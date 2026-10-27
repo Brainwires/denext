@@ -153,6 +153,7 @@ Every path is relative to `basePath` (default `/auth`).
 | `/native/revoke`           | POST        | Sign a native session out (refresh token in the body, or the access token as a bearer). Always `200`.                                                                         |
 | `/native/nonce`            | POST        | A single-use nonce for a native Apple / Google sign-in.                                                                                                                       |
 | `/native/:provider`        | POST        | `apple` / `google`: verify a native sign-in sheet's `id_token` and answer the native session tokens.                                                                          |
+| `/native/passkey/*`        | POST        | Passkeys for an app (needs `native` and `passkeys`): `authenticate/options` + `authenticate` answer the native tokens; `register/options` + `register` under a recent bearer. |
 | `/native/mfa`              | POST        | `{ mfa_token, code[, factor_id, challenge_id] }`: finish a native `id_token` sign-in that owes a second factor.                                                               |
 | `/native/mfa-challenge`    | POST        | `{ mfa_token, factor_id }`: text a code to a verified phone factor for that pending native sign-in.                                                                           |
 | `/native/mfa-enroll`       | POST        | `{ mfa_token }` (a sign-in answered with `mfa_enroll: true`): start a first TOTP factor — `{ factor_id, secret, uri, mfa_token }`.                                            |
@@ -240,6 +241,13 @@ otherwise, as Auth.js's provider `checks` do: with `checks` set, PKCE runs only 
 didn't ask for takes `checks: ["state"]` (`{ ...github({ clientId, clientSecret }), checks:
 ["state"] }`); `state` runs whatever the list says, `"none"` included, and an unknown value is a
 config error.
+
+The callback's `iss` parameter (RFC 9207) is checked too, as Auth.js does: an authorization
+response naming another issuer fails with `oauth_failed`, so a response minted by one authorization
+server can't be replayed at another provider's callback. When the provider's discovery document
+advertises `authorization_response_iss_parameter_supported: true`, a response without `iss` fails
+as well. A plain OAuth 2 provider (no issuer) and Microsoft Entra ID's multi-tenant issuer (checked
+per token) ignore the parameter.
 
 ### Native `OAuthProvider` fields
 
@@ -452,10 +460,32 @@ SessionIndex (`session.saml`), and:
   URL as its Destination, be fresh, and be new (its ID is claimed in the shared replay cache). It
   ends the sessions its NameID started: with a `sessionStore` (and an adapter with the SSO session
   group, as the shipped ones have) exactly those its SessionIndexes name, each recorded at sign-in;
-  with stateless cookie sessions, which have no id to end one by, every session of that user signed
-  in before now (`sessionsValidAfter`). The caller's own cookie is cleared when it is one of them,
-  and the answer is a LogoutResponse signed over HTTP-Redirect to the IdP (`200` when it has no
-  SingleLogoutService).
+  with stateless cookie sessions, exactly the sessions it names too (below). The caller's own
+  cookie is cleared when it is one of them, and the answer is a LogoutResponse signed over
+  HTTP-Redirect to the IdP (`200` when it has no SingleLogoutService).
+
+**Stateless sessions and Single Logout.** Every stateless cookie session carries its own random
+id (128 bits), sealed in its httpOnly cookie and left out of `/auth/session` and the client
+hooks. With Single Logout on, a `saml()` sign-in records which session its NameID and
+SessionIndex started (until the session's `session.maxLifetime` ceiling), and a verified
+LogoutRequest puts exactly the named sessions on a revocation list: those its SessionIndexes
+started, or, with no SessionIndex, every session of that NameID. A revoked session reads as signed
+out and its cookie is cleared on that response. The check is one query, at most once per request,
+made only for a SAML session read in an app with Single Logout on; an app without it, and a
+non-SAML session, make none unless the app revokes sessions by id ([`revokeSession`](#revocation)). A cookie issued before denext minted session ids keeps working but
+can't be named: a LogoutRequest that names a session the index doesn't know ends every session of
+that user signed in before it (`sessionsValidAfter`) instead, so it fails closed.
+
+The index and the revocation list live in the auth adapter, as durable rows: the index until the
+session would have expired, a revocation for at least 400 days (see [Revocation](#revocation)), so
+every instance on the same database sees a revocation and nothing evicts it early. With a
+`sessionStore`, a LogoutRequest naming a SessionIndex no recorded session carries fails closed the
+same way: every session of the user ends. `sqliteAuthAdapter`, `postgresAuthAdapter` and `backendAuthAdapter` keep them
+(`recordSsoSessionIndex`, `listSsoSessionIndexBySessionIndex`, `listSsoSessionIndexByNameId`,
+`revokeSids`, `isSidRevoked`); `inMemoryAuthAdapter` keeps them for this process only. An
+adapter without those methods (an Auth.js adapter) leaves the exact logout off: a LogoutRequest
+then ends every session of the user. `denext doctor` warns about both. `revokeAllSessions(userId)`
+and bans already end stateless sessions through `sessionsValidAfter`.
 
 The messages are checked by the same code as `/auth/v1`'s [Single Logout](#saml-single-sign-on).
 
@@ -578,7 +608,13 @@ which is what keeps an active user's expiry sliding forward.
 ### Revocation
 
 ```ts
-import { denextAuth, revokeAllSessions, revokeSession, sqliteSessionStore } from "denext/server";
+import {
+  currentSessionId,
+  denextAuth,
+  revokeAllSessions,
+  revokeSession,
+  sqliteSessionStore,
+} from "denext/server";
 
 denextAuth({
   // …
@@ -587,8 +623,9 @@ denextAuth({
 
 // After a password change — "sign out everywhere":
 await revokeAllSessions(session.user.id);
-// "Sign out this device" (session.sessionId is set when store-backed):
-await revokeSession(session.sessionId!);
+// "Sign out this device": the current session's id, read on the server only.
+const id = await currentSessionId(); // string | null
+if (id) await revokeSession(id);
 ```
 
 `revokeAllSessions(userId)` ends stateless cookie sessions too, through the user record: it
@@ -599,8 +636,45 @@ stamp is set by a password reset, the pre-account-hijacking eviction, account de
 after it is unaffected, and the stamp never moves back. The comparison is to the second, so
 a session signed in during the very second of the stamp survives it. It needs an `adapter`
 (the time is stored on the user, in every adapter: memory, SQLite, Postgres);
-`revokeAllSessions` throws with neither an adapter nor a `sessionStore`, and `revokeSession`
-(one session by id) needs the store. Both fire the `sessionRevoked` event.
+`revokeAllSessions` throws with neither an adapter nor a `sessionStore`. Both fire the
+`sessionRevoked` event.
+
+`revokeSession(id)` ends one session. Store-backed, `id` is the session's `sessionId` and its
+record is deleted. Stateless (no `sessionStore`), `id` is the session's own `sid` and goes on the
+auth adapter's revocation list, the one [SAML Single Logout](#saml-providers) writes, for the
+larger of `session.maxLifetime` and 400 days (the longest a browser keeps a cookie, so a lifetime
+raised later can't outlive the revocation; raising it past 400 days after a revocation doesn't
+extend that revocation); every instance on the same database then reads that session as signed
+out and clears its cookie. That needs an adapter with the list (`sqliteAuthAdapter`,
+`postgresAuthAdapter`, `backendAuthAdapter`; `inMemoryAuthAdapter` for one process), and
+`revokeSession` throws with an adapter that lacks it (an Auth.js adapter) or with none.
+`currentSessionId()` returns the current request's id (`sessionId`, else `sid`; `null` when
+signed out, for a bearer session, or for a cookie from before denext minted ids). It is
+server-only: `/auth/session` and the client hooks never carry it, and on the session `auth()`
+returns `sid` is non-enumerable — a session passed to a client component, spread or
+`JSON.stringify`'d doesn't carry it (`session.sid` still reads it on the server). In the sealed
+cookie the id rides as `rsid`, a key denext 4.8 ignores, so a rolling 4.8 → 4.9 deploy and a
+rollback keep every session.
+
+**When the list can't be read.** A lookup that throws (a database blip or failover) is answered
+with that session's last answer when it is at most 60 seconds old — a revoked session stays
+revoked, a live one stays live — and only with no answer that recent does the session read as
+signed out for that request; its cookie is kept, so it comes back once the adapter answers (each
+process remembers up to 10,000 answers per adapter). The failure is logged at `warn`, once a
+minute, and `/_denext/health` reports `auth-revocation: "down"` (503) until a probe reaches the
+list again. With `DENEXT_BOOT_DDL=off`, the server checks at startup that the list can be read
+and refuses to start with a `BootSchemaError` when its table is missing (Postgres: apply
+`0009_auth_sso_cookie_sessions` with `denext db push`), so a missing migration never shows up as
+every stateless user signed out.
+
+**What the check costs.** A stateless read looks its `sid` up (one indexed query, at most once per
+request) only once the app has revoked a session this way: the first `revokeSession(id)` also
+writes a durable marker row to the list, and each process caches whether it exists, for good
+once seen and for 10 seconds while it is missing. An app that never revokes a single stateless
+session pays one lookup per process every 10 seconds at most, and one whose adapter has no list
+pays nothing. The instance that revokes enforces it at once; another instance enforces the very
+first revocation an app ever makes within those 10 seconds, and every later one at once. SAML
+sessions under Single Logout are checked on every read regardless.
 
 A user who can no longer sign in needs no revocation to be signed out: with an `adapter`, every read
 of a cookie session — `auth()`, `requireAuth()`, `requireSession()`, the `/auth/*` endpoints —
@@ -675,7 +749,7 @@ else is optional and gates the feature that needs it.
 | Backup codes        | `getMfa`, `setMfa`, `consumeBackupCode`, optional `deleteMfa`, `replaceMfaSecret`                                                                            | Backup codes; moving a pre-4.0 TOTP secret               |
 | Passkeys            | `createPasskey`, `getPasskey`, `listPasskeys`, `updatePasskey`, `deletePasskey`, `createPasskeyChallenge`, `usePasskeyChallenge`                             | WebAuthn sign-in and step-up                             |
 | Native sessions     | `createNativeGrant`, `useNativeGrant`, `createNativeSession`, `getNativeSession`, `rotateNativeSession`, `revokeNativeSession`, `revokeNativeSessionsByUser` | [Native session mode](#native-apps-and-account-deletion) |
-| SSO                 | `createSsoProvider`, `getSsoProvider`, `listSsoProviders`, `createSsoSession`, `claimSamlMessageId`, …                                                       | [SAML](#saml-providers) (`saml()` and `/auth/v1`)        |
+| SSO                 | `createSsoProvider`, `getSsoProvider`, `listSsoProviders`, `createSsoSession`, `claimSamlMessageId`, `recordSsoSessionIndex`, `revokeSids`, …                | [SAML](#saml-providers) (`saml()` and `/auth/v1`)        |
 | Users, extra        | optional `getUserByPhone`, `listUsers`, `deleteUser`                                                                                                         | Phone sign-in, `denext auth reseal`, account deletion    |
 | Sessions, lifecycle | `sessions?: SessionStore`, `close?()`                                                                                                                        | `session.strategy: "database"`, drain                    |
 
@@ -1572,15 +1646,15 @@ denextAuth({
 | `rpId`             | `canonicalOrigin`'s host | The RP ID credentials are scoped to — the host, or a registrable suffix of it to span subdomains              |
 | `rpName`           | the RP ID                | The name an authenticator may show                                                                            |
 | `origins`          | `[canonicalOrigin]`      | Origins a ceremony may come from, matched exactly; each must be `https:` (or `http://localhost`) on the RP ID |
+| `androidApps`      | none                     | Android apps (`{ packageName, sha256CertFingerprints }`) whose `android:apk-key-hash:` origins are accepted   |
 | `corsOrigins`      | none                     | Web origins (also in `origins`) allowed to call the passkey endpoints from another origin, with credentials   |
 | `userVerification` | `"required"`             | `"preferred"` accepts a presence-only assertion — one factor instead of two                                   |
 | `timeout`          | `300`                    | Seconds a ceremony's challenge lives (`30–900`)                                                               |
 
 `origins` lists what `clientDataJSON.origin` may say; it does not open the endpoints to other
 origins. Every `/passkey/*` row is same-origin gated (`403` otherwise) unless the caller is one of
-`corsOrigins`. A native Android app (`android:apk-key-hash:…` is accepted in the signed client
-data) has no web origin, so it can't call the routes cross-origin — such a client needs endpoints
-of your own.
+`corsOrigins`. A native app calls the [`/native/passkey/*`](#passkeys-in-a-native-app) rows
+instead.
 
 **A front end on another origin.** With the auth server at `https://auth.example.com` and the
 pages at `https://www.example.com` (one RP ID, `example.com`):
@@ -1605,6 +1679,73 @@ front end, pass the server's origin to the client calls — `signInWithPasskey({
 "https://auth.example.com" })`, `registerPasskey({ origin: … })` — which then send credentials
 (`credentials: "include"`); the session cookie is the auth server's, so the two origins must be
 same-site for the browser to send it.
+
+### Passkeys in a native app
+
+An app that runs the ceremony itself — Android's Credential Manager, iOS's `ASAuthorization` — has
+no web origin and no cookie, so it uses the `/native/passkey/*` rows, which need
+[native session mode](#native-apps-and-account-deletion) as well as `passkeys`:
+
+| Row                                                   | Body                                             | Answer                                                                                        |
+| ----------------------------------------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `POST {basePath}/native/passkey/authenticate/options` | `{}`                                             | `PublicKeyCredentialRequestOptionsJSON` + `ceremonyId` (usernameless). Per-IP rate-limited.   |
+| `POST {basePath}/native/passkey/authenticate`         | `{ credential, ceremonyId }`                     | The native tokens (`/native/token`'s shape), or `{ mfa_required, mfa_token, … }` (see below). |
+| `POST {basePath}/native/passkey/register/options`     | `{}` + `Authorization: Bearer nat_…`             | `PublicKeyCredentialCreationOptionsJSON` + `ceremonyId`.                                      |
+| `POST {basePath}/native/passkey/register`             | `{ credential, ceremonyId, name? }` + the bearer | `{ ok: true, passkey }`.                                                                      |
+
+They check what the cookie rows check, with the bearer in place of the cookie: registration needs
+an access token from a recent sign-in (`403 reauth_required`), a verified address
+(`403 email_unverified`) and no SSO user; every refused assertion is the same
+`401 { error: "invalid passkey" }`. A ceremony started on these rows completes only on them, and
+one started on a cookie row never completes here. With user verification the passkey is two
+factors; a presence-only assertion (`userVerification: "preferred"`) of a user with a second factor
+answers `{ mfa_required: true, mfa_token, … }`, finished with a code at `/native/mfa`. The rows
+take no ambient credential, so a native HTTP client sends no `Origin`; a request that carries one
+must come from this app or an origin the app's `cors` allows.
+
+**Android.** Inside an app, Credential Manager reports `clientDataJSON.origin` as
+`android:apk-key-hash:` followed by the unpadded base64url SHA-256 of the app's signing
+certificate. List the app and its certificates' fingerprints in `passkeys.androidApps`; each adds
+that exact origin (nothing else — no prefix, padding or case variant matches):
+
+```ts
+// shared by denext.config.ts (appLinks) and the auth config
+export const androidApp = {
+  packageName: "com.example.app",
+  sha256CertFingerprints: [
+    "B1:85:02:F2:9E:48:F5:2C:6A:15:EA:E7:04:F1:E6:0F:1C:FF:61:56:57:99:52:5D:5B:CB:3E:9B:74:53:4E:A1",
+  ],
+};
+
+denextAuth({
+  // …
+  native: { redirectUris: ["com.example.app://auth/callback"] },
+  passkeys: { androidApps: [androidApp] }, // accepts android:apk-key-hash:sYUC8p5I9SxqFernBPHmDxz_YVZXmVJdW8s-m3RTTqE
+});
+```
+
+Android also checks that the RP ID's domain vouches for the app: its
+`/.well-known/assetlinks.json` must delegate `delegate_permission/common.get_login_creds` to that
+package and certificate. `appLinks.android` in `denext.config.ts` serves it (with
+`handle_all_urls`; `get_login_creds` is on unless `loginCredentials: false`), so pass it the same
+object — or a list, for a debug and a release build: `appLinks: { android: [androidApp,
+debugApp] }`.
+
+Getting the fingerprint:
+
+- **Debug and upload keys:** `keytool -list -v -keystore <keystore> -alias <alias>` prints
+  `SHA256: AB:CD:…` (the debug keystore is `~/.android/debug.keystore`, alias `androiddebugkey`,
+  password `android`); `./gradlew signingReport` lists every variant's.
+- **Play App Signing:** Google re-signs the release, so the installed app's origin uses Play's key.
+  Copy it from Play Console → Test and release → App integrity → App signing ("SHA-256 certificate
+  fingerprint"), and list your upload key too if you install builds signed with it.
+
+The value is either `AB:CD:…` (32 colon-separated hex pairs) or 64 hex digits; anything else is
+refused when `denextAuth()` starts, as is a hand-written `android:apk-key-hash:` entry in `origins`
+that is not exactly 43 base64url characters encoding 32 bytes.
+
+**iOS.** An `ASAuthorization` ceremony names the RP's own origin (`https://<rpId>`), already in
+`origins`; the app needs the `webcredentials` associated domain, which `appLinks.apple` serves.
 
 It needs an adapter with the passkey group (both shipped adapters have it), and a relying
 party that doesn't come from the request: with neither `rpId` nor `canonicalOrigin`,
@@ -1635,8 +1776,9 @@ and `crossOrigin` (a call from a cross-origin iframe is refused); the authentica
 RP ID hash, User Present, User Verified under `"required"`, and the backup flags; the
 credential's algorithm — ES256, RS256 or Ed25519, nothing else; the attestation statement —
 `none`, `packed` (self, or an `x5c` leaf whose signature and certificate profile are checked),
-`tpm`, `android-key`, `apple` or `fido-u2f`, each by its WebAuthn Level 3 §8 procedure (below),
-a certificate chained to the authenticator vendor's root only with
+`tpm`, `android-key`, `android-safetynet`, `apple`, `fido-u2f` or `compound`, each by its
+WebAuthn Level 3 §8 procedure (below), a certificate chained to the authenticator vendor's root
+only with
 [`attestation.mds`](#attestation-the-fido-metadata-service); and each assertion's
 signature, its backup-eligibility flag against the stored record, and the signature counter.
 A counter that doesn't increase means a cloned authenticator: the sign-in is refused and
@@ -1671,18 +1813,24 @@ one — gate that yourself, as `DELETE {basePath}/passkeys/:id` does with the re
 **Attestation formats.** A registration's statement is verified whatever its format; one that
 fails is refused (`400 { code: "attestation" }`):
 
-| `fmt`         | What is checked (WebAuthn L3)                                                                                                                                                                                                                                                                                                                                       | Type             |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `none`        | The statement is empty (§8.7)                                                                                                                                                                                                                                                                                                                                       | `none`           |
-| `packed`      | Self: the credential key signs. `x5c`: the leaf signs, and its §8.2.1 profile (v3, subject C/O/OU/CN, not a CA, a matching AAGUID extension)                                                                                                                                                                                                                        | `self` / `basic` |
-| `tpm`         | `ver` 2.0; `pubArea` is the credential key; `certInfo` is a TPM-generated certify statement whose `extraData` hashes this ceremony and whose name is `pubArea`'s; the AIK signs `certInfo`; the AIK certificate's §8.3.1 profile (v3, empty subject, TPM manufacturer / model / version in its SAN, `tcg-kp-AIKCertificate`, not a CA, a matching AAGUID extension) | `attca`          |
-| `android-key` | The leaf signs and its key is the credential key; its key description's challenge is this ceremony's, no `allApplications`, `origin` generated, `purpose` sign (over the software- and TEE-enforced lists together)                                                                                                                                                 | `basic`          |
-| `apple`       | The certificate's nonce extension holds this ceremony's hash, and its key is the credential key                                                                                                                                                                                                                                                                     | `anonca`         |
-| `fido-u2f`    | One P-256 certificate signs the U2F registration data; the credential key is P-256                                                                                                                                                                                                                                                                                  | `basic`          |
+| `fmt`               | What is checked (WebAuthn L3)                                                                                                                                                                                                                                                                                                                                       | Type                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| `none`              | The statement is empty (§8.7)                                                                                                                                                                                                                                                                                                                                       | `none`                                                   |
+| `packed`            | Self: the credential key signs. `x5c`: the leaf signs, and its §8.2.1 profile (v3, subject C/O/OU/CN, not a CA, a matching AAGUID extension)                                                                                                                                                                                                                        | `self` / `basic`                                         |
+| `tpm`               | `ver` 2.0; `pubArea` is the credential key; `certInfo` is a TPM-generated certify statement whose `extraData` hashes this ceremony and whose name is `pubArea`'s; the AIK signs `certInfo`; the AIK certificate's §8.3.1 profile (v3, empty subject, TPM manufacturer / model / version in its SAN, `tcg-kp-AIKCertificate`, not a CA, a matching AAGUID extension) | `attca`                                                  |
+| `android-key`       | The leaf signs and its key is the credential key; its key description's challenge is this ceremony's, no `allApplications`, `origin` generated, `purpose` sign (over the software- and TEE-enforced lists together)                                                                                                                                                 | `basic`                                                  |
+| `apple`             | The certificate's nonce extension holds this ceremony's hash, and its key is the credential key                                                                                                                                                                                                                                                                     | `anonca`                                                 |
+| `fido-u2f`          | One P-256 certificate signs the U2F registration data; the credential key is P-256                                                                                                                                                                                                                                                                                  | `basic`                                                  |
+| `android-safetynet` | `ver` is set; `response` is a JWS whose `x5c` chains to Google's root (GTS Root R1, pinned in denext) with a leaf issued for `attest.android.com`, whose signature verifies with that leaf, and whose payload carries this ceremony's `nonce`, `ctsProfileMatch: true` and a `timestampMs` within a minute of now (§8.5)                                            | `basic`                                                  |
+| `compound`          | 2 to 8 `{ fmt, attStmt }` statements, none itself `compound`, each verified by its own format above; one failure refuses the registration (§8.9)                                                                                                                                                                                                                    | its first certificate statement's (else `self` / `none`) |
 
 A statement signature may use ES256 / ES384 / ES512, RS256 / RS384 / RS512 / RS1, PS256 / PS384 /
-PS512 or EdDSA. Another format (`android-safetynet`, `compound`) is refused — or, under
-`attestation.mds.allowUnattested`, registers as unattested.
+PS512 or EdDSA. Another format (a newer one) is refused — or, under
+`attestation.mds.allowUnattested`, registers as unattested; so does a `compound` holding one.
+
+**`android-safetynet` is deprecated by Google.** The SafetyNet Attestation API has been replaced by
+the Play Integrity API, and current Android passkeys attest `android-key` or `none`. denext verifies
+the format for authenticators and conformance tools that still produce it; expect few of them.
 
 ### Attestation: the FIDO Metadata Service
 
@@ -1707,16 +1855,18 @@ denextAuth({
 With `mds` set, registration options ask for `attestation: "direct"`, and each new passkey is
 held to the metadata after the WebAuthn checks:
 
-- **A certificate attestation** (`packed` with `x5c`, `tpm`, `android-key`, `apple`,
-  `fido-u2f`) must come from an AAGUID the metadata lists, and its `x5c` chain must validate to that entry's `attestationRootCertificates`
+- **A certificate attestation** (`packed` with `x5c`, `tpm`, `android-key`, `android-safetynet`,
+  `apple`, `fido-u2f`, or a `compound` holding one) must come from an AAGUID the metadata lists,
+  and its `x5c` chain — every certificate statement's, for `compound` — must validate to that
+  entry's `attestationRootCertificates`
   (signatures, validity, `cA`, `pathLenConstraint`, `keyUsage`, no unknown critical extension).
   An AAGUID with no entry is refused unless `allowUnknownAuthenticators: true` (its chain is
   then not checked).
 - **`none` and self attestation** prove no model, so they are refused unless
   `allowUnattested: true`. Most phone and password-manager passkeys attest `none`; leave it off
-  only when every user registers a certified security key. A format denext doesn't verify
-  (`android-safetynet`, `compound`) counts as unattested: it registers under `allowUnattested`,
-  and is refused otherwise. Apple's anonymous attestation and U2F keys carry an all-zero AAGUID,
+  only when every user registers a certified security key. A format denext doesn't verify (a
+  newer one) counts as unattested: it registers under `allowUnattested`, and is refused
+  otherwise. Apple's anonymous attestation and U2F keys carry an all-zero AAGUID,
   which no metadata entry has: they register only with `allowUnknownAuthenticators`.
 - **A compromised model is refused** whatever the attestation: an entry whose latest status
   report is `USER_VERIFICATION_BYPASS`, `ATTESTATION_KEY_COMPROMISE`,
@@ -1738,36 +1888,58 @@ one more day, then registrations are refused (`400 { code: "attestation" }`; `re
 answers `invalid`) until a refresh succeeds — retried at most every five minutes. Sign-ins never
 consult the metadata.
 
-| Key                          | Default                                   | What it sets                                           |
-| ---------------------------- | ----------------------------------------- | ------------------------------------------------------ |
-| `url`                        | `https://mds.fidoalliance.org/`           | Where the BLOB is fetched (`https:` only)              |
-| `blob`                       | —                                         | The BLOB itself, or a loader; `url` is then unused     |
-| `timeoutMs`                  | `15000`                                   | The fetch timeout                                      |
-| `maxBytes`                   | 32 MiB                                    | The largest BLOB accepted                              |
-| `allowUnattested`            | `false`                                   | Accept `none` / self attestation                       |
-| `allowUnknownAuthenticators` | `false`                                   | Accept a certificate attestation the BLOB doesn't list |
-| `revocation`                 | `"require"` (`"best-effort"` with `blob`) | What a CRL that can't be had means (below)             |
+| Key                          | Default                                                                  | What it sets                                           |
+| ---------------------------- | ------------------------------------------------------------------------ | ------------------------------------------------------ |
+| `url`                        | `https://mds.fidoalliance.org/`                                          | Where the BLOB is fetched (`https:` only)              |
+| `blob`                       | —                                                                        | The BLOB itself, or a loader; `url` is then unused     |
+| `timeoutMs`                  | `15000`                                                                  | The fetch timeout                                      |
+| `maxBytes`                   | 32 MiB                                                                   | The largest BLOB accepted                              |
+| `allowUnattested`            | `false`                                                                  | Accept `none` / self attestation                       |
+| `allowUnknownAuthenticators` | `false`                                                                  | Accept a certificate attestation the BLOB doesn't list |
+| `revocation`                 | `attestation.revocation`, else `"require"` (`"best-effort"` with `blob`) | What a status that can't be had means (below)          |
 
 **Revocation.** Every certificate of the BLOB's signing path, and of an attestation's `x5c`
-path to its metadata roots, that names CRL distribution points is checked against its issuer's
-certificate revocation list (RFC 5280 §5); a certificate the CRL lists is refused (for the BLOB,
-the refresh fails and the held BLOB serves out its grace day). The fetch is bounded: `http:` /
-`https:` distribution points only (a CRL is signed, so plain HTTP can't forge one), at most four
-per certificate, one fetch per URL at a time, a timeout of `timeoutMs` capped at 10 s, and a
-4 MiB body cap. A CRL is used only when its signature verifies with the issuer's key, it names
-the certificate's issuer, it is current (`thisUpdate` ≤ now ≤ `nextUpdate`; one without
-`nextUpdate` is refused) and it has no critical extension the reader doesn't know (a delta,
-indirect or reason-partitioned CRL is not used). A usable CRL is cached per URL until its
-`nextUpdate` (64 at most); a failed fetch is not retried for five minutes. `revocation` decides
-what happens when no usable CRL can be had for a certificate that names one:
+path to its metadata roots, that names an OCSP responder (Authority Information Access) or CRL
+distribution points is checked against its issuer — OCSP first, then the CRL — and a certificate
+either reports revoked is refused (for the BLOB, the refresh fails and the held BLOB serves out its
+grace day).
 
-- `"require"` — the path is refused (fail closed). The default when the BLOB is fetched.
-- `"best-effort"` — the check is skipped and a warning logged once per URL; a usable CRL that
-  lists the certificate still refuses it. The default when `blob` supplies the BLOB, since a
-  server without outbound network can't reach a CRL either.
-- `"off"` — no CRL is fetched.
+- **OCSP** (RFC 6960, RFC 5019's profile): a DER request naming the certificate by its SHA-1
+  `CertID` (issuer name and key hashes, serial number), POSTed to each `http:` / `https:` responder
+  in turn (at most four; a response is signed, so plain HTTP can't forge one). An answer is used
+  only when the response is `successful`, signed by the issuer or by a delegated responder the
+  issuer signed directly with `id-kp-OCSPSigning` (valid now), names this certificate's `CertID`
+  exactly, and is current: `thisUpdate` no more than five minutes ahead, `nextUpdate` present and
+  not passed. No nonce is sent (RFC 5019 responders pre-sign their answers), so freshness rests on
+  those two times. A `good` or `revoked` answer is cached per certificate until its `nextUpdate`
+  (256 at most); a certificate with no usable answer is not asked about again for five minutes.
+  Responses are capped at 64 KiB.
+- **CRL** (RFC 5280 §5), when OCSP gives no answer: `http:` / `https:` distribution points only,
+  at most four per certificate, one fetch per URL at a time, a 4 MiB body cap. A CRL is used only
+  when its signature verifies with the issuer's key, it names the certificate's issuer, it is
+  current (`thisUpdate` ≤ now ≤ `nextUpdate`; one without `nextUpdate` is refused) and it has no
+  critical extension the reader doesn't know (a delta, indirect or reason-partitioned CRL is not
+  used). A usable CRL is cached per URL until its `nextUpdate` (64 at most); a failed fetch is not
+  retried for five minutes.
 
-A certificate without a distribution point has nothing to check; OCSP is not used. The pinned
+Every fetch has a timeout of `timeoutMs` capped at 10 s. `passkeys.attestation.revocation` decides
+what happens when neither gives a usable answer for a certificate that names a source:
+
+```ts
+passkeys: { attestation: { mds: {}, revocation: "soft" } },
+```
+
+- `"hard"` — the path is refused (fail closed): an unreachable responder and CRL block
+  registration. The default when the BLOB is fetched.
+- `"soft"` — the check is skipped and a warning logged once per certificate's sources
+  (soft-fail, as browsers treat OCSP); a certificate a usable answer reports revoked is still
+  refused. The default when `blob` supplies the BLOB, since a server without outbound network
+  can't reach a responder or a CRL either.
+
+`mds.revocation` overrides it for the MDS paths: `"require"` (= hard), `"best-effort"` (= soft) or
+`"off"` (nothing is fetched).
+
+A certificate that names no OCSP responder and no distribution point has nothing to check. The pinned
 root expires on 2029-03-18, and a denext release before then pins its successor.
 
 ## Roles and authorization
@@ -3263,11 +3435,13 @@ What the first-party auth layer still does not do — the full ledger is
 - **Emailed tokens are delivered after the response.** Every one goes through your
   `sendVerificationRequest` (`smtpMailer()` or your own), handed over after the response, so
   delivery is best-effort where the platform freezes the isolate.
-- **Passkeys: two attestation formats, three algorithms.** Only `none` and `packed` statements
-  are verified — `tpm`, `android-key`, `apple` and `fido-u2f` are refused, or with
-  [`attestation.mds`](#attestation-the-fido-metadata-service) and `allowUnattested` registered
-  as unattested — as are ES384, ES512 and Ed448 keys. The Metadata Service checks fetch no
-  certificate revocation lists.
+- **Passkeys: three credential algorithms.** Every WebAuthn Level 3 attestation format is
+  verified (`none`, `packed`, `tpm`, `android-key`, `android-safetynet`, `apple`, `fido-u2f`,
+  `compound`), but a credential key must be ES256, RS256 or Ed25519 — ES384, ES512 and Ed448
+  keys are refused. A certificate is chained to a vendor root only with
+  [`attestation.mds`](#attestation-the-fido-metadata-service) (or, for `android-safetynet`, to
+  Google's), and revocation fails closed unless `attestation.revocation: "soft"` (or the BLOB
+  comes from `blob`).
 - **Single-node SQLite, additive schema only, and sliding expiry only on paths that own a
   `Response`** — see [Database adapter](#database-adapter) and [Sessions](#sessions).
 - **`verifyTotp` is SHA-1 only**, the algorithm every authenticator app supports.

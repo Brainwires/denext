@@ -93,9 +93,9 @@ import UIKit
 /// - \`apply({ baseUrl, headers, manifest }) → { version, downloaded, copied, switched }\`: \`download\`
 ///   then \`activate\` in one call, with \`download\`'s rejections (\`switched: false\` when the version
 ///   is already running)
-/// - \`booted({ version? }) → { confirmed }\`: confirms the UI on its trial launch, which cancels
+/// - \`booted({ version }) → { confirmed }\`: confirms the UI on its trial launch, which cancels
 ///   the rollback watchdog, when \`version\` (the page's own UI version) is that UI; a call from
-///   another page is ignored
+///   another page, or one that names no version, confirms nothing
 /// - \`reset()\`: back to the bundled UI; during a download it cancels the download first
 /// - event \`otaRejected\` \`{ version, reason }\`: a downloaded UI failed re-verification (a file
 ///   changed on the device after the download, see \`DenextOtaStore.admit\`) and was quarantined;
@@ -368,9 +368,9 @@ public class DenextOtaPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         DispatchQueue.main.async { [weak self] in
             let store = DenextOtaStore.shared
             // A page names its own UI version: a late call from the page being replaced (or any
-            // page other than the one on trial) confirms nothing. A caller that names none (a web
-            // side older than this check) is taken at its word.
-            guard let pending = store.pending, version == nil || version == pending else {
+            // page other than the one on trial) confirms nothing, and neither does a call that
+            // names none (every downloaded UI carries its manifest, so the trial page can).
+            guard let pending = store.pending, let version = version, version == pending else {
                 call.resolve(["confirmed": false])
                 return
             }
@@ -570,8 +570,8 @@ final class DenextOtaStore: @unchecked Sendable {
     /// before anything is downloaded or any state changes: the manifest must be well formed and
     /// within the caps (code \`invalid\`), the file list must hash to its \`version\` (code
     /// \`integrity\`), \`checkTrust\` must accept the signature or the transport (codes \`signature\` /
-    /// \`insecure\`), and \`checkRelease\` its \`sequence\`, \`minNative\` and \`nativeFingerprint\` (codes
-    /// \`downgrade\` / \`native_too_old\` / \`native_mismatch\`).
+    /// \`insecure\`), and \`checkRelease\` its \`sequence\`, \`minNative\`, \`nativeFingerprint\` and
+    /// \`expiresAt\` (codes \`downgrade\` / \`native_too_old\` / \`native_mismatch\` / \`expired\`).
     struct ApplyRequest: Sendable {
         let baseUrl: URL
         let headers: [String: String]
@@ -584,13 +584,17 @@ final class DenextOtaStore: @unchecked Sendable {
         let notes: String
         let minNative: Int64?
         let nativeFingerprint: String?
+        let expiresAt: Int64?
         let signature: String?
 
         init(baseUrl: String?, headers: JSObject?, manifest: JSObject?) throws {
-            guard let baseUrl = baseUrl.flatMap(URL.init(string:)),
+            // No credentials and no backslash: the origin checks and the downloader must read the
+            // same host, whatever parser each uses.
+            guard let raw = baseUrl, !raw.contains("\\\\"),
+                  let baseUrl = URL(string: raw),
                   let scheme = baseUrl.scheme?.lowercased(), scheme == "http" || scheme == "https",
-                  baseUrl.host != nil else {
-                throw OtaError(code: "invalid", message: "baseUrl must be an http(s) URL.")
+                  baseUrl.host != nil, baseUrl.user == nil, baseUrl.password == nil else {
+                throw OtaError(code: "invalid", message: "baseUrl must be an http(s) URL without credentials.")
             }
             var headerFields: [String: String] = [:]
             for (name, value) in headers ?? [:] {
@@ -605,6 +609,10 @@ final class DenextOtaStore: @unchecked Sendable {
             let sequence = try DenextOtaStore.releaseInteger(manifest["sequence"], name: "sequence")
             let minNative = try DenextOtaStore.releaseInteger(manifest["minNative"], name: "minNative")
             let nativeFingerprint = try DenextOtaStore.fingerprintField(manifest["nativeFingerprint"])
+            let expiresAt = try DenextOtaStore.releaseInteger(manifest["expiresAt"], name: "expiresAt")
+            guard expiresAt == nil || sequence != nil else {
+                throw OtaError(code: "invalid", message: "The manifest's expiresAt needs a sequence.")
+            }
             // The version is recomputed from the files, never trusted: files → version → signature.
             guard DenextOtaStore.manifestVersion(files) == version else {
                 throw OtaError(code: "integrity", message: "The manifest version does not match its files.")
@@ -620,11 +628,17 @@ final class DenextOtaStore: @unchecked Sendable {
                     notes: notes,
                     sequence: sequence,
                     minNative: minNative,
-                    nativeFingerprint: nativeFingerprint
+                    nativeFingerprint: nativeFingerprint,
+                    expiresAt: expiresAt
                 ),
                 signature: signature
             )
-            try DenextOtaStore.checkRelease(sequence: sequence, minNative: minNative, nativeFingerprint: nativeFingerprint)
+            try DenextOtaStore.checkRelease(
+                sequence: sequence,
+                minNative: minNative,
+                nativeFingerprint: nativeFingerprint,
+                expiresAt: expiresAt
+            )
             self.baseUrl = baseUrl
             self.headers = headerFields
             self.version = version
@@ -634,6 +648,7 @@ final class DenextOtaStore: @unchecked Sendable {
             self.notes = notes
             self.minNative = minNative
             self.nativeFingerprint = nativeFingerprint
+            self.expiresAt = expiresAt
             self.signature = signature
         }
     }
@@ -711,6 +726,30 @@ final class DenextOtaStore: @unchecked Sendable {
             return nil
         }
         return version
+    }()
+
+    /// The \`sequence\` stamped into the bundled UI's manifest, if any: the downgrade floor before
+    /// this device accepted any over-the-air UI. The bundled UI ships inside the code-signed app,
+    /// so its value is trusted; an older signed UI must never replace a newer bundled one.
+    lazy var bundledSequence: Int64? = {
+        guard let directory = DenextOtaStore.bundledDirectory,
+              let object = DenextOtaStore.readManifest(in: directory),
+              let number = object["sequence"] as? NSNumber,
+              number.doubleValue >= 0, number.doubleValue == Double(number.int64Value) else {
+            return nil
+        }
+        return number.int64Value
+    }()
+
+    /// Whether the bundled UI's manifest carries an \`expiresAt\`: an expiry-aware app then refuses
+    /// a manifest without one (code \`expired\`). Manifests from older tooling carry none, so an app
+    /// whose bundled UI has none keeps taking them.
+    lazy var bundledExpiring: Bool = {
+        guard let directory = DenextOtaStore.bundledDirectory,
+              let object = DenextOtaStore.readManifest(in: directory) else {
+            return false
+        }
+        return object["expiresAt"] is NSNumber
     }()
 
     /// Whether \`value\` is 64 lowercase ASCII hex digits.
@@ -802,8 +841,20 @@ final class DenextOtaStore: @unchecked Sendable {
     /// The Info.plist string key holding the OTA public key: base64 of the DER SubjectPublicKeyInfo
     /// of an ECDSA P-256 key (\`denext mobile add-ota --public-key\`). Read from the app binary only.
     static let publicKeyInfoKey = "DenextOtaPublicKey"
-    /// The hosts an unsigned UI may come from over plain http when no public key is embedded.
+    /// The hosts an unsigned UI may come from over plain http when no public key is embedded, in a
+    /// debug build only (\`isDebugBuild\`).
     static let loopbackHosts: Set<String> = ["localhost", "127.0.0.1", "::1", "[::1]"]
+    /// Whether this binary was compiled for debugging (\`DEBUG\` is defined: Xcode's Debug
+    /// configuration sets it in \`SWIFT_ACTIVE_COMPILATION_CONDITIONS\`). Only then does a loopback
+    /// \`baseUrl\` pass the trust checks: in a release build another app on the device could serve
+    /// an unsigned UI on 127.0.0.1. Native code only (tests set it); the page cannot reach it.
+    static var isDebugBuild: Bool = {
+        #if DEBUG
+        return true
+        #else
+        return false
+        #endif
+    }()
     /// The Info.plist string key pinning the origins a UI may come from (space- or
     /// comma-separated, \`denext mobile add-ota --ota-origin\`). Read from the app binary only.
     static let originsInfoKey = "DenextOtaOrigins"
@@ -885,18 +936,24 @@ final class DenextOtaStore: @unchecked Sendable {
     }
 
     /// The bytes a manifest signature covers (denext's \`otaSignaturePayload\`), UTF-8 with \`\\n\`
-    /// separators and no trailing newline. With a \`sequence\` and a \`nativeFingerprint\` (v3):
+    /// separators and no trailing newline. With a \`sequence\` and an \`expiresAt\` (v4):
+    /// \`"denext-ota-v4\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes) + "\\n" +
+    /// sequence + "\\n" + (minNative or "") + "\\n" + (nativeFingerprint or "") + "\\n" + expiresAt\`;
+    /// else with a \`sequence\` and a \`nativeFingerprint\` (v3):
     /// \`"denext-ota-v3\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes) + "\\n" +
     /// sequence + "\\n" + (minNative or "") + "\\n" + nativeFingerprint\`; with a \`sequence\` alone
     /// (v2): \`"denext-ota-v2\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes) + "\\n" +
     /// sequence + "\\n" + (minNative or "")\`; without one (v1):
     /// \`"denext-ota-v1\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes)\`.
-    static func signaturePayload(version: String, required: Bool, notes: String, sequence: Int64?, minNative: Int64?, nativeFingerprint: String?) -> Data {
+    static func signaturePayload(version: String, required: Bool, notes: String, sequence: Int64?, minNative: Int64?, nativeFingerprint: String?, expiresAt: Int64? = nil) -> Data {
         let head = "\\(version)\\n\\(required ? "1" : "0")\\n\\(sha256Hex(Data(notes.utf8)))"
         guard let sequence = sequence else {
             return Data("denext-ota-v1\\n\\(head)".utf8)
         }
         let v2 = "\\(head)\\n\\(sequence)\\n\\(minNative.map { String($0) } ?? "")"
+        if let expiresAt = expiresAt {
+            return Data("denext-ota-v4\\n\\(v2)\\n\\(nativeFingerprint ?? "")\\n\\(expiresAt)".utf8)
+        }
         guard let nativeFingerprint = nativeFingerprint else {
             return Data("denext-ota-v2\\n\\(v2)".utf8)
         }
@@ -906,14 +963,15 @@ final class DenextOtaStore: @unchecked Sendable {
     /// The download policy, checked before any file is fetched. With origins pinned
     /// (\`DenextOtaOrigins\`), \`baseUrl\` must be on one of them (code \`insecure\`). With a public
     /// key embedded, the manifest must carry a valid signature over \`payload\` (code
-    /// \`signature\`), whatever the transport. Without one, only a pinned https origin or a
-    /// loopback host is allowed (code \`insecure\`): a script in the page can call the plugin, so an
-    /// unsigned UI from any https server it names would install itself for good. A signature
-    /// protects integrity only: over plain http the request headers (bearer tokens) still cross
-    /// the network in the clear.
+    /// \`signature\`), whatever the transport. Without one, only a pinned https origin is allowed
+    /// (code \`insecure\`): a script in the page can call the plugin, so an unsigned UI from any
+    /// https server it names would install itself for good. A loopback host passes both checks in
+    /// a debug build only (\`isDebugBuild\`). A signature protects integrity only: over plain http
+    /// the request headers (bearer tokens) still cross the network in the clear.
     static func checkTrust(baseUrl: URL, payload: Data, signature: String?) throws {
         let host = (baseUrl.host ?? "").lowercased()
-        if !pinnedOrigins.isEmpty && !isPinnedOrigin(baseUrl) && !loopbackHosts.contains(host) {
+        let loopback = isDebugBuild && loopbackHosts.contains(host)
+        if !pinnedOrigins.isEmpty && !isPinnedOrigin(baseUrl) && !loopback {
             throw OtaError(code: "insecure", message: "Refusing a UI from \\(host): it is not one of the pinned \\(originsInfoKey).")
         }
         switch publicKey {
@@ -925,7 +983,7 @@ final class DenextOtaStore: @unchecked Sendable {
             throw OtaError(code: "signature", message: "Info.plist \\(publicKeyInfoKey) is not a base64 P-256 public key.")
         case .unset:
             let pinnedHttps = baseUrl.scheme?.lowercased() == "https" && isPinnedOrigin(baseUrl)
-            guard pinnedHttps || loopbackHosts.contains(host) else {
+            guard pinnedHttps || loopback else {
                 throw OtaError(
                     code: "insecure",
                     message: "Refusing an unsigned UI from \\(host); embed a public key or pin its https origin (denext mobile add-ota --ota-origin)."
@@ -948,15 +1006,25 @@ final class DenextOtaStore: @unchecked Sendable {
     /// authentic) and before any file is fetched: no \`sequence\` below the highest this device
     /// accepted, and none missing once one was (code \`downgrade\`); no \`minNative\` above this
     /// binary's build number (code \`native_too_old\`); no \`nativeFingerprint\` other than this
-    /// binary's (code \`native_mismatch\`), checked only when both carry one.
-    static func checkRelease(sequence: Int64?, minNative: Int64?, nativeFingerprint: String?) throws {
-        if let highest = shared.highestSequence {
+    /// binary's (code \`native_mismatch\`), checked only when both carry one; no \`expiresAt\` at or
+    /// before now, and none missing when the bundled UI's manifest carries one (code \`expired\`).
+    static func checkRelease(sequence: Int64?, minNative: Int64?, nativeFingerprint: String?, expiresAt: Int64?) throws {
+        // The floor: the highest sequence accepted here, raised to the bundled UI's own.
+        if let highest = [shared.highestSequence, shared.bundledSequence].compactMap({ $0 }).max() {
             guard let sequence = sequence else {
-                throw OtaError(code: "downgrade", message: "The manifest has no sequence, but this device accepted sequence \\(highest).")
+                throw OtaError(code: "downgrade", message: "The manifest has no sequence, but this device accepted or bundles sequence \\(highest).")
             }
             guard sequence >= highest else {
                 throw OtaError(code: "downgrade", message: "The manifest's sequence \\(sequence) is older than \\(highest).")
             }
+        }
+        if let expiresAt = expiresAt {
+            let now = Int64(Date().timeIntervalSince1970)
+            guard now < expiresAt else {
+                throw OtaError(code: "expired", message: "The manifest expired (expiresAt \\(expiresAt), now \\(now)); re-sign it.")
+            }
+        } else if shared.bundledExpiring {
+            throw OtaError(code: "expired", message: "The manifest carries no expiry, but the bundled UI's does.")
         }
         if let minNative = minNative, minNative > nativeBuild {
             throw OtaError(
@@ -1122,7 +1190,11 @@ final class DenextOtaStore: @unchecked Sendable {
             }
             guard let target = DenextOtaStore.file(relative, in: directory) else { return .missing }
             guard let file = files[relative] else {
-                return FileManager.default.fileExists(atPath: target.path)
+                // Only a file counts as added on the device: a directory of the UI (a request for
+                // \`assets\`, say) is not, and the handler cannot serve it anyway.
+                var isDirectory: ObjCBool = false
+                let exists = FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory)
+                return exists && !isDirectory.boolValue
                     ? .tampered("\\(relative) is not in the signed manifest.")
                     : .missing
             }
@@ -1166,6 +1238,7 @@ final class DenextOtaStore: @unchecked Sendable {
         let sequence = try releaseInteger(manifest["sequence"], name: "sequence")
         let minNative = try releaseInteger(manifest["minNative"], name: "minNative")
         let nativeFingerprint = try fingerprintField(manifest["nativeFingerprint"])
+        let expiresAt = try releaseInteger(manifest["expiresAt"], name: "expiresAt")
         guard manifestVersion(files) == version else {
             throw OtaError(code: "integrity", message: "UI \\(version)'s stored manifest does not match its version.")
         }
@@ -1177,7 +1250,8 @@ final class DenextOtaStore: @unchecked Sendable {
                 notes: (manifest["notes"] as? String) ?? "",
                 sequence: sequence,
                 minNative: minNative,
-                nativeFingerprint: nativeFingerprint
+                nativeFingerprint: nativeFingerprint,
+                expiresAt: expiresAt
             )
             guard isValidSignature(manifest["signature"] as? String, by: key, over: payload) else {
                 throw OtaError(code: "signature", message: "UI \\(version)'s stored manifest signature does not verify.")
@@ -1504,6 +1578,7 @@ final class DenextOtaStore: @unchecked Sendable {
         if let sequence = request.sequence { manifest["sequence"] = sequence }
         if let minNative = request.minNative { manifest["minNative"] = minNative }
         if let nativeFingerprint = request.nativeFingerprint { manifest["nativeFingerprint"] = nativeFingerprint }
+        if let expiresAt = request.expiresAt { manifest["expiresAt"] = expiresAt }
         if let signature = request.signature { manifest["signature"] = signature }
         return try JSONSerialization.data(withJSONObject: manifest)
     }
@@ -1981,9 +2056,9 @@ import org.json.JSONObject;
  *   <li>{@code apply({ baseUrl, headers, manifest }) → { version, downloaded, copied, switched }}:
  *       {@code download} then {@code activate} in one call, with {@code download}'s rejections
  *       ({@code switched: false} when the version is already running)
- *   <li>{@code booted({ version? }) → { confirmed }}: confirms the UI on its trial launch,
+ *   <li>{@code booted({ version }) → { confirmed }}: confirms the UI on its trial launch,
  *       cancelling the watchdog, when {@code version} (the page's own UI version) is that UI; a
- *       call from another page is ignored
+ *       call from another page, or one that names no version, confirms nothing
  *   <li>{@code reset()}: back to the bundled UI; during a download it cancels the download first
  *   <li>event {@code otaRejected} {@code { version, reason }}: a downloaded UI failed
  *       re-verification (a file changed on the device after the download, see
@@ -2272,9 +2347,9 @@ public class DenextOtaPlugin extends Plugin {
             String pending = store.pending();
             JSObject result = new JSObject();
             // A page names its own UI version: a late call from the page being replaced (or any
-            // page other than the one on trial) confirms nothing. A caller that names none (a web
-            // side older than this check) is taken at its word.
-            if (pending == null || (version != null && !version.equals(pending))) {
+            // page other than the one on trial) confirms nothing, and neither does a call that
+            // names none (every downloaded UI carries its manifest, so the trial page can).
+            if (pending == null || version == null || !version.equals(pending)) {
                 result.put("confirmed", false);
                 call.resolve(result);
                 return;
@@ -2387,16 +2462,19 @@ public class DenextOtaPlugin extends Plugin {
      * anything is downloaded or any state changes: the manifest must be well formed and within the
      * caps (code invalid), the file list must hash to its version (code integrity),
      * {@link DenextOtaStore#checkTrust} must accept the signature or the transport (codes
-     * signature / insecure), and {@link DenextOtaStore#checkRelease} its sequence, minNative and
-     * nativeFingerprint (codes downgrade / native_too_old / native_mismatch).
+     * signature / insecure), and {@link DenextOtaStore#checkRelease} its sequence, minNative,
+     * nativeFingerprint and expiresAt (codes downgrade / native_too_old / native_mismatch / expired).
      */
     private static DenextOtaStore.ApplyRequest parseApplyRequest(PluginCall call, DenextOtaStore store)
         throws DenextOtaStore.OtaException {
         String baseUrl = call.getString("baseUrl");
-        Uri base = baseUrl == null ? null : Uri.parse(baseUrl);
+        // No credentials and no backslash: the origin checks (Uri) and the downloader
+        // (HttpURLConnection) must read the same host.
+        Uri base = baseUrl == null || baseUrl.indexOf('\\\\') >= 0 ? null : Uri.parse(baseUrl);
         if (
             base == null ||
             base.getHost() == null ||
+            base.getUserInfo() != null ||
             !("http".equalsIgnoreCase(base.getScheme()) || "https".equalsIgnoreCase(base.getScheme()))
         ) {
             throw new DenextOtaStore.OtaException("invalid", "baseUrl must be an http(s) URL.");
@@ -2422,6 +2500,10 @@ public class DenextOtaPlugin extends Plugin {
         Long sequence = DenextOtaStore.releaseInteger(manifest.opt("sequence"), "sequence");
         Long minNative = DenextOtaStore.releaseInteger(manifest.opt("minNative"), "minNative");
         String nativeFingerprint = DenextOtaStore.fingerprintField(manifest.opt("nativeFingerprint"));
+        Long expiresAt = DenextOtaStore.releaseInteger(manifest.opt("expiresAt"), "expiresAt");
+        if (expiresAt != null && sequence == null) {
+            throw new DenextOtaStore.OtaException("invalid", "The manifest's expiresAt needs a sequence.");
+        }
         // The version is recomputed from the files, never trusted: files → version → signature.
         if (!DenextOtaStore.manifestVersion(files).equals(version)) {
             throw new DenextOtaStore.OtaException("integrity", "The manifest version does not match its files.");
@@ -2433,10 +2515,10 @@ public class DenextOtaPlugin extends Plugin {
         String signature = rawSignature instanceof String ? (String) rawSignature : null;
         store.checkTrust(
             base,
-            DenextOtaStore.signaturePayload(version, required, notes, sequence, minNative, nativeFingerprint),
+            DenextOtaStore.signaturePayload(version, required, notes, sequence, minNative, nativeFingerprint, expiresAt),
             signature
         );
-        store.checkRelease(sequence, minNative, nativeFingerprint);
+        store.checkRelease(sequence, minNative, nativeFingerprint, expiresAt);
         return new DenextOtaStore.ApplyRequest(
             baseUrl,
             headers,
@@ -2447,7 +2529,8 @@ public class DenextOtaPlugin extends Plugin {
             notes,
             minNative,
             nativeFingerprint,
-            signature
+            signature,
+            expiresAt
         );
     }
 }
@@ -2603,9 +2686,12 @@ final class DenextOtaStore {
         "FFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551",
         16
     );
-    /** The hosts an unsigned UI may come from over plain http when no public key is embedded. */
+    /**
+     * The hosts an unsigned UI may come from over plain http when no public key is embedded, in a
+     * debuggable build only: in a release build another app on the device could serve one there.
+     */
     static final Set<String> LOOPBACK_HOSTS = new HashSet<>(Arrays.asList("localhost", "127.0.0.1", "::1", "[::1]"));
-    /** The emulator's alias for the host machine: loopback too, but only in a debuggable build. */
+    /** The emulator's alias for the host machine: loopback too, in a debuggable build only. */
     static final String EMULATOR_HOST = "10.0.2.2";
     /**
      * The {@code <meta-data>} (inside {@code <application>}) pinning the origins a UI may come from
@@ -2681,6 +2767,8 @@ final class DenextOtaStore {
         final String nativeFingerprint;
         @Nullable
         final String signature;
+        @Nullable
+        final Long expiresAt;
 
         ApplyRequest(
             String baseUrl,
@@ -2692,7 +2780,8 @@ final class DenextOtaStore {
             String notes,
             @Nullable Long minNative,
             @Nullable String nativeFingerprint,
-            @Nullable String signature
+            @Nullable String signature,
+            @Nullable Long expiresAt
         ) {
             this.baseUrl = baseUrl;
             this.headers = headers;
@@ -2704,6 +2793,7 @@ final class DenextOtaStore {
             this.minNative = minNative;
             this.nativeFingerprint = nativeFingerprint;
             this.signature = signature;
+            this.expiresAt = expiresAt;
         }
     }
 
@@ -2730,6 +2820,10 @@ final class DenextOtaStore {
     @Nullable
     private String bundledVersion;
     private boolean bundledVersionRead = false;
+    @Nullable
+    private Long bundledSequence;
+    private boolean bundledSequenceRead = false;
+    private Boolean bundledExpiring;
     private boolean launchPrepared = false;
     /** Set by {@link #cancelDownload}; the download in flight stops at its next check. */
     private volatile boolean cancelRequested = false;
@@ -2884,8 +2978,10 @@ final class DenextOtaStore {
 
     /**
      * The bytes a manifest signature covers (denext's {@code otaSignaturePayload}), UTF-8 with
-     * {@code \\n} separators and no trailing newline. With a {@code sequence} and a
-     * {@code nativeFingerprint} (v3): {@code "denext-ota-v3\\n" + version + "\\n" + ("1" | "0") +
+     * {@code \\n} separators and no trailing newline. With a {@code sequence} and an
+     * {@code expiresAt} (v4): {@code "denext-ota-v4\\n" + version + "\\n" + ("1" | "0") + "\\n" +
+     * sha256hex(notes) + "\\n" + sequence + "\\n" + (minNative or "") + "\\n" + (nativeFingerprint
+     * or "") + "\\n" + expiresAt}; else with a {@code sequence} and a {@code nativeFingerprint} (v3): {@code "denext-ota-v3\\n" + version + "\\n" + ("1" | "0") +
      * "\\n" + sha256hex(notes) + "\\n" + sequence + "\\n" + (minNative or "") + "\\n" +
      * nativeFingerprint}; with a {@code sequence} alone (v2):
      * {@code "denext-ota-v2\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes) + "\\n" +
@@ -2900,31 +2996,47 @@ final class DenextOtaStore {
         @Nullable Long minNative,
         @Nullable String nativeFingerprint
     ) {
+        return signaturePayload(version, required, notes, sequence, minNative, nativeFingerprint, null);
+    }
+
+    /** {@link #signaturePayload(String, boolean, String, Long, Long, String)}, with the v4 {@code expiresAt}. */
+    static byte[] signaturePayload(
+        String version,
+        boolean required,
+        String notes,
+        @Nullable Long sequence,
+        @Nullable Long minNative,
+        @Nullable String nativeFingerprint,
+        @Nullable Long expiresAt
+    ) {
         String head = version + "\\n" + (required ? "1" : "0") + "\\n" + sha256Hex(notes.getBytes(StandardCharsets.UTF_8));
         String text;
         if (sequence == null) {
             text = "denext-ota-v1\\n" + head;
         } else {
             String v2 = head + "\\n" + sequence + "\\n" + (minNative == null ? "" : String.valueOf(minNative));
-            text = nativeFingerprint == null ? "denext-ota-v2\\n" + v2 : "denext-ota-v3\\n" + v2 + "\\n" + nativeFingerprint;
+            if (expiresAt != null) {
+                text = "denext-ota-v4\\n" + v2 + "\\n" + (nativeFingerprint == null ? "" : nativeFingerprint) + "\\n" + expiresAt;
+            } else {
+                text = nativeFingerprint == null ? "denext-ota-v2\\n" + v2 : "denext-ota-v3\\n" + v2 + "\\n" + nativeFingerprint;
+            }
         }
         return text.getBytes(StandardCharsets.UTF_8);
     }
 
     /**
      * The download policy, checked before any file is fetched. With origins pinned
-     * ({@code dev.denext.ota.ORIGINS}), the base URL must be on one of them or on a loopback host
-     * (code insecure). With a public key embedded, the manifest must carry a valid signature over
+     * ({@code dev.denext.ota.ORIGINS}), the base URL must be on one of them (code insecure). With a public key embedded, the manifest must carry a valid signature over
      * {@code payload} (code signature), whatever the transport; a key that is present but does
-     * not parse refuses every manifest. Without one, only a pinned https origin or a loopback host
-     * is allowed (code insecure): a script in the page can call the plugin, so an unsigned UI from
-     * any https server it names would install itself for good. The emulator's {@code 10.0.2.2}
-     * counts as loopback only in a debuggable build. A signature protects integrity only: over
+     * not parse refuses every manifest. Without one, only a pinned https origin is allowed (code
+     * insecure): a script in the page can call the plugin, so an unsigned UI from any https server
+     * it names would install itself for good. A loopback host (and the emulator's
+     * {@code 10.0.2.2}) passes both checks in a debuggable build only. A signature protects integrity only: over
      * plain http the request headers (bearer tokens) cross the network in the clear.
      */
     void checkTrust(Uri base, byte[] payload, @Nullable String signature) throws OtaException {
         String host = base.getHost() == null ? "" : base.getHost().toLowerCase(Locale.ROOT);
-        boolean loopback = LOOPBACK_HOSTS.contains(host) || (EMULATOR_HOST.equals(host) && isDebuggable());
+        boolean loopback = (LOOPBACK_HOSTS.contains(host) || EMULATOR_HOST.equals(host)) && isDebuggable();
         List<Uri> pins = pinnedOrigins();
         boolean pinned = isPinnedOrigin(pins, base);
         if (!pins.isEmpty() && !pinned && !loopback) {
@@ -2954,17 +3066,34 @@ final class DenextOtaStore {
      * authentic) and before any file is fetched: no {@code sequence} below the highest this device
      * accepted, and none missing once one was (code downgrade); no {@code minNative} above this
      * binary's {@code versionCode} (code native_too_old); no {@code nativeFingerprint} other than
-     * this binary's (code native_mismatch), checked only when both carry one.
+     * this binary's (code native_mismatch), checked only when both carry one; no {@code expiresAt}
+     * at or before now, and none missing when the bundled UI's manifest carries one (code expired).
      */
-    void checkRelease(@Nullable Long sequence, @Nullable Long minNative, @Nullable String nativeFingerprint) throws OtaException {
+    void checkRelease(
+        @Nullable Long sequence,
+        @Nullable Long minNative,
+        @Nullable String nativeFingerprint,
+        @Nullable Long expiresAt
+    ) throws OtaException {
+        // The floor: the highest sequence accepted here, raised to the bundled UI's own.
         Long highest = highestSequence();
+        Long bundled = bundledSequence();
+        if (bundled != null && (highest == null || bundled > highest)) highest = bundled;
         if (highest != null) {
             if (sequence == null) {
-                throw new OtaException("downgrade", "The manifest has no sequence, but this device accepted sequence " + highest + ".");
+                throw new OtaException("downgrade", "The manifest has no sequence, but this device accepted or bundles sequence " + highest + ".");
             }
             if (sequence < highest) {
                 throw new OtaException("downgrade", "The manifest's sequence " + sequence + " is older than " + highest + ".");
             }
+        }
+        if (expiresAt != null) {
+            long now = System.currentTimeMillis() / 1000;
+            if (now >= expiresAt) {
+                throw new OtaException("expired", "The manifest expired (expiresAt " + expiresAt + ", now " + now + "); re-sign it.");
+            }
+        } else if (bundledExpiring()) {
+            throw new OtaException("expired", "The manifest carries no expiry, but the bundled UI's does.");
         }
         long build = nativeBuild();
         if (minNative != null && minNative > build) {
@@ -3227,6 +3356,38 @@ final class DenextOtaStore {
         return bundledVersion;
     }
 
+    /**
+     * The {@code sequence} stamped into the bundled UI's manifest, if any: the downgrade floor
+     * before this device accepted any over-the-air UI. The bundled UI ships inside the signed APK,
+     * so its value is trusted; an older signed UI must never replace a newer bundled one.
+     */
+    @Nullable
+    synchronized Long bundledSequence() {
+        if (!bundledSequenceRead) {
+            bundledSequenceRead = true;
+            JSONObject manifest = parseManifest(readAsset(BUNDLED_ASSET_DIR + "/" + MANIFEST_PATH));
+            Object value = manifest == null ? null : manifest.opt("sequence");
+            bundledSequence = (value instanceof Integer || value instanceof Long) && ((Number) value).longValue() >= 0
+                ? ((Number) value).longValue()
+                : null;
+        }
+        return bundledSequence;
+    }
+
+    /**
+     * Whether the bundled UI's manifest carries an {@code expiresAt}: an expiry-aware app then
+     * refuses a manifest without one (code expired). Manifests from older tooling carry none, so
+     * an app whose bundled UI has none keeps taking them.
+     */
+    synchronized boolean bundledExpiring() {
+        if (bundledExpiring == null) {
+            JSONObject manifest = parseManifest(readAsset(BUNDLED_ASSET_DIR + "/" + MANIFEST_PATH));
+            Object value = manifest == null ? null : manifest.opt("expiresAt");
+            bundledExpiring = value instanceof Integer || value instanceof Long;
+        }
+        return bundledExpiring;
+    }
+
     File versionDirectory(String version) {
         return new File(root, version);
     }
@@ -3390,7 +3551,9 @@ final class DenextOtaStore {
             File target = new File(directory, relative);
             ManifestFile file = files.get(relative);
             if (file == null) {
-                return target.exists() ? Verdict.TAMPERED : Verdict.MISSING;
+                // Only a file counts as added on the device: a directory of the UI (a request for
+                // assets, say) is not, and the handler cannot serve it anyway.
+                return target.exists() && !target.isDirectory() ? Verdict.TAMPERED : Verdict.MISSING;
             }
             if (verified.contains(relative)) {
                 return Verdict.SERVE;
@@ -3427,6 +3590,7 @@ final class DenextOtaStore {
         Long sequence = releaseInteger(manifest.opt("sequence"), "sequence");
         Long minNative = releaseInteger(manifest.opt("minNative"), "minNative");
         String nativeFingerprint = fingerprintField(manifest.opt("nativeFingerprint"));
+        Long expiresAt = releaseInteger(manifest.opt("expiresAt"), "expiresAt");
         if (!manifestVersion(files).equals(version)) {
             throw new OtaException("integrity", "UI " + version + "'s stored manifest does not match its version.");
         }
@@ -3443,7 +3607,8 @@ final class DenextOtaStore {
                 notes instanceof String ? (String) notes : "",
                 sequence,
                 minNative,
-                nativeFingerprint
+                nativeFingerprint,
+                expiresAt
             );
             if (!isValidSignature(key, payload, signature instanceof String ? (String) signature : null)) {
                 throw new OtaException("signature", "UI " + version + "'s stored manifest signature does not verify.");
@@ -4030,6 +4195,9 @@ final class DenextOtaStore {
         }
         if (request.nativeFingerprint != null) {
             manifest.put("nativeFingerprint", request.nativeFingerprint);
+        }
+        if (request.expiresAt != null) {
+            manifest.put("expiresAt", (long) request.expiresAt);
         }
         if (request.signature != null) {
             manifest.put("signature", request.signature);

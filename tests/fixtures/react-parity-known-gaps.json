@@ -1,18 +1,143 @@
 {
   "note": "Real, currently-open signature deviations vs React/ReactDOM/Next. Burn this down; the parity test fails on any deviation NOT listed here. Regenerate with `deno task parity:gaps`.",
   "baselineVersions": {
-    "react": "19.2.9",
-    "react-dom": "19.2.9",
-    "react-is": "19.2.9",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-is": "19.3.1",
     "next": "16.4.1",
     "next-intl": "4.14.9",
     "@remix-run/react": "2.17.5",
     "@remix-run/node": "2.17.5",
     "next-auth": "5.0.0-beta.32",
     "next-auth-v4": "4.24.15",
-    "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.7",
-    "@types/react-is": "19.2.0"
+    "preact": "11.0.1",
+    "preact-render-to-string": "6.8.1",
+    "preact-iso": "2.12.2",
+    "@preact/signals": "2.11.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@types/react-is": "19.3.0"
   },
-  "gaps": []
+  "gaps": [
+    {
+      "specifier": "@preact/signals",
+      "symbol": "computed",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "@preact/signals",
+      "symbol": "createModel",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "@preact/signals",
+      "symbol": "effect",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "@preact/signals",
+      "symbol": "signal",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "@preact/signals",
+      "symbol": "useComputed",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "@preact/signals",
+      "symbol": "useModel",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "@preact/signals",
+      "symbol": "useSignal",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "@preact/signals",
+      "symbol": "useSignalEffect",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "preact/compat",
+      "symbol": "createFactory",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "preact/compat",
+      "symbol": "findDOMNode",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "preact/compat",
+      "symbol": "flushSync",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "preact/compat",
+      "symbol": "hydrate",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 2 arg(s) but React/Next allows 3"
+    },
+    {
+      "specifier": "preact/compat",
+      "symbol": "isFragment",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "preact/compat",
+      "symbol": "isMemo",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "preact/compat",
+      "symbol": "render",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 2 arg(s) but React/Next allows 3"
+    },
+    {
+      "specifier": "preact/compat",
+      "symbol": "StrictMode",
+      "category": "ARITY_MISMATCH",
+      "detail": "denext accepts up to 1 arg(s) but React/Next allows 2"
+    },
+    {
+      "specifier": "preact/compat",
+      "symbol": "unmountComponentAtNode",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "preact/jsx-runtime",
+      "symbol": "jsxAttr",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "preact/jsx-runtime",
+      "symbol": "jsxEscape",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    },
+    {
+      "specifier": "preact/jsx-runtime",
+      "symbol": "jsxTemplate",
+      "category": "MISSING_VALUE",
+      "detail": "runtime export missing from denext"
+    }
+  ]
 }

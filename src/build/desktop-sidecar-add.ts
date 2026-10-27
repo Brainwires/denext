@@ -6,6 +6,7 @@
 // `permissions: { ffi: ["*"] }`: the packaged app loads the addon from its embedded files.
 
 import { basename, join, resolve } from "@std/path";
+import { assertInsideProject } from "./project-confine.ts";
 import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
@@ -148,6 +149,10 @@ export async function addDesktopSidecar(
   const source = await spliceSidecar(before, sidecar, configPath);
   const label = basename(configPath);
   const diff = createUnifiedDiff(existing ? before : "", source, `a/${label}`, `b/${label}`);
-  if (!opts.dryRun) await Deno.writeTextFile(configPath, source);
+  if (!opts.dryRun) {
+    // A config linked out of the project (a cloned repository's) is never written through.
+    await assertInsideProject(dir, configPath);
+    await Deno.writeTextFile(configPath, source);
+  }
   return { configPath, sidecar, diff, natives, notes: sidecarNotes(opts, natives) };
 }

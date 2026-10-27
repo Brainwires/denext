@@ -6,9 +6,10 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { startDevOnDir } from "./e2e/harness.ts";
-import { fromFileUrl } from "@std/path";
+import { copyExample } from "./helpers/example-copy.ts";
 
-const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
+// A private copy: this test builds into (and edits) the app, which other test files read.
+const HELLO = await copyExample("hello");
 
 type Ctx = { origin: string; routeJs: string };
 

@@ -20,6 +20,7 @@
 // list means "checked: no required-reason API in its iOS code".
 
 import { join } from "@std/path";
+import { assertInsideProject } from "./project-confine.ts";
 import { addSourceFiles } from "./pbxproj.ts";
 import {
   dictGet,
@@ -574,7 +575,10 @@ async function addToXcode(
       randomId: opts.randomId,
     });
     if (result.added.length === 0) return;
-    if (!opts.dryRun) await Deno.writeTextFile(path, result.text);
+    if (!opts.dryRun) {
+      await assertInsideProject(root, path);
+      await Deno.writeTextFile(path, result.text);
+    }
     const shown = nativeRel(root, PBXPROJ);
     if (!report.written.includes(shown)) report.written.push(shown);
   } catch (err) {
@@ -617,7 +621,10 @@ async function writeBundleManifest(
   }
   if (merged.text === current) report.unchanged.push(rel);
   else {
-    if (!opts.dryRun) await Deno.writeTextFile(join(root, rel), merged.text);
+    if (!opts.dryRun) {
+      await assertInsideProject(root, join(root, rel));
+      await Deno.writeTextFile(join(root, rel), merged.text);
+    }
     report.written.push(rel);
     if (merged.added.length > 0) report.added[rel] = merged.added;
   }

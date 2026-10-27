@@ -170,6 +170,18 @@ function validateCompilePermissions(permissions: unknown, fail: Fail): void {
     isPermissionList,
     fail,
   );
+  // An empty direction would bake its UNSCOPED flag (an empty list is no scope to Deno), the
+  // opposite of what "none" reads as: refuse it rather than grant every host.
+  for (const k of ["netConnect", "netListen"]) {
+    const v = (permissions as Record<string, unknown>)[k];
+    if (Array.isArray(v) && v.length === 0) {
+      fail(
+        `compile.permissions.${k}`,
+        'is empty, which would leave that direction unscoped: list the hosts, use ["*"] for ' +
+          "any, or leave it out",
+      );
+    }
+  }
 }
 
 /** `compile.sign`'s keys, each with its check and the message for a bad value. */
@@ -215,6 +227,18 @@ export function validateCompile(compile: unknown, fail: Fail): void {
   validateCompileInclude(include, fail);
   validateCompilePermissions(permissions, fail);
   validateCompileSign(sign, fail);
+}
+
+/** `start`: an object whose `idleTrim` (when set) is a boolean. */
+export function validateStart(start: unknown, fail: Fail): void {
+  if (start === undefined) return;
+  if (typeof start !== "object" || start === null || Array.isArray(start)) {
+    return fail("start", "must be an object");
+  }
+  const idleTrim = (start as { idleTrim?: unknown }).idleTrim;
+  if (idleTrim !== undefined && typeof idleTrim !== "boolean") {
+    fail("start.idleTrim", "must be a boolean");
+  }
 }
 
 /**

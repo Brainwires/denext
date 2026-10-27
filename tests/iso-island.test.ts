@@ -118,9 +118,6 @@ Deno.test("client:visible: inert until visible, then hydrates the same nodes wit
   try {
     const { container, button, html, mismatches } = await hydrated("visible");
     assertEquals(button.tagName, "BUTTON");
-    fireEventOn(button, "click");
-    flushSync();
-    assertEquals(button.textContent, "c dark 1", "no handler before the island hydrates");
     fire();
     await tick();
     const after = container.children[0].children[1].children[0];
@@ -134,6 +131,25 @@ Deno.test("client:visible: inert until visible, then hydrates the same nodes wit
     flushSync();
     assertEquals(button.textContent, "c dark 2", "live once hydrated");
     assertEquals(mismatches, [], "no hydration mismatch, in the page or the island");
+  } finally {
+    teardown();
+  }
+});
+
+Deno.test("client:visible: an event before it is visible hydrates it at once and reaches its handler", async () => {
+  const fire = manualVisible();
+  try {
+    const { container, button, mismatches } = await hydrated("visible");
+    fireEventOn(button, "click");
+    flushSync();
+    assertEquals(button.textContent, "c dark 2", "the click woke the island and reached it");
+    assert(container.children[0].children[1].children[0] === button, "on the server's node");
+    fire();
+    await tick();
+    fireEventOn(button, "click");
+    flushSync();
+    assertEquals(button.textContent, "c dark 3", "hydrated once");
+    assertEquals(mismatches, []);
   } finally {
     teardown();
   }

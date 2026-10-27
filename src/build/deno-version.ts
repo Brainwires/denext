@@ -112,6 +112,24 @@ export function needsNoLegacyAbortFlag(version: string): boolean {
   return compareDenoVersions(version, FIRST_NO_LEGACY_ABORT_RUNTIME) < 0;
 }
 
+/**
+ * The first release of denext's Deno with the idle trim (Brainwires/deno DENEXT.md item 104:
+ * `--unstable-idle-trim` / `DENO_UNSTABLE_IDLE_TRIM=1`, a full GC and `malloc_trim(0)` once the
+ * event loop has gone idle; glibc Linux only, a no-op elsewhere).
+ */
+export const FIRST_IDLE_TRIM_RUNTIME = "3.0.0-rc.5";
+
+/**
+ * Whether denext's Deno of `version` has the idle trim (from {@linkcode FIRST_IDLE_TRIM_RUNTIME}).
+ * A version that does not parse has not.
+ *
+ * @param version A version of denext's Deno (`3.0.0-rc.N`, `2.9.7-denext.N`).
+ * @returns Whether it accepts `--unstable-idle-trim`.
+ */
+export function supportsIdleTrim(version: string): boolean {
+  return compareDenoVersions(version, FIRST_IDLE_TRIM_RUNTIME) >= 0;
+}
+
 /** `2.9.7-denext.N`: a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

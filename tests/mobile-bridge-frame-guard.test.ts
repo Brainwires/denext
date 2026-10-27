@@ -24,6 +24,13 @@ import { addAuthSessionToProject } from "../src/build/mobile-auth-session-instal
 import { addOtaToProject } from "../src/build/mobile-ota-install.ts";
 import { addSettingsToProject } from "../src/build/mobile-settings-install.ts";
 import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
+import { addExportRoutesToProject } from "../src/build/mobile-export-routes-install.ts";
+import {
+  mainActivitySource,
+  WEBKIT_DEPENDENCY,
+  withWebkitDependency,
+} from "../src/build/mobile-native-install.ts";
+import { needsFrameGuardOptOut, planCapacitor } from "../src/build/migrate-capacitor.ts";
 
 const PBXPROJ_FIXTURE = await Deno.readTextFile(
   new URL("./fixtures/capacitor8/project.pbxproj", import.meta.url),
@@ -80,7 +87,7 @@ Deno.test("frame guard: the Swift drops non-main-frame messages and forwards the
   // It takes Capacitor's handler name, removing Capacitor's registration first (WebKit throws
   // on a duplicate name).
   const remove = FRAME_GUARD_SWIFT.indexOf("removeScriptMessageHandler(forName: handlerName)");
-  const add = FRAME_GUARD_SWIFT.indexOf("controller.add(DenextMainFrameBridgeGuard(");
+  const add = FRAME_GUARD_SWIFT.indexOf("controller.add(guardHandler, name: handlerName)");
   assert(remove > 0 && add > remove);
   assertStringIncludes(FRAME_GUARD_SWIFT, 'private static let handlerName = "bridge"');
   // Weak: the content controller retains its handlers, so a strong reference would be a cycle.
@@ -207,4 +214,219 @@ Deno.test("mobile doctor --release: android.useLegacyBridge is an error", async 
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// ---- AU6-L8: the origin guard ------------------------------------------------------------------
+
+Deno.test("frame guard SECURITY (AU6-L8): iOS refuses a main frame on another origin than the app's", () => {
+  // Every message's origin is compared with the allowed set (unless the config turns it off).
+  assertStringIncludes(
+    FRAME_GUARD_SWIFT,
+    "if let allowed = allowedOrigins, !allowed.contains(from) {",
+  );
+  const forward = FRAME_GUARD_SWIFT.indexOf(
+    "target?.userContentController(userContentController, didReceive: message)",
+  );
+  assert(FRAME_GUARD_SWIFT.indexOf("!allowed.contains(from)") < forward);
+  // The allowed set: Capacitor's local URL, server.url only in a debug build, the config's list.
+  assertStringIncludes(FRAME_GUARD_SWIFT, "let pluginConfig = config.getPluginConfig(configId)");
+  assertStringIncludes(FRAME_GUARD_SWIFT, 'private static let configId = "DenextBridge"');
+  assertStringIncludes(
+    FRAME_GUARD_SWIFT,
+    'guard pluginConfig.getBoolean("frameGuard", true) else { return nil }',
+  );
+  assertStringIncludes(
+    FRAME_GUARD_SWIFT,
+    "if let local = origin(of: config.localURL) { origins.insert(local) }",
+  );
+  assertStringIncludes(
+    FRAME_GUARD_SWIFT,
+    "        #if DEBUG\n        if let server = origin(of: config.serverURL) { origins.insert(server) }\n        #endif\n",
+  );
+  assertStringIncludes(FRAME_GUARD_SWIFT, 'pluginConfig.getArray("allowedOrigins", [])');
+});
+
+Deno.test("frame guard SECURITY (AU6-L8): Android narrows Capacitor's bridge to the app's origin", async () => {
+  const activity = await mainActivitySource("p", new Set());
+  // Installed right after the bridge is built, before the first page commits.
+  assertStringIncludes(
+    activity,
+    "        if (bridge != null) bridge.addWebViewListener(new RendererRecovery(this));\n" +
+      "        // denext: native plugin calls only from the app's own origin (see BridgeOriginGuard).\n" +
+      "        if (bridge != null) BridgeOriginGuard.install(this, bridge);\n",
+  );
+  assertStringIncludes(activity, "static final class BridgeOriginGuard {");
+  assertStringIncludes(activity, 'if (!config.getBoolean("frameGuard", true)) return;');
+  assertStringIncludes(
+    activity,
+    "androidx.webkit.WebViewCompat.removeWebMessageListener(webView, BRIDGE_NAME);",
+  );
+  assertStringIncludes(activity, "allowedOrigins(activity, bridge, config), listener);");
+  assertStringIncludes(activity, "rules.add(localOrigin(bridge));");
+  assertStringIncludes(
+    activity,
+    "String server = debuggable ? origin(bridge.getServerUrl()) : null;",
+  );
+  assertStringIncludes(activity, "if (isMainFrame && data != null) {");
+  // A gradle dependency the app module needs, added once.
+  const gradle = "android {}\ndependencies {\n    implementation 'x:y:1'\n}\n";
+  const once = withWebkitDependency(gradle)!;
+  assertStringIncludes(once, `dependencies {\n    ${WEBKIT_DEPENDENCY}\n`);
+  assertEquals(withWebkitDependency(once), once);
+  assertEquals(withWebkitDependency("android {}\n"), null);
+});
+
+Deno.test("frame guard (AU6-L8): recomposing MainActivity adds androidx.webkit to the app's gradle", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_origin_guard_" });
+  try {
+    const java = join(dir, "android/app/src/main/java/dev/example/MainActivity.java");
+    await Deno.mkdir(join(java, ".."), { recursive: true });
+    await Deno.writeTextFile(
+      java,
+      "package dev.example;\n\nimport com.getcapacitor.BridgeActivity;\n\n" +
+        "public class MainActivity extends BridgeActivity {}\n",
+    );
+    await Deno.writeTextFile(
+      join(dir, "android/app/build.gradle"),
+      "apply plugin: 'com.android.application'\n\ndependencies {\n}\n",
+    );
+    await addExportRoutesToProject({ dir });
+    assertStringIncludes(await Deno.readTextFile(java), "BridgeOriginGuard.install(this, bridge);");
+    assertStringIncludes(
+      await Deno.readTextFile(join(dir, "android/app/build.gradle")),
+      WEBKIT_DEPENDENCY,
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("mobile doctor (AU6-L8): server.url / allowNavigation with the origin guard on, or turned off", async () => {
+  const dir = await project();
+  const doctor = async (config: Record<string, unknown>) => {
+    await Deno.writeTextFile(
+      join(dir, "capacitor.config.json"),
+      JSON.stringify({ appId: "dev.example", webDir: "out", ...config }),
+    );
+    return (await runMobileDoctor({ root: dir, profile: "release" })).findings
+      .filter((f) => f.check === "bridge-origin-guard");
+  };
+  try {
+    assertEquals(await doctor({}), []);
+    const on = await doctor({ server: { allowNavigation: ["auth.example.com"] } });
+    assertEquals(on.length, 1);
+    assertEquals(on[0].level, "warning");
+    assertStringIncludes(on[0].message, "https://auth.example.com");
+    assertStringIncludes(on[0].fix, "plugins.DenextBridge.allowedOrigins");
+    assertEquals(
+      await doctor({
+        server: { allowNavigation: ["auth.example.com"] },
+        plugins: { DenextBridge: { allowedOrigins: ["https://auth.example.com"] } },
+      }),
+      [],
+    );
+    const off = await doctor({
+      server: { url: "https://app.example.com" },
+      plugins: { DenextBridge: { frameGuard: false } },
+    });
+    assertEquals(off.length, 1);
+    assertStringIncludes(off[0].message, "frameGuard is false");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate (AU6-L8): a kept config that loads a hosted server.url opts out of the origin guard", async () => {
+  assert(needsFrameGuardOptOut({ server: { url: "https://app.example.com" } }));
+  assert(!needsFrameGuardOptOut({ server: { url: "http://localhost:3000" } }));
+  assert(!needsFrameGuardOptOut({}));
+  assert(
+    !needsFrameGuardOptOut({
+      server: { url: "https://app.example.com" },
+      plugins: { DenextBridge: { allowedOrigins: ["https://app.example.com"] } },
+    }),
+  );
+  const dir = await Deno.makeTempDir({ prefix: "denext_migrate_guard_" });
+  try {
+    await Deno.writeTextFile(
+      join(dir, "capacitor.config.json"),
+      JSON.stringify({
+        appId: "dev.example",
+        webDir: "out",
+        server: { url: "https://app.example.com" },
+      }),
+    );
+    const plan = await planCapacitor(
+      {
+        dir,
+        deps: {},
+        cli: "denext",
+        run: "deno task",
+        pm: null,
+        appName: "x",
+        kind: "spa",
+        options: { platforms: [] },
+      } as unknown as Parameters<typeof planCapacitor>[0],
+    );
+    assertEquals(plan.frameGuardOptOut, "capacitor.config.json");
+    assert(plan.info.review.some((r) => r.reason.includes("frameGuard: false")));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+const IOS_SDK_FOR_GUARD = Deno.build.os === "darwin" &&
+  new Deno.Command("xcrun", {
+    args: ["--sdk", "iphoneos", "--show-sdk-path"],
+    stdout: "null",
+    stderr: "null",
+  })
+    .outputSync().success;
+
+Deno.test({
+  name:
+    "frame guard (AU6-L8): the Swift guard type-checks against WebKit and a Capacitor stub, debug and release",
+  ignore: !IOS_SDK_FOR_GUARD,
+  async fn() {
+    const dir = await Deno.makeTempDir({ prefix: "denext_guard_swift_" });
+    try {
+      await Deno.copyFile(
+        new URL("./fixtures/frame-guard/Capacitor.swift", import.meta.url),
+        join(dir, "Capacitor.swift"),
+      );
+      await Deno.writeTextFile(
+        join(dir, "Guard.swift"),
+        "import Foundation\nimport WebKit\nimport Capacitor\n" + FRAME_GUARD_SWIFT,
+      );
+      const swiftc = async (args: string[]) => {
+        const out = await new Deno.Command("xcrun", {
+          args: ["--sdk", "iphoneos", "swiftc", "-target", "arm64-apple-ios15.0", ...args],
+          cwd: dir,
+        }).output();
+        assert(out.success, new TextDecoder().decode(out.stderr));
+      };
+      await swiftc([
+        "-emit-module",
+        "-parse-as-library",
+        "-module-name",
+        "Capacitor",
+        "-emit-module-path",
+        join(dir, "Capacitor.swiftmodule"),
+        join(dir, "Capacitor.swift"),
+      ]);
+      for (const flags of [[], ["-DDEBUG"]]) {
+        await swiftc([
+          "-typecheck",
+          "-swift-version",
+          "5",
+          ...flags,
+          "-I",
+          dir,
+          join(dir, "Guard.swift"),
+        ]);
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
 });

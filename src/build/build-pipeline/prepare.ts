@@ -1,5 +1,10 @@
 // Production build, stage 0: the non-App-Router builds and the staging setup.
 
+import {
+  actionIdSecretFromEnv,
+  generateActionIdSecret,
+  setBuildActionIdSecret,
+} from "../../server/action-ids.ts";
 import { ensureDir } from "@std/fs";
 import { join } from "@std/path";
 import { EMITTED_DIR, runPluginBuildSteps, runPluginPrepareSteps } from "../../plugin/mod.ts";
@@ -18,6 +23,7 @@ import {
   appUsesActivity,
   appUsesClassComponents,
   appUsesFormActions,
+  appUsesHookBoundaries,
   appUsesHrefParams,
   appUsesImageBlur,
   appUsesIsoIslands,
@@ -92,6 +98,9 @@ export async function buildWithoutAppRouter(paths: ProjectPaths): Promise<BuildR
  * `client/`, and stale content-hashed chunks from prior builds are dropped).
  */
 export async function prepareBuild(projectDir: string, paths: ProjectPaths): Promise<BuildContext> {
+  // Before anything mints an action id (the stubs, the inline actions): this build's secret.
+  const actionIdSecret = actionIdSecretFromEnv() ? null : generateActionIdSecret();
+  setBuildActionIdSecret(actionIdSecret);
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
     await Deno.remove(join(paths.outDir, `cache.db${suffix}`)).catch(() => {});
   }
@@ -127,6 +136,7 @@ export async function prepareBuild(projectDir: string, paths: ProjectPaths): Pro
     clientDir,
     finalClientDir,
     compat,
+    actionIdSecret,
     flightRoutes,
     boundaryRoutes,
     hasFlight: boundaryRoutes.length > 0,
@@ -216,6 +226,8 @@ async function runtimeFeatureScans(
   const usesImageBlur = await appUsesImageBlur(projectDir, outside);
   const usesFormActions = await appUsesFormActions(projectDir, outside);
   const usesHrefParams = await appUsesHrefParams(projectDir, outside);
+  // …and the reconciler's hook-boundary seam (Preact's `useErrorBoundary`).
+  const usesHookBoundaries = await appUsesHookBoundaries(projectDir, outside);
   return {
     classRuntime,
     usesActivity,
@@ -225,6 +237,7 @@ async function runtimeFeatureScans(
     usesImageBlur,
     usesFormActions,
     usesHrefParams,
+    usesHookBoundaries,
   };
 }
 
@@ -237,4 +250,5 @@ type RuntimeScanKey =
   | "usesSingletons"
   | "usesImageBlur"
   | "usesFormActions"
-  | "usesHrefParams";
+  | "usesHrefParams"
+  | "usesHookBoundaries";

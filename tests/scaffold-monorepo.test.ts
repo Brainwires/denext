@@ -59,13 +59,14 @@ Deno.test("monorepoFiles: the root and the two packages", () => {
 
 Deno.test("monorepo root deno.json: explicit members, root-only fields, shared options, tasks", () => {
   const root = JSON.parse(content(monorepoFiles({ dir: ROOT }), "deno.json")) as Json;
-  // Listed one by one: the client bundler's loader can't expand a glob member.
+  // Listed one by one (a glob member works too, but the root says exactly what it holds).
   assertEquals(root.workspace, ["./apps/web", "./packages/ui", "./packages/shared"]);
   assertEquals(root.unstable, ["no-legacy-abort"]);
   assertEquals(root.allowScripts, { deny: ["npm:@parcel/watcher"] });
   assertEquals((root.compilerOptions as Json).jsxImportSource, "denext");
   assertEquals((root.lint as Json).plugins, [`jsr:@denext/denext@^${VERSION}/lint-plugin`]);
   assert(((root.fmt as Json).exclude as string[]).includes("**/.denext/"));
+  assertEquals(root.exclude, [".deno/"]);
   const tasks = root.tasks as Record<string, string>;
   assertEquals(tasks.dev, "deno task --cwd apps/web dev");
   assertEquals(tasks.build, "deno task --cwd apps/web build");

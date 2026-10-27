@@ -20,6 +20,7 @@ import {
   TABLE_OUT,
 } from "../scripts/gen-command-table.ts";
 import { CLI_MODULES_URL } from "../src/cli/cli-cache.ts";
+import { boundedOutput, childDeadlineMs, retryOnStall } from "../src/build/serial-child.ts";
 import { VERSION as CLI_VERSION } from "../src/version.ts";
 import { VERSION } from "../mod.ts";
 import { CLI_COMPILE_INCLUDES, compileCliArgs } from "../scripts/compile-cli.ts";
@@ -33,15 +34,33 @@ interface ModuleInfo {
   modules: Array<{ specifier: string; dependencies?: Array<{ code?: { specifier: string } }> }>;
 }
 
-/** `deno info --json <root>`. */
+/**
+ * `deno info --json <root>`, the way the build runs it (src/build/serial-child.ts): one `deno info`
+ * child at a time in this process, read until it exits, killed at its deadline and retried once.
+ * On Windows a `deno info` child started beside the other Deno children of `deno test --parallel`
+ * sometimes never exits; unbounded, that held this file until the 600 s stall watchdog.
+ */
 async function info(root: string): Promise<ModuleInfo> {
-  const { stdout, success } = await new Deno.Command(Deno.execPath(), {
-    // a file URL, not a path: `deno info` reads a Windows `C:\…` path as a URL with scheme "c"
-    args: ["info", "--json", toFileUrl(join(ROOT, root)).href],
-    cwd: ROOT,
-    stdout: "piped",
-    stderr: "null",
-  }).output();
+  // a file URL, not a path: `deno info` reads a Windows `C:\…` path as a URL with scheme "c"
+  const args = ["info", "--json", toFileUrl(join(ROOT, root)).href];
+  const { stdout, success } = await retryOnStall(
+    "deno info",
+    args,
+    (deadline) =>
+      boundedOutput(
+        new Deno.Command(Deno.execPath(), {
+          args,
+          cwd: ROOT,
+          stdin: "null",
+          stdout: "piped",
+          stderr: "null",
+        }).spawn(),
+        { stdout: true, stderr: false },
+        deadline,
+        "deno info",
+      ),
+    childDeadlineMs(120_000),
+  );
   assert(success, `deno info ${root}`);
   return JSON.parse(new TextDecoder().decode(stdout));
 }
@@ -184,7 +203,8 @@ Deno.test("src/version.ts carries the framework VERSION", () => {
 Deno.test("every compile of the CLI goes through scripts/compile-cli.ts", async () => {
   // A binary built without `--include src/cli/lazy-modules.generated.ts` starts and prints its
   // version, but every verb fails to load; one built without the framework files the CLI reads
-  // at run time (deno.json, AGENTS.md) fails in those verbs (4.5.1: `migrate`, the MCP guide).
+  // at run time (deno.json) fails in those verbs (4.5.1: `migrate`, then still reading AGENTS.md
+  // for the MCP guide).
   // So no place spells out its own `deno compile … cli.ts`: each runs the one script.
   const files = [
     "deno.json",

@@ -12,6 +12,19 @@
 
 /** The npm packages installed (with their `@types`) to source the real surface. */
 import { NEXT_AUTH_PROVIDER_MODULES } from "../../src/compat/next-auth/providers/list.ts";
+import type { Baseline, Surface } from "./types.ts";
+
+/**
+ * Preact and its ecosystem — what `denext/preact`, `denext/preact/*`, `denext/preact-iso` and
+ * `denext/signals` mirror (each ships its own `.d.ts`). Their surfaces live in their own baseline
+ * ({@linkcode PREACT_BASELINE}), so the React/Next baseline stays as it is.
+ */
+export const PREACT_PACKAGES = [
+  "preact",
+  "preact-render-to-string",
+  "preact-iso",
+  "@preact/signals",
+] as const;
 
 export const REAL_PACKAGES = [
   "react",
@@ -30,6 +43,7 @@ export const REAL_PACKAGES = [
   // NextAuth.js v4 — the line most Next apps still run — installed beside v5 under an npm
   // alias (REAL_PACKAGE_ALIASES), since the shim serves v4's server API too.
   "next-auth-v4",
+  ...PREACT_PACKAGES,
   "@types/react",
   "@types/react-dom",
   "@types/react-is",
@@ -92,6 +106,18 @@ export const NEXT_AUTH_V4_SUBPATHS: ReadonlyArray<readonly [subpath: string, fil
  */
 export const NEXT_AUTH_PROVIDERS: readonly string[] = NEXT_AUTH_PROVIDER_MODULES;
 
+/** The Preact specifiers checked, each against the `src/compat/preact/` file that serves it. */
+export const PREACT_SPECIFIERS: ReadonlyArray<readonly [specifier: string, file: string]> = [
+  ["preact", "mod.ts"],
+  ["preact/hooks", "hooks.ts"],
+  ["preact/compat", "compat.ts"],
+  ["preact/jsx-runtime", "jsx-runtime.ts"],
+  ["preact-render-to-string", "render-to-string.ts"],
+  ["preact-render-to-string/stream", "render-to-string.ts"],
+  ["preact-iso", "iso.ts"],
+  ["@preact/signals", "signals.ts"],
+];
+
 /** One React/Next(-adjacent) specifier and the two files that must agree on it. */
 export interface SpecEntry {
   /** The public bare specifier, e.g. `react` or `next/navigation`. */
@@ -109,7 +135,8 @@ export interface SpecEntry {
     | "pages-router"
     | "remix"
     | "next-auth"
-    | "next-auth-v4";
+    | "next-auth-v4"
+    | "preact";
 }
 
 /**
@@ -342,6 +369,13 @@ export const CATALOG: SpecEntry[] = [
     denext: `src/compat/next-auth/providers/${p}.ts`,
     group: "next-auth-v4" as const,
   })),
+  // Preact (`denext migrate` maps each specifier to the denext module beside it).
+  ...PREACT_SPECIFIERS.map(([specifier, file]) => ({
+    specifier,
+    real: specifier,
+    denext: `src/compat/preact/${file}`,
+    group: "preact" as const,
+  })),
 ];
 
 /**
@@ -379,4 +413,52 @@ export async function assertCatalogMatchesExports(root: string): Promise<void> {
         missing.join("\n  "),
     );
   }
+}
+
+/** The React/Next baseline (repo-relative). */
+export const REACT_BASELINE = "tests/fixtures/react-surface.baseline.json";
+/** The Preact baseline (repo-relative): the `preact` group's surfaces and package versions. */
+export const PREACT_BASELINE = "tests/fixtures/preact-surface.baseline.json";
+
+/** Whether a baseline surface belongs to the Preact baseline. */
+function isPreactSurface(s: Surface): boolean {
+  return PREACT_SPECIFIERS.some(([specifier]) => specifier === s.specifier);
+}
+
+/**
+ * Split a captured baseline into the React/Next one and the Preact one.
+ *
+ * @param all The whole capture.
+ * @returns Each baseline, versions and surfaces partitioned by package / specifier.
+ */
+export function splitBaseline(all: Baseline): { react: Baseline; preact: Baseline } {
+  const preactPkgs = new Set<string>(PREACT_PACKAGES);
+  const pick = (preact: boolean): Baseline => ({
+    versions: Object.fromEntries(
+      Object.entries(all.versions).filter(([p]) => preactPkgs.has(p) === preact),
+    ),
+    capturedAt: all.capturedAt,
+    surfaces: all.surfaces.filter((s) => isPreactSurface(s) === preact),
+  });
+  return { react: pick(false), preact: pick(true) };
+}
+
+/**
+ * Read the committed baselines as one: the React/Next baseline plus the Preact one (when present).
+ *
+ * @param root Repo root (absolute).
+ * @returns The merged baseline.
+ */
+export async function readBaselines(root: string): Promise<Baseline> {
+  const react = JSON.parse(await Deno.readTextFile(`${root}/${REACT_BASELINE}`)) as Baseline;
+  const preact = await Deno.readTextFile(`${root}/${PREACT_BASELINE}`).then(
+    (t) => JSON.parse(t) as Baseline,
+    () => null,
+  );
+  if (!preact) return react;
+  return {
+    versions: { ...react.versions, ...preact.versions },
+    capturedAt: react.capturedAt,
+    surfaces: [...react.surfaces, ...preact.surfaces],
+  };
 }

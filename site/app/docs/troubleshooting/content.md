@@ -40,7 +40,7 @@ See [Migrating from Remix](/docs/migrating-remix) § 1.
 ## A freshly published `@denext/*` version is refused ("minimum dependency age")
 
 **Cause.** Deno's minimum-dependency-age hold refuses a JSR version until it is
-old enough (Deno 2.9.7 holds two days by default, although its error hint says 24
+old enough (Deno 2.9 holds two days by default, although its error hint says 24
 hours). A supply-chain delay, not an error: it is the window in which a
 compromised release would be caught.
 
@@ -109,6 +109,18 @@ unaffected.
 on for a compat app.
 
 See [Migrating from Next.js](/docs/migrating) § 8.
+
+## `deno test` runs `_test.ts` files from `.deno/npm-compat`
+
+**Cause.** From runtime 3.0.0-rc.5 the type check writes `.deno/npm-compat` into
+the project root: an npm-shaped copy of the `@jsr/*` packages, their `_test.ts`
+files included, which a `deno test` with default discovery then finds.
+
+**Fix.** Add a top-level `exclude` to the project's `deno.json` (a workspace's
+root and its members): `{ "exclude": [".deno/"] }`. A project `denext create`
+scaffolds already has it. See
+[Known limitations](/docs/limitations) (the runtime is to keep the copy out of
+the project in a later release).
 
 ## `WorkspaceDiscoverError(ConfigNotWorkspaceMember)` when building
 
@@ -300,16 +312,23 @@ value afterwards:
 **Cause.** A production client bundle carries only the code of the reconciler's own errors,
 not their full text (a dev build, `denext dev`, and `denext/testing` throw the full message):
 
-| Code | Full message                                                                     |
-| ---- | -------------------------------------------------------------------------------- |
-| 1    | Rendered more hooks than during the previous render (a conditional hook)         |
-| 2    | Maximum update depth exceeded: the component schedules an update on every render |
-| 3    | An async component rendered on the client (async components are server-only)     |
-| 4    | Retired: `memo()` of a class component now renders, as in React                  |
-| 5    | A class component with the class runtime off, or after it failed to load         |
+| Code | Full message                                                                       |
+| ---- | ---------------------------------------------------------------------------------- |
+| 1    | Rendered more hooks than during the previous render (a conditional hook)           |
+| 2    | Maximum update depth exceeded: the component schedules an update on every render   |
+| 3    | An async component rendered on the client (async components are server-only)       |
+| 4    | Retired: `memo()` of a class component now renders, as in React                    |
+| 5    | A class component with the class runtime off, or after it failed to load           |
+| 6    | A function `action` / `formAction` in a build whose scan saw none (names the prop) |
+| 7    | Preact's `useErrorBoundary` in a build whose scan saw none                         |
 
 **Fix.** Reproduce it under `denext dev` for the full message, the component stack and the
-dev warnings; the component the production error names is where to start.
+dev warnings; the component the production error names is where to start. Codes 6 and 7 come
+only from a production build: `denext build` leaves the form-action runtime and the
+hook-boundary support out of an app whose own sources never name `action` / `formAction` or
+`useErrorBoundary` (a library's code is not scanned), so `denext dev` does not reproduce them.
+Name the prop or the hook once in the app's own code, for example where the library's component
+is used, and rebuild.
 
 ## `ReferenceError: window is not defined` (or `document`, `localStorage`)
 
@@ -597,6 +616,18 @@ platform-specific files builds each platform its own.
 which picks the export by the `x-denext-ota-platform` header the app sends. See
 [Over-the-air updates](/docs/platform-files#over-the-air-updates).
 
+### An over-the-air update is refused with `expired`
+
+**Cause.** The manifest's signed `expiresAt` has passed (`denext ota manifest --sign` stamps 30
+days by default), so the feed is serving a release nobody re-signed; or the manifest carries no
+expiry at all (signed by older tooling) while the app's bundled UI was built with one.
+`checkForUiUpdate` and the desktop updater report it even when the release is the UI already
+running.
+
+**Fix.** Re-sign the release the feed serves before it expires: `denext ota manifest out --sign
+ota.key` (add `--expires-in <days>` for another lifetime; the version stays, the sequence grows),
+and re-sign on a schedule in CI. See [Over-the-air UI updates](/docs/mobile#over-the-air-ui-updates).
+
 ## React Native mode
 
 The entries below are for an app built with `reactNative: true`. The full guide is
@@ -651,6 +682,18 @@ branch.
 `"web"`) or `runtimePlatform()` from `denext/mobile`, or use `Platform.select`, which picks the
 shell's `ios` / `android` key when the spec has no `web` key. See
 [Platform.OS in the shell](/docs/react-native#platformos-in-the-shell).
+
+## `deno info (pid …) was still running after 120 s and was killed` during a build
+
+**Cause.** `denext build` runs its module-graph crawl (`deno info`, 120 s) and its client bundle
+(`deno bundle`, 300 s) one at a time, each with a deadline after which it is killed and started
+once more; a second overrun fails the build with `ChildStallError`. A first build with a cold
+cache on a slow link (a Docker `RUN denext task build` that downloads every npm package) can
+take longer than that without being stuck.
+
+**Fix.** Set `DENEXT_CHILD_DEADLINE_MS` for that build: a number of milliseconds replaces both
+deadlines (`DENEXT_CHILD_DEADLINE_MS=900000` for 15 minutes), and `0` removes them. Warm the
+cache in an earlier layer (`RUN denext install`) so later builds don't pay for it.
 
 ## Docker: `required variable … is missing a value: set it in .env`
 

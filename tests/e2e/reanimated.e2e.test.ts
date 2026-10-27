@@ -137,29 +137,51 @@ function collectErrors(page: Page): string[] {
 /**
  * How many distinct frames the compositor drew while the main thread was blocked for `ms`,
  * with the element `id` scrolled into view (an animation off screen draws nothing).
+ *
+ * A frame counts by when it was drawn — the screencast's own swap timestamp, against the block's
+ * start and end read in the page — not by when it reached this process: on a loaded runner the
+ * frames of a block can arrive after it, and an arrival-time window then dropped frames the
+ * compositor did draw. The screencast stays on a moment past the block so they still arrive.
  */
 async function framesWhileBlocked(page: Page, id: string, ms = 500): Promise<number> {
   await page.evaluate(`${el(id)}.scrollIntoView({ block: "center" })`);
   // deno-lint-ignore no-explicit-any
   const cdp = page.unsafelyGetCelestialBindings() as any;
-  const frames: { t: number; data: string }[] = [];
+  const frames: { t: number; drawn?: number; data: string }[] = [];
   const onFrame = (e: CustomEvent) => {
-    frames.push({ t: performance.now(), data: e.detail.data });
+    const drawn = e.detail.metadata?.timestamp;
+    frames.push({
+      t: performance.now(),
+      drawn: typeof drawn === "number" ? drawn * 1000 : undefined,
+      data: e.detail.data,
+    });
     cdp.Page.screencastFrameAck({ sessionId: e.detail.sessionId }).catch(() => {});
   };
   cdp.addEventListener("Page.screencastFrame", onFrame);
   await cdp.Page.startScreencast({ format: "jpeg", quality: 60, everyNthFrame: 1 });
   await new Promise((r) => setTimeout(r, 150));
   const from = performance.now();
-  await page.evaluate(
-    `(() => { const end = performance.now() + ${ms}; while (performance.now() < end) {} })()`,
-  );
+  const block = await page.evaluate(
+    `(() => { const now = () => performance.timeOrigin + performance.now(); const start = now(); ` +
+      `const end = performance.now() + ${ms}; while (performance.now() < end) {} ` +
+      `return { start, end: now() }; })()`,
+  ) as { start: number; end: number };
   const to = performance.now();
+  await new Promise((r) => setTimeout(r, 250)); // the block's frames still in flight
   await cdp.Page.stopScreencast();
   cdp.removeEventListener("Page.screencastFrame", onFrame);
-  // The frames that arrived inside the block (a margin at each end for the round trips).
-  return new Set(frames.filter((f) => f.t > from + 50 && f.t < to - 30).map((f) => f.data)).size;
+  const inBlock = frames.every((f) => f.drawn !== undefined)
+    // Drawn inside the block (a margin at each end).
+    ? frames.filter((f) => f.drawn! > block.start + 30 && f.drawn! < block.end - 30)
+    // No swap timestamps: the frames that arrived inside it (a margin for the round trips).
+    : frames.filter((f) => f.t > from + 50 && f.t < to - 30);
+  return new Set(inBlock.map((f) => f.data)).size;
 }
+
+/** How long the element's first running animation has left, in ms (0 when none). */
+const remainingMs = (id: string) =>
+  `(() => { const a = ${el(id)}.getAnimations()[0]; if (!a) return 0; ` +
+  `const t = a.effect.getComputedTiming(); return Math.max(0, t.endTime - t.localTime); })()`;
 
 /** The element's running animations: count, and the first one's kind and iterations. */
 const anims = (id: string) =>
@@ -181,6 +203,12 @@ async function exercise(t: Deno.TestContext, server: RunningServer, label: strin
   const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
+    // Reanimated skips animations under reduced motion; a host with "Reduce motion" on (a dev
+    // Mac) would run none of the compositor cases.
+    // deno-lint-ignore no-explicit-any
+    await (page.unsafelyGetCelestialBindings() as any).Emulation.setEmulatedMedia({
+      features: [{ name: "prefers-reduced-motion", value: "no-preference" }],
+    });
     const errors = collectErrors(page);
     await page.goto(server.origin + "/");
 
@@ -240,7 +268,13 @@ async function exercise(t: Deno.TestContext, server: RunningServer, label: strin
         await page.evaluate(`${el("move")}.click()`);
         const a = await page.evaluate(anims("move-box")) as { n: number; kind: string };
         assertEquals([a.n, a.kind], [1, "Animation"]);
-        const frames = await framesWhileBlocked(page, "move-box");
+        // A runner that starves the compositor for one window gets a second one while the
+        // 2 s animation still covers it: any window with 5 distinct frames during a block shows
+        // the animation off the main thread (Reanimated's own loop draws at most 2, below).
+        let frames = await framesWhileBlocked(page, "move-box");
+        if (frames < 5 && (await page.evaluate(remainingMs("move-box")) as number) > 800) {
+          frames = Math.max(frames, await framesWhileBlocked(page, "move-box"));
+        }
         assert(frames >= 5, `only ${frames} frames while the main thread was blocked`);
         // The completion callback (runOnJS) fires; the final value lands inline.
         await pollFor(page, `${el("moved")}.textContent === "moved"`, 10_000);

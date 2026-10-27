@@ -12,7 +12,7 @@ import { carryLinks } from "./config-links.ts";
 import { ensureDir } from "@std/fs";
 import { parse as parseJsonc } from "@std/jsonc";
 import { denoExecutable, minDepAgeConfig, readFrameworkJson } from "./bundle.ts";
-import { type WorkspaceImports, workspaceImports } from "./workspace-imports.ts";
+import { supplyChainConfig, type WorkspaceImports, workspaceImports } from "./workspace-imports.ts";
 
 /** A minimal view of a deno config's fields relevant to module resolution. */
 export interface DenoConfigView {
@@ -417,6 +417,8 @@ export async function writeMergedModuleConfig(
     appCfg,
     await workspaceImports(appConfigPath),
   );
+  // the project's npm supply-chain policy (paranoid, advisoryCheck, the jail) holds in the child
+  Object.assign(merged, await supplyChainConfig(appConfigPath));
   await ensureDir(outDir);
   carryLinks(merged, appCfg, dirname(appConfigPath), outDir);
   const configPath = join(outDir, "module-config.json");

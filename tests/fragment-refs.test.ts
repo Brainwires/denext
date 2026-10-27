@@ -326,7 +326,31 @@ Deno.test("Fragment ref: listeners and the ref skip a hidden <Activity>, and ret
   assert(inner.current !== null, "and reattaches it");
 });
 
-Deno.test("Fragment ref: observers follow the children; an IntersectionObserver lets go after paint", async () => {
+/**
+ * Frames driven by the test: `requestAnimationFrame` queues, `frame()` runs one. "After the next
+ * paint" is two frames; on timers (the runtime's fallback without `requestAnimationFrame`) a test
+ * sleeping a fixed time raced them: an event loop stalled past both deadlines (a loaded runner)
+ * ran the sleep's timer before the second frame's, which is only scheduled when the first runs.
+ */
+function manualFrames(): { frame: () => void; [Symbol.dispose]: () => void } {
+  const queue: FrameRequestCallback[] = [];
+  const g = globalThis as { requestAnimationFrame?: unknown };
+  const had = Object.hasOwn(g, "requestAnimationFrame");
+  const previous = g.requestAnimationFrame;
+  g.requestAnimationFrame = (cb: FrameRequestCallback) => queue.push(cb);
+  return {
+    frame: () => {
+      for (const cb of queue.splice(0)) cb(performance.now());
+    },
+    [Symbol.dispose]: () => {
+      if (had) g.requestAnimationFrame = previous;
+      else delete g.requestAnimationFrame;
+    },
+  };
+}
+
+Deno.test("Fragment ref: observers follow the children; an IntersectionObserver lets go after paint", () => {
+  using frames = manualFrames();
   const { render } = mount();
   const ref = createRef<FragmentInstance>();
   const Test = ({ ids }: { ids: string[] }) =>
@@ -345,7 +369,9 @@ Deno.test("Fragment ref: observers follow the children; an IntersectionObserver 
     ["observe c"],
     "an IntersectionObserver waits for the exit record",
   );
-  await new Promise((r) => setTimeout(r, 100));
+  frames.frame();
+  assertEquals(io.log.splice(0), [], "still held through the frame that paints the removal");
+  frames.frame();
   assertEquals(io.log.splice(0), ["unobserve a"], "…and lets go after the next paint");
   ref.current!.unobserveUsing(io.observer);
   assertEquals(io.log.splice(0), ["unobserve b", "unobserve c"]);

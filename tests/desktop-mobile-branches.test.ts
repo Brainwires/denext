@@ -763,7 +763,131 @@ Deno.test("desktop downloadToFile is a tracked transfer: listed, progress events
   resetFileTransfersForTesting();
 });
 
-Deno.test("desktop downloads: cancelFileTransfer → fs.cancelDownload; pause is unsupported", async () => {
+Deno.test("desktop downloads: pauseFileTransfer → fs.pauseDownload, resumeFileTransfer → fs.resumeDownload", async () => {
+  resetFileTransfersForTesting();
+  let pauseRunning = () => {};
+  await inDesktop({
+    fs: {
+      download: () =>
+        new Promise((_, reject) => {
+          pauseRunning = () =>
+            reject({
+              code: "paused",
+              message: "the download was paused",
+              data: { bytes: 5, total: 10, resumable: true },
+            });
+        }),
+      pauseDownload: () => {
+        pauseRunning();
+        return { paused: true };
+      },
+      resumeDownload: () => ({ path: "/abs/r.bin", bytes: 10 }),
+    },
+  }, async (rt) => {
+    const events: FileTransferEvent[] = [];
+    const stop = onFileTransfer((e) => events.push(e));
+    const progress: unknown[] = [];
+    const run = downloadToFile("https://example.com/r.bin", "r.bin", {
+      id: "p1",
+      onProgress: (p) => progress.push(p),
+    });
+    let settled = false;
+    run.finally(() => (settled = true)).catch(() => {});
+    await until(() => rt.calls.some((c) => c.method === "download"));
+    assertEquals(await resumeFileTransfer("p1"), false, "a running download does not resume");
+    assert(await pauseFileTransfer("p1"));
+    await until(() => events.some((e) => e.type === "paused"));
+    const [listed] = await fileTransfers();
+    assertEquals([listed.state, listed.bytes, listed.total, listed.resumable], [
+      "paused",
+      5,
+      10,
+      true,
+    ]);
+    assertEquals(await pauseFileTransfer("p1"), false, "a paused download does not pause again");
+    await new Promise((r) => setTimeout(r, 10));
+    assertEquals(settled, false, "a paused download's promise stays pending");
+    assert(await resumeFileTransfer("p1"));
+    assertEquals(await run, { path: "/abs/r.bin" });
+    const resumed = calls(rt).find((c) => c.at === "fs.resumeDownload");
+    assertEquals(
+      [
+        (resumed?.args as { id: string }).id,
+        (resumed?.args as { url: string }).url,
+        (resumed?.args as { path: string }).path,
+      ],
+      ["p1", "https://example.com/r.bin", "r.bin"],
+    );
+    assertEquals(events.map((e) => e.type), ["started", "paused", "started", "progress", "done"]);
+    assertEquals((await fileTransfers())[0].state, "done");
+    assertEquals(progress.at(-1), { id: "p1", kind: "download", bytes: 10, total: 10 });
+    stop();
+  });
+  resetFileTransfersForTesting();
+});
+
+Deno.test("desktop downloads: cancelling a paused download drops its kept partial (fs.cancelDownload)", async () => {
+  resetFileTransfersForTesting();
+  let pauseRunning = () => {};
+  await inDesktop({
+    fs: {
+      download: () =>
+        new Promise((_, reject) => {
+          pauseRunning = () => reject({ code: "paused", message: "paused", data: { bytes: 3 } });
+        }),
+      pauseDownload: () => {
+        pauseRunning();
+        return { paused: true };
+      },
+      cancelDownload: () => ({ cancelled: true }),
+    },
+  }, async (rt) => {
+    const events: FileTransferEvent[] = [];
+    const stop = onFileTransfer((e) => events.push(e));
+    const run = downloadToFile("https://example.com/c.bin", "c.bin", { id: "p2" });
+    run.catch(() => {});
+    await until(() => rt.calls.some((c) => c.method === "download"));
+    assert(await pauseFileTransfer("p2"));
+    await until(() => events.some((e) => e.type === "paused"));
+    stop();
+    assertEquals((await fileTransfers())[0].resumable, false);
+    assert(await cancelFileTransfer("p2"));
+    const err = await assertRejects(() => run, FileTransferError);
+    assertEquals([err.code, err.id], ["CANCELLED", "p2"]);
+    await until(() => calls(rt).some((c) => c.at === "fs.cancelDownload"));
+    assertEquals(
+      calls(rt).find((c) => c.at === "fs.cancelDownload")?.args,
+      { id: "p2" },
+    );
+    assertEquals((await fileTransfers())[0].state, "cancelled");
+  });
+  resetFileTransfersForTesting();
+});
+
+Deno.test("desktop downloads: a pause that comes too late (the download already done) answers false", async () => {
+  resetFileTransfersForTesting();
+  const gate = Promise.withResolvers<void>();
+  await inDesktop({
+    fs: {
+      download: async () => {
+        await gate.promise;
+        return { path: "/abs/l.bin", bytes: 4 };
+      },
+      pauseDownload: () => {
+        gate.resolve();
+        return { paused: false };
+      },
+    },
+  }, async (rt) => {
+    const run = downloadToFile("https://example.com/l.bin", "l.bin", { id: "p3" });
+    await until(() => rt.calls.some((c) => c.method === "download"));
+    assertEquals(await pauseFileTransfer("p3"), false);
+    assertEquals(await run, { path: "/abs/l.bin" });
+  });
+  resetFileTransfersForTesting();
+});
+
+Deno.test("desktop downloads: cancelFileTransfer → fs.cancelDownload", async () => {
   resetFileTransfersForTesting();
   let stopDownload = () => {};
   await inDesktop({
@@ -783,9 +907,6 @@ Deno.test("desktop downloads: cancelFileTransfer → fs.cancelDownload; pause is
     const run = downloadToFile("https://example.com/big.iso", "big.iso", { id: "d2" });
     run.catch(() => {});
     await until(() => rt.calls.some((c) => c.method === "download"));
-    const paused = await pauseFileTransfer("d2").catch((e) => e);
-    assert(isDesktopBridgeError(paused), String(paused));
-    assertEquals(paused.code, "unsupported");
     assertEquals(await resumeFileTransfer("d2"), false);
     assertEquals((await fileTransfers())[0].state, "running");
     assert(await cancelFileTransfer("d2"));

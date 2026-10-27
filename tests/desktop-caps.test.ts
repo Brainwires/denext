@@ -236,6 +236,52 @@ Deno.test("fs SECURITY: a symlink escaping the directory is refused", async () =
   }
 });
 
+Deno.test("fs: a not-yet-created data dir under a symlinked ancestor is writable, and still confined", async () => {
+  if (OS === "windows") return; // symlink creation needs elevation on Windows CI
+  // macOS's temp dir lives under `/var` → `/private/var`: the app's data dir is spelled through a
+  // symlink and does not exist on first launch. Its real path must come from its nearest existing
+  // ancestor, else every path is judged against the unresolved spelling and refused.
+  const real = await Deno.makeTempDir({ prefix: "denext-fs-fresh-real-" });
+  const alias = `${real}-alias`;
+  try {
+    await Deno.symlink(real, alias);
+    const dirs: DesktopAppDirs = {
+      data: join(alias, "app", "data"),
+      cache: join(alias, "app", "cache"),
+      documents: join(alias, "app", "documents"),
+    };
+    const fs = fsCapability({ dirs, read: new Set(["$APPDATA"]), write: new Set(["$APPDATA"]) });
+    await call(fs, "writeFile", {
+      path: "first/note.txt",
+      data: "hi",
+      directory: "data",
+      encoding: "utf8",
+      recursive: true,
+    });
+    assertEquals(
+      await call(fs, "readFile", { path: "first/note.txt", directory: "data", encoding: "utf8" }),
+      "hi",
+    );
+    // The escape protection is intact: `..` out of the (now existing) data dir is still refused,
+    // and so is a sibling of the not-yet-created cache dir.
+    const err = await assertRejects(
+      () =>
+        call(fs, "readFile", { path: "../../outside.txt", directory: "data", encoding: "utf8" }),
+      DesktopCapError,
+    );
+    assertEquals(err.code, "forbidden");
+    const fs2 = fsCapability({ dirs, read: new Set(["$CACHE"]), write: new Set(["$CACHE"]) });
+    const err2 = await assertRejects(
+      () => call(fs2, "writeFile", { path: "../data/x", directory: "cache", data: "x" }),
+      DesktopCapError,
+    );
+    assertEquals(err2.code, "forbidden");
+  } finally {
+    await Deno.remove(alias);
+    await Deno.remove(real, { recursive: true });
+  }
+});
+
 Deno.test("fs SECURITY: a directory outside the read/write scope is refused", async () => {
   const { dirs, cleanup } = await fsFixture();
   try {
@@ -2408,9 +2454,12 @@ Deno.test("fs.download: progress events carry the id; a failure's code says what
     const dl = (url: string) => call(cap, "download", { url, path: "n.bin", directory: "data" });
     assertEquals(await rejectCode(dl("https://files.test/offline")), "network");
     assertEquals(await rejectCode(dl("https://files.test/cut")), "network");
+    // A cut connection keeps the bytes so far (and the sidecar) for a resume.
     assertEquals((await Array.fromAsync(Deno.readDir(root))).map((e) => e.name).sort(), [
       "f.bin",
       "g.bin",
+      "n.bin.part",
+      "n.bin.part.json",
     ]);
   } finally {
     await cleanup();
@@ -2464,7 +2513,7 @@ Deno.test("fs.cancelDownload: stops a running download, answers once the partial
   }
 });
 
-Deno.test("fs.download: the page going away cancels it too (its request's signal)", async () => {
+Deno.test("fs.download: the page going away stops it too (its request's signal), the partial kept", async () => {
   const { root, cap, cleanup } = await downloadFixture(
     ((_u: unknown, init?: RequestInit) => {
       const body = new ReadableStream<Uint8Array>({
@@ -2488,7 +2537,8 @@ Deno.test("fs.download: the page going away cancels it too (its request's signal
     await until(async () => (await listAll(root)).length > 0);
     page.abort();
     assertEquals(await rejectCode(running), "cancelled");
-    assertEquals(await listAll(root), []);
+    // Not the user's cancel: the bytes so far stay for a resume (after a restart too).
+    assertEquals(await listAll(root), ["p.bin.part", "p.bin.part.json"]);
   } finally {
     await cleanup();
   }

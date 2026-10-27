@@ -17,8 +17,11 @@ import { actionEndpoint, actionIdFor } from "../../src/runtime/server-action.ts"
 import { encodeActionArgs } from "../../src/client/action-dispatch.ts";
 import { prepareWire } from "../../src/runtime/wire-encode.ts";
 import { serverModuleIdFor } from "../../src/build/boundary-ids.ts";
+import { ACTION_ID_SECRET_ENV } from "../../src/server/action-ids.ts";
+import { onFreePort } from "../helpers/port.ts";
 import { fsUrlPath } from "../../src/build/dev-unbundled/state.ts";
 import { removeTempDir } from "../helpers/temp.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 /** The checkout as a file URL: an import map's target (a `C:\…` path is no specifier on Windows). */
@@ -116,10 +119,24 @@ export function Island() {
   return dir;
 }
 
-/** The action's stable id, as the server registers it and its stub names it. */
+/**
+ * The secret every CLI child here mints action ids under: ids are salted per build, so this
+ * process (which calls the action by id) and the separate build, export and dev processes agree
+ * only through it, as a deploy that builds more than once does.
+ */
+const ACTION_ID_SECRET = "server-action-stubs-shared-secret";
+
+/** The action's id, as the server registers it and its stub names it. */
 async function actionId(dir: string): Promise<string> {
   const url = toFileUrl(await Deno.realPath(join(dir, "app/actions.ts"))).href;
-  return actionIdFor(serverModuleIdFor(join(dir, "app"), url), "act");
+  const prev = Deno.env.get(ACTION_ID_SECRET_ENV);
+  Deno.env.set(ACTION_ID_SECRET_ENV, ACTION_ID_SECRET);
+  try {
+    return actionIdFor(serverModuleIdFor(join(dir, "app"), url), "act");
+  } finally {
+    if (prev === undefined) Deno.env.delete(ACTION_ID_SECRET_ENV);
+    else Deno.env.set(ACTION_ID_SECRET_ENV, prev);
+  }
 }
 
 /** The CLI under the app's own config, the way `denext` runs a project. */
@@ -129,13 +146,11 @@ function cliArgs(dir: string, args: string[]): string[] {
 
 /** Run a CLI verb to completion. */
 async function cli(dir: string, args: string[]): Promise<{ code: number; output: string }> {
-  const { code, stdout, stderr } = await new Deno.Command(Deno.execPath(), {
+  const { code, stdout, stderr } = await boundedOutput(Deno.execPath(), {
     args: cliArgs(dir, args),
     cwd: dir,
-    stdout: "piped",
-    stderr: "piped",
-    env: { NO_COLOR: "1" },
-  }).output();
+    env: { NO_COLOR: "1", [ACTION_ID_SECRET_ENV]: ACTION_ID_SECRET },
+  });
   const dec = new TextDecoder();
   return { code, output: dec.decode(stdout) + dec.decode(stderr) };
 }
@@ -167,23 +182,22 @@ async function assertNoSecret(root: string): Promise<Map<string, string>> {
   return files;
 }
 
-/** A free localhost port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
+/**
+ * A long-running CLI server (`start` / `dev`) on a free port, ready to answer `/`; a port taken
+ * between the pick and the bind is retried on another.
+ */
+function server(dir: string, verb: "start" | "dev") {
+  return onFreePort((port) => serverOn(dir, verb, port));
 }
 
-/** A long-running CLI server (`start` / `dev`) on a free port, ready to answer `/`. */
-async function server(dir: string, verb: "start" | "dev") {
-  const port = freePort();
+/** {@linkcode server} on `port`. */
+async function serverOn(dir: string, verb: "start" | "dev", port: number) {
   const child = new Deno.Command(Deno.execPath(), {
     args: cliArgs(dir, [verb, "--port", String(port)]),
     cwd: dir,
     stdout: "piped",
     stderr: "piped",
-    env: { NO_COLOR: "1" },
+    env: { NO_COLOR: "1", [ACTION_ID_SECRET_ENV]: ACTION_ID_SECRET },
   }).spawn();
   // Keep what the server prints (drained, so a full pipe never stalls it) for a failure message.
   let output = "";

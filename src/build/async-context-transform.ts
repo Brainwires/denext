@@ -25,10 +25,15 @@
 // each `yield V` becomes `__asyncResume($, yield __asyncYield($, V))`, so the frame's
 // context is handed back to the caller while suspended and restored on resume. Its
 // frame is captured at the first `.next()` (resume-time — TC39 has not settled
-// creation- vs. resume-time capture). Correctness over coverage: a generator that
-// uses `yield*` delegation is left uninstrumented (delegation suspends through a
-// sub-iterator, which needs different bracketing) — a rare shape. Top-level `await`
-// (module init) is likewise left alone.
+// creation- vs. resume-time capture). A `yield* R` in an async generator becomes
+// `yield* __asyncDelegate($, R)`: delegation suspends through the sub-iterator, so each of
+// its steps is bracketed instead (the frame's context while the inner step runs, the
+// caller's while suspended, the frame's again when the delegation ends).
+//
+// A module with a top-level `await` gets a module scope the same way: `const $ =
+// __asyncScope()` after its imports, each top-level `await` / `for await` bracketed, and
+// `__asyncScopeEnd($)` after its last statement, so the code after a top-level `await`
+// runs in the context the module started evaluating in.
 
 import { join, toFileUrl } from "@std/path";
 import { frameworkFileUrl } from "./bundle.ts";
@@ -142,19 +147,16 @@ function hasDirectAwait(body: Node): boolean {
 }
 
 /**
- * Scan a generator body for `yield`s that belong directly to it (not to a nested
- * function): whether any exist, and whether any is a `yield*` delegate (which we
- * leave uninstrumented — delegation suspends through a sub-iterator).
+ * True if a generator body has a `yield` (or `yield*`) that belongs directly to it (not to a
+ * nested function).
  */
-function directYields(body: Node): { hasYield: boolean; hasDelegate: boolean } {
-  let hasYield = false;
-  let hasDelegate = false;
+function hasDirectYield(body: Node): boolean {
+  let found = false;
   walkOwnScope(body, (n) => {
-    if (n.type !== "YieldExpression") return;
-    hasYield = true;
-    if (n.delegate === true) hasDelegate = true;
+    if (n.type === "YieldExpression") found = true;
+    return found;
   });
-  return { hasYield, hasDelegate };
+  return found;
 }
 
 /** The per-module transform state: edits, the helper names used, the scope counter. */
@@ -186,10 +188,13 @@ function wrapBody(st: AcState, fnBody: Node, exprBody: boolean, scope: string): 
   }
 }
 
-/** Wrap an `await X` argument (`__asyncAwait`) or a `for await (… of R)` iterable (`__asyncIter`). */
+/**
+ * Wrap an `await X` argument (`__asyncAwait`), a `for await (… of R)` iterable (`__asyncIter`)
+ * or a `yield* R` delegate (`__asyncDelegate`).
+ */
 function wrapWith(
   st: AcState,
-  helper: "__asyncAwait" | "__asyncIter",
+  helper: "__asyncAwait" | "__asyncIter" | "__asyncDelegate",
   arg: Node,
   scope: string,
 ): void {
@@ -220,20 +225,13 @@ function wrapYield(st: AcState, node: Node, scope: string): void {
 
 /**
  * Instrument an async function/arrow that actually awaits, OR an async generator that
- * awaits or yields (its yields need the same suspension bracketing), returning the new
- * scope var; null when the function is left alone. A generator that uses `yield*`
- * delegation is left alone — its delegated suspension needs different handling. Sync
- * generators never cross an async boundary, so they're left alone too.
+ * awaits or yields (its yields and `yield*` delegations need the same suspension
+ * bracketing), returning the new scope var; null when the function is left alone. Sync
+ * generators never cross an async boundary, so they're left alone.
  */
 function scopeForFunction(st: AcState, fn: FnParts): string | null {
   if (!fn.async || !fn.body) return null;
-  let instrument: boolean;
-  if (fn.generator) {
-    const { hasYield, hasDelegate } = directYields(fn.body);
-    instrument = !hasDelegate && (hasDirectAwait(fn.body) || hasYield);
-  } else {
-    instrument = hasDirectAwait(fn.body);
-  }
+  const instrument = hasDirectAwait(fn.body) || (fn.generator && hasDirectYield(fn.body));
   if (!instrument) return null;
   const scope = `__dnxAc${st.counter++}`;
   wrapBody(st, fn.body, fn.exprBody, scope);
@@ -267,9 +265,11 @@ function visitSuspension(st: AcState, node: Node, scope: string | null): boolean
     return true;
   }
   if (node.type === "YieldExpression") {
-    // A `yield*` delegate is never instrumented (its generator was bailed, so scope is
-    // null here anyway); a plain `yield` is bracketed when in an async-gen scope.
-    if (scope && node.delegate !== true) wrapYield(st, node, scope);
+    // In an async-gen scope a plain `yield` is bracketed around its suspension, and a
+    // `yield*` delegate is wrapped so each of the sub-iterator's steps is.
+    if (scope && node.delegate === true && node.argument) {
+      wrapWith(st, "__asyncDelegate", node.argument, scope);
+    } else if (scope && node.delegate !== true) wrapYield(st, node, scope);
     if (node.argument) visit(st, node.argument, scope); // nested await/yield inside V
     return true;
   }
@@ -283,6 +283,21 @@ function visit(st: AcState, node: Node, scope: string | null): void {
   if (fn) return visitFunction(st, node, fn, scope);
   if (visitSuspension(st, node, scope)) return;
   forEachChild(node, (c) => visit(st, c, scope));
+}
+
+/**
+ * The module scope of a module with a top-level `await` / `for await` (null for one without):
+ * opened after the imports and the helper import, closed after the last statement. No
+ * `finally`: a module body can't be wrapped in a `try` (its imports and exports must stay at
+ * the top level), so a module whose evaluation throws leaves its own context current.
+ */
+function topLevelScope(st: AcState, body: Node[]): string | null {
+  if (!body.some((item) => hasDirectAwait(item))) return null;
+  const scope = `__dnxAc${st.counter++}`;
+  st.used.add("__asyncScope").add("__asyncScopeEnd");
+  insertAt(st, prologueEnd(st.ctx, body), `const ${scope} = __asyncScope();\n`, -5);
+  insertAt(st, endOf(st.ctx, body[body.length - 1]), `\n__asyncScopeEnd(${scope});\n`, 10);
+  return scope;
 }
 
 /**
@@ -307,13 +322,15 @@ export async function transformAsyncContext(
   opts: { runtime?: string; moduleUrl?: string } = {},
 ): Promise<AsyncContextResult> {
   const identity: AsyncContextResult = { code: source, changed: false };
-  // Cheap pre-filter: no `await` anywhere → nothing to do.
-  if (!source.includes("await")) return identity;
+  // Cheap pre-filter: no `await` and no `async` (an async generator may only yield) → nothing
+  // to do.
+  if (!source.includes("await") && !source.includes("async")) return identity;
   const parsed = await parseModule(source);
   if (!parsed) return identity; // unparseable/empty → identity
   const { ctx, body } = parsed;
   const st: AcState = { ctx, edits: [], used: new Set(), counter: 0 };
-  for (const item of body) visit(st, item, null);
+  const moduleScope = topLevelScope(st, body);
+  for (const item of body) visit(st, item, moduleScope);
   if (st.edits.length === 0) return identity;
   // Only a module that changed is relocated, so only then are its specifiers re-rooted.
   if (opts.moduleUrl) absolutizeSpecifiers(ctx, body, opts.moduleUrl, st.edits);

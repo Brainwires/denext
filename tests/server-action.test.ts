@@ -211,16 +211,19 @@ Deno.test("action honors an allowedOrigins entry for a proxied host", async () =
 
 // ---- SECURITY: no leakage / bounded dispatch -------------------------------
 
-Deno.test("unknown action id returns 404 without detail", async () => {
+Deno.test("unknown action id returns 409 + x-denext-action: unknown, without detail", async () => {
+  // Distinct from a plain 404: a page from an older build posts ids a new build re-minted, and
+  // the client reloads the page once on this answer.
   const res = await dispatch(actionRequest("does_not_exist", {
     headers: { origin: "http://localhost", "x-denext-action": "1" },
     json: { args: [] },
   }));
-  assertEquals(res.status, 404);
-  assertEquals((await res.json()).error, "unknown action");
+  assertEquals(res.status, 409);
+  assertEquals(res.headers.get("x-denext-action"), "unknown");
+  assertEquals(await res.json(), { error: "unknown action" });
 });
 
-Deno.test("a malformed action id (bad percent-escape) is a 404, not a 500 (Part C)", async () => {
+Deno.test("a malformed action id (bad percent-escape) is an unknown action, not a 500 (Part C)", async () => {
   // `%ZZ` is not a valid percent-escape — decodeURIComponent throws URIError.
   // It must be treated as a miss (unknown action), never an unhandled 500.
   const req = new Request("http://localhost/_denext/action/%ZZ", {
@@ -229,7 +232,8 @@ Deno.test("a malformed action id (bad percent-escape) is a 404, not a 500 (Part 
     body: JSON.stringify({ args: [] }),
   });
   const res = await dispatch(req);
-  assertEquals(res.status, 404);
+  assertEquals(res.status, 409);
+  assertEquals(res.headers.get("x-denext-action"), "unknown");
   assertEquals((await res.json()).error, "unknown action");
 });
 

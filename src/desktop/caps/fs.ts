@@ -28,6 +28,17 @@ import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
 import type { FileEntry } from "../../mobile/filesystem.ts";
 import type { DesktopAppDirs } from "../app-dirs.ts";
 import { type DesktopCapability, type DesktopCapCtx, DesktopCapError } from "../extension.ts";
+import {
+  discardPartial,
+  finalizePartial,
+  type KeptPartial,
+  openPartial,
+  type PartialAt,
+  partialAt,
+  readPartial,
+  strongValidator,
+  writeSidecar,
+} from "./download-partial.ts";
 import { confineRelative, isReservedDataName, refuseReservedDataPath } from "../path-scope.ts";
 import type { PickedPaths } from "../picked-paths.ts";
 
@@ -326,9 +337,18 @@ function stoppedError(err: unknown, cancel: AbortSignal, timeout: AbortSignal): 
   return new DesktopCapError("network", "the download failed: the connection was lost");
 }
 
+/** The request's headers: the page's (checked), then the runtime's own resume headers. */
+function requestHeaders(page: Headers, resume: Readonly<Record<string, string>>): Headers {
+  const out = new Headers(page);
+  for (const [name, value] of Object.entries(resume)) out.set(name, value);
+  return out;
+}
+
 /**
  * `fetch` with redirects followed BY HAND, re-checking every hop with {@link checkDownloadUrl}.
- * Like a browser's `fetch`, a redirect to another origin drops `Authorization`.
+ * Like a browser's `fetch`, a redirect to another origin drops `Authorization`. `resume` is the
+ * runtime's own `Range` / `If-Range` (a resumed download's), added after the page's headers are
+ * checked, on every hop: the page's headers get the same checks on a resume as on a first request.
  */
 async function fetchChecked(
   url: string,
@@ -336,12 +356,17 @@ async function fetchChecked(
   cfg: FsCapabilityConfig,
   headers: Headers,
   privateTarget: boolean,
+  resume: Readonly<Record<string, string>> = {},
 ): Promise<Response> {
   const doFetch = cfg.fetch ?? fetch;
   let current = url;
   assertNoPrivateHeaders(privateTarget, headers);
   for (let hop = 0;; hop++) {
-    const res = await doFetch(current, { signal, redirect: "manual", headers });
+    const res = await doFetch(current, {
+      signal,
+      redirect: "manual",
+      headers: requestHeaders(headers, resume),
+    });
     const location = res.headers.get("location");
     if (res.status < 300 || res.status >= 400 || location === null) return res;
     await res.body?.cancel();
@@ -426,42 +451,259 @@ function downloadArgs(a: { url?: unknown; id?: unknown; headers?: unknown }): {
   return { url: a.url, id: downloadId(a.id), headers: downloadHeaders(a.headers) };
 }
 
-/**
- * Stream `res`'s body to `target` through a `.part` file, aborting past `maxBytes` (nothing is
- * left behind on failure, a cancel included), then rename it into place. Resolves the size.
- */
-async function writeCapped(
-  res: Response,
-  target: string,
-  maxBytes: number,
-  progress: ProgressReporter = () => {},
-): Promise<number> {
-  const total = declaredLength(res);
-  if (total !== null && total > maxBytes) {
-    await res.body?.cancel();
-    throw new DesktopCapError("too_large", `the download is over ${maxBytes} bytes`);
+/** Why a download was stopped from outside: paused (the partial kept) or cancelled (dropped). */
+type StopWhy = "pause" | "cancel";
+
+/** Where a download attempt continues from: the kept bytes and the validator guarding them. */
+interface ResumePlan {
+  readonly from: number;
+  readonly validator: string | null;
+  readonly total: number | null;
+}
+
+/** A download from byte zero. */
+const FRESH: ResumePlan = { from: 0, validator: null, total: null };
+
+/** The plan for a kept partial: continue it only with bytes AND a validator `If-Range` can use. */
+function planFor(kept: KeptPartial | null): ResumePlan {
+  return kept && kept.validator !== null && kept.bytes > 0
+    ? { from: kept.bytes, validator: kept.validator, total: kept.total }
+    : FRESH;
+}
+
+/** The runtime's own `Range` / `If-Range` for `plan` (none from byte zero). */
+function rangeHeaders(plan: ResumePlan): Record<string, string> {
+  if (plan.from === 0 || plan.validator === null) return {};
+  return { range: `bytes=${plan.from}-`, "if-range": plan.validator };
+}
+
+/** A 206 answer's `Content-Range`: where it starts and the full size (`null` for `*`). */
+function contentRange(res: Response): { start: number; total: number | null } | undefined {
+  const m = /^bytes\s+(\d+)-\d+\/(\d+|\*)\s*$/i.exec(res.headers.get("content-range") ?? "");
+  if (!m) return undefined;
+  return { start: Number(m[1]), total: m[2] === "*" ? null : Number(m[2]) };
+}
+
+/** What to do with an answer: write it (appending or from zero), finish, or ask again from zero. */
+type AnswerStep =
+  | {
+    readonly kind: "write";
+    readonly append: boolean;
+    readonly from: number;
+    readonly total: number | null;
+    /** The validator for the partial's sidecar (`null`: it cannot be resumed). */
+    readonly validator: string | null;
   }
-  const part = `${target}.${crypto.randomUUID()}.part`;
-  const file = await onDisk(() => Deno.open(part, { write: true, createNew: true }));
-  let ok = false;
-  let bytes = 0;
+  | { readonly kind: "finish"; readonly bytes: number }
+  | { readonly kind: "restart" };
+
+/** The answer to a resumed request (`plan.from > 0`), as the next step. */
+async function resumedStep(res: Response, plan: ResumePlan): Promise<AnswerStep | undefined> {
+  if (res.status === 206) {
+    const range = contentRange(res);
+    if (range?.start === plan.from) {
+      const rest = declaredLength(res);
+      const total = range.total ?? (rest === null ? plan.total : plan.from + rest);
+      const validator = strongValidator(res.headers) ?? plan.validator;
+      return { kind: "write", append: true, from: plan.from, total, validator };
+    }
+    await res.body?.cancel();
+    return { kind: "restart" }; // a range that does not continue the kept bytes
+  }
+  if (res.status === 416) {
+    await res.body?.cancel();
+    // Nothing left to send: the kept bytes are the whole file when they match its known size.
+    return plan.total === plan.from ? { kind: "finish", bytes: plan.from } : { kind: "restart" };
+  }
+  return undefined;
+}
+
+/** The answer to a request as the next step (a non-2xx one is the download's failure). */
+async function answerStep(
+  res: Response,
+  plan: ResumePlan,
+  withBody: boolean,
+): Promise<AnswerStep> {
+  const resumed = plan.from > 0 ? await resumedStep(res, plan) : undefined;
+  if (resumed) return resumed;
+  if (!res.ok) throw await httpFailure(res, withBody);
+  // A 200 to a resumed request: the server ignored the range or the file changed. Start over.
+  return {
+    kind: "write",
+    append: false,
+    from: 0,
+    total: declaredLength(res),
+    validator: strongValidator(res.headers),
+  };
+}
+
+/** One download's fixed parts, shared by its attempts and its failure handling. */
+interface DownloadJob {
+  readonly url: string;
+  readonly target: string;
+  /** Where its partial lives (beside the target, or in the cache dir for a picked file). */
+  readonly at: PartialAt;
+  readonly headers: Headers;
+  readonly privateTarget: boolean;
+  readonly signal: AbortSignal;
+  readonly cfg: FsCapabilityConfig;
+  readonly maxBytes: number;
+  readonly withBody: boolean;
+  readonly progress: ProgressReporter;
+}
+
+/** A download's {@link DownloadJob} from its checked request and the capability's config. */
+function downloadJob(
+  cfg: FsCapabilityConfig,
+  a: Record<string, unknown>,
+  ctx: DesktopCapCtx,
+  req: {
+    url: string;
+    id: string | undefined;
+    headers: Headers;
+    target: string;
+    at: PartialAt;
+    privateTarget: boolean;
+    signal: AbortSignal;
+  },
+): DownloadJob {
+  return {
+    url: req.url,
+    target: req.target,
+    at: req.at,
+    headers: req.headers,
+    privateTarget: req.privateTarget,
+    signal: req.signal,
+    cfg,
+    maxBytes: cfg.downloadMaxBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES,
+    withBody: readable(cfg, a.directory),
+    progress: progressReporter(ctx, req.id),
+  };
+}
+
+/** A `too_large` refusal for `job`. */
+function tooLarge(job: DownloadJob): DesktopCapError {
+  return new DesktopCapError("too_large", `the download is over ${job.maxBytes} bytes`);
+}
+
+/**
+ * Stream `res`'s body into `job`'s partial file (appended to the kept bytes, or from zero),
+ * the sidecar written first, enforcing `maxBytes` over the WHOLE file (the kept bytes included);
+ * then move it into place. Resolves the file's size.
+ */
+async function writePartial(
+  res: Response,
+  job: DownloadJob,
+  step: Extract<AnswerStep, { kind: "write" }>,
+): Promise<number> {
+  const { from, total, validator } = step;
+  if (total !== null && total > job.maxBytes) {
+    await res.body?.cancel();
+    throw tooLarge(job);
+  }
+  const file = await onDisk(() => openPartial(job.at, step.append, from));
+  let bytes = from;
   try {
-    progress(0, total, true);
+    await onDisk(() => writeSidecar(job.at, { url: job.url, validator, total, bytes }));
+    job.progress(bytes, total, true);
     for await (const chunk of res.body ?? new ReadableStream<Uint8Array>()) {
       bytes += chunk.byteLength;
-      if (bytes > maxBytes) {
-        throw new DesktopCapError("too_large", `the download is over ${maxBytes} bytes`);
-      }
+      if (bytes > job.maxBytes) throw tooLarge(job);
       await onDisk(() => writeAll(file, chunk));
-      progress(bytes, total);
+      job.progress(bytes, total);
     }
-    ok = true;
   } finally {
     file.close();
-    if (!ok) await Deno.remove(part).catch(() => {});
   }
-  await onDisk(() => Deno.rename(part, target));
+  await onDisk(() => finalizePartial(job.at));
   return bytes;
+}
+
+/**
+ * Run `job`: continue the partial a paused, interrupted or failed download (this launch's or an
+ * earlier one's) kept for the same URL — a range request guarded by `If-Range` — else download it
+ * from zero. A range that does not continue the kept bytes, or a 416 that does not mean "done",
+ * asks once more from zero. Resolves the file's size.
+ */
+async function runDownload(job: DownloadJob): Promise<number> {
+  let plan = planFor(await readPartial(job.at, job.url));
+  for (;;) {
+    const res = await fetchChecked(
+      job.url,
+      job.signal,
+      job.cfg,
+      job.headers,
+      job.privateTarget,
+      rangeHeaders(plan),
+    );
+    const step = await answerStep(res, plan, job.withBody);
+    if (step.kind === "write") return await writePartial(res, job, step);
+    if (step.kind === "finish") {
+      await onDisk(() => finalizePartial(job.at));
+      job.progress(step.bytes, step.bytes, true);
+      return step.bytes;
+    }
+    await discardPartial(job.at);
+    plan = FRESH;
+  }
+}
+
+/** The failure codes after which a partial is dropped: the cap was hit, or the disk failed. */
+const DROPS_PARTIAL: ReadonlySet<string> = new Set(["too_large", "io"]);
+
+/**
+ * A stopped download's partial: dropped (a plain cancel, the byte cap, a disk failure), else kept
+ * with its sidecar's byte count brought up to date. Resolves what is kept (`null` when nothing).
+ */
+async function settlePartial(
+  job: DownloadJob,
+  drop: boolean,
+): Promise<KeptPartial | null> {
+  if (drop) {
+    await discardPartial(job.at);
+    return null;
+  }
+  const kept = await readPartial(job.at, job.url);
+  if (kept) {
+    await writeSidecar(job.at, { url: job.url, ...kept }).catch(() => {});
+  }
+  return kept;
+}
+
+/** What a stopped download kept, as its error's `data`: the bytes, the size, whether it resumes. */
+function keptData(
+  kept: KeptPartial | null,
+): { bytes: number; total: number | null; resumable: boolean } {
+  if (!kept) return { bytes: 0, total: null, resumable: false };
+  return { bytes: kept.bytes, total: kept.total, resumable: planFor(kept).from > 0 };
+}
+
+/** Why a download stopped, from outside (a pause or a cancel), or `undefined`. */
+function stopWhy(stop: AbortSignal): StopWhy | undefined {
+  return stop.aborted ? stop.reason as StopWhy : undefined;
+}
+
+/**
+ * The error a stopped download rejects with, its partial settled: `paused` (with the bytes kept)
+ * for a pause, `cancelled` for a cancel or the page going away, and the failure otherwise — a
+ * `network` one carrying `{ bytes, total, resumable }`.
+ */
+async function downloadFailure(
+  err: unknown,
+  job: DownloadJob,
+  stop: AbortSignal,
+  ctxSignal: AbortSignal,
+  timeout: AbortSignal,
+): Promise<DesktopCapError> {
+  const why = stopWhy(stop);
+  if (why === "pause") {
+    const data = keptData(await settlePartial(job, false));
+    return new DesktopCapError("paused", "the download was paused", { data });
+  }
+  const base = stoppedError(err, AbortSignal.any([ctxSignal, stop]), timeout);
+  const kept = await settlePartial(job, why === "cancel" || DROPS_PARTIAL.has(base.code));
+  if (base.code !== "network") return base;
+  return new DesktopCapError("network", base.message, { data: keptData(kept) });
 }
 
 /** A `directory` arg that names a picked handle (`{ picked: "<handle>" }`) instead of a token. */
@@ -521,7 +763,7 @@ async function resolveTarget(
   path: unknown,
   write: boolean,
   allowRoot = false,
-): Promise<{ target: string; root: string }> {
+): Promise<{ target: string; root: string; single?: boolean }> {
   const handle = pickedHandle(directory);
   if (handle !== undefined) {
     if (!cfg.picked) throw badInput("picked directories are not available");
@@ -568,6 +810,145 @@ function encodingOf(value: unknown): "utf8" | "base64" {
   throw badInput(`unknown encoding "${String(value)}"`);
 }
 
+/** A download running under a page-given id: how to stop it, and when it has. */
+interface RunningDownload {
+  readonly stop: AbortController;
+  readonly settled: Promise<void>;
+  /** Set once it has stopped because of a pause (its partial kept). */
+  paused: boolean;
+}
+
+/** The `exists` refusal for a download id or destination already in use. */
+function inUse(what: string): DesktopCapError {
+  return new DesktopCapError("exists", `${what} is already downloading`, { status: 409 });
+}
+
+/** The `fs` methods that download: `download` / `resumeDownload`, and the pause / cancel controls. */
+type DownloadMethods = Record<
+  "download" | "resumeDownload" | "pauseDownload" | "cancelDownload",
+  DesktopCapability["methods"][string]
+>;
+
+/**
+ * The download methods over `cfg`, sharing one registry: the downloads running under a page-given
+ * id, the partials a stopped one kept (by id, for `cancelDownload`), and the destinations being
+ * written (one download per file, as they share its partial).
+ */
+function downloadMethods(cfg: FsCapabilityConfig): DownloadMethods {
+  const running = new Map<string, RunningDownload>();
+  const kept = new Map<string, PartialAt>();
+  const busy = new Set<string>();
+
+  /** Note whether download `id` (if it has one) left a partial (at `at`) behind. */
+  const remember = (id: string | undefined, at: PartialAt, keeps: boolean) => {
+    if (id === undefined) return;
+    if (keeps) kept.set(id, at);
+    else kept.delete(id);
+  };
+
+  /** Run one download (the page's `id`, if any, already registered as `entry`). */
+  const transfer = async (
+    a: Record<string, unknown>,
+    ctx: DesktopCapCtx,
+    req: { url: string; id: string | undefined; headers: Headers },
+    entry: RunningDownload,
+  ): Promise<{ path: string; bytes: number }> => {
+    const timeout = AbortSignal.timeout(cfg.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS);
+    const privateTarget = await checkDownloadUrl(req.url, cfg.resolveHost);
+    const { target, root, single } = await resolveTarget(cfg, a.directory, a.path, true);
+    if (busy.has(target)) throw inUse("that file");
+    busy.add(target);
+    // A file picked on its own grants that file only: its partial goes in the app's cache dir.
+    const at = await partialAt(target, single ? cfg.dirs.cache : undefined);
+    const job = downloadJob(cfg, a, ctx, {
+      ...req,
+      target,
+      at,
+      privateTarget,
+      signal: AbortSignal.any([ctx.signal, timeout, entry.stop.signal]),
+    });
+    try {
+      await mkdirp(root);
+      await onDisk(() => mkdirp(dirname(target)));
+      const bytes = await runDownload(job);
+      remember(req.id, at, false);
+      return { path: target, bytes };
+    } catch (err) {
+      const failure = await downloadFailure(err, job, entry.stop.signal, ctx.signal, timeout);
+      entry.paused = failure.code === "paused";
+      const keeps = (failure.data as { bytes?: unknown } | undefined)?.bytes;
+      remember(req.id, at, typeof keeps === "number" && keeps > 0);
+      throw failure;
+    } finally {
+      busy.delete(target);
+    }
+  };
+
+  const download: DesktopCapability["methods"][string] = {
+    // The runtime fetches the URL itself; the bridge deadline is off (a large file may take a
+    // while) and the download enforces its own timeout and byte cap instead.
+    timeoutMs: false,
+    permissions: { write: [...cfg.write], net: ["*"] },
+    handler: async (args, ctx) => {
+      const a = (args ?? {}) as Record<string, unknown>;
+      const req = downloadArgs(a);
+      if (req.id !== undefined && running.has(req.id)) throw inUse(`download ${req.id}`);
+      // Registered before the first await, so a pause or cancel can never slip in ahead of it.
+      const settled = Promise.withResolvers<void>();
+      const entry: RunningDownload = {
+        stop: new AbortController(),
+        settled: settled.promise,
+        paused: false,
+      };
+      if (req.id !== undefined) running.set(req.id, entry);
+      try {
+        return await transfer(a, ctx, req, entry);
+      } finally {
+        if (req.id !== undefined) running.delete(req.id);
+        settled.resolve();
+      }
+    },
+  };
+
+  /** Stop running download `id` for `why`; resolves once it has stopped (or `undefined`). */
+  const stopRunning = async (args: unknown, why: StopWhy) => {
+    const id = downloadId((args as { id?: unknown } | null)?.id);
+    const entry = id === undefined ? undefined : running.get(id);
+    if (entry) {
+      entry.stop.abort(why);
+      await entry.settled;
+    }
+    return { id, entry };
+  };
+
+  return {
+    download,
+    // The same download: it continues the partial a paused or interrupted one kept for the same
+    // URL and file (this launch's or an earlier one's), else starts over.
+    resumeDownload: download,
+    pauseDownload: {
+      // Answers once the download has stopped, its partial file and sidecar kept.
+      handler: async (args) => {
+        const { entry } = await stopRunning(args, "pause");
+        return { paused: entry?.paused === true };
+      },
+    },
+    cancelDownload: {
+      // Answers once the download has stopped and its partial file is gone; a paused (or failed)
+      // one's kept partial is dropped too.
+      handler: async (args) => {
+        const { id, entry } = await stopRunning(args, "cancel");
+        if (entry) return { cancelled: true };
+        const at = id === undefined ? undefined : kept.get(id);
+        if (at === undefined || busy.has(at.target)) return { cancelled: false };
+        kept.delete(id!);
+        await discardPartial(at);
+        return { cancelled: true };
+      },
+    },
+  };
+}
+
 /**
  * Build the `fs` capability over `cfg`. The factory closes over the resolved base dirs and the
  * read/write scope; every method confines its path before touching the disk.
@@ -576,8 +957,6 @@ function encodingOf(value: unknown): "utf8" | "base64" {
  * @returns The `fs` {@link DesktopCapability}.
  */
 export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
-  /** The downloads running under a page-given id (for `cancelDownload`). */
-  const running = new Map<string, { cancel: AbortController; settled: Promise<void> }>();
   return {
     name: "fs",
     events: ["progress"],
@@ -643,66 +1022,7 @@ export function fsCapability(cfg: FsCapabilityConfig): DesktopCapability {
           return entries;
         },
       },
-      download: {
-        // The runtime fetches the URL itself; the bridge deadline is off (a large file may take a
-        // while) and the download enforces its own timeout and byte cap instead.
-        timeoutMs: false,
-        permissions: { write: [...cfg.write], net: ["*"] },
-        handler: async (args, ctx) => {
-          const a = (args ?? {}) as {
-            url?: unknown;
-            path?: unknown;
-            directory?: unknown;
-            id?: unknown;
-            headers?: unknown;
-          };
-          const { url, id, headers } = downloadArgs(a);
-          if (id !== undefined && running.has(id)) {
-            throw new DesktopCapError("exists", `download ${id} is already running`, {
-              status: 409,
-            });
-          }
-          // Registered before the first await, so a cancel can never slip in ahead of it.
-          const cancel = new AbortController();
-          const settled = Promise.withResolvers<void>();
-          if (id !== undefined) running.set(id, { cancel, settled: settled.promise });
-          const timeout = AbortSignal.timeout(cfg.downloadTimeoutMs ?? DEFAULT_DOWNLOAD_TIMEOUT_MS);
-          const signal = AbortSignal.any([ctx.signal, timeout, cancel.signal]);
-          try {
-            const privateTarget = await checkDownloadUrl(url, cfg.resolveHost);
-            const { target, root } = await resolveTarget(cfg, a.directory, a.path, true);
-            await mkdirp(root);
-            // A failure past this point is the network's, a cancel, or the disk's (`io`).
-            const stopped = (err: unknown): never => {
-              throw stoppedError(err, AbortSignal.any([ctx.signal, cancel.signal]), timeout);
-            };
-            const res = await fetchChecked(url, signal, cfg, headers, privateTarget).catch(stopped);
-            if (!res.ok) throw await httpFailure(res, readable(cfg, a.directory));
-            await onDisk(() => mkdirp(dirname(target)));
-            const bytes = await writeCapped(
-              res,
-              target,
-              cfg.downloadMaxBytes ?? DEFAULT_DOWNLOAD_MAX_BYTES,
-              progressReporter(ctx, id),
-            ).catch(stopped);
-            return { path: target, bytes };
-          } finally {
-            if (id !== undefined) running.delete(id);
-            settled.resolve();
-          }
-        },
-      },
-      cancelDownload: {
-        // Answers once the download has stopped and its partial file is gone.
-        handler: async (args) => {
-          const id = downloadId((args as { id?: unknown } | null)?.id);
-          const entry = id === undefined ? undefined : running.get(id);
-          if (!entry) return { cancelled: false };
-          entry.cancel.abort();
-          await entry.settled;
-          return { cancelled: true };
-        },
-      },
+      ...downloadMethods(cfg),
     },
   };
 }

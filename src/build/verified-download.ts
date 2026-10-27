@@ -3,7 +3,7 @@
 // and refusing it the moment it outgrows its pin, hashing a file on disk, reading a JSON marker,
 // and sweeping what a crashed install left behind.
 
-import { join } from "@std/path";
+import { dirname, join } from "@std/path";
 import { createHash } from "node:crypto";
 
 /**
@@ -50,6 +50,97 @@ export async function sweepLeftovers(dir: string): Promise<void> {
       await Deno.remove(path, { recursive: true }).catch(() => {});
     }
   }
+}
+
+/** Raised when a cache directory may be written by another user (see {@linkcode assertTrustedCacheDirs}). */
+export class UntrustedCacheDirError extends Error {
+  override name = "UntrustedCacheDirError";
+}
+
+/** What {@linkcode assertTrustedCacheDirs} reads from the process (injectable for tests). */
+export interface TrustedCacheDirSeams {
+  /** The OS (default `Deno.build.os`); Windows is not checked (its ACLs are no mode bits). */
+  readonly os?: string;
+  /** This process's user id (default `Deno.uid()`; `null` when it can't be read). */
+  readonly uid?: number | null;
+  /** Stat a path (default `Deno.stat`). */
+  readonly stat?: (path: string) => Promise<Deno.FileInfo>;
+}
+
+/** `Deno.uid()`, or `null` without the grant. */
+function processUid(): number | null {
+  try {
+    return Deno.uid();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Refuse to trust a download cache another user can change. A binary cached under a directory
+ * another user owns, or that anyone may write into (world-writable without the sticky bit), may
+ * have been planted or swapped by that user, stamp and all, and so may the cache's lock files (a
+ * symlink there makes this process create a file wherever it points). Each existing directory of
+ * `dirs` must be owned by this user (or by root) and must not be world-writable unless it is
+ * sticky. A missing directory is skipped: this process creates it. Not checked on Windows, and only
+ * world-writability is checked where this process may not read its own user id.
+ *
+ * @param dirs The cache directories, outermost first (`DENO_DIR` down to the binary's own).
+ * @param seams Test seams.
+ * @throws {UntrustedCacheDirError} When one of them is not this user's alone.
+ */
+export async function assertTrustedCacheDirs(
+  dirs: readonly string[],
+  seams: TrustedCacheDirSeams = {},
+): Promise<void> {
+  if ((seams.os ?? Deno.build.os) === "windows") return;
+  const uid = seams.uid !== undefined ? seams.uid : processUid();
+  const stat = seams.stat ?? Deno.stat;
+  for (const dir of dirs) {
+    const info = await stat(dir).catch(() => null);
+    if (!info) continue;
+    const why = untrustedWhy(info, uid);
+    if (why === null) continue;
+    throw new UntrustedCacheDirError(
+      `denext: refusing the cache directory ${dir}: it ${why}, so another user could replace ` +
+        "what denext would run from it.\n  Fix: point DENO_DIR at a directory only you can write " +
+        `(or \`chown -R $(id -u) ${dir}\` and \`chmod o-w ${dir}\`), then retry.`,
+    );
+  }
+}
+
+/** Why a cache directory is not this user's alone, or `null`. */
+function untrustedWhy(info: Deno.FileInfo, uid: number | null): string | null {
+  const owner = info.uid;
+  if (uid !== null && owner !== null && owner !== uid && owner !== 0) {
+    return `is owned by user ${owner}, not you (${uid})`;
+  }
+  const mode = info.mode;
+  if (mode !== null && (mode & 0o002) !== 0 && (mode & 0o1000) === 0) {
+    return "is writable by every user";
+  }
+  return null;
+}
+
+/**
+ * The directories from `outer` down to `inner` (both included), outermost first: what
+ * {@linkcode assertTrustedCacheDirs} checks for a binary in `inner` of a cache under `outer`.
+ * Just `[outer, inner]` when `inner` is not under `outer`.
+ *
+ * @param outer The outermost directory (`DENO_DIR`).
+ * @param inner The binary's directory.
+ * @returns The chain.
+ */
+export function cacheDirChain(outer: string, inner: string): string[] {
+  const out: string[] = [];
+  let at = inner;
+  while (at !== outer) {
+    out.unshift(at);
+    const up = dirname(at);
+    if (up === at) return [outer, inner];
+    at = up;
+  }
+  return [outer, ...out];
 }
 
 /** How {@linkcode streamHashed} words its two refusals. */
@@ -127,15 +218,65 @@ export function downloadProgress(
   };
 }
 
+/** A download that sent no bytes for its idle deadline (the connection is half-open, say). */
+export class DownloadIdleError extends Error {
+  /**
+   * @param idleMs How long it went without a byte.
+   */
+  constructor(idleMs: number) {
+    super(`no data for ${idleMs / 1000} s; the connection looks stalled`);
+    this.name = "DownloadIdleError";
+  }
+}
+
+/**
+ * `body`'s chunks, cancelling it and throwing {@linkcode DownloadIdleError} when no chunk arrives
+ * for `idleMs` (`Infinity`: no deadline).
+ *
+ * @param body The download.
+ * @param idleMs The most time between two chunks.
+ * @returns The chunks.
+ */
+async function* idleBounded(
+  body: ReadableStream<Uint8Array>,
+  idleMs: number,
+): AsyncGenerator<Uint8Array> {
+  const reader = body.getReader();
+  try {
+    for (;;) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = new Promise<never>((_, reject) => {
+        if (Number.isFinite(idleMs)) {
+          timer = setTimeout(() => reject(new DownloadIdleError(idleMs)), idleMs);
+        }
+      });
+      let next: ReadableStreamReadResult<Uint8Array>;
+      try {
+        next = await Promise.race([reader.read(), idle]);
+      } catch (err) {
+        reader.cancel(err).catch(() => {});
+        throw err;
+      } finally {
+        clearTimeout(timer);
+      }
+      if (next.done) return;
+      yield next.value;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 /**
  * Stream `body` into the NEW file `dest` (it must not exist), hashing it as it goes and refusing it
- * as soon as it holds more than `maxSize` bytes.
+ * as soon as it holds more than `maxSize` bytes, or once it sends nothing for `idleMs`.
  *
  * @param body The download.
  * @param dest The file to create.
  * @param maxSize The most bytes accepted.
  * @param errors The refusals' wording.
  * @param progress Told the running byte count after each chunk (a {@linkcode downloadProgress}).
+ * @param idleMs The most time between two chunks (default: no deadline).
  * @returns The byte count and SHA-256.
  */
 export async function streamHashed(
@@ -144,13 +285,14 @@ export async function streamHashed(
   maxSize: number,
   errors: StreamHashedErrors,
   progress?: (bytes: number) => void,
+  idleMs = Infinity,
 ): Promise<{ size: number; sha256: string }> {
   const hash = createHash("sha256");
   let size = 0;
   let refused: Error | null = null;
   const file = await Deno.open(dest, { write: true, createNew: true });
   try {
-    for await (const chunk of body) {
+    for await (const chunk of idleBounded(body, idleMs)) {
       size += chunk.byteLength;
       if (size > maxSize) throw (refused = errors.tooLarge());
       hash.update(chunk);
@@ -164,4 +306,72 @@ export async function streamHashed(
     file.close();
   }
   return { size, sha256: hash.digest("hex") };
+}
+
+/** The default deadline for a download's response headers (ms). */
+const CONNECT_TIMEOUT_MS = 30_000;
+/** The default longest gap between two chunks of a download's body (ms). */
+export const IDLE_TIMEOUT_MS = 60_000;
+
+/**
+ * A download deadline: `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS` / `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS`
+ * when set (milliseconds; `0` for none), else the default.
+ *
+ * @param name The variable.
+ * @param fallback The default.
+ * @param env Env reader.
+ * @returns The deadline (`Infinity`: none).
+ */
+export function downloadTimeoutMs(
+  name: "DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS" | "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS",
+  fallback: number,
+  env: (k: string) => string | undefined = envGet,
+): number {
+  const raw = env(name)?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return fallback;
+  return Number(raw) === 0 ? Infinity : Number(raw);
+}
+
+/** One environment variable, or `undefined` (unset, or no env permission). */
+function envGet(k: string): string | undefined {
+  try {
+    return Deno.env.get(k);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * GET `url`, given up on when no response headers arrive within the connect deadline
+ * (`DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`, else 30 s): that rejection then says so.
+ *
+ * @param fetchImpl `fetch`.
+ * @param url The download.
+ * @param headers Request headers, if any.
+ * @returns The response (its body still to be read).
+ */
+export async function fetchWithConnectDeadline(
+  fetchImpl: typeof fetch,
+  url: string,
+  headers?: Readonly<Record<string, string>>,
+): Promise<Response> {
+  const connectMs = downloadTimeoutMs("DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS", CONNECT_TIMEOUT_MS);
+  const connect = new AbortController();
+  const timer = Number.isFinite(connectMs)
+    ? setTimeout(() => connect.abort(), connectMs)
+    : undefined;
+  try {
+    return await fetchImpl(url, {
+      redirect: "follow",
+      signal: connect.signal,
+      ...(headers ? { headers: { ...headers } } : {}),
+    });
+  } catch (err) {
+    if (!connect.signal.aborted) throw err;
+    throw new Error(
+      `no response within ${connectMs / 1000} s (DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS raises it)`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 }

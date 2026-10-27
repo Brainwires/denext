@@ -172,6 +172,35 @@ Deno.test("deploy preset generic-host: the unit serves on denext's toolchain fro
   }
 });
 
+Deno.test("deploy preset generic-host: the unit turns the idle trim on for the toolchain server only", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  const line = "Environment=DENO_UNSTABLE_IDLE_TRIM=1\n";
+  const unit = async (m: DeployManifest, options: Parameters<typeof genericHost>[0] = {}) => {
+    const { ctx, files } = recordingContext(m, paths.projectDir);
+    await genericHost({ name: "shop", domain: "shop.example.com", ...options }).prepare(ctx);
+    return files.get("output/shop.service") ?? "";
+  };
+  try {
+    const on = { ...manifest, server: { ...manifest.server, idleTrim: true } };
+    const text = await unit(on);
+    assertStringIncludes(text, line);
+    // Before the env file, so DENO_UNSTABLE_IDLE_TRIM=0 there turns it off.
+    assert(text.indexOf(line) < text.indexOf("EnvironmentFile="), text);
+    // Opted out (or an older toolchain pin): nothing.
+    assert(!(await unit({ ...on, server: { ...on.server, idleTrim: false } })).includes(line));
+    // A manifest from before the field: nothing.
+    const { idleTrim: _, ...older } = on.server;
+    assert(!(await unit({ ...on, server: older })).includes(line));
+    // A compiled executable has it baked in; another deno may be stock.
+    assert(
+      !(await unit({ ...on, compile: { output: "dist/shop", permissions: [] } })).includes(line),
+    );
+    assert(!(await unit(on, { deno: "/usr/local/bin/deno" })).includes(line));
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
 Deno.test("deploy preset generic-host: no domain bakes in no example.com; env.example is filled", async () => {
   // Up to 4.5.0 a missing domain wrote DENEXT_CANONICAL_ORIGIN=https://example.com into the unit
   // and `server_name example.com` into nginx, and env.example listed only the app's own reads.
@@ -189,7 +218,7 @@ Deno.test("deploy preset generic-host: no domain bakes in no example.com; env.ex
     );
     const env = files.get("output/env.example") ?? "";
     assertStringIncludes(env, "\nDENEXT_CANONICAL_ORIGIN=\n");
-    assertStringIncludes(env, "\n# DENEXT_SHUTDOWN_DRAIN_MS=10000\n");
+    assertStringIncludes(env, "set in the unit, with TimeoutStopSec above");
     // The prepare environment's canonical origin names the domain when no option does.
     const fromEnv = recordingContext(manifest, paths.projectDir, {
       vars: { DENEXT_CANONICAL_ORIGIN: "https://shop.example.org" },
@@ -217,6 +246,47 @@ Deno.test("deploy preset generic-host: no domain bakes in no example.com; env.ex
     assertStringIncludes(
       secrets.files.get("output/env.example") ?? "",
       "at least 32 random characters",
+    );
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
+Deno.test("deploy presets generic-host / fly: the stop timeout follows the configured drain", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  try {
+    // The default 10 s drain: 30 s, as before.
+    const plain = recordingContext(manifest, paths.projectDir);
+    await genericHost({ name: "shop" }).prepare(plain.ctx);
+    const unit = plain.files.get("output/shop.service") ?? "";
+    assertStringIncludes(unit, "\nEnvironment=DENEXT_SHUTDOWN_DRAIN_MS=10000\nTimeoutStopSec=30\n");
+    // A 60 s drain from prepare's environment: systemd waits 80 s, not 30 (it used to kill the
+    // server mid-drain).
+    const long = recordingContext(manifest, paths.projectDir, {
+      vars: { DENEXT_SHUTDOWN_DRAIN_MS: "60000" },
+    });
+    await genericHost({ name: "shop" }).prepare(long.ctx);
+    assertStringIncludes(
+      long.files.get("output/shop.service") ?? "",
+      "\nEnvironment=DENEXT_SHUTDOWN_DRAIN_MS=60000\nTimeoutStopSec=80\n",
+    );
+    await fly({ app: "shop" }).prepare(long.ctx);
+    const toml = long.files.get("project/fly.toml") ?? "";
+    assertStringIncludes(toml, 'kill_timeout = "80s"');
+    assertStringIncludes(toml, 'DENEXT_SHUTDOWN_DRAIN_MS = "60000"');
+    // The preset option wins; 0 (wait for every request) has no systemd limit and Fly's most.
+    const none = recordingContext(manifest, paths.projectDir);
+    await genericHost({ name: "shop", drainMs: 0 }).prepare(none.ctx);
+    assertStringIncludes(
+      none.files.get("output/shop.service") ?? "",
+      "\nTimeoutStopSec=infinity\n",
+    );
+    await fly({ app: "shop", drainMs: 0 }).prepare(none.ctx);
+    assertStringIncludes(none.files.get("project/fly.toml") ?? "", 'kill_timeout = "300s"');
+    await assertRejects(
+      async () => await genericHost({ name: "shop", drainMs: -1 }).prepare(none.ctx),
+      Error,
+      "drainMs",
     );
   } finally {
     await Deno.remove(paths.projectDir, { recursive: true });

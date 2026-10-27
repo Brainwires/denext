@@ -1,9 +1,11 @@
 /**
  * The certificate-bearing WebAuthn attestation statement formats beyond `packed` (W3C Web
- * Authentication Level 3 §8): `tpm` (§8.3), `android-key` (§8.4), `fido-u2f` (§8.6) and `apple`
- * (§8.8), each verified exactly as its verification procedure says. Like `packed`, a verified
- * statement establishes its attestation type and returns its `x5c`; chaining that certificate to
- * a trust anchor is the FIDO Metadata Service's job one layer up ({@link ./fido-mds.ts}).
+ * Authentication Level 3 §8): `tpm` (§8.3), `android-key` (§8.4), `android-safetynet` (§8.5),
+ * `fido-u2f` (§8.6) and `apple` (§8.8), each verified exactly as its verification procedure
+ * says. Like `packed`, a verified statement establishes its attestation type and returns its
+ * `x5c`; chaining that certificate to a trust anchor is the FIDO Metadata Service's job one
+ * layer up ({@link ./fido-mds.ts}) — except `android-safetynet`'s, whose JWS must be signed by
+ * `attest.android.com` under Google's root, here.
  *
  * The statement signatures may use any COSE algorithm Web Crypto can verify: ES256 / ES384 /
  * ES512, RS256 / RS384 / RS512 / RS1, PS256 / PS384 / PS512 and EdDSA (Ed25519).
@@ -12,7 +14,15 @@
  */
 
 import { decodeCbor } from "./cbor.ts";
-import { base64UrlEncode } from "./oauth.ts";
+import { base64UrlDecode, base64UrlEncode } from "./oauth.ts";
+import {
+  base64Der,
+  CertificateChainError,
+  dnsNames,
+  type ParsedCertificate,
+  verifyCertificateChain,
+  verifyWithSpki,
+} from "./x509-chain.ts";
 import {
   bytesEqual,
   type Certificate,
@@ -742,6 +752,172 @@ async function verifyApple(input: AttestationInput): Promise<VerifiedAttestation
   return { type: "anonca", x5c };
 }
 
+// ---- android-safetynet (§8.5) ----------------------------------------------------------------
+
+/**
+ * GTS Root R1 (Google Trust Services; SHA-256
+ * `D9:47:43:2A:BD:E7:B7:FA:90:FC:2E:6B:59:10:1B:12:80:E0:E1:C7:E4:E4:0F:A3:C6:88:7F:FF:57:A7:F4:CF`),
+ * valid until 2036-06-22: the root SafetyNet's `attest.android.com` certificates chain to.
+ */
+const GTS_ROOT_R1 = [
+  "MIIFVzCCAz+gAwIBAgINAgPlk28xsBNJiGuiFzANBgkqhkiG9w0BAQwFADBHMQswCQYDVQQGEwJV",
+  "UzEiMCAGA1UEChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEUMBIGA1UEAxMLR1RTIFJvb3Qg",
+  "UjEwHhcNMTYwNjIyMDAwMDAwWhcNMzYwNjIyMDAwMDAwWjBHMQswCQYDVQQGEwJVUzEiMCAGA1UE",
+  "ChMZR29vZ2xlIFRydXN0IFNlcnZpY2VzIExMQzEUMBIGA1UEAxMLR1RTIFJvb3QgUjEwggIiMA0G",
+  "CSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQC2EQKLHuOhd5s73L+UPreVp0A8of2C+X0yBoJx9vaM",
+  "f/vo27xqLpeXo4xL+Sv2sfnOhB2x+cWX3u+58qPpvBKJXqeqUqv4IyfLpLGcY9vXmX7wCl7raKb0",
+  "xlpHDU0QM+NOsROjyBhsS+z8CZDfnWQpJSMHobTSPS5g4M/SCYe7zUjwTcLCeoiKu7rPWRnWr4+w",
+  "B7CeMfGCwcDfLqZtbBkOtdh+JhpFAz2weaSUKK0PfyblqAj+lug8aJRT7oM6iCsVlgmy4HqMLnXW",
+  "nOunVmSPlk9orj2XwoSPwLxAwAtcvfaHszVsrBhQf4TgTM2S0yDpM7xSma8ytSmzJSq0SPly4cpk",
+  "9+aCEI3oncKKiPo4Zor8Y/kB+Xj9e1x3+naH+uzfsQ55lVe0vSbv1gHR6xYKu44LtcXFilWr06zq",
+  "kUspzBmkMiVOKvFlRNACzqrOSbTqn3yDsEB750Orp2yjj32JgfpMpf/VjsPOS+C12LOORc92wO1A",
+  "K/1TD7Cn1TsNsYqiA94xrcx36m97PtbfkSIS5r762DL8EGMUUXLeXdYWk70paDPvOmbsB4om3xPX",
+  "V2V4J95eSRQAogB/mqghtqmxlbCluQ0WEdrHbEg8QOB+DVrNVjzRlwW5y0vtOUucxD/SVRNuJLDW",
+  "cfr0wbrM7Rv1/oFB2ACYPTrIrnqYNxgFlQIDAQABo0IwQDAOBgNVHQ8BAf8EBAMCAYYwDwYDVR0T",
+  "AQH/BAUwAwEB/zAdBgNVHQ4EFgQU5K8rJnEaK0gnhS9SZizv8IkTcT4wDQYJKoZIhvcNAQEMBQAD",
+  "ggIBAJ+qQibbC5u+/x6Wki4+omVKapi6Ist9wTrYggoGxval3sBOh2Z5ofmmWJyq+bXmYOfg6LEe",
+  "QkEzCzc9zolwFcq1JKjPa7XSQCGYzyI0zzvFIoTgxQ6KfF2I5DUkzps+GlQebtuyh6f88/qBVRRi",
+  "ClmpIgUxPoLW7ttXNLwzldMXG+gnoot7TiYaelpkttGsN/H9oPM47HLwEXWdyzRSjeZ2axfG34ar",
+  "J45JK3VmgRAhpuo+9K4l/3wV3s6MJT/KYnAK9y8JZgfIPxz88NtFMN9iiMG1D53Dn0reWVlHxYci",
+  "NuaCp+0KueIHoI17eko8cdLiA6EfMgfdG+RCzgwARWGAtQsgWSl4vflVy2PFPEz0tv/bal8xa5me",
+  "LMFrUKTX5hgUvYU/Z6tGn6D/Qqc6f1zLXbBwHSs09dR2CQzreExZBfMzQsNhFRAbd03OIozUhfJF",
+  "fbdT6u9AWpQKXCBfTkBdYiJ23//OYb2MI3jSNwLgjt7RETeJ9r/tSQdirpLsQBqvFAnZ0E6yove+",
+  "7u7Y/9waLd64NnHi/Hm3lCXRSHNboTXns5lndcEZOitHTtNCjv0xyBZm2tIMPNuzjsmhDYAPexZ3",
+  "FL//2wmUspO8IFgV6dtxQ/PeEMMA3KgqlbbC1j+Qa3bbbP6MvPJwNQzcmRk13NfIRmPVNnGuV/u3",
+  "gm3c",
+].join("");
+
+/** The host a SafetyNet attestation response must be signed for. */
+const SAFETYNET_HOST = "attest.android.com";
+/** How far `timestampMs` may be from now, either way, ms. */
+export const SAFETYNET_SKEW_MS = 60_000;
+const OID_CN = "550403";
+
+/** What {@linkcode verifyAndroidSafetyNet} is checked against (tests pin their own). */
+export interface SafetyNetOptions {
+  /** The trust anchors (DER). Default: GTS Root R1. */
+  roots?: readonly Uint8Array[];
+  /** The time, epoch ms. Default: now. */
+  now?: number;
+}
+
+/**
+ * A base64url JWS part as a JSON object, or an `attestation` refusal naming `subject`.
+ *
+ * @param part The base64url text.
+ * @param subject What it is, for the message ("the metadata BLOB's header").
+ * @returns The object.
+ * @throws {WebAuthnError} `attestation` when it is not a JSON object.
+ */
+export function jwsJsonPart(part: string, subject: string): Record<string, unknown> {
+  try {
+    const value = JSON.parse(new TextDecoder().decode(base64UrlDecode(part)));
+    if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  } catch { /* refused below */ }
+  return fail(`${subject} is not a JSON object`);
+}
+
+/** Whether the leaf is issued for `attest.android.com` (a SAN dNSName, else its CN). */
+function issuedForSafetyNet(leaf: ParsedCertificate): boolean {
+  const names = dnsNames(leaf);
+  if (names.length) return names.includes(SAFETYNET_HOST);
+  return nameAttributes(derAt(leaf.subject, 0)).get(OID_CN) === SAFETYNET_HOST;
+}
+
+/** The JWS header's `x5c` chain to `roots`, and its leaf's host; returns the leaf. */
+async function safetyNetSigner(
+  header: Record<string, unknown>,
+  roots: readonly Uint8Array[],
+  now: number,
+) {
+  const x5c = header.x5c;
+  check(
+    Array.isArray(x5c) && x5c.length >= 1 && typeof header.alg === "string",
+    "attestation",
+    "the SafetyNet response's header has no alg / x5c",
+  );
+  let chain: Uint8Array[];
+  let leaf: ParsedCertificate;
+  try {
+    chain = x5c.map(base64Der);
+    leaf = await verifyCertificateChain(chain, roots, now);
+  } catch (error) {
+    if (!(error instanceof CertificateChainError)) throw error;
+    return fail("the SafetyNet response does not chain to Google's root");
+  }
+  check(
+    issuedForSafetyNet(leaf),
+    "attestation",
+    "the SafetyNet response is not from attest.android.com",
+  );
+  return { leaf, chain };
+}
+
+/**
+ * The `android-safetynet` statement (§8.5): `{ ver, response }`, `response` a compact JWS from
+ * Google's SafetyNet Attestation API. Its `x5c` must chain to Google's root (GTS Root R1) with
+ * a leaf issued for `attest.android.com`, its signature must verify with that leaf, and its
+ * payload must carry `nonce` = base64(SHA-256(authenticatorData ‖ clientDataHash)),
+ * `ctsProfileMatch: true` and a `timestampMs` within a minute of now.
+ *
+ * **Deprecated by Google**: the SafetyNet Attestation API is replaced by the Play Integrity API,
+ * and current Android passkeys attest `android-key` or `none`. This verifier is kept for
+ * authenticators and conformance tools that still produce the format.
+ *
+ * @param input The statement and the ceremony.
+ * @param options The trust anchors and the time (defaults: GTS Root R1, now).
+ * @returns `basic` with the JWS header's `x5c`.
+ * @throws {WebAuthnError} `attestation` naming the step that failed.
+ */
+export async function verifyAndroidSafetyNet(
+  input: AttestationInput,
+  options: SafetyNetOptions = {},
+): Promise<VerifiedAttestation> {
+  const { stmt } = input;
+  const ver = stmt.get("ver");
+  const response = stmt.get("response");
+  check(typeof ver === "string" && ver.length > 0, "attestation", "android-safetynet ver");
+  check(response instanceof Uint8Array, "attestation", "android-safetynet response");
+  const parts = new TextDecoder().decode(response).split(".");
+  check(
+    parts.length === 3 && parts.every((p) => /^[A-Za-z0-9_-]+$/.test(p)),
+    "attestation",
+    "the SafetyNet response is not a compact JWS",
+  );
+  const now = options.now ?? Date.now();
+  const header = jwsJsonPart(parts[0], "the SafetyNet response's header");
+  const { leaf, chain } = await safetyNetSigner(
+    header,
+    options.roots ?? [base64Der(GTS_ROOT_R1)],
+    now,
+  );
+  check(
+    await verifyWithSpki(
+      leaf.spki,
+      header.alg as string,
+      base64UrlDecode(parts[2]),
+      new TextEncoder().encode(`${parts[0]}.${parts[1]}`),
+    ),
+    "attestation",
+    "the SafetyNet response's signature does not verify",
+  );
+  const payload = jwsJsonPart(parts[1], "the SafetyNet response's payload");
+  const nonce = await sha256(concat(input.authData, input.clientDataHash));
+  check(
+    payload.nonce === btoa(String.fromCharCode(...nonce)),
+    "attestation",
+    "the SafetyNet nonce is not this ceremony's",
+  );
+  check(payload.ctsProfileMatch === true, "attestation", "the device fails the CTS profile match");
+  const timestamp = payload.timestampMs;
+  check(
+    typeof timestamp === "number" && Math.abs(now - timestamp) <= SAFETYNET_SKEW_MS,
+    "attestation",
+    "the SafetyNet response is not current",
+  );
+  return { type: "basic", x5c: chain };
+}
+
 /** The formats this module verifies, by `fmt`. */
 export const CERTIFIED_FORMATS: Record<
   string,
@@ -749,6 +925,7 @@ export const CERTIFIED_FORMATS: Record<
 > = {
   tpm: verifyTpm,
   "android-key": verifyAndroidKey,
+  "android-safetynet": (input) => verifyAndroidSafetyNet(input),
   "fido-u2f": verifyFidoU2f,
   apple: verifyApple,
 };

@@ -71,8 +71,11 @@ on every streamed-hole reveal.
   The dev builds compile JSX to `jsxDEV` (esbuild's `jsxDev` in the unbundled dev
   loop, `react-jsxdev` in a dev `deno bundle`), which records each element's owner
   and the file, line and column of its JSX; a production build compiles to `jsx`
-  and carries none of it. An element made with `h()` / `createElement` records no
-  owner, so for it the chain is the component fibers above it. The same chain is
+  and carries none of it. An element made with `h()` / `createElement` is owned by
+  the component whose render returned it first (as its `children` or an element-valued
+  prop), which is React's owner unless the element was made outside a render and handed
+  to one; such an owner has no call site, so its frame names the component's own
+  declaration. The same chain is
   what `captureOwnerStack()` (from `denext/react`, the `react` alias) returns while
   a component renders in development, formatted as React 19's
   `\n    at Name (file:line:column)` lines, each location being where that owner

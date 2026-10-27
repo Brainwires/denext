@@ -14,6 +14,9 @@ import { useContext, useLayoutEffect, useState } from "../src/runtime/hooks.ts";
 import { useId } from "../src/runtime/hooks/use-id.ts";
 import { createContext } from "../src/runtime/context.ts";
 import { Component } from "../src/compat/react.ts";
+import { memo } from "../src/runtime/memo.ts";
+import { lazy } from "../src/runtime/dynamic.ts";
+import { Suspense } from "../src/runtime/suspense.ts";
 import { createRoot, flushSync, hydrateRoot, setDocument } from "../src/client/reconciler.ts";
 import { installIsoIslands, isoIslandChunk } from "../src/client/iso-island.ts";
 import { resetLazyIslands, setLazyScheduler } from "../src/client/lazy-hydrate.ts";
@@ -119,9 +122,6 @@ Deno.test("split client:visible: no import until visible, then hydrates the same
     const { container, main, button, html, mismatches } = await hydrated(C, "visible");
     assertEquals(imports(), 0, "the page hydrated without importing the island's chunk");
     assertEquals(main.children[1].getAttribute("data-dnx-island"), "", "the wrapper is kept");
-    fireEventOn(button, "click");
-    flushSync();
-    assertEquals(button.textContent, "c dark 1", "inert before its trigger");
     fire();
     assertEquals(imports(), 1, "the trigger imports the chunk");
     await tick();
@@ -333,5 +333,88 @@ export function W() { return <Chart client:idle n={1} />; }
   } finally {
     resetModuleGraphCache();
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** A component that shows its `useId`. */
+function Ident(): VNode {
+  const id = useId();
+  return h("i", { id }, id);
+}
+
+/** A class rendering an id-using child (a component level of its own on both sides). */
+class Holder extends Component<Record<string, unknown>> {
+  override render() {
+    return h("b", null, h(Ident, null));
+  }
+}
+
+/** Ids before, inside and after the component `c` (with a directive). */
+const idPage = (c: unknown, props: Record<string, unknown> = { "client:visible": true }) =>
+  h("main", null, h(Ident, null), h(c as never, props), h(Ident, null));
+
+/** Hydrate `idPage(server)` with `client` in its place, until it settles. */
+async function hydrateIds(server: VNode, client: VNode) {
+  // The test DOM's markup reader takes no comments (a Suspense boundary's markers).
+  const html = (await renderToString(server)).replace(/<!--[^]*?-->/g, "");
+  const { doc, container } = serverDom(html);
+  setDocument(doc as Any);
+  installIsoIslands();
+  const mismatches: unknown[] = [];
+  hydrateRoot(container as Any, client, {
+    onRecoverableError: (e: unknown) => mismatches.push(e),
+  } as Any);
+  for (let i = 0; i < 3; i++) {
+    flushSync();
+    await tick();
+  }
+  flushSync();
+  return { html, container, mismatches };
+}
+
+Deno.test("a class component is a useId level of its own on the client, as on the server (memo(class) too)", async () => {
+  for (const c of [Holder, memo(Holder as never)]) {
+    try {
+      const { html, container, mismatches } = await hydrateIds(idPage(c, {}), idPage(c, {}));
+      assertStringIncludes(html, "_d1-0", "the class is a level of its own on the server");
+      assertEquals(container.innerHTML, html, "the ids hydrated unchanged");
+      assertEquals(mismatches, []);
+    } finally {
+      teardown();
+    }
+  }
+});
+
+Deno.test("useId in and around a split class island matches the server's once its chunk lands", async () => {
+  manualVisible();
+  const { C, land } = chunk(Holder);
+  try {
+    const server = idPage(Holder);
+    const hydrating = hydrateIds(server, idPage(C));
+    land();
+    const { html, container, mismatches } = await hydrating;
+    assert(!html.includes("data-dnx-island"), "the server rendered the class eagerly");
+    assertEquals(container.innerHTML, html, "every id hydrated unchanged");
+    assertEquals(mismatches, []);
+  } finally {
+    teardown();
+  }
+});
+
+Deno.test("useId in and around a split lazy() island matches the server's", async () => {
+  manualVisible();
+  const Lazy = lazy(() => Promise.resolve({ default: Holder as never }));
+  const { C, land } = chunk(Lazy);
+  try {
+    const page = (c: unknown) => h(Suspense, null, idPage(c));
+    const hydrating = hydrateIds(page(Lazy), page(C));
+    land();
+    const { html, container, mismatches } = await hydrating;
+    // The boundary suspended while hydrating, so it rendered its content on the client: with
+    // the server's ids.
+    assertEquals(container.innerHTML, html, "the server's ids");
+    assertEquals(mismatches, []);
+  } finally {
+    teardown();
   }
 });

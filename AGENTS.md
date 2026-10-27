@@ -21,7 +21,8 @@ emit correct denext instead of Next.js.
    on denext's toolchain — `denext task start`, or the image / unit `denext deploy prepare` writes —
    and stops with the fix on stock Deno). `denext create <dir>` scaffolds one (`--monorepo`: a Deno
    workspace, the app in `apps/web` importing shared `packages/ui` / `packages/shared` by name;
-   `denext generate app <name>` adds another app). Migrating a Next app? `denext migrate` does it in one pass
+   `denext generate app <name>` adds another app; glob members such as `apps/*` work, and `denext ui`
+   / `desktop` / `mobile` at the root run on its app). Migrating a Next app? `denext migrate` does it in one pass
    — writes the `deno.json` alias map so `next/*`+`react` resolve to denext with
    your source unchanged (add `--codemod` to rewrite imports to native `denext`). A **`pages/` (Pages
    Router) app** is migrated too: migrate wires the `@denext/pages-router`
@@ -31,14 +32,29 @@ emit correct denext instead of Next.js.
    to the `@denext/tanstack-start` plugin, Start's options carried into `tanstackStart({ … })`.
    A **Fresh** app (Fresh 2's `jsr:@fresh/core`, or 1.x's `$fresh/`) keeps its `routes/` and
    `islands/`: migrate generates `app/` + `middleware.ts` around them (`denext/fresh/server` runs
-   the handlers, middleware and layouts as Fresh does), marks islands `"use client"`, moves
+   the handlers, middleware, layouts and `main.ts`'s app builder as Fresh does; `<Partial>`
+   regions update in place under `f-client-nav` / `f-partial`; `csp()` merges into denext's
+   policy; `import.meta.env` becomes `denext/fresh/env`, public variables only), marks islands `"use client"`, moves
    `static/` to `public/` and maps `fresh`, `preact` and `@preact/signals` to denext
    (`denext/fresh`, `denext/signals`) in its `deno.json`. A **Preact** app (Vite's
    `@preact/preset-vite`, preact-cli, WMR or esbuild) takes the SPA path with the same Preact
    layer (`preact` → `denext/preact`, `@preact/signals` → `denext/signals`, through `resolveAlias`
-   for npm packages too); preact-iso maps to `denext/preact-iso`, and preact-router /
-   wouter-preact keep running on the aliases. Guides: https://denext.dev/docs/migrating-fresh,
-   https://denext.dev/docs/migrating-preact, https://denext.dev/docs/tanstack-start;
+   for npm packages too); preact-iso maps to `denext/preact-iso`, `preact-render-to-string` to
+   `denext/preact/render-to-string` (Preact's markup), `useErrorBoundary` catches, and Preact's
+   `options.vnode` / `event` hooks run; preact-router / wouter-preact keep running on the aliases.
+   A **Lustre** app (Gleam, `target = "javascript"` or lustre_dev_tools) keeps its Gleam source as
+   it is: migrate writes `plugins: [gleam()]` and the `@gleam/` import map, an `app/` page whose
+   island calls the entry's own `main`, and moves `priv/static/` to `public/`; Erlang-target code
+   is reported, and `lustreElement` / `defineLustreView` are opt-in.
+   A **React Router** app (`@denext/react-router`) keeps its route modules: `createContext` /
+   `RouterContextProvider` / `MiddlewareFunction` come from `denext/remix` (what `react-router`
+   maps to), every loader's and action's `context` is a `RouterContextProvider` (`context.get(key)`
+   / `context.set(key, value)`), a route's `middleware` export runs outermost first before its
+   loader or action, and migrate carries a custom server's `getLoadContext` into
+   `load-context.ts` (`defineLoadContext` from `denext/remix/server`):
+   https://denext.dev/docs/react-router#load-context-and-middleware.
+   Guides: https://denext.dev/docs/migrating-fresh,
+   https://denext.dev/docs/migrating-preact, https://denext.dev/docs/migrating-lustre, https://denext.dev/docs/tanstack-start;
    `denext/signals` (Preact Signals' API, usable in any app, not the resumability `useSignal`
    from `denext`): https://denext.dev/docs/signals.
    `denext migrate --check [--json]` previews it (changes, what won't migrate, a verdict) and
@@ -311,6 +327,12 @@ export function NewPost() {
 }
 ```
 
+Server Action ids are an HMAC under a secret `denext build` generates, so every build gets new ids;
+a deploy that builds more than once (one image per region, say) sets `DENEXT_ACTION_ID_SECRET` (16+
+characters) to one value for every build and instance. Only the `"use server"` exports some module
+imports are callable: an export nothing imports answers 404 (`denext build` lists them; `denext dev`
+keeps them callable with a warning).
+
 **Errors as values (opt-in):** `denext/result` has `Result` / `ok` / `err` / `tryAsync` and an
 exhaustive `match(x).with(pattern, fn)….exhaustive()` (a missing case is a compile error;
 `assertNever(x)` does the same in a `switch` `default`). A `defineApi` handler may
@@ -370,7 +392,10 @@ emailOtp()]` plus `sendVerificationRequest` (`smtpMailer({ host, user, pass, fro
 `denext/server`, TLS required, or your own); a magic link opens a click-to-confirm page by
 default, so a mail scanner's pre-fetch can't spend it (`magicLink({ confirm: false })` opts out). Passkeys: `passkeys: true` (or `{ rpId, rpName, userVerification }`) mounts
 `/auth/passkey/*`, and `registerPasskey()` / `signInWithPasskey()` from `denext/client` (check
-`passkeysSupported()`) sign in usernameless or complete a pending second factor. An OAuth / OIDC
+`passkeysSupported()`) sign in usernameless or complete a pending second factor; a native app
+(with `native`) uses `/auth/native/passkey/*`, and `passkeys.androidApps: [{ packageName,
+sha256CertFingerprints }]` accepts its `android:apk-key-hash:` origin (serve the same object as
+`appLinks.android` for the `get_login_creds` assetlinks statement). An OAuth / OIDC
 provider takes `responseMode: "form_post"` (the callback is then a POST). Second factor: an
 enrolled user's sign-in comes back pending; your `pages.mfa` page renders when
 `pendingMfaSession()` returns a session and posts `{ code }` to `/auth/mfa`; enrollment is
@@ -382,8 +407,10 @@ retired one opens and is re-sealed on its next passing check, or at once with `d
 SSO: `saml()` signs in through a SAML 2.0 identity provider on `/auth/*`, and
 `microsoftEntra({ tenant: "common" | "organizations" | "consumers", allowedTenants })` takes a
 multi-tenant app (keyed on `tid` + `oid`). `passkeys: { attestation: { mds: {} } }` checks new
-passkeys against the FIDO Metadata Service. A session ends `session.maxLifetime` after its sign-in (default 30 days) however often it
-slides. `events.apiTokenIssued` / `apiTokenRevoked` report every bearer token minted or retired
+passkeys against the FIDO Metadata Service (OCSP, then CRL revocation; fail-closed unless
+`attestation.revocation: "soft"`). A session ends `session.maxLifetime` after its sign-in (default 30 days) however often it
+slides. `revokeSession(id)` with `currentSessionId()` (server-only) signs out one device, a
+stateless session too (the adapter's revocation list). `events.apiTokenIssued` / `apiTokenRevoked` report every bearer token minted or retired
 (id and owner, never the token). Full guide: https://denext.dev/docs/auth
 
 Per-request facts from anywhere on the server (`denext/server`): `clientIp()` (the proxy's last
@@ -470,7 +497,7 @@ WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fall
 videos)/`pickDocument`/`scanBarcode`/`pickContact` (`null` when cancelled), `setQuickActions`/`useQuickAction`
 (home-screen shortcuts), `openSqlite` (the
 app's own `@sqlite.org/sqlite-wasm` on OPFS on the web; `encryptionKey` / `PRAGMA key` is SQLCipher
-in the shell and refused on the web; syncing it with a server or PowerSync:
+in the shell and refused on the web, `db.rekey(newKey)` changes it; syncing it with a server or PowerSync:
 https://denext.dev/docs/powersync) and `showContextMenu` /
 `useContextMenu` (native in the shell once `denext mobile add context-menu` installs the plugin:
 `UIMenu` with the lifted preview on iOS, `PopupMenu` on Android; an in-page menu elsewhere,
@@ -493,7 +520,8 @@ default for `video`) lets a drag on the view scroll the list. In React Native mo
 `expo-symbols` → `<SystemIcon>`. `auth-session --scheme myapp` adds
 `openAuthSession(url, { callbackScheme })` (OAuth in an iOS ASWebAuthenticationSession / Android
 Custom Tab / web popup finished by `completeAuthSession()`, and in a Deno Desktop window the
-system browser with a loopback redirect; resolves the callback URL, PKCE + `state` are yours).
+system browser with a loopback redirect; resolves the callback URL; the URL must carry PKCE S256,
+else `pkce_required`, unless `pkce: "not-applicable"` + `reason`; `state` is yours).
 App extensions: `denext mobile add share-extension | widget --name <N> [--configurable
 <param:enum=a|b>] | live-activity --name <N>` generate the native targets behind
 `onShareReceived`, `setWidgetData`/`reloadWidgets` and
@@ -501,7 +529,10 @@ App extensions: `denext mobile add share-extension | widget --name <N> [--config
 Live reload on a device: `denext mobile dev --lan` points the app's `server.url` at
 `denext dev` for the session (restored on exit); a non-loopback host loads the dev assets only
 when opted in (`denext dev --lan`, `--host`, `allowedDevOrigins`), and a network bind requires its
-per-run token from other machines (the printed URL carries `?__denext_dev=…`). Docs:
+per-run token from other machines (the printed URL carries `?__denext_dev=…`). Native plugins answer only
+the app's own origin (plus `server.url` in a debug build): a hosted `server.url` or an
+`allowNavigation` page that calls plugins needs `plugins: { DenextBridge: { allowedOrigins: […] } }`
+(or `frameGuard: false`) in the Capacitor config. Docs:
 https://denext.dev/docs/mobile
 
 The momentum shim is not Capacitor-only: it installs for every iOS/iPadOS WebKit visitor,
@@ -515,7 +546,8 @@ core and `offline-screen` writes a page; web fallback where one exists): `keyboa
 (`setSystemBars`, `useSystemBarsFollowTheme`; `useSafeAreaInsets()` needs nothing),
 `permissions` (`checkPermission`/`requestPermission`/`usePermission` → granted | limited |
 prompt | prompt-with-rationale | denied | blocked; `openAppSettings`), `local-notifications` (`scheduleNotification`; `deliveredNotifications` / `removeDeliveredNotifications({ threadId })` list and clear delivered ones, pushes too),
-`biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`),
+`biometrics` (`authenticateBiometric`; `secureStore.set(k, v, { requireBiometric: true })`, which the OS
+enforces: a Keychain access control / an Android Keystore key, never readable by page script),
 `social-login` (`signInWithApple`/`signInWithGoogle` → `signInNative`), `geolocation` /
 `background-location`, `background-audio` (`setNowPlaying`/`onMediaControl`/`setAudioSession`:
 background playback with lock-screen / notification controls; the Media Session API on the web),
@@ -528,7 +560,8 @@ background playback with lock-screen / notification controls; the Media Session 
 `accessibility` (`useScreenReader`, `getFontScale` / `applyFontScale` for Dynamic Type),
 `storage` (`openKeyValueStore`: durable SQLite, behind React Native mode's AsyncStorage / MMKV;
 `--encrypted` adds SQLCipher for `openKeyValueStore(name, { encrypted: true })`, its key in
-`secureStore`, refused with `ENCRYPTION_UNAVAILABLE` wherever it cannot encrypt, the web included),
+`secureStore`, refused with `ENCRYPTION_UNAVAILABLE` wherever it cannot encrypt, the web included;
+`rekeyKeyValueStore(name)` rotates that key, crash-safe),
 `system-icons` (`<SystemIcon>`: SF Symbols in the iOS shell, Material Symbols elsewhere),
 `sentry` (`initCrashReporting`) and `offline-screen`; `useReducedMotion()` needs nothing. An exported multi-page app in the shell needs `export-routes` (Capacitor serves the root `index.html` for every extensionless path; any denext native plugin includes it, and `denext mobile doctor --release` checks it).
 `dialog` / `toast` / `action-sheet` back React Native mode's `Alert` / `ToastAndroid` / `ActionSheetIOS`. `<PullToRefresh>` needs no plugin; `readSafeAreaInsets()` / `watchSafeAreaInsets(cb)` read the insets outside a component. Store tooling: `denext mobile privacy` (the iOS privacy
@@ -731,7 +764,9 @@ or `createApp({ allowedOrigins })`.
 Docs: https://denext.dev/docs/desktop#desktop-capabilities
 
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
-`_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it;
+`_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it (a signed
+manifest expires: 30 days, `--expires-in <days>`; past it every shell refuses it, code `expired`,
+so re-sign the live release);
 `denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
 `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
 drive it; `createOtaHandler` from `denext/server` serves the export. A downloaded UI is
@@ -881,7 +916,9 @@ task, and `db.service()` bypasses RLS (maintenance only). Tables need `grant …
 Realtime from the database: `backend({ postgres, realtime: realtime({ tables: { notes: {} } }) })`
 installs triggers that NOTIFY keys only; `useTableChanges("notes", { initial, filter?, events? })`
 from `@denext/backend/client` keeps rows live (filters `eq neq lt lte gt gte in`), each change
-re-read AS the subscriber under RLS (a delete only to subscribers who could see the row);
+re-read AS the subscriber under RLS (a delete only to subscribers who could see the row; once
+per identity per burst, whatever the filters), and a reconnect within `replay.retentionSeconds`
+(60) is replayed from the instance's journal (else `stale`);
 `onTableChange(table, fn)` / `tableChanges(table, { as, onChange })` from `@denext/backend/server`,
 and `revalidate: true` pushes `table:<name>` tags. The same option serves Supabase Realtime at
 `/realtime/v1/websocket`: stock `supabase.channel()` — `postgres_changes`, broadcast (also
@@ -930,7 +967,9 @@ and `staticHost()` (refuses, listing every route that needs a server). `denext d
 `DENO_DEPLOY_TOKEN` from the environment only). A plugin adds one with `addDeployAdapter`, and
 lists the routes and files it serves in the manifest with `addDeployRoutes` / `addDeployAssets`
 (`@denext/tanstack-start` lists a Start app's pages, server routes, server functions and `/_tss/`
-client files). Deno's
+client files). `genericHost({ drainMs })` / `fly({ drainMs })` (else `DENEXT_SHUTDOWN_DRAIN_MS`
+when `prepare` runs) size the systemd unit's `TimeoutStopSec` and Fly's `kill_timeout` to the
+drain plus 20 s, so a long drain isn't killed midway. Deno's
 `deno deploy` is `denext deno deploy`. Docs: https://denext.dev/docs/deploy#deploy-adapters
 
 **A scheduled / background job (cron):** put it in `jobs/<name>.ts`; schedule it in
@@ -963,6 +1002,12 @@ export default defineJob({
 plugin teardowns, then `instrumentation.ts`'s `onShutdown()`. Close app-owned resources there,
 for example `export async function onShutdown() { await sql.end(); }`. The process exits by
 `DENEXT_SHUTDOWN_DRAIN_MS` even if a pool, timer or socket stays open.
+
+**Idle memory trim:** on denext's Deno from runtime 3.0.0-rc.5 the production server (the process
+`denext start` starts, the `build --compile` binary, the generated Docker image / systemd unit)
+runs a full GC and `malloc_trim(0)` once its event loop has been idle for a second (glibc Linux;
+at most once per idle period, 10 s apart, then only after 16 MB of growth). Never for `dev`, tests
+or jobs. Opt out with `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0`.
 
 **Long-lived server work (supervised services):** `services/<name>.ts` default-exports
 `defineService({ start(ctx) })` from `denext/server` — `start`'s promise is the service's life (a
@@ -1119,7 +1164,8 @@ its `emitFile({ fileName, source })` publishes a file at the site root like Vite
 `addPrepareStep` (codegen the app imports — runs at build AND dev startup, and re-runs on
 `watch`-glob changes in dev), `addTeardown` (dispose on drain), and `addCommand` (contribute a
 CLI verb); a router plugin whose pages come from its own route tree also calls
-`ctx.servesRoutes?.()`, so the app needs no `app/`. Declare it as `plugins: [myPlugin()]`. See
+`ctx.servesRoutes?.()`, so the app needs no `app/`. In dev a prepare step's re-run gets the edited
+files as `changed`, and `ctx.reportDevError?.(title, err)` shows a failure in the dev error overlay. Declare it as `plugins: [myPlugin()]`. See
 the [plugin guide](https://denext.dev/docs/plugins) and
 [`examples/plugin-aliases`](https://github.com/Brainwires/denext/tree/main/examples/plugin-aliases).
 
@@ -1137,12 +1183,17 @@ the [plugin guide](https://denext.dev/docs/plugins) and
 - **denext's Deno toolchain**: the verbs that run project code (`dev`, `build`, `export`,
   `start`, `test`, `check`, `job`, `analyze`, `profile`, `doctor`, `desktop run|dev|build|package`,
   `mobile dev|build`,
-  project verbs) re-run themselves on denext's pinned Deno build (`2.9.7-denext.N`: `Deno.SQL`,
-  Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
-  `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced. `DENEXT_DENO=stock`
+  project verbs) re-run themselves on denext's pinned Deno build (a `3.0.0-rc.N` release built from Deno
+  2.9.8: `Deno.SQL`, Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
+  `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced (every API, flag
+  and env var it adds over Deno 2.9.8, by version: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
   opts out, `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
   first use, no build for the host, a failed download) the command stops with the fix
-  (`denext toolchain install`) — denext never runs another Deno on its own. Every other verb that
+  (`denext toolchain install`) — denext never runs another Deno on its own. Downloads of the
+  toolchain and the Deno Desktop runtime give up after 30 s with no response
+  (`DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`) or 60 s with no data (`DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS`;
+  `0` removes either), and `DENEXT_CHILD_DEADLINE_MS` replaces the build's `deno info` /
+  `deno bundle` deadlines (120 s / 300 s; `0`: none) for a cold cache on a slow link. Every other verb that
   starts `deno` (`fmt`, `lint`, `add`, `ui`, `mcp`, `create`, …) hands it the toolchain too.
   `denext task <name>` is Deno's `deno task` on the toolchain, and every
   `deno` inside it (its own steps, and any a script it starts finds on PATH) is the toolchain too; a
@@ -1163,8 +1214,9 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   SQLite: https://denext.dev/docs/toolchain. A dependency's approved lifecycle script runs jailed
   (no network, writes only under `node_modules`; on by default from runtime 3.0.0-rc.5):
   `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
-  packages (puppeteer, sharp, Prisma's engines, electron, …) need and `denext doctor` flags a
-  missing one; never turn the jail off for them:
+  packages (puppeteer, sharp, Prisma's engines, electron, …) need (into the workspace root's
+  deno.json, the only one Deno reads; download hosts instead of `net: true` once denext pins
+  runtime 3.0.0-rc.6, not yet released) and `denext doctor` flags a missing one; never turn the jail off for them:
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
@@ -1252,9 +1304,10 @@ denext ships tooling so agents get it right the first time:
 All work lands on `development`, and releases are cut there with
 `deno task release <version>` (which tags `v<version>` and pushes). The script
 first refuses unless ci.yml's heavy jobs (`integration`, `next-compat`, `coverage`,
-with `check`, `backend-integration`, `ios-export-router`, `windows-resolve`, `windows-tests`, `macos-tests` and `cargo-audit`) are green on HEAD: a push to `development`
+with `check`, `backend-integration`, `ios-export-router`, `windows-resolve`, `windows-tests`, `macos-tests`, `cargo-audit` and `bundle-budget`, and no other job failed) are green on HEAD: a push to `development`
 skips them, so dispatch ci.yml on the commit first
-(`gh workflow run ci.yml --ref development`, then wait for it). It also refuses unless the newest
+(`gh workflow run ci.yml --ref development`, then wait for it). Only a finished push or dispatch run
+of exactly HEAD counts (never a `pull_request` run, which tests a merge ref). It also refuses unless the newest
 desktop-ci.yml run on HEAD (Windows / macOS / Linux desktop suites, installers, install.ps1 /
 install.sh) finished with every job green (`DESKTOP_CI_JOBS` in `scripts/release-ci.ts` names the
 ones that must exist): a push runs desktop-ci only when its `paths` filter matches, so dispatch it
@@ -1267,7 +1320,10 @@ both (`gh workflow run e2e.yml --ref development`, `gh workflow run desktop-wind
 development`). Last, the newest native-plugins.yml run on HEAD must have built both apps green
 (`NATIVE_PLUGINS_JOBS`: `android`, `ios`; a push runs it only when a native template or installer
 changes, so dispatch it: `gh workflow run native-plugins.yml --ref development`). Wait for all
-five. Active `development` runs ahead of `main` by design.
+five. Active `development` runs ahead of `main` by design. A release that stopped resumes with the
+same command (or `--resume-from <step>`), but only with the gate-pass marker the release records
+when the CI gate and its local gate pass, for exactly the tree it publishes (`--regate` re-runs
+both); never make the `release:` commit by hand.
 
 **`main` must always be exactly what is published.** So **cutting a version is not
 done until `development` is merged into `main`** — the release flow is: tag

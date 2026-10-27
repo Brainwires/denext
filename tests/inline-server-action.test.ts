@@ -7,14 +7,22 @@
 // Before, a client component's inline action shipped its body to the browser, and a Server
 // Component's inline action rendered a `<form>` with no `action`.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertNotEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import {
   findInlineServerActions,
   INLINE_ACTION_IN_CLIENT_ERROR,
+  inlineActionModuleKey,
   InlineServerActionError,
   transformInlineServerActions,
 } from "../src/build/inline-server-action.ts";
+import { setBuildActionIdSecret } from "../src/server/action-ids.ts";
 import { generateServerStub } from "../src/build/client-imports.ts";
 import { serverStubPlugin, stopNextCompat } from "../src/build/next-compat.ts";
 import { ACTION_PREFIX, getServerAction, isServerAction } from "../src/runtime/server-action.ts";
@@ -39,7 +47,7 @@ export default function Page() {
   assertStringIncludes(code, "inlineServerReference as _dnxServerRef");
   assertStringIncludes(code, "const add = _dnxInlineAction0;");
   assert(
-    /const _dnxInlineAction0 = _dnxServerRef\("a[a-z0-9]+", async function add\(fd: FormData\) \{\s*"use server";/
+    /const _dnxInlineAction0 = _dnxServerRef\("a[\w-]+", async function add\(fd: FormData\) \{\s*"use server";/
       .test(code),
     code,
   );
@@ -47,13 +55,44 @@ export default function Page() {
   assert(code.indexOf("_dnxInlineAction0 = ") > code.indexOf("return <form"), code);
 });
 
+Deno.test("inline action ids are keyed by the project-relative path, so builds at other roots agree", async () => {
+  const src = `export async function save() { "use server"; return 1; }\n`;
+  const idOf = (code: string) => /_dnxServerRef\("(a[\w-]+)"/.exec(code)![1];
+  setBuildActionIdSecret("shared-deploy-secret-for-two-roots");
+  try {
+    const here = await transformInlineServerActions(src, "file:///srv/a/app/page.tsx", {
+      projectDir: "/srv/a",
+    });
+    const there = await transformInlineServerActions(src, "file:///srv/b/app/page.tsx", {
+      projectDir: "/srv/b",
+    });
+    assertEquals(idOf(here.code), idOf(there.code), "one source, one secret: one id");
+    assertEquals(
+      inlineActionModuleKey("file:///srv/a/app/page.tsx", "/srv/a"),
+      "app/page.tsx",
+      "`/`-separated, however the OS spells paths",
+    );
+    const other = await transformInlineServerActions(src, "file:///srv/a/app/other.tsx", {
+      projectDir: "/srv/a",
+    });
+    assertNotEquals(idOf(other.code), idOf(here.code), "another module: another id");
+    // Without a project root the absolute URL keys it, so the two roots differ.
+    const absA = await transformInlineServerActions(src, "file:///srv/a/app/page.tsx");
+    const absB = await transformInlineServerActions(src, "file:///srv/b/app/page.tsx");
+    assertNotEquals(idOf(absA.code), idOf(absB.code));
+    assertEquals(inlineActionModuleKey("file:///srv/a/app/page.tsx"), "file:///srv/a/app/page.tsx");
+  } finally {
+    setBuildActionIdSecret(null);
+  }
+});
+
 Deno.test("a module-scope inline action is registered in place, exports kept", async () => {
   const src = `export async function save() { "use server"; return 1; }
 export const remove = async () => { "use server"; return 2; };
 `;
   const { code } = await transformInlineServerActions(src, MOD);
-  assert(/export const save = _dnxServerRef\("a[a-z0-9]+", async function save\(\)/.test(code));
-  assert(/export const remove = _dnxServerRef\("a[a-z0-9]+", async \(\) =>/.test(code), code);
+  assert(/export const save = _dnxServerRef\("a[\w-]+", async function save\(\)/.test(code));
+  assert(/export const remove = _dnxServerRef\("a[\w-]+", async \(\) =>/.test(code), code);
   assert(!code.includes("_dnxInlineAction"), "nothing hoisted at module scope");
 });
 
@@ -87,7 +126,7 @@ Deno.test("an inline action that closes over a component's values gets them boun
   const { code } = await transformInlineServerActions(src, MOD);
   // The hoisted function takes the values it reads first, in a stable (sorted) order.
   assert(
-    /const _dnxInlineAction0 = _dnxServerRef\("a[a-z0-9]+", \(id, prefix, \.\.\.args\) => \(async function del\(\)/
+    /const _dnxInlineAction0 = _dnxServerRef\("a[\w-]+", \(id, prefix, \.\.\.args\) => \(async function del\(\)/
       .test(code),
     code,
   );

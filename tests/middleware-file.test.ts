@@ -2,14 +2,14 @@
 // accepts) gates the app instead of being skipped, and a middleware file that exports no handler
 // stops the app from starting rather than letting every request through unchecked.
 
-import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { createTestApp, createTestClient, probeApp } from "../src/testing/mod.ts";
-import { watchTests } from "./helpers/watchdog.ts";
+import { inChild } from "./helpers/isolated.ts";
 
-// Each test builds an app in this process: a stall (CI windows-tests, runtime 3.0.0-rc.5) fails
-// the test within minutes, naming the subprocess it waits on, instead of holding the job.
-watchTests(300_000);
+// Each test crawls and builds an app: in a bounded child process (`inChild`), since an in-process
+// build that stalls (CI windows-tests, runtime 3.0.0-rc.5) can't be stopped.
+const TESTING =
+  `import { createTestApp, createTestClient, probeApp } from "@repo/src/testing/mod.ts";`;
 
 const JSX = new URL("../src/jsx/jsx-runtime.ts", import.meta.url).href;
 
@@ -51,11 +51,14 @@ export default function Admin() { return h("p", null, "admin secrets"); }`,
 for (const file of ["proxy.tsx", "proxy.jsx", "middleware.tsx", "middleware.mjs"]) {
   Deno.test(`a root ${file} gates its matcher`, async () => {
     await withApp({ [file]: GATE }, async (dir) => {
-      const client = createTestClient(await createTestApp(dir));
-      const admin = await client.get("/admin");
-      assertEquals(admin.status, 401);
-      assertEquals(admin.text, "blocked");
-      assertEquals((await client.get("/")).status, 200);
+      const { value } = await inChild<{ admin: [number, string]; home: number }>({
+        imports: TESTING,
+        body: `const client = createTestClient(await createTestApp(${JSON.stringify(dir)}));
+        const admin = await client.get("/admin");
+        return { admin: [admin.status, admin.text], home: (await client.get("/")).status };`,
+      });
+      assertEquals(value.admin, [401, "blocked"]);
+      assertEquals(value.home, 200);
     });
   });
 }
@@ -70,10 +73,17 @@ Deno.test("a middleware file that exports no handler stops the app from starting
     ]
   ) {
     await withApp({ [file]: src }, async (dir) => {
-      const err = await assertRejects(() => createTestApp(dir), Error);
-      assertStringIncludes(err.message, `${file} must export a function`);
+      const { value } = await inChild<{ app: string | null; probe: string | null }>({
+        imports: TESTING,
+        body: `const refusal = (p) => p.then(() => null, (err) => String(err?.message ?? err));
+        return {
+          app: await refusal(createTestApp(${JSON.stringify(dir)})),
+          probe: await refusal(probeApp(${JSON.stringify(dir)})),
+        };`,
+      });
+      assertStringIncludes(value.app ?? "(started)", `${file} must export a function`);
       // denext doctor (probeApp) refuses it too.
-      await assertRejects(() => probeApp(dir), Error, "must export a function");
+      assertStringIncludes(value.probe ?? "(passed)", "must export a function");
     });
   }
 });

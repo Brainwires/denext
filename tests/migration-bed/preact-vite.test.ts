@@ -4,7 +4,10 @@
 // an asset, CSS imports, and `render()` into `#app`. `denext migrate` takes the SPA path with the
 // Preact layer (preact → denext, preact-iso → denext/preact-iso), then the app is built, served,
 // its shell checked with JS off, and in headless Chromium it renders and a header link navigates
-// on the client.
+// on the client. The bed adds a preact-iso `lazy()` route whose page holds a `useErrorBoundary`
+// component catching a child's render error, and an `options.vnode` hook that marks `<main>` — so
+// the click loads a code-split route through the Router, the hook boundary renders its error UI,
+// and Preact's options hook ran on the app's own JSX.
 //
 // Pin: 3903ab1 (2026-09-30). create-preact assembles a project from its templates at run time
 // (`templates/base`, then `templates/config/router` into `src/`, plus `preact-iso` as a
@@ -28,6 +31,7 @@ const PREACT_VITE: Bed = {
   prepare: async (app) => {
     await copy(join(app, "..", "config", "router"), join(app, "src"), { overwrite: true });
     await Deno.rename(join(app, "_gitignore"), join(app, ".gitignore"));
+    await addPreactParityScenario(join(app, "src"));
   },
   kind: "preact",
   routes: [
@@ -43,11 +47,71 @@ const PREACT_VITE: Bed = {
     path: "/",
     hydrated: 'document.querySelector("h1")?.textContent.includes("Get Started") === true',
     interact: {
-      click: 'header a[href="/404"]',
-      until: 'location.pathname === "/404" && document.body.textContent.includes("404: Not Found")',
+      click: 'header a[href="/lazy"]',
+      until:
+        'location.pathname === "/lazy" && document.body.textContent.includes("lazy page") && ' +
+        'document.body.textContent.includes("caught: broken child") && ' +
+        'document.querySelector("main[data-options-vnode]") !== null',
     },
   },
 };
+
+/**
+ * The Preact-parity scenario added to the template: a `/lazy` route loaded with preact-iso's
+ * `lazy()`, a page whose `useErrorBoundary` component catches its child's render error, an
+ * `options.vnode` hook marking `<main>`, and a header link to the route.
+ */
+async function addPreactParityScenario(src: string): Promise<void> {
+  const index = join(src, "index.jsx");
+  let entry = await Deno.readTextFile(index);
+  entry = entry
+    .replace(
+      "import { render } from 'preact';",
+      "import { options, render } from 'preact';\n" +
+        "options.vnode = (v) => { if (v.type === 'main') v.props['data-options-vnode'] = ''; };",
+    )
+    .replace(
+      "import { LocationProvider, Router, Route } from 'preact-iso';",
+      "import { LocationProvider, Router, Route, lazy } from 'preact-iso';\n" +
+        "const LazyPage = lazy(() => import('./pages/Lazy.jsx'));",
+    )
+    .replace(
+      '<Route path="/" component={Home} />',
+      '<Route path="/" component={Home} />\n\t\t\t\t\t<Route path="/lazy" component={LazyPage} />',
+    );
+  await Deno.writeTextFile(index, entry);
+  await Deno.writeTextFile(
+    join(src, "pages", "Lazy.jsx"),
+    `import { useErrorBoundary } from 'preact/hooks';
+
+function Broken() {
+\tthrow new Error('broken child');
+}
+
+function Guard({ children }) {
+\tconst [error] = useErrorBoundary();
+\treturn error ? <p>caught: {error.message}</p> : children;
+}
+
+export default function Lazy() {
+\treturn (
+\t\t<section>
+\t\t\t<h2>lazy page</h2>
+\t\t\t<Guard><Broken /></Guard>
+\t\t</section>
+\t);
+}
+`,
+  );
+  const header = join(src, "components", "Header.jsx");
+  await Deno.writeTextFile(
+    header,
+    (await Deno.readTextFile(header)).replace(
+      '<a href="/404"',
+      '<a href="/lazy">Lazy</a>\n\t\t\t\t<a href="/404"',
+    ),
+  );
+}
 
 Deno.test({
   name: "migration bed: create-preact's Vite + preact-iso app migrates, builds and routes",

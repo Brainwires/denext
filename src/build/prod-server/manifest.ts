@@ -8,7 +8,7 @@ import { boundaryRefLoader, compatModuleMapFromManifest } from "../next-compat-l
 import { setSelfHostedFonts } from "../../compat/next/font/registry.ts";
 import type { PageRoute, RouteManifest } from "../../router/manifest.ts";
 import { tagClientModules } from "../../runtime/client-reference.ts";
-import { tagServerModules } from "../../runtime/server-action.ts";
+import { setUnreferencedActionsPermissive, tagServerModules } from "../../runtime/server-action.ts";
 import { FLIGHT_BUNDLE_FILE } from "../build-pipeline/context.ts";
 import {
   type BoundaryManifest,
@@ -18,6 +18,14 @@ import {
 import { type ProjectPaths, routeId } from "../paths.ts";
 import { parseServerCopies, type ServerCopiesManifest } from "../server-copies.ts";
 import { setBuildServerActionsKey } from "../../server/action-bound.ts";
+import {
+  ACTION_ID_SECRET_ENV,
+  actionIdSecretDigest,
+  actionIdSecretEnvValue,
+  setBuildActionIdSecret,
+  setLegacyActionIds,
+} from "../../server/action-ids.ts";
+import { registerHealthCheck } from "../../server/health.ts";
 
 /** What `denext start` reads from `manifest.json` (absent/old fields fall back). */
 export interface BuildInfo {
@@ -54,7 +62,103 @@ function installBuildKey(key: string): void {
   }
 }
 
-/** Read the build manifest; a missing/invalid one means "nothing static, no compat". */
+/**
+ * The server can't serve the build's Server Action ids: the build minted them under a
+ * `DENEXT_ACTION_ID_SECRET` the server doesn't have (unset, or another value), so every action
+ * the client bundle posts would be unknown. `denext start` fails with it.
+ */
+export class ActionIdSecretError extends Error {
+  override name = "ActionIdSecretError";
+}
+
+/** Unregisters the `action-ids` readiness check once it is down (`null` while healthy). */
+let actionIdsDown: (() => void) | null = null;
+
+/**
+ * Take the instance out of rotation: `/_denext/health` reports `action-ids: "down"` (503) from
+ * now on, so a deploy whose action-id secret disagrees with its build fails its probe instead of
+ * answering `ok` while the operator's setting is wrong.
+ */
+function markActionIdSecretMismatch(): void {
+  actionIdsDown ??= registerHealthCheck("action-ids", () => false);
+}
+
+/** Bring the `action-ids` readiness check back up (tests). */
+export function resetActionIdHealthForTesting(): void {
+  actionIdsDown?.();
+  actionIdsDown = null;
+  warnedIgnoredEnvSecret = false;
+}
+
+/** Whether the ignored-variable warning was printed (once per process). */
+let warnedIgnoredEnvSecret = false;
+
+/** What the build manifest says about the action-id secret. */
+interface ActionIdSecretRecord {
+  actionIdSecret?: unknown;
+  actionIdSecretEnv?: unknown;
+  actionIdSecretDigest?: unknown;
+}
+
+/**
+ * Install the secret the build minted its Server Action ids under — the one the client bundle
+ * carries ids for, so it is authoritative over the environment's:
+ * - the recorded one (the build generated it): a `DENEXT_ACTION_ID_SECRET` set here that differs
+ *   is ignored, with one warning per process, since it was not there when the ids were minted.
+ *   The server answers every action correctly then, so the instance stays healthy;
+ * - the environment's, when the build used it: it must be set here to the same value — unset, or
+ *   another value (told apart by the recorded fingerprint), is an {@link ActionIdSecretError} and
+ *   the start fails, never a server answering every action with "unknown";
+ * - or, for a build from before salted ids, the legacy ids its client bundle carries.
+ */
+function installActionIdSecret(bm: ActionIdSecretRecord): void {
+  if (typeof bm.actionIdSecret === "string" && bm.actionIdSecret) {
+    installRecordedSecret(bm.actionIdSecret);
+  } else if (bm.actionIdSecretEnv === true) {
+    installEnvSecret(typeof bm.actionIdSecretDigest === "string" ? bm.actionIdSecretDigest : null);
+  } else {
+    setLegacyActionIds(true);
+  }
+}
+
+/** The build generated `secret`: it is used, and a differing environment value is ignored. */
+function installRecordedSecret(secret: string): void {
+  setBuildActionIdSecret(secret);
+  const env = actionIdSecretEnvValue();
+  if (!env || env === secret || warnedIgnoredEnvSecret) return;
+  warnedIgnoredEnvSecret = true;
+  console.warn(
+    `denext: ${ACTION_ID_SECRET_ENV} is set, but this build generated its own Server Action ` +
+      "id secret (the variable was not set when `denext build` ran), so the build's is used " +
+      "and the variable ignored (Server Actions work). To share one secret across builds and " +
+      "instances, set it where `denext build` runs too.",
+  );
+}
+
+/**
+ * The build used the environment's secret (`digest` its fingerprint, when recorded): the server
+ * must have the same value.
+ */
+function installEnvSecret(digest: string | null): void {
+  setBuildActionIdSecret(null);
+  const env = actionIdSecretEnvValue();
+  if (env && (digest === null || actionIdSecretDigest(env) === digest)) return;
+  markActionIdSecretMismatch();
+  throw new ActionIdSecretError(
+    `denext: this build minted its Server Action ids under ${ACTION_ID_SECRET_ENV}, which ` +
+      `is ${env ? "set to another value" : "not set"} here, so every action the client ` +
+      "bundle posts would be unknown. Set the variable to the value `denext build` ran " +
+      "with (it must be the same for every build and every instance of this app), or " +
+      "rebuild with the value set here.",
+  );
+}
+
+/**
+ * Read the build manifest; a missing/invalid one means "nothing static, no compat".
+ *
+ * @throws {ActionIdSecretError} When the build minted its action ids under a
+ *   `DENEXT_ACTION_ID_SECRET` this server doesn't have (see {@link installActionIdSecret}).
+ */
 export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
   const info: BuildInfo = {
     staticRoutes: new Set(),
@@ -72,6 +176,7 @@ export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
     if (bm.fonts && typeof bm.fonts === "object") setSelfHostedFonts(bm.fonts);
     // The key this build seals bound Server Action values under (unless the env sets one).
     if (typeof bm.serverActionsKey === "string") installBuildKey(bm.serverActionsKey);
+    installActionIdSecret(bm);
     info.nextCompat = bm.nextCompat === true;
     if (typeof bm.buildId === "string" && bm.buildId) info.buildId = bm.buildId;
     info.buildIdPinned = bm.buildIdPinned === true;
@@ -89,7 +194,11 @@ export async function readBuildInfo(paths: ProjectPaths): Promise<BuildInfo> {
         bm.compatServerModules as Record<string, string>,
       );
     }
-  } catch { /* no/invalid build manifest → treat none as static */ }
+  } catch (error) {
+    // A server that can't serve the build's action ids must not start; anything else (no or an
+    // invalid build manifest) means "nothing static, no compat".
+    if (error instanceof ActionIdSecretError) throw error;
+  }
   return info;
 }
 
@@ -187,6 +296,9 @@ export async function resolveFlightBoundary(
   // the single keyed server bundle (the whole app's islands cost one module load, not one
   // import per island).
   const tagLoad = boundaryRefLoader(load);
+  // Production refuses the actions no module imports (a dev server earlier in this process, as
+  // in a test run, may have left the process permissive).
+  setUnreferencedActionsPermissive(false);
   await timed("tagServerModules", () => tagServerModules(boundary.server, tagLoad));
   // Import + tag the islands now, before the server listens, so the FIRST request doesn't
   // pay for it.

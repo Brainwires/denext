@@ -21,6 +21,7 @@ import { DESKTOP_RUNTIME_PIN } from "../src/build/desktop-runtime.ts";
 import { GLEAM_TOOLCHAIN } from "../src/build/gleam-toolchain.ts";
 import { FASTLANE_TOOLCHAIN } from "../src/build/fastlane-toolchain.ts";
 import { denoCacheDir } from "../src/build/deno-cache-dir.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
 // The CLI child runs on Deno's real module cache through links (see isolatedDenoDir); POSIX only.
@@ -320,11 +321,11 @@ Deno.test("denext toolchain uninstall / prune: the real CLI against a temp cache
     const work = join(dir, "work");
     await Deno.mkdir(join(work, ".git"), { recursive: true });
     const run = (args: string[]) =>
-      new Deno.Command(Deno.execPath(), {
+      boundedOutput(Deno.execPath(), {
         args: ["run", "-A", "--config", join(ROOT, "deno.json"), CLI, ...args],
         cwd: work,
         env: { DENO_DIR: cacheDir, DENEXT_TOOLCHAIN_ACTIVE: "", NO_COLOR: "1" },
-      }).output().then((o) => {
+      }).then((o) => {
         const d = new TextDecoder();
         return { code: o.code, stdout: d.decode(o.stdout), stderr: d.decode(o.stderr) };
       });

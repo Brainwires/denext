@@ -6,8 +6,9 @@
 // carry: the root's imports, each member's `exports` under its `name`, and each member's own
 // imports scoped to its directory.
 
-import { dirname, join, resolve, toFileUrl } from "@std/path";
+import { dirname, isAbsolute, join, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
+import { CONFIG_FILES } from "./config-files.ts";
 
 /** What {@linkcode workspaceImports} adds to a merged config. */
 export interface WorkspaceImports {
@@ -20,9 +21,9 @@ export interface WorkspaceImports {
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
 
 /** A config file's object, or `null` (absent, unreadable, not a JSON(C) object). */
-async function readObject(path: string): Promise<Record<string, unknown> | null> {
+function readObject(path: string): Record<string, unknown> | null {
   try {
-    const value = parseJsonc(await Deno.readTextFile(path));
+    const value = parseJsonc(Deno.readTextFileSync(path));
     return value && typeof value === "object" && !Array.isArray(value)
       ? value as Record<string, unknown>
       : null;
@@ -32,11 +33,9 @@ async function readObject(path: string): Promise<Record<string, unknown> | null>
 }
 
 /** The `deno.json` / `deno.jsonc` in `dir` with its parsed object, or `null`. */
-async function configIn(
-  dir: string,
-): Promise<{ path: string; config: Record<string, unknown> } | null> {
+function configIn(dir: string): { path: string; config: Record<string, unknown> } | null {
   for (const name of CONFIG_NAMES) {
-    const config = await readObject(join(dir, name));
+    const config = readObject(join(dir, name));
     if (config) return { path: join(dir, name), config };
   }
   return null;
@@ -56,22 +55,27 @@ export function workspaceMembers(config: Record<string, unknown> | null): string
  * @param root The workspace root directory.
  * @param entry One `workspace` entry.
  */
-export async function memberDirs(root: string, entry: string): Promise<string[]> {
+export function memberDirs(root: string, entry: string): Promise<string[]> {
+  return Promise.resolve(memberDirsSync(root, entry));
+}
+
+/** {@linkcode memberDirs}, synchronously (the client bundler's loader setup is synchronous). */
+function memberDirsSync(root: string, entry: string): string[] {
   if (!entry.includes("*")) return [join(root, entry)];
   const m = /^(.*?)\/?\*\/?$/.exec(entry);
   if (!m || m[1].includes("*")) return [];
   const parent = join(root, m[1]);
   const out: string[] = [];
   try {
-    for await (const e of Deno.readDir(parent)) if (e.isDirectory) out.push(join(parent, e.name));
+    for (const e of Deno.readDirSync(parent)) if (e.isDirectory) out.push(join(parent, e.name));
   } catch { /* no such directory: names nothing */ }
   return out.sort();
 }
 
 /** Every member directory a workspace root lists (resolved, de-duplicated). */
-async function allMemberDirs(root: string, members: readonly string[]): Promise<string[]> {
+function allMemberDirs(root: string, members: readonly string[]): string[] {
   const dirs = new Set<string>();
-  for (const entry of members) for (const d of await memberDirs(root, entry)) dirs.add(resolve(d));
+  for (const entry of members) for (const d of memberDirsSync(root, entry)) dirs.add(resolve(d));
   return [...dirs];
 }
 
@@ -118,8 +122,8 @@ interface Workspace {
 }
 
 /** The workspace `dir`'s own config declares, or null. */
-async function workspaceAt(dir: string): Promise<Workspace | null> {
-  const found = await configIn(dir);
+function workspaceAt(dir: string): Workspace | null {
+  const found = configIn(dir);
   const members = workspaceMembers(found?.config ?? null);
   return found && members ? { root: dir, config: found.config, members } : null;
 }
@@ -129,14 +133,65 @@ async function workspaceAt(dir: string): Promise<Workspace | null> {
  * `workspace`, else the nearest ancestor config with one — when that one lists the app (Deno
  * treats an unlisted app as standalone, and so does denext).
  */
-async function findWorkspace(appDir: string): Promise<Workspace | null> {
-  const own = await workspaceAt(appDir);
+function findWorkspace(appDir: string): Workspace | null {
+  const own = workspaceAt(appDir);
   if (own) return own;
   for (let up = dirname(appDir), below = appDir; up !== below; below = up, up = dirname(up)) {
-    const ws = await workspaceAt(up);
-    if (ws) return (await allMemberDirs(up, ws.members)).includes(appDir) ? ws : null;
+    const ws = workspaceAt(up);
+    if (ws) return allMemberDirs(up, ws.members).includes(appDir) ? ws : null;
   }
   return null;
+}
+
+/** A Deno workspace as {@linkcode workspaceOf} reports it. */
+export interface WorkspaceDirs {
+  /** The root directory (the one whose config declares `workspace`). */
+  readonly root: string;
+  /** Every member directory the root lists (resolved). */
+  readonly members: readonly string[];
+}
+
+/**
+ * The Deno workspace `dir` belongs to (as its root or a listed member), or null.
+ *
+ * @param dir A project directory.
+ * @returns The root and member directories.
+ */
+export async function workspaceOf(dir: string): Promise<WorkspaceDirs | null> {
+  const ws = await findWorkspace(resolve(dir));
+  return ws ? { root: ws.root, members: await allMemberDirs(ws.root, ws.members) } : null;
+}
+
+/**
+ * The npm supply-chain settings a config denext generates for a re-exec (`module-config.json`,
+ * `css-config.json`, the compile config) must carry, so a build child resolves npm packages
+ * under the project's own policy (`paranoid`, `advisoryCheck: "required"`, the jail and its
+ * exceptions) and not Deno's defaults. Deno reads `supplyChain` from the workspace root's
+ * config alone, so a member app takes the root's. Relative `jailScripts.packages.*.write` paths
+ * are made absolute against that config's directory (the generated file lives elsewhere); `~`
+ * paths stay for the runtime to resolve.
+ *
+ * @param appConfigPath The app's `deno.json` / `deno.jsonc`.
+ * @returns `{ supplyChain }`, or `{}` when the project sets none.
+ */
+export async function supplyChainConfig(
+  appConfigPath: string,
+): Promise<{ supplyChain?: unknown }> {
+  const appDir = resolve(dirname(appConfigPath));
+  const ws = await findWorkspace(appDir);
+  const root = ws?.root ?? appDir;
+  const config = ws ? ws.config : await readObject(resolve(appConfigPath));
+  const value = config?.supplyChain;
+  if (value === undefined || value === null) return {};
+  const copy = structuredClone(value) as Record<string, unknown>;
+  const jail = copy?.jailScripts as { packages?: Record<string, { write?: unknown }> } | undefined;
+  for (const pkg of Object.values(jail?.packages ?? {})) {
+    if (!pkg || !Array.isArray(pkg.write)) continue;
+    pkg.write = pkg.write.map((w) =>
+      typeof w === "string" && !w.startsWith("~") && !isAbsolute(w) ? resolve(root, w) : w
+    );
+  }
+  return { supplyChain: copy };
 }
 
 /**
@@ -147,17 +202,28 @@ async function findWorkspace(appDir: string): Promise<Workspace | null> {
  * @param appConfigPath The app's `deno.json` / `deno.jsonc`.
  * @returns The entries (the caller layers the app's own imports over `imports`).
  */
-export async function workspaceImports(appConfigPath: string): Promise<WorkspaceImports> {
+export function workspaceImports(appConfigPath: string): Promise<WorkspaceImports> {
+  return Promise.resolve(workspaceImportsSync(appConfigPath));
+}
+
+/**
+ * {@linkcode workspaceImports}, synchronously: what the client bundler's loader is handed for an
+ * app a workspace names through a glob member (`apps/*`), which its own discovery can't expand.
+ *
+ * @param appConfigPath The app's `deno.json` / `deno.jsonc`.
+ * @returns The entries.
+ */
+export function workspaceImportsSync(appConfigPath: string): WorkspaceImports {
   const appDir = resolve(dirname(appConfigPath));
-  const ws = await findWorkspace(appDir);
+  const ws = findWorkspace(appDir);
   if (!ws) return { imports: {}, scopes: {} };
   const imports: Record<string, string> = ws.root === appDir
     ? {}
     : absoluteImports(ws.config, ws.root);
   const scopes: Record<string, Record<string, string>> = {};
-  for (const dir of await allMemberDirs(ws.root, ws.members)) {
+  for (const dir of allMemberDirs(ws.root, ws.members)) {
     if (dir === appDir) continue;
-    const member = await configIn(dir);
+    const member = configIn(dir);
     if (!member) continue;
     Object.assign(imports, packageEntries(member.config, dir));
     const own = absoluteImports(member.config, dir);
@@ -175,10 +241,10 @@ export async function workspaceImports(appConfigPath: string): Promise<Workspace
  */
 export async function workspaceMemberDirs(appDir: string): Promise<string[]> {
   const dir = resolve(appDir);
-  const ws = await findWorkspace(dir);
+  const ws = findWorkspace(dir);
   if (!ws) return [];
   const out: string[] = [];
-  for (const d of await allMemberDirs(ws.root, ws.members)) {
+  for (const d of allMemberDirs(ws.root, ws.members)) {
     if (d === dir) continue;
     try {
       if ((await Deno.stat(d)).isDirectory) out.push(d);
@@ -196,9 +262,15 @@ async function isDirectory(path: string): Promise<boolean> {
   }
 }
 
-/** Whether `dir` holds a denext app (an `app/` or `src/app/` folder). */
+/** Whether `dir` holds a denext app: an `app/` or `src/app/` folder, or a `denext.config.*`. */
 async function isAppDir(dir: string): Promise<boolean> {
-  return await isDirectory(join(dir, "app")) || await isDirectory(join(dir, "src", "app"));
+  if (await isDirectory(join(dir, "app")) || await isDirectory(join(dir, "src", "app"))) {
+    return true;
+  }
+  for (const name of CONFIG_FILES) {
+    if (await Deno.stat(join(dir, name)).then((s) => s.isFile, () => false)) return true;
+  }
+  return false;
 }
 
 /**
@@ -216,17 +288,17 @@ export async function workspacePackageDirs(appDir: string): Promise<string[]> {
 
 /**
  * The members of the workspace rooted at `rootDir` that are denext apps (an `app/` or
- * `src/app/` folder), relative to the root and `/`-separated. Empty when `rootDir` declares no
+ * `src/app/` folder, or a `denext.config.*`), relative to the root and `/`-separated. Empty when `rootDir` declares no
  * `workspace`.
  *
  * @param rootDir A directory whose `deno.json` may declare a workspace.
  */
 export async function workspaceApps(rootDir: string): Promise<string[]> {
   const root = resolve(rootDir);
-  const members = workspaceMembers((await configIn(root))?.config ?? null);
+  const members = workspaceMembers(configIn(root)?.config ?? null);
   if (!members) return [];
   const apps: string[] = [];
-  for (const dir of await allMemberDirs(root, members)) {
+  for (const dir of allMemberDirs(root, members)) {
     if (await isAppDir(dir)) apps.push(dir.slice(root.length + 1).replaceAll("\\", "/"));
   }
   return apps;
@@ -246,4 +318,58 @@ export async function workspaceRootHint(rootDir: string): Promise<string | null>
   } ` +
     `${apps.join(", ")}. Run the command on one (\`denext dev ${apps[0]}\`, \`denext build ` +
     `${apps[0]}\`), or a root task (\`denext task dev\`), which delegates to it.`;
+}
+
+/** What a verb run at a directory operates on: see {@linkcode workspaceVerbTarget}. */
+export type WorkspaceVerbTarget =
+  | {
+    /** The directory to run on: the one given, or its workspace's single app. */
+    readonly dir: string;
+    /** The app member it was moved to (root-relative), when it was. */
+    readonly app?: string;
+  }
+  | {
+    /** Why it can't run there: the workspace has several apps and the verb names none. */
+    readonly error: string;
+  };
+
+/** Options for {@linkcode workspaceVerbTarget}. */
+export interface WorkspaceVerbTargetOptions {
+  /** The verb as typed (`denext desktop add secure-store`), for the hint naming each app. */
+  readonly command: string;
+  /** Which members the verb applies to (default: every denext app). */
+  readonly accepts?: (memberDir: string) => Promise<boolean>;
+  /** The flag that points the verb at a project (default `--cwd`). */
+  readonly dirFlag?: string;
+}
+
+/**
+ * Where a project verb that may write (`denext ui`, `denext desktop …`, `denext mobile add`) runs
+ * when it is pointed at `dir`: `dir` itself, unless `dir` is a Deno workspace root that is no app
+ * of its own (no `app/`, `src/app/` or `denext.config.*`) — a `denext create --monorepo` root.
+ * There it runs on the workspace's one app the verb applies to, or, with several, refuses with a
+ * hint that names them, so it never scaffolds a config or a native shell into the root.
+ *
+ * @param dir The directory the verb was pointed at.
+ * @param options The verb as typed, and which members it applies to.
+ * @returns The directory to run on, or why there is none.
+ */
+export async function workspaceVerbTarget(
+  dir: string,
+  options: WorkspaceVerbTargetOptions,
+): Promise<WorkspaceVerbTarget> {
+  const root = resolve(dir);
+  const ws = workspaceAt(root);
+  if (!ws || await isAppDir(root)) return { dir: root };
+  const accepts = options.accepts ?? isAppDir;
+  const apps: string[] = [];
+  for (const member of allMemberDirs(root, ws.members)) {
+    if (await accepts(member)) apps.push(member.slice(root.length + 1).replaceAll("\\", "/"));
+  }
+  if (apps.length === 0) return { dir: root };
+  if (apps.length === 1) return { dir: join(root, apps[0]), app: apps[0] };
+  return {
+    error: `${root} is a Deno workspace root with several apps (${apps.join(", ")}). Run it on ` +
+      `one: \`${options.command} ${options.dirFlag ?? "--cwd"} ${apps[0]}\`.`,
+  };
 }

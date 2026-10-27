@@ -179,6 +179,7 @@ Deno.test("every top-level config key maps to the widget its type deserves", () 
     mobile: "group",
     desktop: "group",
     compile: "group", // `denext build --compile`: embedded paths + extra baked permissions
+    start: "group", // the production server: its idle memory trim
     deploy: "group", // the deploy adapter (a preset from denext/deploy)
     experimental: "group",
     classComponents: "toggle",

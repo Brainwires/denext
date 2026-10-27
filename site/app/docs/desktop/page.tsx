@@ -1461,7 +1461,20 @@ try {
         {" "}
         is not strictly greater than the highest one accepted, or that has none after a sequenced
         release, is refused (<code>downgrade</code>), so every release needs a new sequence (the
-        default Unix time does that).
+        default Unix time does that). The bundled export's own manifest sequence is the floor before
+        any overlay was accepted, so an overlay older than the UI the app ships is refused.
+      </p>
+      <p>
+        <strong>Releases expire.</strong> <code>denext ota manifest --sign</code> stamps a signed
+        {" "}
+        <code>expiresAt</code> (30 days, or <code>--expires-in</code> /{" "}
+        <code>--expires-at</code>). From then on <code>checkForDesktopUpdate</code> and{" "}
+        <code>prepareDesktopUpdate</code>{" "}
+        refuse the manifest (<code>expired</code>), even when it names the overlay already running,
+        so a feed stuck on an old release is reported instead of read as "no update"; re-sign the
+        live release before then. An app whose bundled export's manifest carries an expiry also
+        refuses a release without one (<code>expired</code>); one bundled by older tooling keeps
+        taking them.
       </p>
       <p>
         <strong>The export is for this OS.</strong> A manifest that names another target (
@@ -1753,7 +1766,13 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>netListen</code> grant one. <code>DENEXT_DESKTOP_RUNTIME=stock</code>, a local{" "}
         <code>DENEXT_DESKTOP_RUNTIME_DIR</code> build or a stock <code>deno</code> keep the single
         {" "}
-        <code>--allow-net</code>, with the directional hosts folded into it.
+        <code>--allow-net</code>, with the directional hosts folded into it. A hand-written
+        packaging script derives the same flags with{" "}
+        <code>desktopBuildFlags(config, os, {"{ netSplit: true }"})</code> from{" "}
+        <code>denext/desktop</code>: with <code>netSplit</code>{" "}
+        (the pinned runtime, 3.0.0-rc.2 or later) it bakes <code>--allow-net-connect</code> /{" "}
+        <code>--allow-net-listen</code>; without it (the default) it bakes the stock runtime&apos;s
+        single <code>--allow-net</code>.
       </Callout>
       <Callout kind="note">
         <strong>What is verified.</strong>{" "}
@@ -2001,12 +2020,20 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>downloadToFile</code> fetches only <code>http</code>/<code>https</code>{" "}
         URLs, refuses loopback and link-local targets (<code>localhost</code>,{" "}
         <code>127.0.0.0/8</code>, <code>::1</code>, <code>169.254.0.0/16</code>,{" "}
-        <code>fe80::/10</code>, checked after DNS and again on every redirect), stops after 100 MiB
-        or 10 minutes, and leaves nothing behind on failure or a cancel. It sends the page&apos;s
-        request headers except those a browser&apos;s <code>fetch</code>{" "}
-        refuses (<code>Cookie</code>, <code>Host</code>, <code>Origin</code>, the hop-by-hop and
-        {" "}
-        <code>Sec-</code> / <code>Proxy-</code> ones), and drops <code>Authorization</code>{" "}
+        <code>fe80::/10</code>, checked after DNS and again on every redirect, a resume included),
+        stops after 100 MiB (counted over the whole file when it resumes) or 10 minutes, and leaves
+        nothing behind on a cancel. A pause, a network failure or a restart keeps the bytes so far
+        in <code>&lt;file&gt;.part</code>{" "}
+        beside the file, with a sidecar naming the URL; it is continued only for that URL and that
+        file, with an <code>If-Range</code>{" "}
+        request, else started over. A file the user picked on its own (a single-file{" "}
+        <code>picked</code>{" "}
+        handle) grants that file only, so its partial and sidecar go in the app&apos;s cache
+        directory instead (<code>denext-downloads/</code>, named by a hash of the destination):
+        nothing is created or removed beside the picked file. It sends the page&apos;s request
+        headers except those a browser&apos;s <code>fetch</code> refuses (<code>Cookie</code>,{" "}
+        <code>Host</code>, <code>Origin</code>, the hop-by-hop and <code>Sec-</code> /{" "}
+        <code>Proxy-</code> ones), and drops <code>Authorization</code>{" "}
         on a redirect to another origin. LAN addresses (<code>
           192.168.x.x
         </code>, <code>10.x.x.x</code>, …) stay allowed, so a download from a NAS works.{" "}
@@ -2761,8 +2788,9 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
         (the same keys: <code>read</code>, <code>write</code>, <code>net</code>, <code>env</code>,
         {" "}
         <code>sys</code>, <code>run</code>, <code>ffi</code>; <code>"*"</code>{" "}
-        bakes the unscoped flag). The scripts union it into the flags they bake, and{" "}
-        <code>--regenerate-scripts</code>{" "}
+        bakes the unscoped flag; each entry is one value, so an entry with a comma, an empty one or
+        a URL as a host is refused, by config validation and again by the package scripts). The
+        scripts union it into the flags they bake, and <code>--regenerate-scripts</code>{" "}
         keeps it because it lives in the config, not in the script. Events that fire before a
         handler subscribes (a notification click that launched the app, a deep link) are kept by the
         runtime and delivered to the first subscriber.
@@ -3748,7 +3776,11 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           <code>WebView2Loader.dll</code>, the app-local VC++ runtime, CEF&apos;s DLLs and helpers,
           any <code>.node</code>, found by their header, third-party ones included), then the{" "}
           <code>.msi</code>. A full-app update of a signed app is refused unless every PE file in it
-          carries the running app&apos;s signature. Unset, nothing is signed.{" "}
+          carries the running app&apos;s signature. Unset, nothing is signed; set, the run fails
+          where <code>signtool</code> is not on <code>PATH</code>{" "}
+          rather than ship an unsigned app (<code>--no-sign</code> builds unsigned on purpose).{" "}
+          <code>DENEXT_WINDOWS_CERT_THUMBPRINT</code>{" "}
+          names a certificate in the Windows store instead of a <code>.pfx</code>.{" "}
           <code>DENEXT_WINDOWS_CERT_PASSWORD</code> is its password (redacted from errors) and{" "}
           <code>DENEXT_SIGN_TIMESTAMP_URL</code>{" "}
           an RFC 3161 timestamp server (default DigiCert&apos;s). A CEF app must be signed with a
@@ -3797,10 +3829,13 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         task, on denext&apos;s pinned runtime from any host). The <code>.msi</code>{" "}
         needs WiX 5 and Authenticode needs{" "}
         <code>signtool</code>, both on a Windows host: elsewhere the default <code>.msi</code>{" "}
-        falls back to a <code>.zip</code> per architecture and the <code>.exe</code>{" "}
-        stays unsigned. On Windows both are signed when <code>DENEXT_WINDOWS_CERT</code> (+{" "}
-        <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, optional{" "}
-        <code>DENEXT_SIGN_TIMESTAMP_URL</code>) is set.
+        falls back to a <code>.zip</code>{" "}
+        per architecture, and a certificate in the environment fails the run unless it is given{" "}
+        <code>--no-sign</code>{" "}
+        (an unsigned build is then on purpose). On Windows both are signed when{" "}
+        <code>DENEXT_WINDOWS_CERT</code> (+ <code>DENEXT_WINDOWS_CERT_PASSWORD</code>, optional{" "}
+        <code>DENEXT_SIGN_TIMESTAMP_URL</code>) or <code>DENEXT_WINDOWS_CERT_THUMBPRINT</code>{" "}
+        is set.
       </Callout>
     </DocsShell>
   );

@@ -270,9 +270,7 @@ function prepareRenderProps(inst: Fiber): unknown {
     const ov = dh.propOverrides(inst);
     if (ov) props = { ...(props as Record<string, unknown>), ...ov };
   }
-  if (inst.idScope === undefined) {
-    inst.idScope = enterScope(inst.idParentScope ?? rootScope());
-  }
+  inst.idScope ??= enterScope(inst.idParentScope ?? rootScope());
   return props;
 }
 
@@ -294,13 +292,42 @@ function renderWithStrictMode(
 ): VNode | null {
   const baselineLength = inst.hooks!.length;
   const result = runRenderPhase(inst, baselineLength, type, props, ref, forwardsRef);
-  return strictPass !== null && hasBit(inst, StrictBit)
-    ? strictPass(result, inst, baselineLength, type, props, ref, forwardsRef)
+  return devPass !== null
+    ? devPass(result, inst, baselineLength, type, props, ref, forwardsRef)
     : result ?? null;
 }
 
-/** The StrictMode second render pass; null until the dev path installs it. */
-let strictPass: typeof strictSecondPass | null = null;
+/**
+ * The dev pass over a render's result — StrictMode's second render, then the owner stamp; null
+ * until the dev path installs either, so production calls nothing here.
+ */
+let devPass: typeof devRenderPass | null = null;
+/** Whether StrictMode's second render is installed ({@linkcode installStrictRender}). */
+let strictOn = false;
+/** Notes the rendering component as the owner of the elements its render made (dev). */
+let ownerStamp: ((result: VNode | null, inst: Fiber) => void) | null = null;
+
+/** The installed dev pass: StrictMode's second render under a `<StrictMode>`, then the stamp. */
+function devRenderPass(
+  first: VNode | null | undefined,
+  inst: Fiber,
+  baselineLength: number,
+  type: RenderFn,
+  props: unknown,
+  ref: unknown,
+  forwardsRef: boolean,
+): VNode | null {
+  const result = strictOn && hasBit(inst, StrictBit)
+    ? strictSecondPass(first, inst, baselineLength, type, props, ref, forwardsRef)
+    : first ?? null;
+  ownerStamp?.(result, inst);
+  return result;
+}
+
+/** Point {@linkcode devPass} at the dev pass while any part of it is installed. */
+function syncDevPass(): void {
+  devPass = strictOn || ownerStamp !== null ? devRenderPass : null;
+}
 
 /**
  * StrictMode's second render pass (dev; `first` is used as is without `__denextDev`). The first
@@ -340,7 +367,22 @@ function strictSecondPass(
  * contains it.
  */
 export function installStrictRender(on = true): void {
-  strictPass = on ? strictSecondPass : null;
+  strictOn = on;
+  syncDevPass();
+}
+
+/**
+ * Install (or, with `null`, remove) the dev owner stamp: called with each component's render
+ * result, it records that component as the owner of the elements the render made. Called from
+ * the dev path only (`installOwnerStack`).
+ *
+ * @param stamp The stamp, or `null`.
+ */
+export function installRenderOwners(
+  stamp: ((result: VNode | null, inst: Fiber) => void) | null,
+): void {
+  ownerStamp = stamp;
+  syncDevPass();
 }
 
 /**
@@ -394,6 +436,9 @@ export function renderComponent(inst: Fiber): VNode | null {
   const profT0 = devtoolsHooks?.profiler ? performance.now() : 0;
   const prevDispatcher = setDispatcher(clientDispatcher);
   try {
+    // Before the class branch: a class is a `useId` level of its own too (its id scope), as
+    // every server renderer counts it.
+    const props = prepareRenderProps(inst);
     // The flag is the FIRST operand on purpose: with class components compiled out, the
     // whole branch folds away and `renderClassFiber` (hence the class runtime) is dropped
     // from the bundle — a plain `isClassComponent(...)` test would keep it referenced.
@@ -409,7 +454,6 @@ export function renderComponent(inst: Fiber): VNode | null {
       type = target.fn as RenderFn;
       forwardsRef = target.forwardsRef;
     }
-    const props = prepareRenderProps(inst);
     // An isomorphic island (iso-island.ts) renders its wrapper in place of the component.
     const island = islandRender?.(inst, rawType, props as Record<string, unknown>);
     if (island) {

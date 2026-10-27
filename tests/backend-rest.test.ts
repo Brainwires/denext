@@ -37,6 +37,7 @@ import {
   StatementGate,
 } from "../packages/backend/src/rest.ts";
 import { RestError } from "../packages/backend/src/rest-query.ts";
+import { RestLimiter } from "../packages/backend/src/rest-limit.ts";
 import { writeRestTypes } from "../packages/backend/src/rest-codegen.ts";
 import { restClient, RestClientError, type Selected } from "../packages/backend/client.ts";
 import { type FakeSqlClient, fakeSqlClient } from "./helpers/fake-sql-client.ts";
@@ -210,9 +211,9 @@ function tearDown(): void {
 }
 
 /** A signed-in user's session cookie. */
-async function cookieFor(id: string): Promise<string> {
+async function cookieFor(id: string, user: { isAnonymous?: true } = {}): Promise<string> {
   const issuing = createRequestContext(new Request(`${ORIGIN}/`));
-  await runWithContext(issuing, () => issueAuthSession(authConfig, { id }, "credentials"));
+  await runWithContext(issuing, () => issueAuthSession(authConfig, { id, ...user }, "credentials"));
   return issuing.outgoingHeaders.getSetCookie().find((c) => c.startsWith("__Host-denext_auth="))!
     .split(";")[0];
 }
@@ -1712,6 +1713,19 @@ Deno.test("rate limits: a budget per address signed out, per user signed in; 429
       429,
       "the user's budget follows them across addresses",
     );
+    // Anonymous sign-ins (minted on request) also count against their address: a new one per
+    // request cannot mint a fresh budget behind a spent address.
+    const anonPeer = "198.51.100.40";
+    assertEquals(await status(await app.call("/rest/v1/notes", { peer: anonPeer })), 200);
+    assertEquals(await status(await app.call("/rest/v1/notes", { peer: anonPeer })), 200);
+    for (const n of [1, 2]) {
+      const anonymous = await cookieFor(`anon-user-${n}`, { isAnonymous: true });
+      assertEquals(
+        await status(await app.call("/rest/v1/notes", { peer: anonPeer, cookie: anonymous })),
+        429,
+        "an anonymous sign-in behind a spent address",
+      );
+    }
     // The secret key is a trusted server: never limited.
     for (let i = 0; i < 4; i++) {
       const res = await app.call("/rest/v1/notes", {
@@ -1780,7 +1794,7 @@ Deno.test("rate limits: on by default, a shared store, `false` turns them off; o
   }
 });
 
-Deno.test("rate limits: the shared store denextAuth configures is the default; rest's own store wins", async () => {
+Deno.test("rate limits: the routes count in their own store, never the auth limiters' store", async () => {
   const recording = () => {
     const store = inMemoryRateLimitStore();
     const keys: string[] = [];
@@ -1795,45 +1809,51 @@ Deno.test("rate limits: the shared store denextAuth configures is the default; r
     await res.body?.cancel();
     return res.status;
   };
-  // Two "replicas" (two apps) over the app's one shared store count against one budget.
+  // denextAuth's store (for its sign-in limiters) is never written by a REST request.
   const app = recording();
   const auth = { ...authConfig, rateLimit: { store: app.store } };
   const first = await restApp(undefined, { rateLimit: { max: 2 } }, undefined, auth);
   try {
-    assertEquals(await status(await first.call("/rest/v1/notes", { peer: "203.0.113.30" })), 200);
-  } finally {
-    tearDown();
-  }
-  const second = await restApp(undefined, { rateLimit: { max: 2 } }, undefined, auth);
-  try {
-    assertEquals(await status(await second.call("/rest/v1/notes", { peer: "203.0.113.30" })), 200);
+    for (let i = 0; i < 2; i++) {
+      assertEquals(await status(await first.call("/rest/v1/notes", { peer: "203.0.113.30" })), 200);
+    }
     assertEquals(
-      await status(await second.call("/rest/v1/notes", { peer: "203.0.113.30" })),
+      await status(await first.call("/rest/v1/notes", { peer: "203.0.113.30" })),
       429,
-      "the budget spent on the other replica counts here",
+      "the routes' own default store still limits",
     );
-    assertEquals(app.keys, Array(3).fill("rest|ip:203.0.113.30"));
+    assertEquals(app.keys, [], "nothing went to the auth store");
   } finally {
     tearDown();
   }
-  // `rest.rateLimit.store` is used over the app's.
-  const own = recording();
-  const explicit = await restApp(undefined, { rateLimit: { store: own.store } }, undefined, auth);
-  try {
-    assertEquals(
-      await status(await explicit.call("/rest/v1/notes", { peer: "203.0.113.31" })),
-      200,
+  // Two "replicas" over one shared store passed as `rest.rateLimit.store` count against one budget.
+  const shared = recording();
+  for (const expected of [200, 429]) {
+    const replica = await restApp(
+      undefined,
+      { rateLimit: { max: 1, store: shared.store } },
+      undefined,
+      auth,
     );
-    assertEquals([own.keys, app.keys.length], [["rest|ip:203.0.113.31"], 3]);
-  } finally {
-    tearDown();
+    try {
+      assertEquals(
+        await status(await replica.call("/rest/v1/notes", { peer: "203.0.113.31" })),
+        expected,
+      );
+    } finally {
+      tearDown();
+    }
   }
-  // Auth with its limiters off has no store to share: counted per process.
-  const off = await restApp(undefined, {}, undefined, { ...authConfig, rateLimit: false });
-  try {
-    assertEquals(await status(await off.call("/rest/v1/notes", { peer: "203.0.113.32" })), 200);
-    assertEquals(app.keys.length, 3);
-  } finally {
-    tearDown();
+  assertEquals([shared.keys, app.keys], [Array(2).fill("rest|ip:203.0.113.31"), []]);
+});
+
+Deno.test("rate limits: the default store keeps room for new clients under many quiet ones", async () => {
+  const limiter = new RestLimiter({ max: 5, windowMs: 60_000, store: undefined });
+  // 10 000 clients at their budget (5 requests each, none over it) fill the store.
+  const store = limiter.store;
+  for (let i = 0; i < 10_000; i++) {
+    for (let n = 0; n < 5; n++) await store.increment(`rest|ip:k${i}`, 60_000);
   }
+  // A new client is still counted from 1 (a key at its budget may be evicted), not refused.
+  assertEquals((await store.increment("rest|ip:new", 60_000)).count, 1);
 });

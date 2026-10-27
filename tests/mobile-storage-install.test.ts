@@ -68,7 +68,7 @@ Deno.test("mobile add storage: DenextStorage on iOS + Android, registered, idemp
     }
     assert(!report.written.includes(ANDROID_CIPHER), "no SQLCipher without --encrypted");
     const ios = await read(dir, IOS);
-    assert(ios.startsWith("// denext-storage-template: 2 sha256="));
+    assert(ios.startsWith("// denext-storage-template: 3 sha256="));
     assertStringIncludes(ios, 'jsName = "DenextStorage"');
     assertStringIncludes(await read(dir, IOS_STORE), "import SQLite3");
     assert(!(await read(dir, PBXPROJ)).includes("SQLCipher"));

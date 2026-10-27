@@ -25,6 +25,7 @@ import {
   validateCompile,
   validateDeploy,
   validateNestedRequired,
+  validateStart,
 } from "./config-validate/project.ts";
 import {
   validateCacheAndEnv,
@@ -86,6 +87,7 @@ export function validateDenextConfig(config: DenextConfig, name = "denext.config
   validateJobs(config.jobs, fail);
   validateCommands(config.commands, fail);
   validateCompile(config.compile, fail);
+  validateStart(config.start, fail);
   validateDeploy(config.deploy, fail);
   validateNestedRequired(config, fail);
 }

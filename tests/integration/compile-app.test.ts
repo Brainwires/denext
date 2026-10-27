@@ -19,6 +19,8 @@ import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
 import { isDenextDenoVersion } from "../../src/build/deno-version.ts";
 import { spawnStoppable } from "../helpers/console-ctrl.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
+import { onFreePort } from "../helpers/port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -160,6 +162,7 @@ export async function GET(): Promise<Response> {
 }
 `,
     "app/api/slow/route.ts": `export async function GET(): Promise<Response> {
+  console.log("${SLOW_STARTED}");
   await new Promise((r) => setTimeout(r, 1500));
   return new Response("slow done");
 }
@@ -192,13 +195,8 @@ async function writeFixture(dir: string): Promise<void> {
   }
 }
 
-/** A free loopback port. */
-function freePort(): number {
-  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = l.addr as Deno.NetAddr;
-  l.close();
-  return port;
-}
+/** What the fixture's slow route prints when its handler starts: a stop waits for it. */
+const SLOW_STARTED = "fixture: slow handler started";
 
 const dec = new TextDecoder();
 
@@ -209,14 +207,13 @@ async function run(
   cwd: string,
   env: Record<string, string> = {},
 ): Promise<{ code: number; out: string }> {
-  const r = await new Deno.Command(cmd, {
+  const r = await boundedOutput(cmd, {
     args,
     cwd,
     env: { NO_COLOR: "1", ...env },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+    // A compile build on a loaded runner: a failure bound, not a latency claim.
+    timeoutMs: 900_000,
+  });
   return { code: r.code, out: dec.decode(r.stdout) + dec.decode(r.stderr) };
 }
 
@@ -292,9 +289,21 @@ interface Served {
 /** The drain deadline the shutdown checks run with. */
 const DRAIN_MS = 3000;
 
-/** Start the binary on a free port and wait until `/` answers. */
-async function serve(bin: string, cwd: string, env: Record<string, string>): Promise<Served> {
-  const port = freePort();
+/**
+ * Start the binary on a free port and wait until `/` answers; a port taken between the pick and
+ * the bind is retried on another.
+ */
+function serve(bin: string, cwd: string, env: Record<string, string>): Promise<Served> {
+  return onFreePort((port) => serveOn(port, bin, cwd, env));
+}
+
+/** {@linkcode serve} on `port`. */
+async function serveOn(
+  port: number,
+  bin: string,
+  cwd: string,
+  env: Record<string, string>,
+): Promise<Served> {
   // On Windows the stop is the console's Ctrl-C (tests/helpers/console-ctrl.ts): `kill("SIGTERM")`
   // there is `TerminateProcess`, which no handler sees.
   const server = spawnStoppable(bin, [], {
@@ -336,8 +345,16 @@ async function serve(bin: string, cwd: string, env: Record<string, string>): Pro
     return output;
   };
   const stopDuring = async (path: string) => {
+    const before = output.split(SLOW_STARTED).length;
     const inFlight = fetch(origin + path).then((r) => r.text());
-    await new Promise((r) => setTimeout(r, 300)); // the handler is running
+    // Signal once the handler is running (it says so), not after a fixed wait a loaded machine
+    // may not have reached it by.
+    for (let i = 0; i < 600 && output.split(SLOW_STARTED).length === before && !exited; i++) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    if (output.split(SLOW_STARTED).length === before) {
+      throw new Error(`${path}'s handler never started:\n${output}`);
+    }
     const at = performance.now();
     await server.stop();
     signalled = true;

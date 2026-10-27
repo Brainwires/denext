@@ -18,9 +18,13 @@
  *
  * Which sessions end: with a `sessionStore` and an adapter that keeps the SSO session group, a
  * SAML sign-in recorded its session (`saml-sessions.ts`), and exactly the named ones are deleted.
- * Otherwise — stateless cookie sessions, which have no id to end one by — every session of the
- * user that NameID is linked to, signed in before now, is ended (`sessionsValidAfter`). The
- * caller's own cookie is cleared too when it is one of them.
+ * With stateless cookie sessions and an adapter that keeps the session index, a SAML sign-in
+ * recorded its session's `sid` (`saml-revocation.ts`), and exactly the named `sid`s go on the
+ * adapter's revocation list: those the SessionIndexes started, or with no SessionIndex every
+ * session of that NameID. A target the index can't resolve (a cookie from before `sid`s, a pruned
+ * row), or an adapter without the index, fails closed: every
+ * session of the user that NameID is linked to, signed in before now, is ended
+ * (`sessionsValidAfter`). The caller's own cookie is cleared too when it is one of them.
  *
  * Every message is checked by the same primitives `/auth/v1` uses (`saml/logout.ts`): signed,
  * Destination this SP's SLO URL, Issuer the configured IdP, fresh, InResponseTo, and its ID claimed
@@ -53,6 +57,7 @@ import {
 } from "./routes-shared.ts";
 import { readForm, SLO_TX, spFor, ssoProviderOf } from "./routes-saml.ts";
 import { COOKIE_SESSION_PREFIX, samlSessionStoreOf } from "./saml-sessions.ts";
+import { cookieRevocationOf, revokeCookieSessions } from "./saml-revocation.ts";
 import { clearAuthSession, endUserSessions, readAuthSession } from "./session.ts";
 import { safeRedirectLocation } from "../config.ts";
 import { type AuthSession, isSamlProvider, type SamlProvider } from "./types.ts";
@@ -168,50 +173,111 @@ async function finishSpLogout(
   }
 }
 
+/** Who a LogoutRequest ended: the user, and the cookie `sid`s when it named them exactly. */
+interface EndedSessions {
+  userId: string;
+  sids?: string[];
+}
+
 /**
  * End the sessions a NameID started at `providerId`: the recorded ones its SessionIndexes name
- * (store-backed), else every session of the linked user signed in before now.
+ * (store-backed), the indexed cookie `sid`s they name (stateless), else every session of the
+ * linked user signed in before now.
  */
 async function endSamlSessions(
   ctx: AuthRouteContext,
   providerId: string,
   nameId: string,
   sessionIndexes: string[],
-): Promise<string | null> {
+): Promise<EndedSessions | null> {
   const adapter = ctx.options.adapter!;
   const user = await adapter.getUserByAccount({
     provider: `sso:${providerId}`,
     providerAccountId: nameId,
   });
   if (!user) return null;
-  const records = samlSessionStoreOf(adapter);
-  const sessions = ctx.options.sessionStore;
-  if (records && sessions) {
-    const mine = (await records.listSsoSessions(providerId, nameId)).filter((r) =>
-      r.sessionId.startsWith(COOKIE_SESSION_PREFIX) && r.userId === user.id
-    );
-    if (mine.length) {
-      for (const record of mine) {
-        const named = !sessionIndexes.length ||
-          (record.sessionIndex !== undefined && sessionIndexes.includes(record.sessionIndex));
-        if (named) await sessions.delete(record.sessionId.slice(COOKIE_SESSION_PREFIX.length));
-      }
-      return user.id;
-    }
+  if (await endStoredSessions(ctx, providerId, nameId, user.id, sessionIndexes)) {
+    return { userId: user.id };
+  }
+  if (ctx.options.revocableCookies) {
+    const sids = await revokedCookieSids(ctx, providerId, nameId, sessionIndexes);
+    if (sids) return { userId: user.id, sids };
   }
   await endUserSessions(adapter, user.id);
-  return user.id;
+  return { userId: user.id };
+}
+
+/**
+ * Delete the store-backed sessions of `userId` that a NameID's recorded SAML sign-ins started and
+ * the SessionIndexes name (all of them with none). `true` only when every named SessionIndex
+ * matched a record (or none were named and there was a record): a session the records don't know
+ * (never recorded — recording is best effort — or pruned) fails closed, the caller ending every
+ * session of the user instead. `false` too when there is no store or no record.
+ */
+async function endStoredSessions(
+  ctx: AuthRouteContext,
+  providerId: string,
+  nameId: string,
+  userId: string,
+  sessionIndexes: string[],
+): Promise<boolean> {
+  const records = samlSessionStoreOf(ctx.options.adapter);
+  const sessions = ctx.options.sessionStore;
+  if (!records || !sessions) return false;
+  const mine = (await records.listSsoSessions(providerId, nameId)).filter((r) =>
+    r.sessionId.startsWith(COOKIE_SESSION_PREFIX) && r.userId === userId
+  );
+  const matched = new Set<string>();
+  for (const record of mine) {
+    const named = !sessionIndexes.length ||
+      (record.sessionIndex !== undefined && sessionIndexes.includes(record.sessionIndex));
+    if (!named) continue;
+    await sessions.delete(record.sessionId.slice(COOKIE_SESSION_PREFIX.length));
+    if (record.sessionIndex !== undefined) matched.add(record.sessionIndex);
+  }
+  return sessionIndexes.length
+    ? sessionIndexes.every((index) => matched.has(index))
+    : mine.length > 0;
+}
+
+/** {@linkcode revokeCookieSessions}, with an adapter failure logged and read as unresolved. */
+async function revokedCookieSids(
+  ctx: AuthRouteContext,
+  providerId: string,
+  nameId: string,
+  sessionIndexes: string[],
+): Promise<string[] | null> {
+  try {
+    return await revokeCookieSessions(
+      cookieRevocationOf(ctx.options.adapter)!,
+      providerId,
+      nameId,
+      sessionIndexes,
+    );
+  } catch (error) {
+    ctx.options.logger.error(
+      "denextAuth: the session revocation list could not be written; ending every session " +
+        "of the user instead",
+      error,
+    );
+    return null;
+  }
 }
 
 /** Whether the caller's own session is one the LogoutRequest just ended. */
 function endedHere(
   current: AuthSession | null,
   providerId: string,
-  userId: string,
+  ended: EndedSessions,
   nameId: string,
 ): boolean {
-  return current?.provider === providerId && current.user.id === userId &&
-    current.saml?.nameId === nameId;
+  if (
+    current?.provider !== providerId || current.user.id !== ended.userId ||
+    current.saml?.nameId !== nameId
+  ) {
+    return false;
+  }
+  return !ended.sids || (current.sid !== undefined && ended.sids.includes(current.sid));
 }
 
 /** An IdP-initiated LogoutRequest: verify it, end the sessions, answer a LogoutResponse. */
@@ -236,13 +302,13 @@ async function answerIdpLogout(
   }
   // The browser carrying a front-channel request may hold one of those sessions: clear it too.
   const current = await readAuthSession(ctx.config);
-  const userId = await endSamlSessions(
+  const ended = await endSamlSessions(
     ctx,
     slo.provider.id,
     request.nameId,
     request.sessionIndexes,
   );
-  if (userId && endedHere(current, slo.provider.id, userId, request.nameId)) {
+  if (ended && endedHere(current, slo.provider.id, ended, request.nameId)) {
     await clearAuthSession(ctx.config);
   }
   if (!slo.sso.idp.sloUrl) return new Response(null, { status: 200 });

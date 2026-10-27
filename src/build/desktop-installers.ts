@@ -22,6 +22,7 @@ import { basename, dirname, fromFileUrl, join, relative, SEPARATOR } from "@std/
 import { parse as parseJsonc } from "@std/jsonc";
 import type { DesktopOs } from "./desktop-capabilities.ts";
 import { gzipBytes } from "./precompress.ts";
+import { loadConfigBeside } from "./desktop-config-beside.ts";
 
 /** Every installer format, by the OS it is built for. */
 export const DESKTOP_INSTALLER_FORMATS = {
@@ -127,18 +128,7 @@ export function planDesktopInstallers(
   return { formats, explicit };
 }
 
-/**
- * `denext.config.ts` beside the scripts dir of `entryUrl` (a missing config is `undefined`). Shared
- * by the package-script helpers.
- */
-export async function loadConfigBeside(entryUrl: string): Promise<unknown> {
-  try {
-    const mod = await import(new URL("../denext.config.ts", entryUrl).href);
-    return (mod as { default?: unknown }).default;
-  } catch {
-    return undefined; // no denext.config.ts (or it exports no config): the defaults apply
-  }
-}
+export { loadConfigBeside };
 
 /**
  * {@linkcode planDesktopInstallers} for the project whose `scripts/` holds `entryUrl` (its

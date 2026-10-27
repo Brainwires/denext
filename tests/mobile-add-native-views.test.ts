@@ -10,6 +10,7 @@ import { addMobileCapabilities, type CommandRunner } from "../src/build/mobile-c
 import {
   bridgeViewControllerSource,
   mainActivitySource,
+  withWebkitDependency,
 } from "../src/build/mobile-native-install.ts";
 import { withGradleDependency } from "../src/build/mobile-native-views-install.ts";
 import {
@@ -152,7 +153,12 @@ Deno.test("mobile add native-views: the plugin on iOS + Android, registered; no 
     assertStringIncludes(pbx, "DenextNativeViewsPlugin.swift");
     assertStringIncludes(pbx, "DenextVideoViewFactory.swift");
     assert(!pbx.includes("DenextMapViewFactory.swift"), "the map is native-map's");
-    assertEquals(await read(dir, APP_GRADLE), APP_GRADLE_TEXT, "no osmdroid without native-map");
+    // androidx.webkit for MainActivity's bridge origin guard, and no osmdroid without native-map.
+    assertEquals(
+      await read(dir, APP_GRADLE),
+      withWebkitDependency(APP_GRADLE_TEXT),
+      "no osmdroid without native-map",
+    );
     const again = await addMobileCapabilities({ capabilities: ["native-views"], cwd: dir, run });
     assertEquals(again.written, []);
   });

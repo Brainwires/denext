@@ -18,6 +18,7 @@
 // /json/list endpoint and the domains used), and adb's `forward` (tcp:0 prints the chosen port).
 
 import { adbDevices } from "../build/mobile-inspect.ts";
+import { runToExit } from "../build/exited-output.ts";
 import { profilePage } from "./core.ts";
 import type { ProfileOptions, ProfileResult } from "./types.ts";
 
@@ -66,8 +67,8 @@ export function adbRunner(adb = Deno.env.get("ADB") || "adb"): AdbRunner {
   return async (args) => {
     let out: Deno.CommandOutput;
     try {
-      out = await new Deno.Command(adb, { args: [...args], stdout: "piped", stderr: "piped" })
-        .output();
+      // Until adb exits: the adb server it may start on first use keeps its pipes open.
+      out = await runToExit(adb, { args: [...args] });
     } catch {
       throw new Error(
         `denext profile --android: ${adb} is not on the PATH (install the Android SDK ` +

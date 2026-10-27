@@ -14,14 +14,18 @@ import {
 } from "../src/build/jail-exceptions.ts";
 import {
   applyJailExceptions,
+  entryException,
   explainJailFailures,
   JAIL_DEFAULT_RELEASE,
   jailEffective,
   jailFailures,
   jailOnByDefault,
+  narrowWriteTarget,
   npmPackageName,
   npmrcValue,
   readJailSetting,
+  UPSTREAM_BY_NAME_RELEASE,
+  upstreamByNameAdvice,
 } from "../src/build/jail-scripts.ts";
 import { compareDenoVersions } from "../src/build/deno-version.ts";
 import toolchainPin from "../src/build/deno-toolchain-pin.json" with { type: "json" };
@@ -322,6 +326,68 @@ generator js {
   }
 });
 
+Deno.test("jail: write targets outside the project are refused", async () => {
+  for (
+    const bad of [
+      "",
+      " ",
+      "/",
+      "/abs",
+      "C:/x",
+      "c:\\x",
+      "\\\\host\\share",
+      ".",
+      "./",
+      "..",
+      "../x",
+      "a/../../x",
+      "../../../home/u/.ssh",
+      "a\\..\\..\\x",
+    ]
+  ) {
+    assertFalse(narrowWriteTarget(bad), JSON.stringify(bad));
+    assertFalse(narrowWriteTarget(bad, "prisma-output"), JSON.stringify(bad));
+  }
+  for (const ok of ["generated/client", "public", "./static", "a/b/c"]) {
+    assert(narrowWriteTarget(ok, "msw-worker"), ok);
+  }
+  // only git-hooks may sit above the project, and only as the repository's .git/hooks
+  assert(narrowWriteTarget("../.git/hooks", "git-hooks"));
+  assert(narrowWriteTarget("../../.git/hooks", "git-hooks"));
+  assertFalse(narrowWriteTarget("../.git/hooks", "prisma-output"));
+  assertFalse(narrowWriteTarget("../other/.git/hooks", "git-hooks"));
+
+  const root = await project({
+    "app/deno.json": "{}",
+    "app/package.json": {
+      dependencies: { prisma: "6", "@prisma/client": "6", msw: "2" },
+      msw: { workerDirectory: ["../../outside", "/abs/worker"] },
+    },
+    "app/prisma/schema.prisma": `generator a {
+  provider = "prisma-client"
+  output   = "/"
+}
+generator b {
+  provider = "prisma-client"
+  output   = "../../../home/u/.ssh"
+}
+`,
+  });
+  const dir = join(root, "app");
+  try {
+    const r = await applyJailExceptions(dir, { version: RC5, env: NO_ENV });
+    const jail = await jailConfig(dir) as { packages?: Record<string, JailPackageException> };
+    assertEquals(jail?.packages?.["@prisma/client"]?.write, undefined, "no Prisma grant");
+    assertEquals(jail?.packages?.msw?.write, undefined, "no msw grant");
+    const lines = r.lines.join("\n");
+    assertStringIncludes(lines, '"../../home/u/.ssh"', "the Prisma output above the project");
+    assertStringIncludes(lines, '"../../outside"', "the msw directory above the project");
+    assertStringIncludes(lines, "abs/worker");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("jail: a write-only package with nothing to write needs no exception", async () => {
   const dir = await project({
     "deno.json": "{}",
@@ -358,7 +424,8 @@ TypeError: x is not a function
 `;
 
 Deno.test("jail: an install log's jail failures are recognised and explained", () => {
-  const failures = jailFailures(INSTALL_LOG);
+  // as on Linux / macOS, where the OS sandbox's own errors are the jail's too
+  const failures = jailFailures(INSTALL_LOG, "linux");
   assertEquals(
     failures.map((f) => [f.name, f.version, f.script, f.exitCode, f.signs]),
     [
@@ -368,37 +435,193 @@ Deno.test("jail: an install log's jail failures are recognised and explained", (
       ["plain", "1.0.0", "postinstall", 2, []],
     ],
   );
-  const text = explainJailFailures(failures).join("\n");
+  const text = explainJailFailures(failures, RC5).join("\n");
   assertStringIncludes(text, "puppeteer@24.1.0's postinstall script failed in the lifecycle");
-  assertStringIncludes(text, `"puppeteer": ${JSON.stringify(listed("puppeteer"))}`);
-  assertStringIncludes(text, "packages.@acme/native.write");
+  const puppeteer = JAIL_SCRIPT_EXCEPTIONS.find((e) => e.name === "puppeteer")!;
+  assertStringIncludes(text, `"puppeteer": ${JSON.stringify(entryException(puppeteer, RC5))}`);
+  // on a runtime with host lists the fix names the hosts, not the whole network
+  assertStringIncludes(
+    explainJailFailures(failures, "3.0.0-rc.6").join("\n"),
+    '"net":["storage.googleapis.com"]',
+  );
+  assertStringIncludes(text, '"supplyChain.jailScripts.packages" → "@acme/native" → "write"');
   assertStringIncludes(text, "never allowed in the jail");
   assertFalse(text.includes("plain@"), "a failure without a sign of the jail is not blamed on it");
   assertEquals(jailFailures("no failures here"), []);
-  // an unknown package that hit the network is pointed at `net`
+  // an unknown package that hit the network gets a warning and review advice, never a grant
   const net = jailFailures(
     "error: script 'install' in 'x@1.0.0' failed with exit code 1\nNotCapable: Requires net access",
+    "linux",
   );
-  assertStringIncludes(explainJailFailures(net).join("\n"), '{"net":true}');
+  const netText = explainJailFailures(net).join("\n");
+  assertFalse(netText.includes('"net":true'), "no paste-ready whole-network grant");
+  assertFalse(netText.includes("fix:"), "no paste-ready fix for an unreviewed package");
+  assertStringIncludes(netText, "common sign of malware");
+  assertStringIncludes(netText, '"net": ["<host>"]');
   const deno = jailFailures(
     "error: script 'install' in 'y@1.0.0' failed with exit code 1\n" +
       "error: This deno subcommand is not allowed in a jailed npm lifecycle script (jail-scripts).",
+    "linux",
   );
   assertEquals(deno[0].signs, ["deno"]);
+});
+
+Deno.test("jail: a forged failure line can't shape the advice; a host list is never widened", () => {
+  // the script prints a line naming a package of its own making
+  const forged = 'evil"}}},"x":{"net":true';
+  const failures = jailFailures(
+    `error: script 'postinstall' in '${forged}@1.0.0' failed with exit code 1\n` +
+      "NotCapable: Requires net access",
+    "linux",
+  );
+  assertEquals(failures.map((f) => f.name), [forged]);
+  const text = explainJailFailures(failures, RC5).join("\n");
+  assertStringIncludes(text, JSON.stringify(forged), "the name is quoted");
+  assertFalse(text.includes("fix:"));
+  assertFalse(text.includes('{"net":true}'));
+  // a name spanning lines is not a match at all
+  assertEquals(
+    jailFailures("error: script 'install' in 'a\nb@1.0.0' failed with exit code 1", "linux"),
+    [],
+  );
+
+  // a built-in entry on a runtime without host lists: the project's host list is kept
+  const puppeteer = jailFailures(
+    "error: script 'postinstall' in 'puppeteer@24.1.0' failed with exit code 1\n" +
+      "Error: getaddrinfo ENOTFOUND storage.googleapis.com",
+    "linux",
+  );
+  const kept = explainJailFailures(puppeteer, RC5, {
+    puppeteer: { net: ["storage.googleapis.com"] },
+  }).join("\n");
+  assertFalse(kept.includes('"net":true'), "an existing host list is not widened");
+  assertStringIncludes(kept, '"net":["storage.googleapis.com"]');
+  // with no list of the project's own, the reviewed entry's grant is pasted as before
+  assertStringIncludes(explainJailFailures(puppeteer, RC5).join("\n"), '"net":true');
+});
+
+/** A host-listed package's script failing through a proxy that refused the checked address. */
+const PROXY_LOG = `\x1b[33mWarning\x1b[0m jail-scripts: the upstream proxy refused a tunnel to ` +
+  `storage.googleapis.com:443 by its checked address (403 Forbidden); if this network's proxy ` +
+  `only accepts host names, set "upstreamByName": true in supplyChain.jailScripts in deno.json.
+error: script 'postinstall' in 'puppeteer@24.1.0' failed with exit code 1
+stderr:
+Error: fetch failed
+`;
+
+/** deno.json with a host list for puppeteer (and `extra` merged into jailScripts). */
+function hostListed(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    supplyChain: {
+      jailScripts: { packages: { puppeteer: { net: ["storage.googleapis.com"] } }, ...extra },
+    },
+  };
+}
+
+Deno.test("jail: upstreamByName is suggested when a listed host failed through a name-only proxy", () => {
+  const advice = upstreamByNameAdvice({ output: PROXY_LOG, denoJson: hostListed(), env: NO_ENV });
+  const text = advice.join("\n");
+  assertStringIncludes(text, "puppeteer (storage.googleapis.com)");
+  assertStringIncludes(text, '"jailScripts": { "upstreamByName": true }');
+  assertStringIncludes(text, "refuses a name that resolves to this machine or its network");
+  assertStringIncludes(text, "resolves the name again itself");
+  assertStringIncludes(text, "Keep the jail on");
+  assertFalse(text.includes('"jailScripts": false'), "never suggests turning the jail off");
+  // already on, or no host list (whole network / unlisted package): nothing to suggest
+  assertEquals(
+    upstreamByNameAdvice({ output: PROXY_LOG, denoJson: hostListed({ upstreamByName: true }) }),
+    [],
+  );
+  for (const net of [true, ["example.com"]]) {
+    const denoJson = { supplyChain: { jailScripts: { packages: { puppeteer: { net } } } } };
+    assertEquals(upstreamByNameAdvice({ output: PROXY_LOG, denoJson, env: NO_ENV }), []);
+  }
+  assertEquals(upstreamByNameAdvice({ output: PROXY_LOG, denoJson: null }), []);
+  // no proxy in sight: a failed download is not a proxy problem
+  const plain = INSTALL_LOG;
+  assertEquals(upstreamByNameAdvice({ output: plain, denoJson: hostListed(), env: NO_ENV }), []);
+  // a proxy named in the environment, on a runtime that has the setting
+  const proxyEnv = (n: string) => n === "HTTPS_PROXY" ? "http://proxy.corp:3128" : undefined;
+  const viaEnv = upstreamByNameAdvice({
+    output: plain,
+    denoJson: hostListed(),
+    env: proxyEnv,
+    version: UPSTREAM_BY_NAME_RELEASE,
+  });
+  assertStringIncludes(viaEnv.join("\n"), "puppeteer (storage.googleapis.com)");
+  assertFalse(viaEnv.join("\n").includes("proxy.corp"), "the proxy URL is never echoed");
+  // ...but not before that runtime, nor for an https:// proxy the jail doesn't chain through
+  assertEquals(
+    upstreamByNameAdvice({ output: plain, denoJson: hostListed(), env: proxyEnv, version: RC5 }),
+    [],
+  );
+  const httpsProxy = (n: string) => n === "HTTPS_PROXY" ? "https://proxy.corp" : undefined;
+  assertEquals(
+    upstreamByNameAdvice({
+      output: plain,
+      denoJson: hostListed(),
+      env: httpsProxy,
+      version: UPSTREAM_BY_NAME_RELEASE,
+    }),
+    [],
+  );
+  // a host outside the allow-list is the list's problem, not the proxy's
+  const unlisted = "error: script 'postinstall' in 'puppeteer@24.1.0' failed with exit code 1\n" +
+    "jail-scripts: cdn.example.com:443 is not in this lifecycle script's network allow-list\n" +
+    "Error: fetch failed\n";
+  assertEquals(
+    upstreamByNameAdvice({
+      output: unlisted,
+      denoJson: hostListed(),
+      env: proxyEnv,
+      version: UPSTREAM_BY_NAME_RELEASE,
+    }),
+    [],
+  );
+  // the status form of the warning, and an IPv6 / bracketed host
+  const status = "jail-scripts: the upstream proxy (or the server) answered 400 to a request " +
+    "for [2001:db8::1]:443 by its checked address; …\n" +
+    "error: script 'install' in 'mirror-pkg@1.0.0' failed with exit code 1\n";
+  const v6 = upstreamByNameAdvice({
+    output: status,
+    denoJson: {
+      supplyChain: { jailScripts: { packages: { "mirror-pkg": { net: ["[2001:db8::1]"] } } } },
+    },
+  });
+  assertStringIncludes(v6.join("\n"), "mirror-pkg (2001:db8::1)");
+});
+
+Deno.test("doctor: the jail check suggests upstreamByName from an install log", async () => {
+  const { jailScriptsCheck } = await import("../src/cli/commands/doctor.ts");
+  const dir = await project({ "deno.json": hostListed(), "package.json": { dependencies: {} } });
+  try {
+    const check = await jailScriptsCheck(dir, { version: RC5, env: NO_ENV, installLog: PROXY_LOG });
+    assertEquals([check?.ok, check?.critical], [false, false]);
+    assertStringIncludes(check!.detail, "puppeteer@24.1.0's postinstall script failed");
+    assertStringIncludes(check!.detail, '"upstreamByName": true');
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify(hostListed({ upstreamByName: true })),
+    );
+    const set = await jailScriptsCheck(dir, { version: RC5, env: NO_ENV, installLog: PROXY_LOG });
+    assertFalse(set!.detail.includes("upstreamByName"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("doctor: the jail check flags a missing exception, then passes once it is written", async () => {
   const { jailScriptsCheck } = await import("../src/cli/commands/doctor.ts");
   const dir = await project({ "deno.json": "{}", "package.json": { dependencies: { re2: "1" } } });
   try {
-    const opts = { version: RC5, env: NO_ENV };
+    const opts = { version: RC5, env: NO_ENV, os: "linux" as const };
     const missing = await jailScriptsCheck(dir, opts);
     assertEquals([missing?.ok, missing?.critical], [false, false]);
     assertStringIncludes(missing!.detail, "re2 needs an exception");
     assertStringIncludes(missing!.detail, '{"supplyChain":{"jailScripts":{"packages":{"re2"');
     assertStringIncludes(missing!.detail, `on by default from runtime ${RC5}`);
     // before rc.5 it is a heads-up, not a failure
-    const pending = await jailScriptsCheck(dir, { version: RC3, env: NO_ENV });
+    const pending = await jailScriptsCheck(dir, { version: RC3, env: NO_ENV, os: "linux" });
     assertEquals(pending?.ok, true);
     assertStringIncludes(pending!.detail, "will need an exception");
     await applyJailExceptions(dir, opts);

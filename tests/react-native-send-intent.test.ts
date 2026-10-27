@@ -154,6 +154,7 @@ function javaPutExtras(): string {
 const STUBS: Record<string, string> = {
   "org/json/JSONObject.java": `package org.json;
 public class JSONObject {
+    public static final Object NULL = new Object();
     private final java.util.Map<String, Object> map;
     public JSONObject(java.util.Map<String, Object> map) { this.map = map; }
     public Object opt(String key) { return map.get(key); }
@@ -280,6 +281,8 @@ public class Intent {
   "android/content/Context.java": `package android.content;
 public class Context {
     public static final String NOTIFICATION_SERVICE = "notification";
+    public static final String KEYGUARD_SERVICE = "keyguard";
+    public static final int MODE_PRIVATE = 0;
     public static RuntimeException failure;
     public static android.app.NotificationManager notifications;
     public final java.util.List<String> started = new java.util.ArrayList<>();
@@ -291,10 +294,140 @@ public class Context {
         if (failure != null) throw failure;
         started.add(intent.action);
     }
+    public java.util.concurrent.Executor getMainExecutor() { return Runnable::run; }
+    public SharedPreferences getSharedPreferences(String name, int mode) { return null; }
 }
 `,
   "android/app/Activity.java": `package android.app;
-public class Activity extends android.content.Context {}
+public class Activity extends android.content.Context {
+    public void runOnUiThread(Runnable action) { action.run(); }
+}
+`,
+  // The biometric-gated secret store (AU6): compiled only, never run off Android.
+  "android/annotation/TargetApi.java": `package android.annotation;
+public @interface TargetApi { int value(); }
+`,
+  "android/app/KeyguardManager.java": `package android.app;
+public class KeyguardManager {
+    public boolean isDeviceSecure() { return false; }
+}
+`,
+  "android/content/DialogInterface.java": `package android.content;
+public interface DialogInterface {
+    interface OnClickListener { void onClick(DialogInterface dialog, int which); }
+}
+`,
+  "android/content/SharedPreferences.java": `package android.content;
+public interface SharedPreferences {
+    String getString(String key, String fallback);
+    Editor edit();
+    interface Editor {
+        Editor putString(String key, String value);
+        Editor remove(String key);
+        Editor clear();
+        boolean commit();
+    }
+}
+`,
+  "android/hardware/biometrics/BiometricManager.java": `package android.hardware.biometrics;
+public class BiometricManager {
+    public interface Authenticators {
+        int BIOMETRIC_STRONG = 0x000F;
+        int DEVICE_CREDENTIAL = 0x8000;
+    }
+}
+`,
+  // Only what the framework class makes public (androidx's ERROR_NEGATIVE_BUTTON is not there):
+  // a constant the real class lacks must fail to compile here too, as it does in Gradle.
+  "android/hardware/biometrics/BiometricPrompt.java": `package android.hardware.biometrics;
+public class BiometricPrompt {
+    public static final int BIOMETRIC_ERROR_HW_UNAVAILABLE = 1;
+    public static final int BIOMETRIC_ERROR_CANCELED = 5;
+    public static final int BIOMETRIC_ERROR_LOCKOUT = 7;
+    public static final int BIOMETRIC_ERROR_LOCKOUT_PERMANENT = 9;
+    public static final int BIOMETRIC_ERROR_USER_CANCELED = 10;
+    public static final int BIOMETRIC_ERROR_NO_BIOMETRICS = 11;
+    public static final int BIOMETRIC_ERROR_HW_NOT_PRESENT = 12;
+    public void authenticate(
+        CryptoObject crypto,
+        android.os.CancellationSignal cancel,
+        java.util.concurrent.Executor executor,
+        AuthenticationCallback callback
+    ) {}
+    public static class CryptoObject {
+        private final javax.crypto.Cipher cipher;
+        public CryptoObject(javax.crypto.Cipher cipher) { this.cipher = cipher; }
+        public javax.crypto.Cipher getCipher() { return cipher; }
+    }
+    public static class AuthenticationResult {
+        public CryptoObject getCryptoObject() { return null; }
+    }
+    public abstract static class AuthenticationCallback {
+        public void onAuthenticationSucceeded(AuthenticationResult result) {}
+        public void onAuthenticationError(int code, CharSequence message) {}
+    }
+    public static class Builder {
+        public Builder(android.content.Context context) {}
+        public Builder setTitle(CharSequence title) { return this; }
+        public Builder setSubtitle(CharSequence subtitle) { return this; }
+        public Builder setAllowedAuthenticators(int authenticators) { return this; }
+        public Builder setNegativeButton(
+            CharSequence text,
+            java.util.concurrent.Executor executor,
+            android.content.DialogInterface.OnClickListener listener
+        ) { return this; }
+        public BiometricPrompt build() { return new BiometricPrompt(); }
+    }
+}
+`,
+  "android/os/Build.java": `package android.os;
+public class Build {
+    public static class VERSION { public static final int SDK_INT = 35; }
+    public static class VERSION_CODES {
+        public static final int P = 28;
+        public static final int R = 30;
+    }
+}
+`,
+  "android/os/CancellationSignal.java": `package android.os;
+public class CancellationSignal {}
+`,
+  "android/security/keystore/KeyGenParameterSpec.java": `package android.security.keystore;
+public class KeyGenParameterSpec implements java.security.spec.AlgorithmParameterSpec {
+    public static class Builder {
+        public Builder(String alias, int purposes) {}
+        public Builder setKeySize(int size) { return this; }
+        public Builder setDigests(String... digests) { return this; }
+        public Builder setEncryptionPaddings(String... paddings) { return this; }
+        public Builder setUserAuthenticationRequired(boolean required) { return this; }
+        public Builder setInvalidatedByBiometricEnrollment(boolean invalidated) { return this; }
+        public Builder setUserAuthenticationParameters(int timeout, int type) { return this; }
+        public KeyGenParameterSpec build() { return new KeyGenParameterSpec(); }
+    }
+}
+`,
+  "android/security/keystore/KeyPermanentlyInvalidatedException.java":
+    `package android.security.keystore;
+public class KeyPermanentlyInvalidatedException extends java.security.InvalidKeyException {}
+`,
+  "android/security/keystore/KeyProperties.java": `package android.security.keystore;
+public final class KeyProperties {
+    public static final int PURPOSE_DECRYPT = 2;
+    public static final int AUTH_DEVICE_CREDENTIAL = 1;
+    public static final int AUTH_BIOMETRIC_STRONG = 2;
+    public static final String DIGEST_SHA256 = "SHA-256";
+    public static final String ENCRYPTION_PADDING_RSA_OAEP = "OAEPPadding";
+    public static final String KEY_ALGORITHM_RSA = "RSA";
+}
+`,
+  "android/util/Base64.java": `package android.util;
+public final class Base64 {
+    public static final int NO_WRAP = 2;
+    public static String encodeToString(byte[] bytes, int flags) {
+        return java.util.Base64.getEncoder().encodeToString(bytes);
+    }
+    public static byte[] decode(String text, int flags) { return java.util.Base64.getDecoder().decode(text); }
+}
 `,
   "android/os/Bundle.java": `package android.os;
 public class Bundle {
@@ -395,6 +528,11 @@ public class PluginCall {
     public String outcome = "pending";
     public PluginCall(String action) { this.action = action; }
     public String getString(String key) { return "action".equals(key) ? action : null; }
+    public String getString(String key, String fallback) {
+        String value = getString(key);
+        return value != null ? value : fallback;
+    }
+    public Boolean getBoolean(String key, Boolean fallback) { return fallback; }
     public JSArray getArray(String key, JSArray fallback) { return array != null ? array : fallback; }
     public void resolve() { outcome = "resolved"; }
     public void resolve(JSObject data) { outcome = "resolved " + data; }
@@ -572,6 +710,67 @@ public final class Harness {
         "no array: rejected invalid: notifications must be an array.",
         // An id that is not an integer, and an entry that is not an object, are skipped.
         "removed: resolved [7, FCM-Notification:1#0]",
+      ]);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
+  name: "DenextSettings (Android): BiometricPrompt errors map to BiometricError codes (compiled)",
+  ignore: IGNORE_WITHOUT_JDK,
+  async fn() {
+    requireJdk();
+    const dir = await Deno.makeTempDir({ prefix: "denext_biometric_code_" });
+    try {
+      for (const [path, text] of Object.entries(PLUGIN_STUBS)) {
+        await Deno.mkdir(join(dir, path, ".."), { recursive: true });
+        await Deno.writeTextFile(join(dir, path), text);
+      }
+      const plugin = join(dir, "dev/denext/settings", ANDROID_FILE);
+      await Deno.mkdir(join(plugin, ".."), { recursive: true });
+      await Deno.writeTextFile(plugin, SETTINGS_ANDROID_FILES[ANDROID_FILE]);
+      await Deno.writeTextFile(
+        join(dir, "dev/denext/settings/Harness.java"),
+        `package dev.denext.settings;
+public final class Harness {
+    public static void main(String[] args) {
+        // The framework's codes: CANCELED 5, LOCKOUT 7, LOCKOUT_PERMANENT 9, USER_CANCELED 10,
+        // NO_BIOMETRICS 11, HW_NOT_PRESENT 12, NEGATIVE_BUTTON 13 (hidden), NO_DEVICE_CREDENTIAL 14.
+        for (int code : new int[] { 1, 3, 5, 7, 9, 10, 11, 12, 13, 14 }) {
+            System.out.println(code + " " + DenextSettingsPlugin.biometricCode(code));
+        }
+    }
+}
+`,
+      );
+      const sources = [...Object.keys(PLUGIN_STUBS), `dev/denext/settings/${ANDROID_FILE}`]
+        .map((p) => join(dir, p));
+      sources.push(join(dir, "dev/denext/settings/Harness.java"));
+      const compile = await new Deno.Command("javac", {
+        args: ["-nowarn", "-d", join(dir, "classes"), ...sources],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert(compile.success, new TextDecoder().decode(compile.stderr));
+      const run = await new Deno.Command("java", {
+        args: ["-cp", join(dir, "classes"), "dev.denext.settings.Harness"],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert(run.success, new TextDecoder().decode(run.stderr));
+      assertEquals(new TextDecoder().decode(run.stdout).trim().split(/\r?\n/), [
+        "1 unavailable",
+        "3 failed",
+        "5 cancelled",
+        "7 lockout",
+        "9 lockout",
+        "10 cancelled",
+        "11 not-enrolled",
+        "12 unavailable",
+        "13 cancelled",
+        "14 passcode-not-set",
       ]);
     } finally {
       await Deno.remove(dir, { recursive: true });

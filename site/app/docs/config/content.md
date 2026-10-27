@@ -314,6 +314,16 @@ itself (it reads neither the config keys nor the env vars for them).
   (default 1 MiB), `concurrency` (default 4), `maxItemResponseBytes` (default
   4 MiB) and `maxTotalResponseBytes` (default 16 MiB). See
   [Typed API](/docs/typed-api).
+- **`start`** — `StartConfig` (`denext/server`). Settings of the production
+  server process rather than its request handler. `start.idleTrim` — `boolean`
+  (default `true`; env `DENEXT_IDLE_TRIM=0` turns it off too). Once the event
+  loop has gone a second without work, the server runs a full GC and then
+  `malloc_trim(0)`, handing the memory a load burst left behind back to the OS
+  (at most once per idle period, never twice within 10 s). On for
+  `denext start`, the `build --compile` binary and the generated Docker image /
+  systemd unit on denext's Deno from runtime 3.0.0-rc.5; never for `dev`, tests
+  or jobs; glibc Linux only. See
+  [Deployment targets › Idle memory trim](/docs/deployment-targets#idle-memory-trim).
 
 ```ts
 export default {
@@ -451,7 +461,8 @@ See [Writing a plugin](/docs/plugins).
 - **`appLinks`** — `AppLinksConfig`. The domain-association files for
   universal links (iOS) and App Links (Android): `denext start` and
   `denext dev` serve `/.well-known/apple-app-site-association` and
-  `/.well-known/assetlinks.json` from it, and `denext export` writes both. See
+  `/.well-known/assetlinks.json` from it, and `denext export` writes both.
+  `android` is one app or a list of apps (a debug and a release build, say). See
   [Mobile › Serving the association files](/docs/mobile#app-links).
 - **`cors`** (for an app's own origin such as `capacitor://localhost`) is under
   [Security](#security).

@@ -92,6 +92,8 @@ export interface ExportContext {
   readonly usesFormActions: boolean;
   /** Whether the app may write a route-pattern href (scan; the `__DENEXT_HREF_PARAMS__` define). */
   readonly usesHrefParams: boolean;
+  /** Whether the app may use Preact's `useErrorBoundary` (scan; `__DENEXT_HOOK_BOUNDARIES__`). */
+  readonly usesHookBoundaries: boolean;
   /**
    * The `global-error.tsx` hydration bundle URL, once `bundleExportGlobalError` wrote it (unset
    * when the app has no global-error.tsx).

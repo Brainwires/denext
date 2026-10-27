@@ -6,6 +6,7 @@
 // leaves what it does not touch alone, and running it again changes nothing.
 
 import { join } from "@std/path";
+import { assertInsideProject } from "./project-confine.ts";
 import {
   addEmbedPhase,
   addNativeTarget,
@@ -93,6 +94,7 @@ export function resolveAppGroup(pbxproj: string, flag: string | undefined): stri
 /** `path` created from `initial` when absent (its folder must exist); whether it exists now. */
 async function ensureFile(inst: Installer, path: string, initial: string): Promise<boolean> {
   if (await readText(path) !== undefined) return true;
+  await assertInsideProject(inst.opts.dir, path);
   try {
     await Deno.writeTextFile(path, initial, { createNew: true });
   } catch (err) {
@@ -319,6 +321,7 @@ export async function installExtensionTarget(
 ): Promise<void> {
   const root = inst.opts.dir;
   const folder = nativeJoin(root, "ios", "App", ext.name);
+  await assertInsideProject(root, folder);
   await Deno.mkdir(folder, { recursive: true });
   const displayName = await appDisplayName(root) ?? ext.name;
   await ensureFile(

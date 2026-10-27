@@ -2,7 +2,7 @@
 // `action.bind(null, …)` ride the reference id sealed with AES-GCM, and the endpoint runs the
 // action with them first. The browser can neither read nor change them: an edited, truncated or
 // forged token, a token moved to another action, and a token sealed under another key are all
-// an unknown action (404) — the handler never runs.
+// an unknown action (409, `x-denext-action: unknown`) — the handler never runs.
 
 import { assert, assertEquals, assertMatch, assertThrows } from "@std/assert";
 import { encodeBase64 } from "@std/encoding/base64";
@@ -98,7 +98,7 @@ Deno.test("a tampered, truncated or forged token is an unknown action; the handl
   const forged = encodeBase64Url(new Uint8Array(bytes.length).fill(7));
   for (const bad of [encodeBase64Url(flipped), encodeBase64Url(shortTag), forged, "", "%%%"]) {
     const res = await call(`${action}.${bad}`);
-    assertEquals(res.status, 404, `token ${bad.slice(0, 12)}…`);
+    assertEquals(res.status, 409, `token ${bad.slice(0, 12)}…`);
     assertEquals(res.body, { error: "unknown action" });
   }
   assertEquals(calls.length, 0);
@@ -109,7 +109,7 @@ Deno.test("a token sealed for one action never opens for another", async () => {
   const b = recorder("aBoundB");
   const token = bindInlineAction(a.ref, () => ["for-a"]).denextActionId.split(".")[1];
   const res = await call(`aBoundB.${token}`);
-  assertEquals(res.status, 404, "replayed on another action");
+  assertEquals(res.status, 409, "replayed on another action");
   assertEquals(b.calls.length, 0);
   assertEquals(openBoundValues("aBoundA", token), ["for-a"]);
   assertEquals(openBoundValues("aBoundB", token), null);

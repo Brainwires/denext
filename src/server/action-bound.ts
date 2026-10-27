@@ -37,12 +37,14 @@ import {
   unregisterServerReference,
 } from "../runtime/server-action.ts";
 import { processShared } from "../runtime/process-shared.ts";
+// The server mints salted action ids (installs the minter).
+import "./action-ids.ts";
 
 /** The environment variable that sets the key (Next.js's name is read too). */
 export const ACTIONS_KEY_ENV = "DENEXT_SERVER_ACTIONS_ENCRYPTION_KEY";
 const NEXT_ACTIONS_KEY_ENV = "NEXT_SERVER_ACTIONS_ENCRYPTION_KEY";
 
-/** Separates an action id from its bound values' token (absent from both alphabets). */
+/** Separates an action id from its bound values' token (absent from base64url and minted ids). */
 const BOUND_SEPARATOR = ".";
 /** The token format's version byte. */
 const VERSION = 1;
@@ -170,9 +172,13 @@ export function openBoundValues(actionId: string, token: string): unknown[] | nu
   }
 }
 
-/** A bound reference id split into its action id and token, or null for a plain id. */
+/**
+ * A bound reference id split into its action id and token, or null for a plain id. Split at the
+ * LAST separator: the token (base64url) never contains one, but an explicit action id may
+ * (`serverAction("posts.delete", …)`).
+ */
 function splitBoundId(id: string): { actionId: string; token: string } | null {
-  const at = id.indexOf(BOUND_SEPARATOR);
+  const at = id.lastIndexOf(BOUND_SEPARATOR);
   return at === -1 ? null : { actionId: id.slice(0, at), token: id.slice(at + 1) };
 }
 
@@ -278,7 +284,6 @@ setServerReferenceDecorator((fn, id) => decorate(fn, id, fn, () => []));
  * @param handler The hoisted function.
  * @param captures How many leading parameters are captured values (0: a plain action).
  */
-// fallow-ignore-next-line unused-export -- imported by the code the inline transform generates
 export function inlineServerReference(
   id: string,
   handler: Handler,

@@ -29,6 +29,11 @@ export interface ChildRun {
   readonly cwd?: string;
   /** How long the child may run before its tree is killed (default {@linkcode CHILD_DEADLINE_MS}). */
   readonly timeoutMs?: number;
+  /**
+   * `false` runs the child with `--no-lock`: a body that imports a module from a throwaway origin
+   * (a loopback server on a random port) must not record it in the checkout's `deno.lock`.
+   */
+  readonly lock?: false;
 }
 
 /** The default deadline of {@linkcode inChild}: minutes past the slowest healthy runner's time. */
@@ -72,6 +77,7 @@ export async function inChild<T = unknown>(run: ChildRun): Promise<ChildResult<T
       "-A",
       "--unstable-kv",
       ...(coverage ? [`--coverage=${resolve(coverage)}`] : []),
+      ...(run.lock === false ? ["--no-lock"] : []),
       "--config",
       fromFileUrl(new URL("deno.json", REPO)),
       main,

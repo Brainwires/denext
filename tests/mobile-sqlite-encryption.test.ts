@@ -27,7 +27,7 @@ interface FakeFile {
 }
 
 /** @capacitor-community/sqlite with encryption, over node:sqlite. */
-function cipherPlugin(options: { encryptionOff?: boolean } = {}) {
+function cipherPlugin(options: { encryptionOff?: boolean; failRekey?: boolean } = {}) {
   const files = new Map<string, FakeFile>();
   const conns = new Map<string, { mode: string; open: boolean }>();
   const calls: Array<[string, Any]> = [];
@@ -100,6 +100,18 @@ function cipherPlugin(options: { encryptionOff?: boolean } = {}) {
       conns.clear();
       return { result: o.passphrase === secret };
     }),
+    // Re-encrypts every encrypted file under the new passphrase, then stores it (as the plugin
+    // does: UtilsSecret.changeEncryptionSecret), closing every connection first.
+    changeEncryptionSecret: record("changeEncryptionSecret", (o) => {
+      off();
+      if (o.oldpassphrase !== secret) {
+        throw new Error("changeEncryptionSecret: wrong old passphrase");
+      }
+      conns.clear();
+      if (options.failRekey) throw new Error("changeEncryptionSecret: disk full");
+      for (const file of files.values()) if (file.key !== null) file.key = o.passphrase;
+      secret = o.passphrase;
+    }),
     isDatabaseEncrypted: record("isDatabaseEncrypted", (o) => {
       const file = files.get(o.database);
       if (!file) throw new Error("Database does not exist");
@@ -167,6 +179,10 @@ Deno.test({
       // A statement that only mentions a key is not a key pragma.
       await db.exec("CREATE TABLE kv (key TEXT); PRAGMA user_version = 3");
       assertEquals(await expo.getFirstAsync("PRAGMA user_version"), { user_version: 3 });
+      // No SQLCipher, so no rekey either.
+      const rekey = await assertRejects(() => db.rekey("pw"), SqliteEncryptionError);
+      assertEquals((rekey as SqliteEncryptionError).code, "ENCRYPTION_UNAVAILABLE");
+      await assertRejects(() => db.exec("PRAGMA rekey = 'pw'"), SqliteEncryptionError);
       await db.close();
     } finally {
       resetSqliteWorkerForTesting();
@@ -267,32 +283,44 @@ Deno.test("sqlite encryption (native): encryption off in capacitor.config is ENC
   });
 });
 
-Deno.test("sqlite encryption: rekey, hexkey and a key pragma that is not first are refused; nothing runs", async () => {
+Deno.test("sqlite encryption: hexkey and a key pragma that is not first are refused; nothing runs", async () => {
   const fake = cipherPlugin();
   await inShell(fake.plugin, async () => {
     const db = await openSqlite("r.db");
     for (
       const sql of [
-        "PRAGMA rekey = 'new'",
         "PRAGMA hexkey = '00ff'",
         "PRAGMA main.textkey = 'x'",
         "PRAGMA key = x'00ff'",
         "CREATE TABLE early (v); PRAGMA key = 'pw'",
         "PRAGMA key = 'a'; PRAGMA key = 'b'",
         // A quoted pragma name is the same pragma to SQLite: never a way past the rule.
-        `PRAGMA "rekey" = 'new'`,
-        "PRAGMA [rekey] = 'new'",
         "PRAGMA 'hexkey' = '00ff'",
         "PRAGMA `textrekey` = 'x'",
-        `PRAGMA "main"."rekey" = 'x'`,
-        "PRAGMA [main] . [rekey] = 'x'",
-        "PRAGMA/**/rekey = 'x'",
+        "PRAGMA rekey = x'00ff'",
+        "PRAGMA rekey = 'a'; PRAGMA key = 'b'",
+        "CREATE TABLE early3 (v); PRAGMA rekey = 'x'",
         `CREATE TABLE early2 (v); PRAGMA "key" = 'pw'`,
       ]
     ) {
       const err = await assertRejects(() => db.exec(sql), SqliteEncryptionError, "", sql);
       assertEquals((err as SqliteEncryptionError).code, "UNSUPPORTED", sql);
     }
+    // PRAGMA rekey in any spelling is the rekey: refused on a database that was never keyed.
+    for (
+      const sql of [
+        "PRAGMA rekey = 'new'",
+        `PRAGMA "rekey" = 'new'`,
+        "PRAGMA [rekey] = 'new'",
+        `PRAGMA "main"."rekey" = 'x'`,
+        "PRAGMA [main] . [rekey] = 'x'",
+        "PRAGMA/**/rekey = 'x'",
+      ]
+    ) {
+      const err = await assertRejects(() => db.exec(sql), SqliteEncryptionError, "", sql);
+      assertEquals((err as SqliteEncryptionError).code, "KEY_REQUIRED", sql);
+    }
+    assert(!fake.calls.some(([n]) => n === "changeEncryptionSecret"));
     assertEquals(await db.query("SELECT name FROM sqlite_master"), [], "nothing ran");
     assert(!fake.calls.some(([n]) => n === "setEncryptionSecret"));
     await assertRejects(() => openSqlite("x.db", { encryptionKey: "" }), TypeError);
@@ -307,4 +335,95 @@ Deno.test("sqlite encryption (native): a plugin without the encryption methods r
     const err = await assertRejects(() => db.exec("PRAGMA key = 'pw'"), SqliteEncryptionError);
     assertEquals((err as SqliteEncryptionError).code, "ENCRYPTION_UNAVAILABLE");
   });
+});
+
+// ---- rekey --------------------------------------------------------------------------------
+
+Deno.test("sqlite rekey (native): every encrypted database moves to the new passphrase", async () => {
+  const fake = cipherPlugin();
+  await inShell(fake.plugin, async () => {
+    const plain = await openSqlite("plain.db");
+    await plain.exec("CREATE TABLE p (v TEXT); INSERT INTO p VALUES ('p')");
+    const other = await openSqlite("other.db", { encryptionKey: "one" });
+    await other.exec("CREATE TABLE o (v TEXT); INSERT INTO o VALUES ('o')");
+    const db = await openSqlite("vault.db", { encryptionKey: "one" });
+    await db.exec("CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('secret')");
+    await db.rekey("two");
+    // The handle reconnected under the new passphrase; the others reconnect by themselves.
+    assertEquals(await db.query("SELECT v FROM t"), [{ v: "secret" }]);
+    assertEquals(await other.query("SELECT v FROM o"), [{ v: "o" }]);
+    assertEquals(await plain.query("SELECT v FROM p"), [{ v: "p" }]);
+    await db.rekey("two"); // the same passphrase: nothing to do
+  });
+  assertEquals(fake.secret(), "two");
+  assertEquals(fake.files.get("vault")!.key, "two");
+  assertEquals(fake.files.get("other")!.key, "two", "the plugin keeps one passphrase");
+  assertEquals(fake.files.get("plain")!.key, null, "a plain database stays plain");
+  const changes = fake.calls.filter(([n]) => n === "changeEncryptionSecret").map(([, o]) => o);
+  assertEquals(changes, [{ passphrase: "two", oldpassphrase: "one" }]);
+  // The next launch opens with the new passphrase only.
+  await inShell(fake.plugin, async () => {
+    const err = await assertRejects(
+      () => openSqlite("vault.db", { encryptionKey: "one" }),
+      SqliteEncryptionError,
+    );
+    assertEquals((err as SqliteEncryptionError).code, "WRONG_KEY");
+    const db = await openSqlite("vault.db", { encryptionKey: "two" });
+    assertEquals(await db.query("SELECT v FROM t"), [{ v: "secret" }]);
+  });
+});
+
+Deno.test("sqlite rekey (native): expo-sqlite's PRAGMA rekey after PRAGMA key", async () => {
+  const fake = cipherPlugin();
+  await inShell(fake.plugin, async () => {
+    const db = await SQLite.openDatabaseAsync("app.db");
+    await db.execAsync("PRAGMA key = 'old'; CREATE TABLE t (v TEXT)");
+    await db.execAsync("PRAGMA rekey = 'n''ew'; INSERT INTO t VALUES ('x')");
+    assertEquals(await db.getAllAsync("SELECT v FROM t"), [{ v: "x" }]);
+  });
+  assertEquals(fake.secret(), "n'ew");
+  assertEquals(fake.files.get("app")!.key, "n'ew");
+});
+
+Deno.test("sqlite rekey (native): refusals change nothing", async () => {
+  const fake = cipherPlugin();
+  await inShell(fake.plugin, async () => {
+    const db = await openSqlite("vault.db", { encryptionKey: "one" });
+    await db.exec("CREATE TABLE t (v TEXT)");
+    // Inside a transaction.
+    await db.exec("BEGIN");
+    const inTx = await assertRejects(() => db.rekey("two"), SqliteEncryptionError);
+    assertEquals((inTx as SqliteEncryptionError).code, "UNSUPPORTED");
+    await db.exec("ROLLBACK");
+    // Not a passphrase.
+    await assertRejects(() => db.rekey(""), TypeError);
+    // A database not keyed on this page.
+    const plain = await openSqlite("plain.db");
+    const unkeyed = await assertRejects(() => plain.rekey("two"), SqliteEncryptionError);
+    assertEquals((unkeyed as SqliteEncryptionError).code, "KEY_REQUIRED");
+  });
+  assertEquals(fake.secret(), "one");
+  assert(!fake.calls.some(([n]) => n === "changeEncryptionSecret"));
+  // A plugin too old to change its passphrase.
+  const older = cipherPlugin();
+  const { changeEncryptionSecret: _, ...withoutChange } = older.plugin;
+  await inShell(withoutChange, async () => {
+    const db = await openSqlite("vault.db", { encryptionKey: "one" });
+    const err = await assertRejects(() => db.rekey("two"), SqliteEncryptionError);
+    assertEquals((err as SqliteEncryptionError).code, "ENCRYPTION_UNAVAILABLE");
+  });
+  assertEquals(older.secret(), "one");
+});
+
+Deno.test("sqlite rekey (native): a failed rekey keeps the old passphrase working", async () => {
+  const fake = cipherPlugin({ failRekey: true });
+  await inShell(fake.plugin, async () => {
+    const db = await openSqlite("vault.db", { encryptionKey: "one" });
+    await db.exec("CREATE TABLE t (v TEXT); INSERT INTO t VALUES ('kept')");
+    await assertRejects(() => db.rekey("two"), Error, "disk full");
+    // The plugin closed the connection; the handle reconnects under the old passphrase.
+    assertEquals(await db.query("SELECT v FROM t"), [{ v: "kept" }]);
+  });
+  assertEquals(fake.secret(), "one");
+  assertEquals(fake.files.get("vault")!.key, "one");
 });

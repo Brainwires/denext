@@ -18,7 +18,7 @@ the work is in configuration and validating the edges.
 > [!NOTE]
 > This is the Next.js guide. `denext migrate` also converts other sources, each with its own
 > guide: [Remix and React Router v7](/docs/migrating-remix),
-> [Fresh](/docs/migrating-fresh), [Preact](/docs/migrating-preact),
+> [Fresh](/docs/migrating-fresh), [Preact](/docs/migrating-preact), [Lustre](/docs/migrating-lustre),
 > [TanStack Start](/docs/tanstack-start), [Expo and React Native](/docs/coming-from-react-native),
 > and a Vite, CRA or generic React SPA (§3b below).
 
@@ -273,6 +273,12 @@ A **Preact** app (Vite with `@preact/preset-vite`, preact-cli, WMR or esbuild) t
 with Preact, preact-iso and Preact Signals pointed at denext. See
 [Migrating from Preact](/docs/migrating-preact) and [Preact Signals](/docs/signals).
 
+### Lustre
+
+A **Lustre** app (Gleam, JavaScript target, built with lustre_dev_tools) keeps its Gleam source as
+it is: the `gleam()` plugin compiles it and a page mounts its `main` as an island. See
+[Migrating from Lustre](/docs/migrating-lustre).
+
 ---
 
 ## 3c. Adding an iOS / Android target (`--enable-capacitor`)
@@ -327,6 +333,13 @@ backend, and for an App Router app its route handlers and Server Actions (they
 need a server) and `denext mobile add export-routes`. `denext migrate --check
 --enable-capacitor` shows all of it, the files and the commands, without writing
 or running anything.
+
+**Hosted mode.** A kept Capacitor config that loads a hosted `server.url` (the shell shows a
+remote site instead of the bundled export) gets `plugins.DenextBridge.frameGuard: false`
+written into it, and a review item: the native bridge accepts plugin calls only from the app's
+own origin by default ([the bridge's origin guard](/docs/mobile#bridge-origin-guard)), and the
+hosted page would lose its plugins. Narrow it afterwards by listing the hosted origin in
+`plugins.DenextBridge.allowedOrigins` and removing `frameGuard: false`.
 
 ---
 
@@ -442,6 +455,12 @@ Loading proves module init; still smoke-test any SDK that opens raw sockets
 - **Crypto/auth** — `jose`, `bcryptjs`, WebAuthn load cleanly.
 - **Env/secrets** — use `Deno.env`; environment variables and CLI flags are
   trusted inputs.
+- **Files beside a module** — in a drop-in, each of the app's own server modules
+  keeps its source file's `import.meta.url` (`.filename`, `.dirname`,
+  `.resolve` too), as in Next.js, so a route that reads a file beside itself
+  (`fs.readFile(new URL("./Inter-SemiBold.ttf", import.meta.url))` for an OG
+  image) works under `denext start`, in a container image and in a
+  `build --compile` binary.
 
 ---
 

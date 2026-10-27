@@ -171,6 +171,12 @@ internal design choice with no observable difference lives in
   so the form posts to `/_denext/action/<id>.<token>`. Large bound values make a long URL: keep
   them small (an id, not a record). `action.bind` values are encrypted too, and a value must be
   one the wire codec carries (no functions, class instances or other actions).
+- **Server Action ids change with every build** unless `DENEXT_ACTION_ID_SECRET` is set (16+
+  characters, one value for every build and instance). An open page from the previous build gets
+  the unknown-action answer (404), as an expired Next.js action does, and a `"use server"` export
+  that no module imports is not callable in `denext build` / `start` (`denext build` lists them;
+  `denext dev` keeps them callable with a warning). See
+  [Server Actions › Action ids](https://denext.dev/docs/server-actions#action-ids-and-which-actions-are-exposed).
 - **Config `rewrites` have one phase.** Next distinguishes `beforeFiles` /
   `afterFiles` / `fallback` rewrites; denext runs its single `rewrites` list after
   middleware and before the filesystem (Next's `beforeFiles` position). Middleware
@@ -521,9 +527,6 @@ from TypeScript 7.0's compiler rather than `tsc` 6:
   printed `"light" | "dark"`, so a "use one of" suggestion lists them in that order.
 - TypeScript 7.0.2 rejects a regular expression character-class range bounded by a literal
   (unescaped) character above U+07FF with TS1516; write the escape (`\uD7FF`) instead.
-- An unresolved bare import reads `Cannot find module 'zod' or its corresponding type
-  declarations` (TS2307) without Deno's `deno add` hint; the explanation names the package to add
-  either way.
 - `import x = require("m")` in an ES module is an error (TS1202), which the in-process checker let
   through.
 - In a `tsconfig.json`, an option TypeScript 7 removed (`baseUrl`, `"moduleResolution": "node"`,
@@ -569,9 +572,10 @@ opt-in — documented, not surprises. Full checklist in [the deployment guide](h
   on upgrade). Opt in with `hostPrefix: true` on `getSession`.
 - **`denextAuth` sessions are stateless by default.** With an adapter they are still ended
   early per user (`revokeAllSessions`, a password reset, a ban: the user's
-  `sessionsValidAfter`); to revoke one device's session (`revokeSession`), opt in to
-  server-side sessions with `sessionStore` (`inMemorySessionStore()` / `sqliteSessionStore()`
-  or your own). **Configuring an `AuthAdapter` does not change
+  `sessionsValidAfter`); to revoke one device's session (`revokeSession`), use an adapter that
+  keeps the revocation list (`sqliteAuthAdapter`, `postgresAuthAdapter`, `backendAuthAdapter`)
+  or opt in to server-side sessions with `sessionStore` (`inMemorySessionStore()` /
+  `sqliteSessionStore()` or your own). **Configuring any other `AuthAdapter` does not change
   this** — an adapter is a persistence port (users, accounts, tokens), not a session
   mechanism; `session: { strategy: "database" }` is the switch.
 - **Multi-tenant Microsoft Entra ignores an unverified address.** Auth.js's Microsoft Entra

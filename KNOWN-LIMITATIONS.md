@@ -21,10 +21,15 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **Async `startTransition` is scoped by a time window by default.** Browsers have no
   `AsyncContext`, so an unrelated urgent update raised outside an event handler while an async
   transition is pending is treated as a transition. `asyncContext: true` scopes by identity (it
-  instruments every client `await`; `yield*` delegation and top-level `await` are not).
-- **`captureOwnerStack()` follows the JSX owner only for `jsxDEV` elements:** an element made with
-  `h()` / `createElement` records no owner, so its stack is the render-parent chain, and during
-  a server render it returns `null`.
+  instruments every client `await`, async generator `yield` / `yield*` and top-level `await`).
+  An async generator resumed by `throw()` / `return()` at a plain `yield` runs its `catch` /
+  `finally` in the caller's context, not its own, and a module whose top-level evaluation throws
+  leaves its context current.
+- **`captureOwnerStack()` returns `null` during a server render**, and an element made with
+  `h()` / `createElement` gets its owner when a render returns it (the component whose render
+  result first holds it), not when it is made: one built outside any render (a module-level
+  constant) is owned by the first component that returns it, where React gives it none, and its
+  frame carries no JSX call site.
 - **A native App Router or SPA build leaves out three runtimes the app's own sources never name**
   (on denext's Deno toolchain, whose `deno bundle` takes `--define`): the clearing of `next/image`
   blur placeholders in server-only trees (kept when a source names `blurDataURL` or a
@@ -96,11 +101,25 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   keeps TypeScript 6 whatever the setting says, and a `deno.unstable` list in
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
+- **Runtime 3.0.0-rc.5's type-check leaves `.deno/npm-compat` in the project root.** It holds
+  an npm-shaped copy of the `@jsr/*` packages, their `_test.ts` files included, and a later
+  `deno test` with default discovery would run those. A `denext create` project's `deno.json`
+  excludes `.deno/` (top-level `exclude`), as denext's own does; an older project adds
+  `"exclude": [".deno/"]` itself. A runtime issue, to be fixed in rc.6 or later by keeping the
+  copy out of the project.
 - **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
   `denext start` begins its graceful shutdown on those events too, but Windows ends a console
   process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
   the `services/` stop and `onShutdown()` don't get to finish. Stop a server with Ctrl-C or
   Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully.
+- **The production server's idle memory trim is glibc Linux only, and a trim can delay one
+  request.** On macOS, Windows and musl (Alpine) the runtime ignores the switch. The trim runs
+  between event loop polls, so a request that arrives while one runs waits for it once (up to about
+  240 ms on a large app after a load burst; 8-20 ms on a small handler). It needs denext's Deno
+  from runtime 3.0.0-rc.5, so stock Deno never gets it, and `denext task start` (straight on the
+  toolchain) gets it only with `DENO_UNSTABLE_IDLE_TRIM=1` in its environment.
+  `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0` turns it off. See
+  [Deployment targets › Idle memory trim](https://denext.dev/docs/deployment-targets#idle-memory-trim).
 - **A plain `deno task` runs a task's `deno` steps on the Deno that started it** (stock Deno);
   `denext task` is what puts the toolchain inside a task.
 
@@ -113,10 +132,10 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `denext build` / `export`; otherwise (and in `denext dev` and a next-compat drop-in) it stays in
   the page bundle. A module-level `hydrate` default is not read (only the usage-site directive). A
   class or `lazy()` component renders eagerly; when split, it holds the page's hydration until its
-  chunk lands, and a `useId` below it may differ from the server's. An `on*Capture` handler in a
-  `client:interaction` island misses the event that woke it. While a split island's chunk loads,
-  the gesture is held at its wrapper and replayed: a capture-phase listener above the island sees
-  it twice. `client:only` skips SSR by definition.
+  chunk lands (inside a Suspense boundary, the boundary renders it on the client instead). Events
+  held while a split island's chunk loads replay as synthetic copies (`isTrusted` false), and a
+  held `submit` that nothing cancels submits its form without its submitter. A listener on
+  `window` itself sees a held event twice. `client:only` skips SSR by definition.
 - **In SPA mode the directives defer the mount, not hydration.** There is no server HTML to keep
   inert, so the directives defer the component's mount and split its code instead. A module-level
   `hydrate` default is read only from a module imported by a relative path (not through an
@@ -181,7 +200,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `sessionsValidAfter` (set by `revokeAllSessions`, a password reset or change, a ban, a deletion
   and the pre-account-hijacking eviction) lives on the stored user, so with no adapter there is
   nothing to read. It is compared to the second: a session signed in during the very second it
-  is set survives it. `revokeSession(id)` (one device) needs a `sessionStore`.
+  is set survives it. `revokeSession(id)` (one device) needs a `sessionStore` or an adapter with
+  the revocation list (`sqliteAuthAdapter`, `postgresAuthAdapter`, `backendAuthAdapter`;
+  `inMemoryAuthAdapter` for one process). Once an app has revoked a stateless session by id, every
+  stateless read makes one indexed lookup on that list; while the adapter can't answer, a session
+  reads as it last did within 60 seconds, else as signed out, and `/_denext/health` reports
+  `auth-revocation: "down"`. A revocation lives the larger of `session.maxLifetime` and 400 days:
+  raising the lifetime past 400 days after a revocation doesn't extend it.
 - **Sliding refresh needs a `Response` being produced** (`/session`, `requireAuth()`,
   `requireSession()`; a streamed component's headers have flushed). A store without `update`
   never slides.
@@ -190,21 +215,20 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   zero remaining; rate limiters count per node without a shared
   `rateLimit.store`, and every per-IP budget (the captcha budget included) is skipped for a
   loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
-- **An Android `apk-key-hash` passkey origin can't call the passkey endpoints:** a native app has
-  no web origin for `passkeys.corsOrigins`, so it needs endpoints of its own.
-- **Passkeys verify `none`, `packed`, `tpm`, `android-key`, `apple` and `fido-u2f`
-  attestation** (`android-safetynet` and `compound` register only as unattested, under
-  `attestation.mds.allowUnattested`), and ES256 / RS256 / Ed25519 credential keys only. The
-  Metadata Service checks use CRLs, not OCSP.
-- **Fixed profiles:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator supports); an
-  email local part must be ASCII.
+- **Native passkey rows sign in usernameless only:** `/native/passkey/*` has no step-up of a
+  pending native sign-in with a passkey (a code at `/native/mfa` finishes it), and no list or
+  delete rows (the cookie `/passkeys` rows, or `listPasskeys` / `deletePasskey` on the server).
+- **Passkeys accept ES256 / RS256 / Ed25519 credential keys only** (every WebAuthn L3
+  attestation format is verified, `android-safetynet` and `compound` included). Revocation of the
+  Metadata Service paths (OCSP, then CRL) fails closed by default, so an unreachable responder and
+  CRL block registration; `attestation.revocation: "soft"` (the default with an offline `blob`)
+  lets it through instead.
+- **Fixed profiles, by design:** TOTP is SHA-1 / 6 digits / 30 s (what every authenticator
+  supports), and an email local part must be ASCII. Both are kept on purpose, not planned to change.
 - **Native sessions:** Apple token revocation needs `native.apple.clientSecret`.
 - **`cors` lets a cross-origin caller into Server Actions, the API batch and Live only without
   cookies** (those keep the same-origin rule, or `allowedOrigins`), and a cross-origin Live socket
   needs `canonicalOrigin`; middleware must let `OPTIONS` under `/auth` through.
-- **SAML Single Logout with stateless sessions ends every session of the user:** a cookie session
-  has no id, so an IdP's LogoutRequest naming one SessionIndex ends all of that user's sessions
-  signed in before it (a `sessionStore` ends exactly the named one).
 
 ### `next-auth` (Auth.js v5 and NextAuth.js v4) compat
 
@@ -260,13 +284,18 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   (`rest.rateLimit`) counts per process when neither it nor `denextAuth`'s `rateLimit` names a
   shared `store`.
 - **Realtime re-reads every change as each subscriber.** With the default LISTEN/NOTIFY source the
-  trigger sends only the key, so every change costs a re-read per identity and filter; many
-  concurrent writers serialize on commit (the logical-replication source
-  avoids that, but needs `wal_level = logical` and a `REPLICATION` role); and a change sent while
-  the listener reconnects is lost (every subscriber is told to re-read). A delete, or an update out of view, reaches only a subscription
-  that tracked the key — at most `maxTrackedKeys` (default 10 000) per subscription. Subscriptions
-  are capped per identity and per instance; behind a reverse proxy without
-  `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per address.
+  trigger sends only the key, so every burst costs one re-read per distinct role and claims (a
+  user's sessions each carry their own `session_id`, so two devices are two re-reads); many
+  concurrent writers serialize on commit (the logical-replication source avoids that, but needs
+  `wal_level = logical` and a `REPLICATION` role); and a change sent while the database listener
+  reconnects is lost (every subscriber is told to re-read). A browser's reconnect is replayed only
+  from the instance that held its subscription, within `replay.retentionSeconds` and
+  `replay.maxChangesPerTable`: without sticky sessions, or past either, the subscriber re-reads.
+  Supabase's `postgres_changes` has no replay, as on Supabase. A delete, or an update out of view,
+  reaches only a subscription that tracked the key — at most `maxTrackedKeys` (default 10 000) per
+  subscription. Subscriptions are capped per identity and per instance; behind a reverse proxy
+  without `trustForwardedHeaders`, signed-out visitors are counted per Live connection, not per
+  address.
 - **Storage's SQL policies need `storage: { rls: true }`** (otherwise a bucket's `authorize` in
   TypeScript decides, with no `storage` schema to join against). A signed upload without a
   `size` is not length-pinned at the store (S3 has no length range for a presigned `PUT`), so
@@ -286,11 +315,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   instead. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
   `build` and `export` stay on the CLI.
-- **A Deno workspace lists its members one by one for an app to import them by name.** The client
-  bundler's loader can't expand a glob member (`packages/*`), so an app named by one builds on its
-  own config and its siblings' names don't resolve (`denext create --monorepo` lists them). A
-  package's own import map applies to its files as a scope, except in a server copy `denext dev`
-  writes after an edit there, which resolves through the app's map.
+- **A workspace glob member expands one level.** `"./apps/*"` names the folders directly under
+  `apps/`; a deeper or mid-path glob (`packages/**`, `apps/*/web`) names nothing to denext, so an
+  app it covers builds on its own config and its siblings' names don't resolve. List such members
+  one by one. A package's own import map applies to its files as a scope, except in a server copy
+  `denext dev` writes after an edit there, which resolves through the app's map.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
@@ -316,8 +345,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   them; an inline element (`<b>`, `<span>`, …) is closed at the end of the paragraph, heading,
   cell or item it was written in. Use an `.mdx` entry for components.
 - **`denext ui`'s compose editor owns a closed set of fields** (services, image, restart, build,
-  ports, volumes, environment, depends_on, networks); the rest is hand-edited, a multi-document
-  file is read-only, and a merge-key (`<<`) field can be overridden, not deleted. A third-party
+  the plain-text settings `container_name`, `hostname`, `working_dir`, `user`, `platform`,
+  `stop_signal` and `stop_grace_period`, ports, volumes, environment, depends_on, networks); the
+  rest (`command`, `healthcheck`, `labels`, …) is hand-edited, and a multi-document file is
+  read-only. A field a merge key (`<<`) supplies can be overridden, not deleted: Compose itself
+  can't drop a merged value for one service (`!reset` leaves it in place). A third-party
   plugin's form needs a published `denext.catalog.optionsSchema`; code-valued options are
   read-only.
 
@@ -328,32 +360,60 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   mapped, but a value built from a top-level declaration of the server file or a middleware's local
   variable, a request field with no Fetch equivalent, and `req` / `res` passed on whole are left as
   located notes. A session the old server's store held does not carry over, `cspNonce` is
-  `undefined` (denext's CSP is hash-based), and the synthesized `ServerBuild` is flat.
+  `undefined` (denext's CSP is hash-based), and the synthesized `ServerBuild` is flat. A
+  `getLoadContext` that returns a `RouterContextProvider` keeps the `context.set(key, value)` calls
+  whose value carries over; one passing `req` / `res` on (an `expressContext`) is a note.
+- **React Router route `middleware` on a page render runs ahead of the loaders, not around the
+  render.** There is no single handler to wrap, so `next()` resolves at once to a stand-in
+  response (headers set on it reach the page; another `Response` answers like a thrown one), code
+  after `next()` runs before the loaders, and a parent route's loader may run before a child
+  route's middleware. On a resource route and a plain POST to a page's action `next()` runs the
+  real handler. `clientMiddleware` does not run.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
-- **Prisma auto-migration wires SQLite, Postgres (CockroachDB too) and MySQL only:** a
-  `sqlserver` or `mongodb` datasource keeps its `new PrismaClient()` unwired (SQL Server takes
-  `@prisma/adapter-mssql` by hand; Prisma 6 has no MongoDB driver adapter). SQLite and Postgres
+- **Prisma auto-migration wires SQLite, Postgres (CockroachDB too), MySQL and SQL Server only:**
+  a `mongodb` datasource keeps its `new PrismaClient()` unwired (Prisma 6 has no MongoDB driver
+  adapter). SQL Server's `@prisma/adapter-mssql` (over npm `mssql`) is wired and unit-tested but
+  not yet run against a live SQL Server. SQLite and Postgres
   run over `Deno.SQL` (`denext/prisma-adapter`, no npm driver) only on denext's Deno runtime
   3.0.0-rc.1 or later; on an earlier runtime migrate wires Prisma's npm adapters
   (`@prisma/adapter-better-sqlite3` with its `links` shim, `@prisma/adapter-pg`), and CockroachDB
   and MySQL always take theirs.
 - **`denext/prisma-adapter` reads no `interval`, range, composite or geometric Postgres column**
-  (Prisma's `UnsupportedNativeDataType`; cast it to `text` in a raw query), and reads `money` with
-  two fractional digits (`lc_monetary` `C` / `en_US`).
+  (Prisma's `UnsupportedNativeDataType`; cast it to `text` in a raw query). `money` is read at
+  the fractional digits of `lc_monetary` as the first `money` result found it: a session that
+  changes `lc_monetary` later (`SET lc_monetary`) keeps the client's first answer.
 
 ### Fresh and Preact
 
-- **Fresh:** Partials (`<Partial>`, `f-client-nav`) render their children and navigate as full
-  pages; `ctx.isPartial` is always `false`. `main.ts`'s `appWrapper` / `layout` / `onError` /
-  `notFound` / `route` / `mountApp` / `islands` calls, Fresh and Vite plugins and `fresh({…})`
-  options are not run, `csp()` is a no-op (denext's own CSP applies) and Vite's
-  `import.meta.env` is not defined. `denext migrate --check` lists each one it finds
+- **Fresh:** partial navigation swaps the `<Partial>` regions without Fresh's View Transitions
+  wrapper (`f-view-transition`) and takes only the answer's `<title>` from its head; browser
+  back / forward re-renders the whole page (a region's `append` / `prepend` history is not
+  replayed). `main.ts`'s `app.islands()`, Fresh and Vite plugins and `fresh({…})` options are not
+  run; `app.layout()` layouts wrap the pages inside the `_app` wrapper and outside the `_layout`
+  files, and `app.onError()` answers the errors a handler or middleware raises (an error while a
+  page component renders goes to the route's `_error` page). An `app.notFound()` middleware's
+  Response body renders as the not-found page's text, at its status, so the static files in
+  `public/` still answer first. `csp({ useNonce: true })` leaves out `'unsafe-inline'` (denext
+  allows its own inline styles by hash and runs no inline script), and `import.meta.env.PROD` is
+  true under `denext start`, where the source runs in place rather than from Vite's build output.
+  `denext migrate --check` lists each one it finds
   ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)).
-- **Preact:** `useErrorBoundary`, `preact-render-to-string`, Preact's `options` hooks and
-  `@preact/signals`' `useSignalRef` / `createModel` are not provided. `denext/preact-iso`'s
-  `Router` renders nothing while a `lazy()` route loads (preact-iso keeps the previous route) and
-  never calls `onLoadStart`; its `hydrate` renders on the client. A migrated Preact app runs as a
-  SPA, so preset-vite's `prerender` does not carry over.
+- **Preact:** `@preact/signals`' `useSignalRef` / `createModel` / `useModel` are not provided, and
+  its `signal` / `computed` / `effect` (and hook forms) take no options argument.
+  `denext/preact/compat` lacks `createFactory`, `findDOMNode`, `isFragment`, `isMemo` and
+  `unmountComponentAtNode`, and its `render` / `hydrate` / `flushSync` take no callback;
+  `denext/preact/jsx-runtime` lacks Deno's precompiled-JSX helpers (`jsxTemplate`, `jsxAttr`,
+  `jsxEscape`), so `"jsx": "precompile"` needs `react-jsx`. (The parity gate lists each in
+  `tests/fixtures/react-parity-known-gaps.json`.) Of Preact's `options` hooks denext calls
+  `vnode`, `event` and `useDebugValue` (for elements the Preact entry points create); `diffed`,
+  `unmount`, `debounceRendering`, `requestAnimationFrame` and the internal hooks are never called,
+  so `preact/debug` / `preact/devtools` are empty modules. `useErrorBoundary` never catches during
+  a server render, and a production build compiles its boundary support in only when the app's
+  own sources name `useErrorBoundary` or import preact-iso (a Preact library that calls the hook
+  needs the app to name it once). `denext/preact/render-to-string` keeps denext's attribute order and hyphenated SVG attributes, ignores the legacy `context` argument,
+  and `renderToReadableStream` sends the whole document once resolved (no fallback-first
+  streaming); `preact-render-to-string/jsx` and `/stream-node` are not mapped. A migrated Preact
+  app runs as a SPA, so preset-vite's `prerender` does not carry over.
 - **`denext/signals` re-renders the component that read a signal**, where Preact patches the text
   node in place; a signal bound to a DOM prop needs Preact's JSX runtime
   (`jsxImportSource: "preact"`).
@@ -410,8 +470,9 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   yet run on a device in the background. Android's WorkManager stops a job after about ten
   minutes: a download resumes from its `.part` file on the next run, an upload starts over; uploads
   cannot pause anywhere. iOS may defer a background transfer started while the app is already in
-  the background. On the web a transfer lasts as long as the page, and a Deno Desktop download
-  cannot pause (`pauseFileTransfer` rejects `unsupported`; cancel it and start it again).
+  the background. On the web a transfer lasts as long as the page. A Deno Desktop download
+  pauses and resumes, but `fileTransfers()` lists only the ones this page started: after a
+  restart, download the same URL to the same file again to continue its kept partial file.
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame
@@ -421,7 +482,24 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
 - **OTA updates can't change what the app is** (Apple DPLA 3.3.1(B)); the signing key is in the
   binary, so rotating it takes a store release; the fingerprint gate can't see native code pulled
   in from outside `ios/`, `android/` and the declared plugins; an iOS web-content crash during a
-  trial is reloaded by Capacitor, not the plugin.
+  trial is reloaded by Capacitor, not the plugin. A signed manifest expires (30 days by default):
+  a release left unsigned past that is refused (`expired`) until it is re-signed, and the expiry
+  is checked against the device clock. Unsigned updates from loopback work only in a debug build.
+- **The native bridge answers only the app's own origin:** a page reached through
+  `server.allowNavigation` or a hosted `server.url` (in a release build) cannot call plugins
+  unless `plugins.DenextBridge.allowedOrigins` lists its exact origin (no wildcards) or
+  `frameGuard: false` turns the check off. On Android the guard finds Capacitor's private
+  `MessageHandler` by its type; if a future Capacitor changes that, the guard logs it and the
+  bridge keeps Capacitor's own origin rules. Plugin responses then go back through
+  `evaluateJavascript` (Capacitor's fallback path).
+- **`openAuthSession` needs PKCE** (S256) on every platform unless `pkce: "not-applicable"` with a
+  `reason`; Deno Desktop's loopback flow does not check for it yet.
+- **`secureStore`'s `requireBiometric` is OS-enforced only in a current binary** (`denext mobile
+  add biometrics` from a denext newer than 4.8.0, in a new binary): in an older binary, and in a Deno Desktop window (the desktop
+  keychain has no biometric access control yet), the gate is denext's code in the page and page
+  script can read the value. Android needs 9 or later (8 and earlier refuse it); the passcode as
+  a fallback (`allowDeviceCredential`) needs Android 11. A gated value is dropped when the enrolled
+  biometrics change, and it is never backed up.
 - **`denext fastlane` (the managed fastlane)** runs on macOS and Linux only (arm64, x64); Windows
   is not supported. Its first install needs a C compiler, because several of fastlane's gems
   build C extensions. It runs denext's pinned gems, so plugins in `fastlane/Pluginfile` need the
@@ -448,7 +526,10 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   runs in the iOS / Android app; the web build (sqlite-wasm) and Deno Desktop refuse
   `PRAGMA key` and encrypted stores rather than keep the data in the clear.
   `@capacitor-community/sqlite` keeps one passphrase for all of an app's databases, so
-  `PRAGMA key` with a second, different passphrase is refused; `PRAGMA rekey` is not supported.
+  `PRAGMA key` with a second, different passphrase is refused, and `rekey` / `PRAGMA rekey`
+  re-encrypts every encrypted database of the app one after another, so a crash part-way can
+  leave them split between the two passphrases (an encrypted key-value store's rotation recovers
+  by itself).
 - **Native views:** maps and video are native only where registered, without overlays (on the
   web a placeholder and `<video>`); Liquid Glass, tab bars and large titles are CSS; `@expo/ui`
   views are stand-ins; `react-native-webview` is an `<iframe>`.
@@ -463,9 +544,8 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   change. Resolution variants (`@2x`) are picked at load.
 - **On the App Router** (`reactNative` without `mode: "spa"`): expo-router is not available (it
   is a router, and `app/` is the App Router's; an import fails the build). react-native-web's
-  server style sheet holds every style the process has created, and a module first loaded inside
-  a streamed Suspense boundary adds its rules on the client only. `dev` uses the bundled loop
-  (rebuild and reload, no per-module hot swap). `fonts`, `rootStyle` and uniwind are the SPA
+  server style sheet holds every style the process has created, not only the page's (a streamed
+  Suspense boundary's new rules stream ahead of it). `fonts`, `rootStyle` and uniwind are the SPA
   shell's; `compatibilityMode: false` cannot be combined with it.
 - **Can't (no WebView or browser API):** `expo-gl` on a worklet / UI runtime
   (`getWorkletContext` is undefined) and camera textures (`createCameraTextureAsync` rejects):

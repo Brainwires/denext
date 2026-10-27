@@ -49,6 +49,7 @@ import {
 import { loadEnv } from "../server/env.ts";
 import { markBuildPhase } from "../server/phase.ts";
 import { cliNpmModeArgs } from "../build/pnpm-workspace.ts";
+import { configDisablesIdleTrim, idleTrimEnv, readEnv } from "../build/idle-trim.ts";
 import { VERSION } from "../version.ts";
 import type { CommandContext, CommandSpec } from "./command.ts";
 import { envTierFor, projectDir } from "./shared.ts";
@@ -71,19 +72,29 @@ function entryUrl(): string {
  * The `--allow-*` flags to give a re-exec child: mirror the parent's coarse
  * permission grants (a parent run with `-A` grants all → all pass through; a scoped
  * parent passes through only what it holds). Path-scoped grants can't be enumerated
- * by the Deno API, so they aren't reconstructed.
+ * by the Deno API, so they aren't reconstructed, and a grant the parent holds only in part
+ * (`--allow-net --deny-net=host`: `partial`) is not passed on either: a bare allow would drop
+ * the parent's deny list.
+ *
+ * @param query The permission query (a test seam).
+ * @returns The flags.
  */
-async function childPermissionFlags(): Promise<string[]> {
+export async function childPermissionFlags(
+  query: (name: string) => Promise<Pick<Deno.PermissionStatus, "state" | "partial">> = (name) =>
+    Deno.permissions.query({ name } as unknown as Deno.PermissionDescriptor),
+): Promise<string[]> {
   const names: Deno.PermissionName[] = ["read", "write", "net", "env", "run", "sys", "ffi"];
   const flags: string[] = [];
   for (const name of names) {
     try {
-      if ((await Deno.permissions.query({ name })).state === "granted") {
-        flags.push(`--allow-${name}`);
-      }
+      const status = await query(name);
+      if (status.state === "granted" && !status.partial) flags.push(`--allow-${name}`);
     } catch { /* permission name unknown to this Deno version */ }
   }
-  return [...flags, ...await directionalNetFlags(flags.includes("--allow-net"))];
+  // A partly granted legacy `net` still rules out the directional names (one model per line).
+  let legacyNet = flags.includes("--allow-net");
+  if (!legacyNet) legacyNet = await query("net").then((s) => s.state === "granted", () => false);
+  return [...flags, ...await directionalNetFlags(legacyNet, query)];
 }
 
 /**
@@ -91,7 +102,9 @@ async function childPermissionFlags(): Promise<string[]> {
  * / `--allow-net-listen`, `--deny-net-connect` / `--deny-net-listen`), each one held unscoped, for
  * a re-exec child. Only when the parent runs in that model: there `net` reads `prompt`, and the two
  * models may not be mixed on one command line. Elsewhere (`--allow-net`, `--deny-net`, a Deno
- * without the split) none.
+ * without the split) none. A direction granted only in part (`--allow-net-connect
+ * --deny-net-connect=host`) is not passed on: its deny list can't be read back, and a bare allow
+ * would drop it, so the child is left to be refused (or asked) instead.
  *
  * @param legacyGranted Whether the parent holds the legacy `net` grant.
  * @param query The permission query (a test seam).
@@ -99,16 +112,16 @@ async function childPermissionFlags(): Promise<string[]> {
  */
 export async function directionalNetFlags(
   legacyGranted: boolean,
-  query: (name: string) => Promise<Deno.PermissionState> = (name) =>
-    Deno.permissions.query({ name } as unknown as Deno.PermissionDescriptor).then((s) => s.state),
+  query: (name: string) => Promise<Pick<Deno.PermissionStatus, "state" | "partial">> = (name) =>
+    Deno.permissions.query({ name } as unknown as Deno.PermissionDescriptor),
 ): Promise<string[]> {
   if (legacyGranted) return [];
   try {
-    if (await query("net") !== "prompt") return [];
+    if ((await query("net")).state !== "prompt") return [];
     const flags: string[] = [];
     for (const direction of ["connect", "listen"]) {
-      const state = await query(`net-${direction}`);
-      if (state === "granted") flags.push(`--allow-net-${direction}`);
+      const { state, partial } = await query(`net-${direction}`);
+      if (state === "granted" && !partial) flags.push(`--allow-net-${direction}`);
       else if (state === "denied") flags.push(`--deny-net-${direction}`);
     }
     return flags;
@@ -295,7 +308,10 @@ function spawnCliChild(
  *
  * @param dir The project directory the verb targets.
  */
-function maybeReexecPinned(dir: string): Promise<boolean> {
+function maybeReexecPinned(
+  dir: string,
+  childEnv: Record<string, string> = {},
+): Promise<boolean> {
   return reexecPinned(dir, VERSION, Deno.args, {
     standalone: isStandaloneBinary,
     env: (name) => Deno.env.get(name),
@@ -314,7 +330,7 @@ function maybeReexecPinned(dir: string): Promise<boolean> {
           ...minDepAgeArgs(),
         ],
         cli,
-        { DENEXT_PINNED_ACTIVE: "1" },
+        { ...childEnv, DENEXT_PINNED_ACTIVE: "1" },
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
@@ -370,6 +386,31 @@ function gateDir(command: CommandSpec, ctx: CommandContext): string {
 }
 
 /**
+ * The environment a child that will serve `denext start` gets: the idle trim
+ * (`DENO_UNSTABLE_IDLE_TRIM=1`, src/build/idle-trim.ts) when the child runs denext's Deno from
+ * 3.0.0-rc.5 (`marker`) and neither the project's config nor `DENEXT_IDLE_TRIM=0` opts out. The
+ * runtime reads it when the process starts, so only a process denext starts itself can get it;
+ * every other verb (`dev`, `test`, `job`, …) gets nothing.
+ *
+ * @param command The verb.
+ * @param dir The project directory (its config's opt-out is read as text, before any import).
+ * @param marker The toolchain the child runs (`undefined`: stock Deno).
+ * @returns The variables to add.
+ */
+export async function startIdleTrimEnv(
+  command: CommandSpec,
+  dir: string,
+  marker: string | undefined,
+): Promise<Record<string, string>> {
+  if (!servesInProcess(command) || command.name !== "start") return {};
+  return idleTrimEnv({
+    runtime: marker,
+    configOff: await configDisablesIdleTrim(dir),
+    env: readEnv,
+  });
+}
+
+/**
  * Run a verb that executes project code on denext's Deno toolchain — the decision is
  * {@linkcode maybeReexecToolchain} (src/cli/self-exec.ts); this wires it to the process: the same
  * invocation re-runs under the toolchain binary with this process's permission grants, stdio and
@@ -405,7 +446,11 @@ function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise<boole
           ),
         ],
         entrypointArg(entryUrl()),
-        { ...env, DENEXT_TOOLCHAIN_ACTIVE: marker },
+        {
+          ...env,
+          ...await startIdleTrimEnv(command, gateDir(command, ctx), marker),
+          DENEXT_TOOLCHAIN_ACTIVE: marker,
+        },
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
@@ -549,7 +594,12 @@ async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<bo
   // so config helpers don't refuse a runtime secret the build environment doesn't have.
   if (command.name === "build" || command.name === "export") markBuildPhase();
   const dir = gateDir(command, ctx);
-  if (await maybeReexecPinned(dir)) return true;
+  const pinnedEnv = await startIdleTrimEnv(
+    command,
+    dir,
+    childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity()),
+  );
+  if (await maybeReexecPinned(dir, pinnedEnv)) return true;
   await loadEnv({ dir, mode: envTierFor(command) });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
   // `doctor` reports leaked css-shim entries instead of silently healing them.

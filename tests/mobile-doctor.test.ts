@@ -202,6 +202,7 @@ Deno.test("mobile doctor --store flags every planted App Review problem, each wi
     ]);
     assertEquals(flagged(report, "warning"), [
       "cleartext",
+      "bridge-origin-guard",
       "csp",
       "source-maps",
       "account-deletion",
@@ -294,7 +295,12 @@ export default config;
   try {
     const report = await runMobileDoctor({ root: dir, profile: "store" });
     assertEquals(flagged(report, "error"), ["server-url"]);
-    assertEquals(flagged(report, "warning"), ["csp", "source-maps", "secrets"]);
+    assertEquals(flagged(report, "warning"), [
+      "bridge-origin-guard",
+      "csp",
+      "source-maps",
+      "secrets",
+    ]);
     assertStringIncludes(
       report.findings.find((f) => f.check === "csp")!.message,
       "no export at dist/",

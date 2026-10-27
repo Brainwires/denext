@@ -10,18 +10,29 @@
 //                              # what changed upstream — never writes, never fails CI
 //
 // The real surface is captured into a committed snapshot
-// (`tests/fixtures/react-surface.baseline.json`) so the parity TEST
+// (`tests/fixtures/react-surface.baseline.json`, and the Preact surfaces in
+// `tests/fixtures/preact-surface.baseline.json`) so the parity TEST
 // (`tests/react-parity.test.ts`) runs offline against a fixed point. This script is
 // the only part that touches npm/network; it installs into a throwaway temp dir (via
 // Deno's `--node-modules-dir=auto`) so the repo root stays clean.
 
 import { TYPESCRIPT_API_RANGE } from "../../src/ts/program-api.ts";
-import { BASELINE_HOLDS, REAL_PACKAGE_TAGS, REAL_PACKAGES, realDependencySpec } from "./spec.ts";
+import {
+  BASELINE_HOLDS,
+  PREACT_BASELINE,
+  REACT_BASELINE,
+  readBaselines,
+  REAL_PACKAGE_TAGS,
+  REAL_PACKAGES,
+  realDependencySpec,
+  splitBaseline,
+} from "./spec.ts";
 import type { Baseline, Surface } from "./types.ts";
 import { fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../../", import.meta.url)).replace(/[\\/]$/, "");
-const BASELINE = `${ROOT}/tests/fixtures/react-surface.baseline.json`;
+const BASELINE = `${ROOT}/${REACT_BASELINE}`;
+const PREACT = `${ROOT}/${PREACT_BASELINE}`;
 const RUNNER = fromFileUrl(new URL("./_real-runner.ts", import.meta.url));
 
 /** Install the real packages into `dir` and extract their surface in a child deno. */
@@ -150,7 +161,7 @@ function holdsFor(drift: boolean): Readonly<Record<string, string>> {
 async function main() {
   const drift = Deno.args.includes("--latest");
   const pinned = !drift && Deno.args.includes("--pinned")
-    ? (JSON.parse(await Deno.readTextFile(BASELINE)) as Baseline).versions
+    ? (await readBaselines(ROOT)).versions
     : {};
   const dir = await Deno.makeTempDir({ prefix: "denext_parity_" });
   try {
@@ -158,7 +169,7 @@ async function main() {
     const captured = await captureReal(dir, pinned, holdsFor(drift));
 
     if (drift) {
-      const oldB = JSON.parse(await Deno.readTextFile(BASELINE)) as Baseline;
+      const oldB = await readBaselines(ROOT);
       console.log(summarizeDrift(oldB, captured));
       return;
     }
@@ -169,12 +180,15 @@ async function main() {
       surfaces: captured.surfaces,
     };
     await Deno.mkdir(`${ROOT}/tests/fixtures`, { recursive: true });
-    await Deno.writeTextFile(BASELINE, JSON.stringify(baseline, null, 2) + "\n");
+    // The React/Next surfaces and the Preact ones go to their own files.
+    const { react, preact } = splitBaseline(baseline);
+    await Deno.writeTextFile(BASELINE, JSON.stringify(react, null, 2) + "\n");
+    await Deno.writeTextFile(PREACT, JSON.stringify(preact, null, 2) + "\n");
     const symCount = captured.surfaces.reduce((n, s) => n + Object.keys(s.symbols).length, 0);
     const resolved = captured.surfaces.filter((s) => s.resolved).length;
     console.log(
       `wrote baseline: ${symCount} real symbols across ${resolved}/${captured.surfaces.length} resolved ` +
-        `specifiers → ${BASELINE}`,
+        `specifiers → ${BASELINE} + ${PREACT}`,
     );
     console.log("versions:", JSON.stringify(captured.versions));
   } finally {

@@ -1,4 +1,5 @@
 {
+  "packages/avif/mod.ts": [91, 80, 100],
   "packages/backend/client.ts": [100, 97, 100],
   "packages/backend/mod.ts": [95, 91, 96],
   "packages/backend/server.ts": [100, 0, 0],
@@ -124,6 +125,7 @@
   "packages/pages-router/src/api.ts": [93, 83, 97],
   "packages/pages-router/src/client-bundle.ts": [95, 79, 100],
   "packages/pages-router/src/client-entry.ts": [100, 100, 100],
+  "packages/pages-router/src/client-runtime.ts": [76, 71, 73],
   "packages/pages-router/src/compat-record.ts": [100, 100, 100],
   "packages/pages-router/src/document.ts": [81, 50, 83],
   "packages/pages-router/src/handler.ts": [100, 0, 100],

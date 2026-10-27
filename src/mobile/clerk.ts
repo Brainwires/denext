@@ -58,6 +58,12 @@ export type {
 const OAUTH_TIMEOUT_MS = 180_000;
 /** How long a browser (hosted) sign-in may take. */
 const BROWSER_SIGN_IN_TIMEOUT_MS = 10 * 60_000;
+/** Why Clerk's native OAuth URL carries no PKCE: the callback's nonce is bound to this client. */
+const CLERK_OAUTH_PKCE_REASON = "Clerk native OAuth: the callback's rotating_token_nonce is " +
+  "redeemed by this client's own FAPI request (bearer client JWT, this client's sign-in)";
+/** Why the hosted sign-in URL carries no PKCE (it is bound at creation). */
+const CLERK_HOSTED_PKCE_REASON = "Clerk hosted auth: the S256 code challenge is bound at " +
+  "POST /client/hosted_auth and the nonce is redeemed only with the verifier this page keeps";
 /** A custom URL scheme (lower-case: Android matches schemes case-sensitively). */
 const SCHEME = /^[a-z][a-z0-9+.-]*$/;
 /** Schemes that are not an app's own. */
@@ -173,6 +179,8 @@ function oauthTransport(scheme: string, redirect: string): ClerkOAuthTransport {
         const { url: callbackUrl } = await openAuthSession(url, {
           callbackScheme: scheme,
           timeoutMs: OAUTH_TIMEOUT_MS,
+          pkce: "not-applicable",
+          reason: CLERK_OAUTH_PKCE_REASON,
         });
         // Only this session's redirect: another path or host of the scheme is not Clerk's answer.
         if (targetOf(callbackUrl) !== target) {
@@ -288,6 +296,8 @@ export function startClerkMobileBrowserSignIn(
     const { url } = await openAuthSession(hostedUrl, {
       callbackScheme: options.scheme,
       timeoutMs: options.timeoutMs ?? BROWSER_SIGN_IN_TIMEOUT_MS,
+      pkce: "not-applicable",
+      reason: CLERK_HOSTED_PKCE_REASON,
     });
     if (targetOf(url) !== target) {
       throw new Error("Clerk: the sign-in came back to another URL than its redirect");

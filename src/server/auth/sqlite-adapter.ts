@@ -45,7 +45,7 @@ import type {
   SsoProviderRecord,
   SsoProviderWrite,
 } from "./adapter.ts";
-import type { SsoMethods } from "./memory-sso.ts";
+import type { SsoIndexMethods, SsoMethods } from "./memory-sso.ts";
 import { emailKey } from "./email-key.ts";
 import {
   OAUTH_SERVER_SQLITE_TABLES,
@@ -71,6 +71,7 @@ import {
   patchUser,
   spendBackupCode,
   SSO_PROVIDER_MAP,
+  SSO_SESSION_INDEX_MAP,
   SSO_SESSION_MAP,
   toRow as sharedToRow,
   USER_MAP,
@@ -390,6 +391,36 @@ const SSO_SCHEMA: TableSpec[] = [
           "CREATE INDEX IF NOT EXISTS auth_sso_sessions_expiry ON auth_sso_sessions (expires_at)",
       },
     ],
+  },
+  {
+    // SAML Single Logout of stateless cookie sessions: which session a sign-in started.
+    name: "auth_sso_cookie_sessions",
+    columns: [
+      ["sid", "TEXT PRIMARY KEY"],
+      ["provider_id", "TEXT NOT NULL"],
+      ["name_id", "TEXT NOT NULL"],
+      ["session_index", "TEXT"],
+      ["expires_at", "INTEGER NOT NULL"],
+    ],
+    indexes: [
+      {
+        sql: "CREATE INDEX IF NOT EXISTS auth_sso_cookie_sessions_name " +
+          "ON auth_sso_cookie_sessions (provider_id, name_id, session_index)",
+      },
+      {
+        sql: "CREATE INDEX IF NOT EXISTS auth_sso_cookie_sessions_expiry " +
+          "ON auth_sso_cookie_sessions (expires_at)",
+      },
+    ],
+  },
+  {
+    // ...and the revoked ones, kept until they expire.
+    name: "auth_revoked_sessions",
+    columns: [["sid", "TEXT PRIMARY KEY"], ["expires_at", "INTEGER NOT NULL"]],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_revoked_sessions_expiry " +
+        "ON auth_revoked_sessions (expires_at)",
+    }],
   },
   {
     name: "auth_saml_message_ids",
@@ -1146,6 +1177,52 @@ function ssoMethods(state: SqliteState): SsoMethods {
   };
 }
 
+/** SAML Single Logout's session index and revocation list. */
+function ssoIndexMethods(state: SqliteState): SsoIndexMethods {
+  const select = (where: string, params: SqlValue[]) =>
+    state.db().query<Record<string, SqlValue>>(
+      `SELECT * FROM auth_sso_cookie_sessions WHERE ${where} AND expires_at > ?`,
+      [...params, state.now()],
+    ).map((row) => fromRow(SSO_SESSION_INDEX_MAP, row));
+  return {
+    recordSsoSessionIndex(providerId, nameId, sessionIndex, sid, expiresAt) {
+      const db = state.db();
+      db.exec("DELETE FROM auth_sso_cookie_sessions WHERE expires_at <= ?", [state.now()]);
+      db.exec(
+        "INSERT OR REPLACE INTO auth_sso_cookie_sessions " +
+          "(sid, provider_id, name_id, session_index, expires_at) VALUES (?, ?, ?, ?, ?)",
+        [sid, providerId, nameId, sessionIndex ?? null, expiresAt],
+      );
+    },
+    listSsoSessionIndexBySessionIndex: (providerId, nameId, sessionIndex) =>
+      select("provider_id = ? AND name_id = ? AND session_index = ?", [
+        providerId,
+        nameId,
+        sessionIndex,
+      ]),
+    listSsoSessionIndexByNameId: (providerId, nameId) =>
+      select("provider_id = ? AND name_id = ?", [providerId, nameId]),
+    revokeSids(sids, expiresAt) {
+      transaction(state.db(), () => {
+        const db = state.db();
+        db.exec("DELETE FROM auth_revoked_sessions WHERE expires_at <= ?", [state.now()]);
+        for (const sid of sids) {
+          db.exec(
+            "INSERT INTO auth_revoked_sessions (sid, expires_at) VALUES (?, ?) " +
+              "ON CONFLICT(sid) DO UPDATE SET expires_at = MAX(expires_at, excluded.expires_at)",
+            [sid, expiresAt],
+          );
+        }
+      });
+    },
+    isSidRevoked: (sid) =>
+      !!one(state.db(), "SELECT sid FROM auth_revoked_sessions WHERE sid = ? AND expires_at > ?", [
+        sid,
+        state.now(),
+      ]),
+  };
+}
+
 export { NATIVE_SESSION_RETENTION };
 
 /** The tables keyed by `user_id` that a user's deletion clears. */
@@ -1272,6 +1349,7 @@ export function sqliteAuthAdapter(options: SqliteAuthAdapterOptions = {}): AuthA
     ...nativeMethods(state),
     ...passkeyMethods(state),
     ...ssoMethods(state),
+    ...ssoIndexMethods(state),
     ...sqlOAuthServerGroups({
       rows: (sql, params) => Promise.resolve(state.db().query(sql, params as SqlValue[])),
       table: (name) => name,

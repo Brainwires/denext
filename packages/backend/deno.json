@@ -1,6 +1,6 @@
 {
   "name": "@denext/backend",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -8,7 +8,7 @@
     "./client": "./client.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^4.8.0",
+    "@denext/denext": "jsr:@denext/denext@^4.9.0",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "denext": {

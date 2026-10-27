@@ -70,6 +70,7 @@ on:
       - "src/build/file-lock.ts"
       - "src/build/project-locks.ts"
       - "src/build/scaffold.ts"
+      - "src/build/project-confine.ts"
       - "src/build/fallow-template.ts"
       - "src/build/pe-resources.ts"
       - "src/build/code-signing.ts"
@@ -88,6 +89,8 @@ on:
       - "src/build/paths.ts"
       - "src/build/json-edit.ts"
       - "src/build/config-edit.ts"
+      - "src/build/config-files.ts"
+      - "src/build/workspace-imports.ts"
       - "src/build/patch-diff.ts"
       - "src/build/css-config-guard.ts"
       - "src/build/dev-proxy.ts"
@@ -190,6 +193,7 @@ jobs:
         # Linux has no CLI backend: its store is the pinned runtime's (the window test covers it).
         os: [windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
@@ -205,6 +209,7 @@ jobs:
       matrix:
         os: [windows-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: examples/native

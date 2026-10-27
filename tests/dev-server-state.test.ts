@@ -12,6 +12,7 @@ import { getManifest } from "../src/build/dev-server/manifest.ts";
 import { createDevState } from "../src/build/dev-server/state.ts";
 import { registerRouteSynthesizer } from "../src/router/manifest.ts";
 import { defaultLoader } from "../src/server/mod.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 async function tempApp(): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_dev_state_" });
@@ -36,19 +37,6 @@ async function tempApp(): Promise<string> {
   return dir;
 }
 
-/** Wait (≤ 3 s) until `file` exists — for a write the code under test fires and forgets. */
-async function settled(file: string): Promise<void> {
-  for (let i = 0; i < 60; i++) {
-    try {
-      await Deno.stat(file);
-      await new Promise((r) => setTimeout(r, 50)); // the sibling routes.ts write, too
-      return;
-    } catch {
-      await new Promise((r) => setTimeout(r, 50));
-    }
-  }
-}
-
 Deno.test({
   name: "dev getManifest: concurrent first hits share ONE scan (single-flight after a rebuild)",
   sanitizeOps: false,
@@ -69,11 +57,15 @@ Deno.test({
     st.manifest = null;
     await Promise.all([getManifest(st), getManifest(st)]);
     assertEquals(scans, 2);
-    // The typed-module emit is fire-and-forget: let it land before the dir goes away.
-    await settled(join(dir, ".denext", "api.ts"));
+    // The typed-module emit is fire-and-forget for the requests: let it land (every file of it)
+    // before the dir goes away, or Windows refuses the removal of a file still being written
+    // (os error 145, a directory not empty).
+    assert(st.typedEmit, "the rescan emitted the typed modules");
+    await st.typedEmit;
+    await Deno.stat(join(dir, ".denext", "api.ts"));
   } finally {
     unregister();
-    await Deno.remove(dir, { recursive: true });
+    await removeTempDir(dir);
   }
 });
 

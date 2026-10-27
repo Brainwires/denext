@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A dev schema reload says what it did.** Each reload logs one line naming the edited files
+  (`[@denext/graphql] schema reloaded after an edit to app/graphql/schema.ts`). A reload that fails
+  logs the error with the same files and shows it in the dev error overlay (through the plugin
+  kit's `reportDevError`, denext 4.9); requests answer with that error until the next edit. On an
+  older denext the overlay part is skipped.
+
+### Fixed
+
+- **`@denext/openapi` is required at `^0.7.0`**, the version the workspace builds against: the
+  `^0.6.0` range did not match it, so a plain `deno test` in the repository rewrote `deno.lock`.
+
 ## 0.6.0
 
 ### Added

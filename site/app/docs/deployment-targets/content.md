@@ -226,8 +226,62 @@ Live WebSockets are closed the moment shutdown begins (they would otherwise
 never drain); the client reconnects to whichever instance is now routed, without
 replay — pass a cold-start `initial` for anything that must not flicker. During
 the overlap window two builds serve at once; each page links the content-hashed
-chunks of the build that rendered it, so the mix is safe as long as the old
-image keeps serving until it has drained.
+chunks of the build that rendered it, so the pages themselves mix safely as long
+as the old image keeps serving until it has drained. Server Action ids are the
+exception: they are salted per build, so a form rendered by one build posts ids
+the other does not know. The overlap is safe for them too when every build is
+made with the same `DENEXT_ACTION_ID_SECRET` (set where `denext build` runs, not
+only at runtime: a build made without it generates its own secret, and a
+runtime-only value is ignored with a warning). Without a shared secret, a tab
+rendered by the old build that posts to the new one gets `409` with
+`x-denext-action: unknown` and reloads itself once to pick the new ids up — the
+submission it was making is lost. See
+[Server Actions › Action ids](/docs/server-actions#action-ids-and-which-actions-are-exposed).
+
+## Idle memory trim
+
+A long-running server's resident memory after a load burst is mostly memory glibc's allocator
+keeps after the JavaScript heap has let go of it. denext's Deno from runtime `3.0.0-rc.5` can hand
+it back: once the event loop has gone a second without work, it runs a full V8 GC and then
+`malloc_trim(0)`. denext turns that on for the production server only:
+
+| Where                                                  | How                                          |
+| ------------------------------------------------------ | -------------------------------------------- |
+| `denext start`, when it starts the server process      | `DENO_UNSTABLE_IDLE_TRIM=1` in its env       |
+| `denext build --compile`                               | `--unstable-idle-trim` baked into the binary |
+| `denext generate docker`, the `docker` / `fly` presets | `ENV DENO_UNSTABLE_IDLE_TRIM=1` in the image |
+| the `genericHost()` systemd unit                       | `Environment=DENO_UNSTABLE_IDLE_TRIM=1`      |
+
+`denext dev`, tests, `denext job`, the desktop runtime and stock Deno never get it, and it does
+anything on glibc Linux only (macOS, Windows and musl ignore it). `denext start` can set it only on
+a process it starts itself (the switch onto the toolchain, a compiled `denext`'s run of the
+project's pinned denext). A `start` task run straight on the toolchain (`denext task start`)
+starts with whatever its environment says, so run it as `DENO_UNSTABLE_IDLE_TRIM=1 denext task
+start` to get it there.
+
+The trim runs between event loop polls, never while JavaScript runs, at most once per idle period,
+never twice within 10 s, and after the first only when the resident memory has grown 16 MB since the
+last one left it, so a server woken by its own timers is not collected over and over. A request
+that arrives during a trim waits for it once: on `examples/hello` after a load burst the GC took
+112-217 ms and `malloc_trim` 9-26 ms (up to about 240 ms); a small handler's trim takes 8-20 ms.
+Measured on an 8-vCPU Linux host:
+
+| Server           | Resident after a burst, off | After 3 s idle, on | After 30 s idle, off |
+| ---------------- | --------------------------- | ------------------ | -------------------- |
+| `examples/hello` | 541-652 MB                  | 172 MB             | 400-451 MB           |
+| a plain handler  | 139-148 MB                  | 65 MB              | 139-148 MB           |
+
+Throughput and p99 latency were unchanged within run-to-run noise. Turn it off with
+`start: { idleTrim: false }` in `denext.config.ts`, or `DENEXT_IDLE_TRIM=0` in the environment of
+`denext start` (or of the `build --compile` / `generate` run, since a generated file keeps what it
+was written with); an image or unit already written takes `DENO_UNSTABLE_IDLE_TRIM=0`. The config's
+value is read as evaluated: `denext start` and `generate docker` take what the last `denext build`
+recorded in `.denext/deploy-manifest.json` (so `idleTrim: isProd ? false : true` works), and only
+before a first build read the file's text, comments ignored. A `build --compile` binary has the
+trim baked in, and a flag baked into a binary can't be removed when it runs, so
+`DENEXT_IDLE_TRIM=0` in the binary's environment holds the trim off instead: the binary wakes its
+event loop at half the idle delay (`DENO_IDLE_TRIM_DELAY_MS`, 1 s by default), so it is never idle
+long enough to trim. `DENO_IDLE_TRIM_TRACE=1` prints one line per trim to stderr.
 
 ## A single binary with `denext build --compile`
 
@@ -313,7 +367,7 @@ prints the flags it baked.
 into `--allow-net-connect` (outbound: `fetch`, WebSocket, database clients) and
 `--allow-net-listen` (`Deno.serve`, `Deno.listen`, `node:net` servers). Name either direction in
 `compile.permissions` and the binary bakes the pair instead of `--allow-net`; an unset direction
-stays unscoped:
+stays unscoped (an empty list is a config error, since Deno would read it as unscoped too):
 
 ```ts
 export default {

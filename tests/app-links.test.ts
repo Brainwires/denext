@@ -133,3 +133,34 @@ Deno.test("createApp: answers before basePath, trailingSlash and redirects", asy
   const links = await app(new Request("https://example.com/.well-known/assetlinks.json"));
   assertEquals((await links.json())[0].target.package_name, "com.example.app");
 });
+
+Deno.test("appLinks.android as a list: one statement per app, each validated at its index", async () => {
+  const release = { packageName: "com.example.app", sha256CertFingerprints: [FP] };
+  const debug = {
+    packageName: "com.example.app.debug",
+    sha256CertFingerprints: ["00".repeat(32)],
+    loginCredentials: false,
+  };
+  assertEquals(problems({ android: [release, debug] }), []);
+  assertEquals(problems({ android: [] }), ["appLinks.android: must list at least one app"]);
+  assertEquals(
+    problems({ android: [release, { packageName: "x", sha256CertFingerprints: [] }] })
+      .map((p) => p.split(":")[0]),
+    ["appLinks.android[1].packageName", "appLinks.android[1].sha256CertFingerprints"],
+  );
+  validateDenextConfig({ appLinks: { android: [release, debug] } });
+  const statements = assetLinks([release, debug]);
+  assertEquals(statements.map((s) => (s.target as { package_name: string }).package_name), [
+    "com.example.app",
+    "com.example.app.debug",
+  ]);
+  // The passkey relation is per app: a debug build that opts out keeps App Links only.
+  assertEquals(statements.map((s) => s.relation), [
+    ["delegate_permission/common.handle_all_urls", "delegate_permission/common.get_login_creds"],
+    ["delegate_permission/common.handle_all_urls"],
+  ]);
+  const served = createAppLinksHandler({ android: [release, debug] })(
+    new Request("https://x/.well-known/assetlinks.json"),
+  )!;
+  assertEquals((await served.json()).length, 2);
+});

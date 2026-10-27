@@ -15,7 +15,7 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { REACT_COMPAT_VERSION } from "../src/compat/react-version.ts";
-import { assertCatalogMatchesExports, CATALOG } from "../scripts/parity/spec.ts";
+import { assertCatalogMatchesExports, CATALOG, readBaselines } from "../scripts/parity/spec.ts";
 import { docFor, extractDenextSurfaces } from "../scripts/parity/extract-denext.ts";
 import { diffSurfaces, findingKey, formatReport } from "../scripts/parity/diff.ts";
 import { WAIVERS } from "../scripts/parity/waivers.ts";
@@ -23,13 +23,13 @@ import type { Baseline } from "../scripts/parity/types.ts";
 import { fromFileUrl } from "@std/path";
 import { watchTests } from "./helpers/watchdog.ts";
 
-// The surface test runs `deno doc` once per compat module: a stall (CI windows-tests, runtime
-// 3.0.0-rc.5) fails it at the deadline, naming the `deno doc` it waits on, instead of holding the
-// job.
-watchTests();
+// The surface extraction runs `deno doc` children from this process, one per catalog module,
+// serially: a stall (CI windows-tests, runtime 3.0.0-rc.5) fails it at the deadline, naming the
+// `deno doc` it waits on, instead of holding the CI job. About 20 s on a healthy runner but more
+// than 10 minutes on a machine at load 400, so the deadline is 30 minutes rather than the default.
+watchTests(1_800_000);
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url)).replace(/[\\/]$/, "");
-const BASELINE = `${ROOT}/tests/fixtures/react-surface.baseline.json`;
 const LEDGER = `${ROOT}/tests/fixtures/react-parity-known-gaps.json`;
 
 interface Ledger {
@@ -37,7 +37,8 @@ interface Ledger {
 }
 
 async function loadBaseline(): Promise<Baseline> {
-  return JSON.parse(await Deno.readTextFile(BASELINE)) as Baseline;
+  // The React/Next baseline plus the Preact one (tests/fixtures/preact-surface.baseline.json).
+  return await readBaselines(ROOT);
 }
 
 async function loadKnownGaps(): Promise<Set<string>> {

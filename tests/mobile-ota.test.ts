@@ -632,3 +632,41 @@ Deno.test("onOtaRejected: hears the native otaRejected event; a no-op on the web
     assert(listeners[0].removed);
   });
 });
+
+Deno.test("checkForUiUpdate / prepareUiUpdate SECURITY (AU6-L1): an expired manifest is an error, even for the running version", async () => {
+  const expired = { ...MANIFEST, sequence: 1, expiresAt: Math.floor(Date.now() / 1000) - 1 };
+  const stale = () => fakeFetch(() => Response.json(expired));
+  // The server keeps offering the running version past its expiry: a frozen feed, not "current".
+  const running = plugin({ current: null, bundled: SERVER, pending: null });
+  await withShell({ DenextOta: running.plugin }, async () => {
+    const r = await checkForUiUpdate({ baseUrl: BASE, fetch: stale().fetch });
+    assertEquals(r.kind, "error");
+    assertEquals((r as Any).code, "expired");
+    const p = await prepareUiUpdate({ baseUrl: BASE, fetch: stale().fetch });
+    assertEquals((p as Any).code, "expired");
+    assertEquals(running.calls.apply.length + running.calls.download.length, 0);
+  });
+  // Not yet expired: the usual path.
+  const fresh = { ...MANIFEST, sequence: 1, expiresAt: Math.floor(Date.now() / 1000) + 3600 };
+  const newer = plugin({ current: null, bundled: BUNDLED, pending: null });
+  await withShell({ DenextOta: newer.plugin }, async () => {
+    const f = fakeFetch(() => Response.json(fresh));
+    assertEquals(await checkForUiUpdate({ baseUrl: BASE, fetch: f.fetch }), {
+      kind: "applied",
+      version: SERVER,
+    });
+    assertEquals(newer.calls.apply[0].manifest.expiresAt, fresh.expiresAt);
+  });
+  // The native refusal carries its code too.
+  const refusing = plugin(
+    { bundled: BUNDLED },
+    () => Promise.reject(Object.assign(new Error("refused (expired)"), { code: "expired" })),
+  );
+  await withShell({ DenextOta: refusing.plugin }, async () => {
+    assertEquals(await checkForUiUpdate({ baseUrl: BASE, fetch: okManifest().fetch }), {
+      kind: "error",
+      reason: "refused (expired)",
+      code: "expired",
+    });
+  });
+});

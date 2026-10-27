@@ -2,9 +2,13 @@
 // location provider and client navigation, `<Router>` / `<Route>` / `useRoute`, `lazy`,
 // `ErrorBoundary`, `prerender` and `locationStub`.
 
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertStrictEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { render } from "../src/testing/mod.ts";
+import { DomDocument } from "../src/testing/dom.ts";
+import { setDocument } from "../src/client/reconciler.ts";
+import { useEffect, useState } from "../src/runtime/hooks.ts";
+import { ErrorBoundary as DenextErrorBoundary } from "../src/runtime/error-boundary.ts";
 import {
   ErrorBoundary,
   exec,
@@ -88,7 +92,8 @@ Deno.test("Router renders the matching route (else the default) and follows rout
   nav!.back();
   nav!.forward();
   assertEquals(pushed, ["/", "replace:/nope", "back", "forward"]);
-  assertEquals(changes.at(-1), "/nope");
+  // preact-iso: not on the first render, then once per committed route change.
+  assertEquals(changes, ["/", "/nope"]);
   await screen.unmount();
 });
 
@@ -106,16 +111,89 @@ Deno.test("lazy loads a module's default export (or the component), preload star
   assertEquals(typeof (await Bare.preload()), "object");
 });
 
-Deno.test("ErrorBoundary reports a render error and renders nothing in its place", async () => {
+Deno.test("ErrorBoundary reports a render error to onError and passes it to the boundary above", async () => {
   const errors: unknown[] = [];
   function Boom(): never {
     throw new Error("boom");
   }
+  const Outer = (p: { error: Error }) => h("em", null, p.error.message);
   const screen = await render(
-    h(ErrorBoundary, { onError: (e: unknown) => errors.push(e) }, h(Boom, null)),
+    h(
+      DenextErrorBoundary,
+      { fallback: Outer },
+      h(ErrorBoundary, { onError: (e: unknown) => errors.push(e) }, h(Boom, null)),
+    ),
   );
-  assertEquals(screen.html(), "");
+  assertEquals(screen.html(), "<em>boom</em>");
+  assertEquals(errors.length, 1);
   assertEquals((errors[0] as Error).message, "boom");
+  await screen.unmount();
+});
+
+Deno.test("ErrorBoundary lets a lazy child load in place", async () => {
+  const Page = lazy(() => Promise.resolve({ default: () => h("b", null, "loaded") }));
+  const screen = await render(h("div", null, h(ErrorBoundary, null, h(Page, null))));
+  await screen.act(() => new Promise((r) => setTimeout(r, 10)));
+  assertEquals(screen.html(), "<div><b>loaded</b></div>");
+  await screen.unmount();
+});
+
+Deno.test("Router keeps the previous route mounted while a lazy route loads", async () => {
+  stubBrowser("/");
+  let nav: ReturnType<typeof useLocation> | null = null;
+  function Nav() {
+    nav = useLocation();
+    return null as never;
+  }
+  let finishLoad: () => void = () => {};
+  const LazyPage = lazy(() =>
+    new Promise((resolve) => {
+      finishLoad = () => resolve({ default: () => h("b", null, "lazy page") });
+    })
+  );
+  let homeMounts = 0;
+  function Home() {
+    useEffect(() => {
+      homeMounts++;
+    }, []);
+    return h("p", null, "home");
+  }
+  const events: string[] = [];
+  const screen = await render(
+    h(
+      LocationProvider,
+      null,
+      h(Nav, null),
+      h(Router, {
+        onLoadStart: (u: string) => events.push(`start ${u}`),
+        onLoadEnd: (u: string) => events.push(`end ${u}`),
+        onRouteChange: (u: string) => events.push(`change ${u}`),
+      }, [
+        h(Route, { path: "/", component: Home, key: "h" }),
+        h(Route, { path: "/lazy", component: LazyPage, key: "l" }),
+      ] as never),
+    ),
+  );
+  assertEquals(screen.html(), "<p>home</p>");
+  assertEquals(nav!.wasPush, false);
+  await screen.act(() => nav!.route("/lazy"));
+  // Loading: the previous route is still mounted (not remounted) and on screen.
+  assertEquals(screen.html(), "<p>home</p>");
+  assertEquals(homeMounts, 1);
+  assertEquals(events, ["start /lazy"]);
+  assertEquals(nav!.wasPush, true);
+  await screen.act(async () => {
+    finishLoad();
+    await new Promise((r) => setTimeout(r, 10));
+  });
+  assertEquals(screen.html(), "<b>lazy page</b>");
+  assertEquals(events, ["start /lazy", "change /lazy", "end /lazy"]);
+  // A route that renders at once: a route change, no load events.
+  await screen.act(() => nav!.route("/", true));
+  assertEquals(screen.html(), "<p>home</p>");
+  assertEquals(events.slice(3), ["change /"]);
+  assertEquals(nav!.wasPush, false);
+  await screen.unmount();
 });
 
 Deno.test("prerender returns the HTML and its links; locationStub; hydrate without a document", async () => {
@@ -137,6 +215,41 @@ Deno.test("prerender returns the HTML and its links; locationStub; hydrate witho
     "/x/y",
   );
   hydrate(h("p", null));
+});
+
+Deno.test("hydrate adopts prerendered markup next to the isodata script once, then renders", async () => {
+  const doc = new DomDocument();
+  setDocument(doc as never);
+  const container = doc.createElement("main");
+  const pre = doc.createElement("p");
+  pre.appendChild(doc.createTextNode("server"));
+  container.appendChild(pre);
+  const isodata = doc.createElement("script");
+  isodata.setAttribute("type", "isodata");
+  container.appendChild(isodata);
+  const g = globalThis as Record<string, unknown>;
+  const saved = g.document;
+  const body = doc.createElement("body");
+  g.document = { querySelector: () => isodata, body };
+  function App() {
+    const [text, setText] = useState("server");
+    useEffect(() => setText("client"), []);
+    return h("p", null, text);
+  }
+  try {
+    hydrate(h(App, null));
+    await new Promise((r) => setTimeout(r, 10));
+    // Hydrated in the isodata script's parent: the server's <p> is the same node, now live.
+    assertStrictEquals(container.childNodes[0], pre);
+    assertEquals(pre.textContent, "client");
+    assertEquals(body.innerHTML, "");
+    const other = doc.createElement("section");
+    hydrate(h("i", null, "second"), other as never);
+    await new Promise((r) => setTimeout(r, 10));
+    assertEquals(other.innerHTML, "<i>second</i>");
+  } finally {
+    g.document = saved;
+  }
 });
 
 Deno.test("a same-origin link click navigates on the client; others are left to the browser", async () => {

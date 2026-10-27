@@ -6,7 +6,7 @@
 // intact, which separate dynamic imports would break.
 
 import { quietThenExplain, runToExit } from "./exited-output.ts";
-import { boundedOutput, retryOnStall } from "./serial-child.ts";
+import { boundedOutput, childDeadlineMs, retryOnStall } from "./serial-child.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { denoExecutable } from "./deno-executable.ts";
 export { denoExecutable };
@@ -277,7 +277,12 @@ export function classDefine(classComponents?: boolean): Record<string, string> {
 export function nativeBundleDefines(
   opts: Pick<
     BundleOptions,
-    "classRuntime" | "features" | "usesImageBlur" | "usesFormActions" | "usesHrefParams"
+    | "classRuntime"
+    | "features"
+    | "usesImageBlur"
+    | "usesFormActions"
+    | "usesHrefParams"
+    | "usesHookBoundaries"
   >,
 ): Record<string, string> {
   return {
@@ -286,6 +291,7 @@ export function nativeBundleDefines(
     ...scanGateDefine("__DENEXT_IMAGE_BLUR__", opts.usesImageBlur),
     ...scanGateDefine("__DENEXT_FORM_ACTIONS__", opts.usesFormActions),
     ...scanGateDefine("__DENEXT_HREF_PARAMS__", opts.usesHrefParams),
+    ...scanGateDefine("__DENEXT_HOOK_BOUNDARIES__", opts.usesHookBoundaries),
   };
 }
 
@@ -621,7 +627,7 @@ const SCAN_SKIP = new Set([".denext", ".git", "node_modules"]);
 /** Project-root folders that hold build output (`denext export`'s default, desktop/mobile builds). */
 const SCAN_SKIP_ROOT = new Set(["out", "dist"]);
 /** The source extensions a feature scan reads. */
-const SCAN_SOURCE = /\.(?:tsx?|jsx?|mjs)$/;
+const SCAN_SOURCE = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 
 /**
  * The app's source files under `dir`, for the feature scans. Build output is left out: the
@@ -774,7 +780,9 @@ const IMAGE_BLUR_USE =
  * function-valued form action — the build-time signal that keeps the reconciler's
  * `<form action={fn}>` / `formAction={fn}` seam (`__DENEXT_FORM_ACTIONS__`). Such a prop can't be
  * written without naming `action` or `formAction` (JSX, an `h()` props object, a prop passed
- * down), so the scan matches either name followed by `=` or `:` in code. Comments are not code.
+ * down), so the scan matches either name followed by `=` or `:`, or as a shorthand property, in
+ * code. A build that drops the seam reports a function action it meets (error 6) rather than letting
+ * the form submit natively in silence. Comments are not code.
  * npm packages are not scanned (as for every gate): a library that renders its own `<form>` with
  * a function action from props it builds needs the app to name `action` once.
  */
@@ -782,8 +790,12 @@ export function appUsesFormActions(rootDir: string, extraFiles: string[] = []): 
   return scanAppSources(rootDir, (c) => FORM_ACTION_USE.test(withoutComments(c)), extraFiles);
 }
 
-/** `action` / `formAction` as a JSX prop, an object key or a binding (`=` / `:`, not `==`). */
-const FORM_ACTION_USE = /\b(?:formAction|action)["']?\s*[=:](?!=)/;
+/**
+ * `action` / `formAction` as a JSX prop, an object key or a binding (`=` / `:`, not `==`), or as
+ * a shorthand property (`{ action }`, `h("form", { formAction, … })`).
+ */
+const FORM_ACTION_USE =
+  /\b(?:formAction|action)["']?\s*[=:](?!=)|[{,]\s*(?:formAction|action)\s*[,}]/;
 
 /**
  * Whether any source file under `rootDir` (or in `extraFiles`) may navigate with a route-pattern
@@ -804,6 +816,24 @@ export function appUsesHrefParams(
     extraFiles,
   );
 }
+
+/**
+ * Whether any source file under `rootDir` (or in `extraFiles`) may make a function component an
+ * error boundary with Preact's `useErrorBoundary` — the build-time signal that keeps the
+ * reconciler's hook-boundary seam (`__DENEXT_HOOK_BOUNDARIES__`). The app names the hook, or
+ * imports preact-iso (whose `ErrorBoundary` is built on it). Comments are not code. npm packages
+ * are not scanned (as for every gate): a Preact library that calls `useErrorBoundary` itself needs
+ * the app to name it once.
+ */
+export function appUsesHookBoundaries(
+  rootDir: string,
+  extraFiles: string[] = [],
+): Promise<boolean> {
+  return scanAppSources(rootDir, (c) => HOOK_BOUNDARY_USE.test(withoutComments(c)), extraFiles);
+}
+
+/** Preact's `useErrorBoundary`, or a preact-iso import (its `ErrorBoundary` uses the hook). */
+const HOOK_BOUNDARY_USE = /\buseErrorBoundary\b|["'](?:denext\/)?preact-iso(?:\/[\w-]+)?["']/;
 
 /** A string or template literal holding a dynamic route segment (`/[id]`, `/[...p]`, `/[[...p]]`). */
 const HREF_PATTERN_USE = /["'`][^"'`\n]*\/\[\[?(?:\.\.\.)?[A-Za-z_$][\w$-]*\]/;
@@ -1318,6 +1348,12 @@ export interface BundleOptions {
    */
   usesHrefParams?: boolean;
   /**
+   * Whether the app may use Preact's `useErrorBoundary` (an {@linkcode appUsesHookBoundaries}
+   * scan). `false` defines `__DENEXT_HOOK_BOUNDARIES__` off on the `--define` path, so the
+   * reconciler carries no hook-boundary seam. Unset (no scan): kept.
+   */
+  usesHookBoundaries?: boolean;
+  /**
    * The project's `instrumentation-client.{ts,tsx,js}` (absolute path), imported first by
    * every generated browser entry so it runs before the app's client code. Null/unset: none.
    */
@@ -1368,6 +1404,7 @@ export async function bundleFlightEntry(
       usesImageBlur: opts.usesImageBlur,
       usesFormActions: opts.usesFormActions,
       usesHrefParams: opts.usesHrefParams,
+      usesHookBoundaries: opts.usesHookBoundaries,
     },
   );
 }
@@ -1779,7 +1816,7 @@ async function runDenoBundle(
         deadline,
         "deno bundle",
       );
-    }, DENO_BUNDLE_DEADLINE_MS)
+    }, childDeadlineMs(DENO_BUNDLE_DEADLINE_MS))
   );
   if (output.code !== 0) {
     throw new Error(bundleFailureMessage(output.code, new TextDecoder().decode(output.stderr)));

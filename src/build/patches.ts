@@ -126,8 +126,16 @@ export async function readPatch(entry: PatchEntry): Promise<FileDiff[]> {
 
 // ── npm packages ──────────────────────────────────────────────────────────────
 
+/** An npm package name, scoped or not (the registry's characters; never `.` or `..` alone). */
+const NPM_NAME = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/i;
+
 /** The installed package directory (symlinks resolved), or a clear error. */
 export async function npmPackageDir(projectDir: string, pkg: string): Promise<string> {
+  if (!NPM_NAME.test(pkg)) {
+    // `../../x` (typed, or a patch file named `..+1.0.0.patch`) must never name a directory
+    // outside node_modules: the patch file and the package's files are written from it.
+    throw new Error(`denext patch: ${JSON.stringify(pkg)} is not an npm package name`);
+  }
   const path = join(projectDir, "node_modules", ...pkg.split("/"));
   try {
     return await Deno.realPath(path);

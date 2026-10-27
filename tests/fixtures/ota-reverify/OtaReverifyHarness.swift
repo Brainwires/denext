@@ -5,6 +5,8 @@ import CryptoKit
 import Foundation
 
 let work = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+// The harness's requests come from 127.0.0.1, which only a debug build accepts unsigned.
+DenextOtaStore.isDebugBuild = true
 let fm = FileManager.default
 var failures = 0
 
@@ -212,6 +214,60 @@ do {
     try unsigned.install(storedManifest(signature: nil))
     store.stage(version, sequence: 7)
     check("a fresh download of a quarantined version is served again", unsigned.admit(store, "/assets/logo.svg"))
+
+    // ---- AU6 lows: a signed expiry (v4), loopback only in debug builds, directories ----------
+    let now = Int(Date().timeIntervalSince1970)
+    func manifest(_ extra: JSObject, sequence: Bool = true) -> JSObject {
+        var object: JSObject = [
+            "version": version,
+            "files": manifestFiles.map { ["path": $0.path, "sha256": $0.sha256, "size": Int($0.size)] as JSObject } as JSArray,
+            "notes": "hello",
+        ]
+        if sequence { object["sequence"] = 7 }
+        for (name, value) in extra { object[name] = value }
+        return object
+    }
+    func refusal(_ object: JSObject, baseUrl: String = "http://127.0.0.1/ui") -> String? {
+        do {
+            _ = try DenextOtaStore.ApplyRequest(baseUrl: baseUrl, headers: nil, manifest: object)
+            return nil
+        } catch let error as DenextOtaStore.OtaError {
+            return error.code
+        } catch {
+            return "\(error)"
+        }
+    }
+    check("expiry: a manifest past its expiresAt is refused (expired)", refusal(manifest(["expiresAt": now - 1])) == "expired")
+    check("expiry: a manifest before its expiresAt is accepted", refusal(manifest(["expiresAt": now + 3600])) == nil)
+    check("expiry: an expiresAt without a sequence is invalid", refusal(manifest(["expiresAt": now + 3600], sequence: false)) == "invalid")
+    let future = Int64(now + 86_400)
+    let v4 = DenextOtaStore.signaturePayload(version: version, required: false, notes: "hello", sequence: 7, minNative: nil, nativeFingerprint: nil, expiresAt: future)
+    let v4Signature = (try key.signature(for: v4)).rawRepresentation.base64EncodedString()
+    let expiringRequest = try DenextOtaStore.ApplyRequest(
+        baseUrl: "http://127.0.0.1/ui",
+        headers: nil,
+        manifest: manifest(["expiresAt": Int(future), "signature": v4Signature])
+    )
+    let expiring = try device("expiring", manifest: DenextOtaStore.storedManifest(expiringRequest))
+    check("expiry: the stored v4 manifest keeps expiresAt and verifies at launch", expiring.launch(key: signed).prepareLaunch().directory != nil)
+    var altered = try JSONSerialization.jsonObject(with: Data(contentsOf: expiring.dir.appendingPathComponent(DenextOtaStore.manifestPath))) as! [String: Any]
+    altered["expiresAt"] = future + 1
+    try expiring.install(JSONSerialization.data(withJSONObject: altered))
+    check("expiry: a stored expiresAt changed on the device fails the signature", expiring.launch(key: signed).prepareLaunch().directory == nil)
+    print("payload-v4 \(version) \(DenextOtaStore.signaturePayload(version: version, required: true, notes: "n", sequence: 7, minNative: 3, nativeFingerprint: nil, expiresAt: 1_800_000_000).base64EncodedString())")
+
+    DenextOtaStore.isDebugBuild = false
+    check("release build: an unsigned UI from loopback is refused (insecure)", refusal(manifest([:])) == "insecure")
+    DenextOtaStore.isDebugBuild = true
+    check("debug build: an unsigned UI from loopback is accepted", refusal(manifest([:])) == nil)
+    check("a baseUrl with credentials is invalid", refusal(manifest([:]), baseUrl: "http://user:pw@127.0.0.1/ui") == "invalid")
+    check("a baseUrl with a backslash is invalid", refusal(manifest([:]), baseUrl: "http://127.0.0.1\\@evil.example/ui") == "invalid")
+
+    let folders = try device("folders", manifest: storedManifest(signature: sign(key)))
+    store = folders.launch(key: signed)
+    _ = store.prepareLaunch()
+    check("a request for a directory of the UI is refused without quarantining", !folders.admit(store, "/assets") && store.tampered == nil)
+    check("the UI is still served after it", folders.admit(store, "/assets/logo.svg"))
 } catch {
     print("FAIL harness error: \(error)")
     failures += 1

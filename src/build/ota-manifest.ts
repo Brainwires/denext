@@ -112,6 +112,20 @@ export function defaultOtaSequence(now: number = Date.now()): number {
   return Math.floor(now / 1000);
 }
 
+/** How long a signed manifest is accepted when no expiry is given, in days. */
+export const OTA_DEFAULT_EXPIRY_DAYS = 30;
+
+/**
+ * The default signed `expiresAt`: {@linkcode OTA_DEFAULT_EXPIRY_DAYS} (or `days`) from `now`, in
+ * whole Unix seconds.
+ */
+export function defaultOtaExpiry(
+  now: number = Date.now(),
+  days: number = OTA_DEFAULT_EXPIRY_DAYS,
+): number {
+  return Math.floor(now / 1000) + Math.round(days * 24 * 60 * 60);
+}
+
 /**
  * (Re)write `<dir>/_denext/ota.json` for the web root `dir`.
  *
@@ -121,10 +135,11 @@ export function defaultOtaSequence(now: number = Date.now()): number {
  * server's configured directory) once its manifest is written.
  *
  * @param dir The web root (e.g. `out/`); it must contain an `index.html`.
- * @param meta Optional `required` / `notes` / `sequence` / `minNative` / `nativeFingerprint`; a
- *   key left out is left out of the manifest, except that a signed manifest without a `sequence`
- *   gets {@linkcode defaultOtaSequence} (so it is signed with the v2 payload, or v3 with a
- *   `nativeFingerprint`).
+ * @param meta Optional `required` / `notes` / `sequence` / `minNative` / `nativeFingerprint` /
+ *   `expiresAt`; a key left out is left out of the manifest, except that a signed manifest (or one
+ *   given an `expiresAt`) without a `sequence` gets {@linkcode defaultOtaSequence}, and a signed
+ *   one without an `expiresAt` gets {@linkcode defaultOtaExpiry} (30 days), so it is signed with
+ *   the v4 payload.
  * @param signingKey An ECDSA P-256 private key (`loadOtaSigningKey`): the manifest then carries
  *   a `signature` over its version and metadata.
  * @returns The manifest written.
@@ -141,9 +156,14 @@ export async function writeOtaManifest(
   } catch {
     throw new Error(`${dir} has no index.html, so it is not a web root an app can boot`);
   }
-  const stamped = signingKey && meta.sequence === undefined
-    ? { ...meta, sequence: defaultOtaSequence() }
-    : meta;
+  const now = Date.now();
+  let stamped = meta;
+  if ((signingKey || meta.expiresAt !== undefined) && meta.sequence === undefined) {
+    stamped = { ...stamped, sequence: defaultOtaSequence(now) };
+  }
+  if (signingKey && meta.expiresAt === undefined) {
+    stamped = { ...stamped, expiresAt: defaultOtaExpiry(now) };
+  }
   // `denext ota manifest --platform` on an export without a stamp: stamp it first, so the
   // version covers the target.
   if (meta.platform !== undefined) await writePlatformStamp(dir, meta.platform);

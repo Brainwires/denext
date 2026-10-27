@@ -239,6 +239,13 @@ export interface RequestContext {
    */
   renderPageForMethod?: boolean;
   /**
+   * Set by a compat runtime's middleware (`denext/fresh`'s `csp()`) to adjust this response's
+   * Content-Security-Policy: called with the policy denext computed for the document (undefined
+   * when `csp` is `"off"`), it returns the policy to send (undefined: none). It may also queue
+   * headers on {@linkcode outgoingHeaders} (a report-only policy, `Reporting-Endpoints`).
+   */
+  cspTransform?: (policy: string | undefined) => string | undefined;
+  /**
    * Set when the request's locale was negotiated (`detectLocale`: the `NEXT_LOCALE` cookie or
    * `Accept-Language`; `localeMiddleware`, next-intl's middleware): the response may differ per
    * visitor on the same URL, so `cdnCacheHeaders` never marks it public.

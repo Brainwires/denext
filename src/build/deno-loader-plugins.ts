@@ -25,7 +25,9 @@
 // whose `workspace` names other packages) fails the loader's discovery with
 // `WorkspaceDiscoverError(ConfigNotWorkspaceMember …)`, where Deno itself only warns and runs the
 // app on its own config. The loader is handed a stand-in beside the app's config — the same
-// fields, plus `"workspace": []` so discovery stops there — removed when the process exits.
+// fields, plus `"workspace": []` so discovery stops there — removed when the process exits. An
+// app a glob member names (`"workspace": ["./apps/*"]`) gets one too, since the loader can't expand
+// the glob, carrying the workspace's entries (its siblings by name) as plain imports and scopes.
 
 import {
   DEFAULT_LOADER,
@@ -36,6 +38,7 @@ import {
 import { dirname, extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import type * as esbuild from "./esbuild/mod.ts";
+import { workspaceImportsSync } from "./workspace-imports.ts";
 
 const WINDOWS = Deno.build.os === "windows";
 
@@ -221,7 +224,8 @@ function readConfigObject(path: string): Record<string, unknown> | null {
 /**
  * Whether a workspace's `members` (as its root `rootDir` lists them) include `dir`. A glob member
  * never counts: the loader's discovery can't expand one (it fails with `ResolveMember`), so an
- * app it names builds on its own config like any other app the workspace doesn't list.
+ * app it names builds on a stand-in that carries the workspace's entries (see
+ * {@linkcode standInConfig}).
  */
 function listsMember(rootDir: string, members: unknown[], dir: string): boolean {
   return members.some((m) => typeof m === "string" && resolve(rootDir, m) === dir);
@@ -241,6 +245,28 @@ function outsideItsWorkspace(configPath: string, config: Record<string, unknown>
     }
   }
   return false;
+}
+
+/**
+ * The stand-in for the app config at `path`: its own fields as a workspace of its own
+ * (`"workspace": []`), plus, when a glob member of its workspace names it (`"./apps/*"`, which the
+ * loader's discovery can't expand), the workspace's entries as plain imports and scopes — the
+ * root's imports, every other member by its name, each member's own imports scoped to it — so it
+ * imports its siblings by name as Deno resolves them. The app's own entries win. An app no member
+ * names gets nothing more: it builds on its own config, as Deno runs it.
+ */
+function standInConfig(path: string, config: Record<string, unknown>): Record<string, unknown> {
+  const ws = workspaceImportsSync(path);
+  const own = (key: string) => {
+    const value = config[key];
+    return value && typeof value === "object" && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {};
+  };
+  const out: Record<string, unknown> = { ...config, workspace: [] };
+  if (Object.keys(ws.imports).length > 0) out.imports = { ...ws.imports, ...own("imports") };
+  if (Object.keys(ws.scopes).length > 0) out.scopes = { ...ws.scopes, ...own("scopes") };
+  return out;
 }
 
 /** The stand-in configs written this process, by original path (removed on exit). */
@@ -275,7 +301,7 @@ function standaloneConfig(configPath: string): string {
   const config = readConfigObject(path);
   if (!config || !outsideItsWorkspace(path, config)) return configPath;
   const standIn = join(dirname(path), `.deno.denext-loader-${Deno.pid}.json`);
-  Deno.writeTextFileSync(standIn, JSON.stringify({ ...config, workspace: [] }));
+  Deno.writeTextFileSync(standIn, JSON.stringify(standInConfig(path, config)));
   if (standIns.size === 0) globalThis.addEventListener("unload", removeStandIns);
   standIns.set(path, standIn);
   return standIn;

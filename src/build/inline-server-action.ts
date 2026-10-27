@@ -34,6 +34,8 @@
 //   would ship. Next refuses the build with the same message.
 
 import { actionIdFor } from "../runtime/server-action.ts";
+// Inline actions carry the build's salted ids (installs the minter).
+import "../server/action-ids.ts";
 import { scanDirective } from "./directives.ts";
 import {
   applyEdits,
@@ -51,6 +53,7 @@ import {
 } from "./swc-ast.ts";
 import { BLOCK_SCOPES, boundNames, FN_SCOPES } from "./use-cache-transform.ts";
 import { projectSourceFiles } from "./platform-extensions.ts";
+import { fromFileUrl, relative, resolve, SEPARATOR } from "@std/path";
 import { toPosixPath } from "./mobile-paths.ts";
 
 /** Next.js's build error for an inline `"use server"` function in client code (verbatim). */
@@ -285,19 +288,47 @@ function nestedEdits(
   return `const ${ref} = _dnxServerRef(${id}, ${handler}${captures});`;
 }
 
+/** Options for {@linkcode transformInlineServerActions}. */
+export interface TransformInlineServerActionsOptions {
+  /**
+   * The project root. With it, the action ids are keyed by the module's project-relative path
+   * (`/`-separated), so separate builds of the same source at different absolute paths (one image
+   * per replica, a build per host) mint the same ids under a shared `DENEXT_ACTION_ID_SECRET`.
+   * Without it, by the module's absolute URL.
+   */
+  projectDir?: string;
+}
+
+/**
+ * The key an inline action's ids are minted under for `moduleUrl`: its project-relative path when
+ * the project root is known (see {@link TransformInlineServerActionsOptions.projectDir}), else
+ * the URL itself.
+ *
+ * @param moduleUrl The module's absolute `file:` URL.
+ * @param projectDir The project root, if known.
+ * @returns The key.
+ */
+export function inlineActionModuleKey(moduleUrl: string, projectDir?: string): string {
+  if (!projectDir || !moduleUrl.startsWith("file:")) return moduleUrl;
+  return relative(resolve(projectDir), fromFileUrl(moduleUrl)).split(SEPARATOR).join("/");
+}
+
 /**
  * Rewrite each inline `"use server"` function of a SERVER module into a registered server
  * reference (see the module comment). A module with none (or a `"use server"` module) is
  * returned unchanged.
  *
  * @param source The module source.
- * @param moduleUrl The module's absolute URL: it keys the action ids.
+ * @param moduleUrl The module's absolute URL: it keys the action ids (project-relative with
+ *   `options.projectDir`).
+ * @param options The project root, for ids that agree across builds of one source.
  * @returns The rewritten code and whether anything changed.
  * @throws {InlineServerActionError} When an inline action is a method.
  */
 export async function transformInlineServerActions(
   source: string,
   moduleUrl: string,
+  options: TransformInlineServerActionsOptions = {},
 ): Promise<{ code: string; changed: boolean }> {
   const identity = { code: source, changed: false };
   if (skips(source)) return identity;
@@ -308,10 +339,11 @@ export async function transformInlineServerActions(
   if (found.length === 0) return identity;
   const edits: Edit[] = [];
   const hoisted: string[] = [];
+  const moduleKey = inlineActionModuleKey(moduleUrl, options.projectDir);
   found.forEach((f, i) => {
     assertHoistable(ctx, moduleUrl, f);
     const name = fnName(f.fn);
-    const id = JSON.stringify(actionIdFor(moduleUrl, `inline:${i}:${name ?? ""}`));
+    const id = JSON.stringify(actionIdFor(moduleKey, `inline:${i}:${name ?? ""}`));
     if (f.scopes.length === 0) edits.push(...moduleScopeEdits(ctx, f.fn, id, name));
     else hoisted.push(nestedEdits(ctx, f, id, name, `_dnxInlineAction${i}`, edits));
   });

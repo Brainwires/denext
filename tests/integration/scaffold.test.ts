@@ -14,6 +14,7 @@ import {
 } from "../../src/build/desktop-macos-signing.ts";
 import { macosCodesignArgs } from "../../src/build/code-signing.ts";
 import { createTestApp, createTestClient } from "../../src/testing/mod.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 Deno.test("scaffoldFiles: plain project", () => {
   const files = scaffoldFiles({ dir: "/x" });
@@ -957,7 +958,7 @@ Deno.test("a scaffolded app type-checks against the framework", async () => {
     };
     await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(denoJson, null, 2));
 
-    const out = await new Deno.Command(Deno.execPath(), {
+    const out = await boundedOutput(Deno.execPath(), {
       args: [
         "check",
         "--config",
@@ -966,9 +967,7 @@ Deno.test("a scaffolded app type-checks against the framework", async () => {
         join(dir, "app", "layout.tsx"),
         join(dir, "app", "counter.tsx"),
       ],
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    });
     assertEquals(
       out.code,
       0,

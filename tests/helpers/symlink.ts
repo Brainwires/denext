@@ -37,3 +37,46 @@ async function probeFileSymlinks(): Promise<boolean> {
  * the symlink privilege, where a test that needs one is ignored (named in its `ignore`).
  */
 export const FILE_SYMLINKS: boolean = await probeFileSymlinks();
+
+/** Whether this process may create a directory link (a junction on Windows, a symlink elsewhere). */
+async function probeDirLinks(): Promise<boolean> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_dirlink_probe_" });
+  try {
+    await Deno.mkdir(`${dir}/target`);
+    await symlinkDir(`${dir}/target`, `${dir}/link`);
+    return true;
+  } catch {
+    return false;
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+}
+
+/** `true` when directory links can be created here (a junction needs no privilege on Windows). */
+const DIR_LINKS: boolean = await probeDirLinks();
+
+function inCi(): boolean {
+  try {
+    return (Deno.env.get("CI") ?? "") !== "";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The `ignore` of a test that needs a directory link: set on a host that can't create one, so the
+ * test is reported as ignored instead of passing without checking anything. Never under CI
+ * (`CI` set): a runner that can't make a junction is broken, and the test fails there.
+ */
+export const IGNORE_WITHOUT_DIR_LINKS: boolean = !DIR_LINKS && !inCi();
+
+/**
+ * `name`, saying why the test is ignored when {@linkcode IGNORE_WITHOUT_DIR_LINKS} is set.
+ *
+ * @param name The test's name.
+ */
+export function dirLinkTestName(name: string): string {
+  return IGNORE_WITHOUT_DIR_LINKS
+    ? `${name} [ignored: this host can't create a directory link]`
+    : name;
+}

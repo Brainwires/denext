@@ -318,7 +318,11 @@ Deno.test("upgrade: removes only the jsr:@denext/* exclude entry, and says why",
   assertEquals(code, 0, out);
   assertEquals(
     file,
-    EXISTING.replace('"jsr:@denext/*", ', ""),
+    // (upgrade also adds runtime 3.0.0-rc.5's `.deno/` exclude to an older project)
+    EXISTING.replace('"jsr:@denext/*", ', "").replace(
+      /\n}\n$/,
+      ',\n  "exclude": [".deno/"]\n}\n',
+    ),
     "the other entries, the age, the comment and the pin (4.5.0 is inside P2D) are kept",
   );
   assertStringIncludes(out, 'Removed "jsr:@denext/*" from minimumDependencyAge.exclude');

@@ -6,7 +6,8 @@
 
 import { basename, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import { mfs } from "./migrate-io.ts";
+import { confineWrites, mfs } from "./migrate-io.ts";
+import { assertInsideProject, OutsideProjectError } from "./project-confine.ts";
 import { DESKTOP_RUNTIME_CONFIG_FILE, desktopRuntimeConfigText } from "./desktop-app-config.ts";
 import { CAPACITOR_BUILD_IGNORES, CAPACITOR_VERSION } from "./capacitor-pins.ts";
 import { addFastlaneToProject } from "./mobile-fastlane.ts";
@@ -277,7 +278,8 @@ function scaffoldTasks(opts: ScaffoldOptions): Record<string, string> {
     // Cross-builds from any OS via `deno desktop --target`.
     tasks["desktop:package:linux"] = "deno run -A scripts/package-linux.ts";
     // Windows bundle (exe + dlls) → zip, Authenticode-signed when a cert is configured.
-    // The exe cross-builds from any OS; signing runs where signtool is available.
+    // The exe cross-builds from any OS; signing needs signtool (a configured cert without it
+    // fails the run; --no-sign builds unsigned).
     tasks["desktop:package:windows"] = "deno run -A scripts/package-windows.ts";
   }
   if (opts.capacitor) {
@@ -383,6 +385,14 @@ export const SCAFFOLD_COMPILER_OPTIONS: Readonly<Record<string, unknown>> = {
   lib: ["deno.window", "deno.unstable", "dom", "dom.iterable", "dom.asynciterable"],
 };
 
+/**
+ * A scaffold's top-level `exclude`: what no subcommand (`test`, `lint`, `fmt`, `check`) should
+ * walk. `.deno/` is where Deno runtime 3.0.0-rc.5's type-check leaves an `npm-compat` copy of
+ * `@jsr/*` packages, their `_test.ts` files included, which `deno test`'s default discovery would
+ * otherwise run.
+ */
+export const SCAFFOLD_EXCLUDE: readonly string[] = [".deno/"];
+
 /** A scaffold's `lint`: denext's lint plugin, at the scaffold's version. */
 export const SCAFFOLD_LINT: Readonly<Record<string, unknown>> = {
   plugins: [`${dep}/lint-plugin`],
@@ -414,6 +424,7 @@ export function denoJson(opts: ScaffoldOptions): string {
     imports: scaffoldImports(opts),
     // A monorepo lints every member with the root's plugin.
     ...(member ? {} : { lint: SCAFFOLD_LINT }),
+    exclude: [...SCAFFOLD_EXCLUDE],
   };
   if (opts.desktop) {
     // Read by `deno desktop` when packaging the native binary.
@@ -873,13 +884,16 @@ export async function scaffoldProject(
   const opts = options.fastlane ? { ...options, capacitor: true } : options;
   const files = scaffoldFiles(opts);
   await refuseToClobber(files, opts);
-  const written = await writeScaffoldFiles(opts.dir, files);
-  if (opts.fastlane) {
-    // The same files `denext mobile add fastlane` writes, from the capacitor.config just written.
-    written.push(...(await addFastlaneToProject({ dir: opts.dir })).written);
-  }
-  written.push(...await writeProjectConfigs(opts));
-  return written;
+  // `init` writes into an existing (maybe cloned) directory: its symlinks never lead a write out.
+  return await confineWrites(opts.dir, async () => {
+    const written = await writeScaffoldFiles(opts.dir, files);
+    if (opts.fastlane) {
+      // The same files `denext mobile add fastlane` writes, from the capacitor.config just written.
+      written.push(...(await addFastlaneToProject({ dir: opts.dir })).written);
+    }
+    written.push(...await writeProjectConfigs(opts));
+    return written;
+  });
 }
 
 /**
@@ -892,6 +906,7 @@ export async function scaffoldProject(
 export async function writeScaffoldFiles(dir: string, files: ScaffoldFile[]): Promise<string[]> {
   for (const f of files) {
     const abs = join(dir, f.path);
+    await assertInsideProject(dir, abs);
     await Deno.mkdir(join(abs, ".."), { recursive: true });
     await Deno.writeTextFile(abs, f.content, f.mode ? { mode: f.mode } : undefined);
   }
@@ -1045,11 +1060,18 @@ async function writeVscodeText(
   text: string,
   written: string[],
 ): Promise<void> {
-  await mfs.mkdir(vscodeDir, { recursive: true });
-  // Same symlink guard as migrate's `ensureGitignore`: unlink first so a symlinked target
-  // (possible in a cloned third-party repo) isn't followed out of tree.
-  await mfs.remove(path).catch(() => {});
-  await mfs.writeTextFile(path, text);
+  try {
+    await mfs.mkdir(vscodeDir, { recursive: true });
+    // Same symlink guard as migrate's `ensureGitignore`: unlink first so a symlinked target
+    // (possible in a cloned third-party repo) isn't followed out of tree.
+    await mfs.remove(path).catch(() => {});
+    await mfs.writeTextFile(path, text);
+  } catch (error) {
+    // A `.vscode` linked out of the project (shared editor settings, or a planted link) is left
+    // alone: the editor setup is a convenience, not worth refusing the whole run over.
+    if (error instanceof OutsideProjectError) return;
+    throw error;
+  }
   written.push(path);
 }
 
@@ -1873,8 +1895,9 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  * complete bundle directory (the \`.exe\`, its \`.dll\`s, and resources); this builds one or
  * both arches, Authenticode-signs every PE file in the bundle (the \`.exe\`, its \`.dll\`s, any
  * \`.node\`) when a code-signing certificate is provided, and
- * wraps each bundle in its installers (an \`.msi\` by default). Signing only runs where
- * \`signtool\` is available (Windows) and a cert is configured.
+ * wraps each bundle in its installers (an \`.msi\` by default). Signing needs \`signtool\`
+ * (Windows SDK): with a certificate configured and no signtool the run fails rather than ship an
+ * unsigned app (\`--no-sign\` builds unsigned on purpose).
  *
  *   deno run -A scripts/package-windows.ts [--arch <mode>] [--no-export] [--no-sign] [--format <list>]
  *
@@ -1903,6 +1926,7 @@ const WINDOWS_PACKAGE_SCRIPT = `#!/usr/bin/env -S deno run -A
  *   DENEXT_WINDOWS_CERT            path to a code-signing certificate (.pfx) — signing is
  *                                  skipped when unset (no secrets are ever baked in).
  *   DENEXT_WINDOWS_CERT_PASSWORD   the .pfx password, if any.
+ *   DENEXT_WINDOWS_CERT_THUMBPRINT a certificate in the Windows store instead of a .pfx.
  *   DENEXT_SIGN_TIMESTAMP_URL      RFC-3161 timestamp server (default: DigiCert's).
  *   deno.json \`version\` is the MSI ProductVersion (numeric major.minor.build); denext.config.ts
  *   \`desktop.installers.publisher\` its Manufacturer.
@@ -1986,7 +2010,8 @@ async function buildBundle(
 }
 
 /** Authenticode-sign \`files\` with DENEXT_WINDOWS_CERT through \`signtool\`, batched; without a
- * certificate or signtool, skip with a warning (see desktopSignWindows). Whether they were signed. */
+ * certificate, skip with a warning; with one but no signtool, fail (see desktopSignWindows).
+ * Whether they were signed. */
 async function sign(files: string[]): Promise<boolean> {
   return await desktopSignWindows(files);
 }

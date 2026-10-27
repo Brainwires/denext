@@ -14,6 +14,7 @@ export async function generateMetadata(
   return { title: `denext — blog: ${slug}` };
 }
 
+// fallow-ignore-next-line code-duplication -- mirrors examples/hello's page on purpose
 interface Post {
   title: string;
   body: string;

@@ -73,3 +73,46 @@ export function describeRoute(route: DeployRoute): string {
     route.reason ? ` — ${route.reason}` : ""
   }`;
 }
+
+/** What a stop timeout allows above the drain: the services, the plugin teardowns, `onShutdown`. */
+const STOP_MARGIN_S = 20;
+
+/**
+ * The shutdown drain the generated files run with (ms): the preset's `drainMs`, else
+ * `DENEXT_SHUTDOWN_DRAIN_MS` in the environment `prepare` runs in, else the manifest's default.
+ * `0` waits for every request.
+ *
+ * @param manifest The deploy manifest.
+ * @param env Reads `prepare`'s environment.
+ * @param explicit The preset's `drainMs` option.
+ * @returns The drain in milliseconds.
+ * @throws {Error} For a `drainMs` that is not a whole number of milliseconds (0 or more).
+ */
+export function drainMsOf(
+  manifest: DeployManifest,
+  env: (name: string) => string | undefined,
+  explicit?: number,
+): number {
+  if (explicit !== undefined) {
+    if (!Number.isInteger(explicit) || explicit < 0) {
+      throw new Error(
+        `denext: deploy option drainMs ${JSON.stringify(explicit)} is not a whole number of ms`,
+      );
+    }
+    return explicit;
+  }
+  const raw = env(manifest.server.drain.env)?.trim();
+  return raw && /^\d+$/.test(raw) ? Number(raw) : manifest.server.drain.ms;
+}
+
+/**
+ * How long the host waits after `SIGTERM` before it kills the server (seconds): the drain plus a
+ * margin for the services, the plugin teardowns and `onShutdown`, so a stop never cuts a drain
+ * short. `null` for a drain of `0` (it waits for every request: no limit).
+ *
+ * @param drainMs The drain ({@linkcode drainMsOf}).
+ * @returns The stop timeout in seconds, or `null`.
+ */
+export function stopTimeoutSec(drainMs: number): number | null {
+  return drainMs === 0 ? null : Math.ceil(drainMs / 1000) + STOP_MARGIN_S;
+}

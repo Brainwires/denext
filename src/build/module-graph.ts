@@ -22,6 +22,7 @@ import {
 } from "@std/path";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { type Directive, readDirective } from "./directives.ts";
+import { referencedActionExports } from "./action-references.ts";
 import { canonicalPath } from "./canonical-path.ts";
 import { clientIdFor, serverModuleIdFor, shortHash } from "./boundary-ids.ts";
 import {
@@ -31,7 +32,7 @@ import {
 } from "./platform-extensions.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs, prepareConfig } from "./bundle.ts";
-import { boundedOutput, retryOnStall } from "./serial-child.ts";
+import { boundedOutput, childDeadlineMs, retryOnStall } from "./serial-child.ts";
 import { quietThenExplain, type StderrMode } from "./exited-output.ts";
 
 // The boundary ids and the manifest's shape live in leaf modules the server runtime imports
@@ -431,9 +432,12 @@ export function denoInfoGraph(
       if (!prev || [...prev.entries].every((e) => entries.has(e))) {
         graphCaches.set(name, { entries, info: graph.info, resolved: graph.resolvedEntries });
       }
-      graphInFlight.delete(key);
     }
     return { info: graph.info, roots: graph.roots };
+  }).finally(() => {
+    // Settled either way: a failed crawl (a stall, a bad config) must not answer every later
+    // request for the same graph until the cache is reset.
+    if (name) graphInFlight.delete(key);
   });
   if (name) graphInFlight.set(key, run);
   return run;
@@ -467,7 +471,7 @@ const DENO_INFO_DEADLINE_MS = 120_000;
 
 async function spawnDenoInfo(
   entryFiles: string[],
-  deadlineMs: number = DENO_INFO_DEADLINE_MS,
+  deadlineMs: number = childDeadlineMs(DENO_INFO_DEADLINE_MS),
 ): Promise<ModuleGraph & { resolvedEntries: Map<string, string> }> {
   graphSpawns++;
   const tmpDir = await Deno.makeTempDir({ prefix: "denext_graph_" });
@@ -783,6 +787,7 @@ export async function buildBoundaryManifest(
 
   if (opts.npm) await addNpmBoundary(manifest, appDir, locals, opts.npm);
 
+  const localServers = new Map<string, string[]>();
   await Promise.all(
     locals.map(async (filePath) => {
       const directive: Directive = await readDirective(filePath);
@@ -803,11 +808,37 @@ export async function buildBoundaryManifest(
         // `createServerReference` per export.
         const exports = opts.exportsOf ? await opts.exportsOf(filePath) : [];
         manifest.server.set(serverModuleIdFor(appDir, url), { url, exports });
+        localServers.set(url, exports);
       }
     }),
   );
-
+  if (localServers.size > 0) await recordExposedActions(manifest, entryFiles, locals, localServers);
   return manifest;
+}
+
+/**
+ * Record on each local `"use server"` module which of its exports the app's modules reference
+ * (`exposed`, ./action-references.ts): the server registers only those. One referenced as a
+ * whole keeps every export.
+ */
+async function recordExposedActions(
+  manifest: BoundaryManifest,
+  entryFiles: string[],
+  locals: string[],
+  servers: Map<string, string[]>,
+): Promise<void> {
+  const { info, roots } = await denoInfoGraph(entryFiles);
+  const localUrls = new Set(locals.map((p) => toFileUrl(p).href));
+  const graph = runtimeReachable(info, roots).filter((m) => localUrls.has(m.specifier));
+  const referenced = await referencedActionExports(graph, servers);
+  // A route entry the framework imports itself is referenced as a whole.
+  const entries = new Set(roots);
+  for (const ref of manifest.server.values()) {
+    if (!servers.has(ref.url) || entries.has(ref.url)) continue;
+    const names = referenced.get(ref.url);
+    if (names === "*") continue;
+    ref.exposed = [...names ?? []].sort();
+  }
 }
 
 /**

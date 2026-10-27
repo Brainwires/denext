@@ -16,14 +16,15 @@ export const CLI_LAZY_MODULES: readonly string[] = ["src/cli/lazy-modules.genera
 /**
  * Framework files the CLI reads as data at run time, in its own process, from a compiled binary:
  * - `deno.json`: the framework's `exports` (`migrate` lists the `next/*` subpaths it maps) and
- *   import map (`frameworkImports()`); the version is the `VERSION` constant, never read here;
- * - `AGENTS.md`: the MCP server's `denext://guide` resource.
+ *   import map (`frameworkImports()`); the version is the `VERSION` constant, never read here.
+ *
+ * The MCP server's `denext://guide` resource is not one: the docs corpus module carries it.
  *
  * Build-time reads (the CSS config, `deno.lock`, the runtime sources a bundle loads) are not
  * listed: a binary never builds in its own process — module verbs run on the denext the
  * project pins (src/cli/run-verb.ts).
  */
-export const CLI_RUNTIME_FILES: readonly string[] = ["deno.json", "AGENTS.md"];
+export const CLI_RUNTIME_FILES: readonly string[] = ["deno.json"];
 
 /** Every `--include` the CLI's `deno compile` passes, relative to the repository root. */
 export const CLI_COMPILE_INCLUDES: readonly string[] = [...CLI_LAZY_MODULES, ...CLI_RUNTIME_FILES];

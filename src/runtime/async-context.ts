@@ -193,8 +193,8 @@ export function __asyncAwait<T>(scope: AsyncScope, value: T | PromiseLike<T>): P
  *
  * Async generators capture their frame at the first `.next()` (when the body first
  * runs), consistent with how {@link __asyncScope} treats an async function's entry;
- * the TC39 proposal has not settled creation-time vs. resume-time capture, and
- * `yield*` delegation is left uninstrumented (see the build transform).
+ * the TC39 proposal has not settled creation-time vs. resume-time capture. A `yield*`
+ * is bracketed by {@linkcode __asyncDelegate} instead.
  */
 export function __asyncYield<T>(scope: AsyncScope, value?: T): T | undefined {
   current = scope.ambient; // hand the caller back its own context while suspended
@@ -256,6 +256,77 @@ export function __asyncIter<T>(
         next: (a?: unknown) => step("next", a),
         return: (v?: unknown) => step("return", v),
         throw: (e?: unknown) => step("throw", e),
+      };
+    },
+  };
+}
+
+/**
+ * Bracket a `yield*` in an async generator: wrap the delegate so the frame's context is the
+ * one current while each step of the inner iterator runs, the caller's ambient context is put
+ * back while the frame is suspended, and the frame's context is restored when the delegation
+ * completes and the body goes on. The first step runs inside the body (the frame is current);
+ * each later one runs on a caller's `.next()` / `.return()` / `.throw()`, under the caller's
+ * context. A sync iterable is adapted as `yield*` adapts it (its values awaited); an inner
+ * iterator with no `throw` is closed and a `TypeError` thrown, as `yield*` does.
+ */
+export function __asyncDelegate<T>(
+  scope: AsyncScope,
+  iterable: AsyncIterable<T> | Iterable<T | PromiseLike<T>>,
+): AsyncIterable<T> {
+  return {
+    [Symbol.asyncIterator](): AsyncIterator<T> {
+      const asyncInner = (iterable as Partial<AsyncIterable<T>>)[Symbol.asyncIterator];
+      const inner =
+        (asyncInner
+          ? asyncInner.call(iterable)
+          : (iterable as Iterable<T | PromiseLike<T>>)[Symbol.iterator]()) as
+            & AsyncIterator<T>
+            & Partial<Record<"return" | "throw", (a?: unknown) => unknown>>;
+      let first = true;
+      const run = (call: () => unknown): Promise<IteratorResult<T>> => {
+        // The first step runs in the body (the frame is current); a later one on a caller's
+        // resume: remember that ambient and run the inner step in the frame's context.
+        if (first) first = false;
+        else {
+          scope.ambient = current;
+          current = scope.frame;
+        }
+        let step: unknown;
+        try {
+          step = call();
+        } catch (e) {
+          step = Promise.reject(e); // a step that throws at once settles like a rejected one
+        } finally {
+          current = scope.ambient; // suspended: the caller's context again
+        }
+        return Promise.resolve(step).then(
+          async (r) => {
+            const result = r as IteratorResult<T | PromiseLike<T>>;
+            const value = asyncInner ? result.value : await result.value;
+            if (result.done) {
+              scope.ambient = current; // the delegation ends: the body resumes in its frame
+              current = scope.frame;
+            }
+            return { value, done: result.done } as IteratorResult<T>;
+          },
+          (e) => {
+            scope.ambient = current;
+            current = scope.frame;
+            throw e;
+          },
+        );
+      };
+      return {
+        next: (a?: unknown) => run(() => inner.next(a as never)),
+        return: (v?: unknown) =>
+          run(() => (inner.return ? inner.return(v) : { value: v, done: true })),
+        throw: (e?: unknown) =>
+          run(() => {
+            if (inner.throw) return inner.throw(e);
+            inner.return?.();
+            throw new TypeError("The iterator does not provide a 'throw' method");
+          }),
       };
     },
   };

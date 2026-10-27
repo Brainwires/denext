@@ -137,6 +137,7 @@ export { realtime, realtimeMigrations, realtimeSetupSql } from "./src/realtime-s
 export type {
   RealtimeLogicalOptions,
   RealtimeOptions,
+  RealtimeReplayOptions,
   RealtimeRevalidateOptions,
   RealtimeSocketOptions,
   RealtimeTableOptions,

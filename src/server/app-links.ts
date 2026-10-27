@@ -17,6 +17,16 @@ const APPLE_APP_ID = /^[A-Z0-9]{10}\.[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$/;
 const ANDROID_PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
 
 /**
+ * Whether `name` is an Android application id (`com.example.app`).
+ *
+ * @param name The value to check.
+ * @returns `true` for a dotted application id.
+ */
+export function isAndroidPackageName(name: unknown): name is string {
+  return typeof name === "string" && ANDROID_PACKAGE.test(name);
+}
+
+/**
  * A SHA-256 certificate fingerprint in the colon form Android expects, or null when `value` is
  * not 32 bytes of hex (with or without colons).
  *
@@ -46,7 +56,10 @@ export function validateAppLinks(
   }
   const { apple, android } = value as Record<string, unknown>;
   if (apple !== undefined) validateApple(apple, fail);
-  if (android !== undefined) validateAndroid(android, fail);
+  if (Array.isArray(android)) {
+    if (android.length === 0) fail("appLinks.android", "must list at least one app");
+    android.forEach((app, i) => validateAndroid(app, fail, `appLinks.android[${i}]`));
+  } else if (android !== undefined) validateAndroid(android, fail);
 }
 
 type Fail = (path: string, message: string) => void;
@@ -90,27 +103,27 @@ function validateApple(apple: unknown, fail: Fail): void {
   validateOptionalBoolean(webcredentials, "appLinks.apple.webcredentials", fail);
 }
 
-/** `appLinks.android`. */
-function validateAndroid(android: unknown, fail: Fail): void {
+/** `appLinks.android` (or one app of a list of them, at `at`). */
+function validateAndroid(android: unknown, fail: Fail, at = "appLinks.android"): void {
   if (typeof android !== "object" || android === null) {
-    return fail("appLinks.android", "must be an object ({ packageName, sha256CertFingerprints })");
+    return fail(at, "must be an object ({ packageName, sha256CertFingerprints })");
   }
   const { packageName, sha256CertFingerprints, loginCredentials } = android as Record<
     string,
     unknown
   >;
-  if (typeof packageName !== "string" || !ANDROID_PACKAGE.test(packageName)) {
-    fail("appLinks.android.packageName", 'must be the application id (e.g. "com.example.app")');
+  if (!isAndroidPackageName(packageName)) {
+    fail(`${at}.packageName`, 'must be the application id (e.g. "com.example.app")');
   }
   validateList(
     sha256CertFingerprints,
-    "appLinks.android.sha256CertFingerprints",
+    `${at}.sha256CertFingerprints`,
     "must list at least one SHA-256 fingerprint",
     (fp) => typeof fp === "string" && normalizeCertFingerprint(fp) !== null,
     (fp) => `${JSON.stringify(fp)} is not a SHA-256 fingerprint (32 hex bytes, "AB:CD:…")`,
     fail,
   );
-  validateOptionalBoolean(loginCredentials, "appLinks.android.loginCredentials", fail);
+  validateOptionalBoolean(loginCredentials, `${at}.loginCredentials`, fail);
 }
 
 /** Whether `p` is a path pattern the AASA `components` can carry. */
@@ -137,26 +150,35 @@ export function appleAppSiteAssociation(apple: AppleAppLinks): Record<string, un
 }
 
 /**
- * The `assetlinks.json` statement list (Digital Asset Links).
+ * The `assetlinks.json` statement list (Digital Asset Links): one statement per app. Each
+ * delegates `handle_all_urls` (App Links) and, unless `loginCredentials: false`,
+ * `get_login_creds` — which Android's Credential Manager requires before the app may use this
+ * domain's passkeys and passwords (its `android:apk-key-hash:` WebAuthn origin).
  *
- * @param android The Android config.
+ * @param android The Android config: one app, or several (a debug and a release build, or
+ * separate apps sharing the domain).
  * @returns The JSON value to serve.
  */
-export function assetLinks(android: AndroidAppLinks): Array<Record<string, unknown>> {
-  const relation = ["delegate_permission/common.handle_all_urls"];
-  if (android.loginCredentials !== false) {
-    relation.push("delegate_permission/common.get_login_creds");
-  }
-  return [{
-    relation,
-    target: {
-      namespace: "android_app",
-      package_name: android.packageName,
-      sha256_cert_fingerprints: android.sha256CertFingerprints.map((fp) =>
-        normalizeCertFingerprint(fp) ?? fp
-      ),
-    },
-  }];
+export function assetLinks(
+  android: AndroidAppLinks | readonly AndroidAppLinks[],
+): Array<Record<string, unknown>> {
+  const apps: readonly AndroidAppLinks[] = Array.isArray(android) ? android : [android];
+  return apps.map((app) => {
+    const relation = ["delegate_permission/common.handle_all_urls"];
+    if (app.loginCredentials !== false) {
+      relation.push("delegate_permission/common.get_login_creds");
+    }
+    return {
+      relation,
+      target: {
+        namespace: "android_app",
+        package_name: app.packageName,
+        sha256_cert_fingerprints: app.sha256CertFingerprints.map((fp) =>
+          normalizeCertFingerprint(fp) ?? fp
+        ),
+      },
+    };
+  });
 }
 
 /**

@@ -6,6 +6,7 @@
 
 import { fromFileUrl, join } from "@std/path";
 import { compileCliArgs } from "../../scripts/compile-cli.ts";
+import { boundedOutput } from "../helpers/bounded-command.ts";
 
 /** The repository root. */
 const ROOT: string = fromFileUrl(new URL("../..", import.meta.url));
@@ -66,16 +67,13 @@ export async function runCli(
   cwd: string,
   env: Record<string, string> = {},
 ): Promise<CliRun> {
-  const { code, stdout, stderr } = await new Deno.Command(bin, {
+  const { code, stdout, stderr } = await boundedOutput(bin, {
     args,
     cwd,
     // A pinned child resolves denext from JSR: a release younger than Deno's minimum dependency
     // age would otherwise be refused there.
     env: { DENEXT_MIN_DEP_AGE: "0", NO_COLOR: "1", ...env },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  });
   const decoder = new TextDecoder();
   return { code, out: decoder.decode(stdout), err: decoder.decode(stderr) };
 }

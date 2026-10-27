@@ -7,6 +7,7 @@ import { join } from "@std/path";
 import { runBounded } from "./helpers/bounded-command.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 import {
+  boundArgsForTest,
   deadlineFrom,
   exitedOutputForTest,
   parseCimJson,
@@ -14,6 +15,7 @@ import {
   parsePs,
   processSnapshot,
   processTree,
+  registrationSite,
   stallMessage,
 } from "./helpers/watchdog.ts";
 
@@ -60,10 +62,49 @@ Deno.test("watchTests: a stalled test fails at its deadline, naming the open sub
     assertStringIncludes(r.output, "1 failed");
     assertStringIncludes(r.output, "1 ignored");
     assertStringIncludes(r.output, "namedFunction");
+    // Every test is reported at its own registration in the test file, never at the wrapper, and
+    // the stall names the file and line as well as the test.
+    const located = r.output.split("\n").filter((l) => / => \S+:\d+:\d+$/.test(l));
+    assert(located.length > 0, r.output);
+    for (const line of located) {
+      assert(!line.includes("watchdog.ts"), `reported at the wrapper: ${line}`);
+      assertStringIncludes(line, "stall.test.ts:");
+    }
+    assertStringIncludes(r.output, "stall.test.ts:3:6");
+    assert(/stall\.test\.ts:3:\d+: "stalls" still running/.test(r.output), r.output);
     assert(Date.now() - t0 < 100_000, `took ${Date.now() - t0} ms`);
   } finally {
     await removeTempDir(dir);
   }
+});
+
+Deno.test("watchdog: a test's registration site is the first frame outside the wrapper", () => {
+  const self = WATCHDOG;
+  const stack = [
+    "Error",
+    `    at Object.test (${self}:401:5)`,
+    `    at ${self}:12:3`,
+    "    at file:///repo/tests/foo.test.ts:42:6",
+    "    at ext:core/01_core.js:10:1",
+  ].join("\n");
+  assertEquals(registrationSite(stack), "file:///repo/tests/foo.test.ts:42:6");
+  assertEquals(
+    registrationSite(`Error\n    at x (${self}:1:1)\n    at y (file:///C:/a/b.test.ts:7:2)`),
+    "file:///C:/a/b.test.ts:7:2",
+  );
+  assertEquals(registrationSite(`Error\n    at x (${self}:1:1)`), undefined);
+  assertEquals(registrationSite(undefined), undefined);
+  // The location rides on the wrapped function; a helper's own location (bdd) is kept.
+  const [, fn] = boundArgsForTest(["t", () => {}], 0, "file:///x.test.ts:1:1") as [
+    string,
+    Record<symbol, unknown>,
+  ];
+  assertEquals(fn[Symbol.for("Deno.test.location")], "file:///x.test.ts:1:1");
+  const own = Object.assign(() => {}, { [Symbol.for("Deno.test.location")]: "file:///own.ts:2:2" });
+  const [def] = boundArgsForTest([{ name: "t", fn: own }], 1000, "file:///x.test.ts:1:1") as [
+    { fn: Record<symbol, unknown> },
+  ];
+  assertEquals(def.fn[Symbol.for("Deno.test.location")], "file:///own.ts:2:2");
 });
 
 const PRELOAD = new URL("./helpers/watchdog-preload.ts", import.meta.url).href;

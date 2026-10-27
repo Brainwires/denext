@@ -8,9 +8,9 @@
 //                        in `"use client"` islands alike, plus their stylesheet (an export)
 //   packages/shared/     `@<scope>/shared`: plain TypeScript, no denext
 //
-// The members are listed explicitly, not as `apps/*`: the esbuild Deno loader the client bundle
-// resolves through can't expand a glob member (see deno-loader-plugins.ts), so an app named by
-// one builds standalone and can't import its siblings by name.
+// The members are listed one by one, so the root says exactly what the workspace holds; a glob
+// member (`apps/*`) works too (deno-loader-plugins.ts hands the client bundler's loader, which
+// can't expand one, the workspace's entries itself).
 
 import { basename, join } from "@std/path";
 import {
@@ -19,6 +19,7 @@ import {
   SCAFFOLD_COMPILER_OPTIONS,
   SCAFFOLD_DENEXT_CLI,
   SCAFFOLD_DENEXT_DEP,
+  SCAFFOLD_EXCLUDE,
   SCAFFOLD_LINT,
   type ScaffoldFile,
   type ScaffoldOptions,
@@ -103,6 +104,7 @@ function monorepoRootDenoJson(opts: ScaffoldOptions): string {
     compilerOptions: SCAFFOLD_COMPILER_OPTIONS,
     fmt: { exclude: BUILD_OUTPUT },
     lint: { ...SCAFFOLD_LINT, exclude: BUILD_OUTPUT },
+    exclude: [...SCAFFOLD_EXCLUDE],
   };
   return JSON.stringify(config, null, 2) + "\n";
 }
@@ -365,9 +367,8 @@ ${
           "may import.",
       ),
       item(
-        "`deno.json` — the workspace. Its members are listed one by one: denext's client " +
-          "bundler resolves a member by name only when the root lists it (not through a " +
-          "`packages/*` glob). It also holds what every member shares: `compilerOptions`, " +
+        "`deno.json` — the workspace. Its members are listed one by one (a glob such as " +
+          "`packages/*` works too). It also holds what every member shares: `compilerOptions`, " +
           "`fmt`, `lint`, and the `unstable` / `allowScripts` fields only a root may set.",
       ),
     ].join("")

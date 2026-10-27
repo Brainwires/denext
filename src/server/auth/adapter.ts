@@ -390,6 +390,20 @@ export interface SsoSessionRecord {
   expiresAt: number;
 }
 
+/** A stateless cookie session a SAML sign-in started: Single Logout's session index. */
+export interface SsoSessionIndexRecord {
+  /** The `saml()` provider id. */
+  providerId: string;
+  /** The assertion's NameID. */
+  nameId: string;
+  /** The AuthnStatement's SessionIndex, when given. */
+  sessionIndex?: string;
+  /** The cookie session's id (`AuthSession.sid`). */
+  sid: string;
+  /** When the session ends, epoch seconds. */
+  expiresAt: number;
+}
+
 /** Identifies one linked provider account. */
 export interface AdapterAccountRef {
   /** The denext provider id. */
@@ -955,6 +969,73 @@ export interface AuthAdapter extends OAuthServerAdapter, CustomProviderAdapter, 
    * @returns Whether this call claimed it.
    */
   claimSamlMessageId?(id: string, expiresAt: number): MaybePromise<boolean>;
+
+  // ---- SAML Single Logout of stateless cookie sessions (optional) ----------
+  // All five together turn it on (`cookieRevocationOf`): a SAML sign-in records which cookie
+  // session (`sid`) its NameID and SessionIndex started, and an IdP's LogoutRequest revokes
+  // exactly the sessions it names. Rows are durable: a revocation is never dropped before it
+  // expires (an expired row may be pruned on any write).
+
+  /**
+   * Record that a SAML sign-in at `providerId` started the cookie session `sid` (and prune
+   * expired index rows).
+   *
+   * @param providerId The `saml()` provider id.
+   * @param nameId The assertion's NameID.
+   * @param sessionIndex Its SessionIndex, or `undefined` when it gave none.
+   * @param sid The cookie session's id.
+   * @param expiresAt When the session ends (its absolute ceiling), epoch seconds.
+   */
+  recordSsoSessionIndex?(
+    providerId: string,
+    nameId: string,
+    sessionIndex: string | undefined,
+    sid: string,
+    expiresAt: number,
+  ): MaybePromise<void>;
+
+  /**
+   * The unexpired cookie sessions one SessionIndex of a NameID started.
+   *
+   * @param providerId The provider id.
+   * @param nameId The NameID.
+   * @param sessionIndex The SessionIndex.
+   * @returns The sessions.
+   */
+  listSsoSessionIndexBySessionIndex?(
+    providerId: string,
+    nameId: string,
+    sessionIndex: string,
+  ): MaybePromise<SsoSessionIndexRecord[]>;
+
+  /**
+   * The unexpired cookie sessions a NameID started, every SessionIndex.
+   *
+   * @param providerId The provider id.
+   * @param nameId The NameID.
+   * @returns The sessions.
+   */
+  listSsoSessionIndexByNameId?(
+    providerId: string,
+    nameId: string,
+  ): MaybePromise<SsoSessionIndexRecord[]>;
+
+  /**
+   * Put cookie sessions on the revocation list until `expiresAt` (and prune expired entries).
+   * Never evicted early.
+   *
+   * @param sids The sessions.
+   * @param expiresAt Until when they stay revoked, epoch seconds.
+   */
+  revokeSids?(sids: readonly string[], expiresAt: number): MaybePromise<void>;
+
+  /**
+   * Whether the cookie session `sid` is on the revocation list (and not expired).
+   *
+   * @param sid The session.
+   * @returns `true` when it was revoked.
+   */
+  isSidRevoked?(sid: string): MaybePromise<boolean>;
 
   // ---- account deletion (optional) -----------------------------------------
 

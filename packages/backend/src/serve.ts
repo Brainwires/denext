@@ -68,7 +68,9 @@ export function objectHeaders(
  * `If-None-Match`, `416` when none of the requested ranges can be satisfied — else the ranges to
  * read (none for the whole object). `Range` is read as the static file handler reads it (several
  * ranges, sorted and coalesced; {@linkcode parseRanges}), and an `If-Range` that no longer names
- * the object asks for all of it.
+ * the object asks for all of it. More than {@linkcode MAX_STORAGE_RANGES} ranges after coalescing
+ * are answered with the whole object (a `200`, as nginx's `max_ranges` does): each part is a
+ * separate driver read (an S3 GET), so a long `Range` list would fan one request out.
  *
  * @param info The object.
  * @param headers Its headers (a 416 adds `Content-Range`).
@@ -91,8 +93,12 @@ export function preflight(
     headers.set("content-range", `bytes */${info.size}`);
     return new Response(null, { status: 416, headers });
   }
+  if (ranges && ranges.length > MAX_STORAGE_RANGES) return {};
   return { ranges };
 }
+
+/** The most ranges one storage request is served in parts; more get the whole object. */
+const MAX_STORAGE_RANGES = 8;
 
 /**
  * `If-Range` (RFC 9110 §13.1.5): absent, or a validator that still names this object, lets the
@@ -166,14 +172,31 @@ async function multipartResponse(
   headers.set("content-length", String(length));
   if (!read) return new Response(null, { status: 206, headers });
   const first = await read(ranges[0]);
+  // Until its bytes are being copied, `first` is ours to close: a client that goes away before
+  // then (the generator not even started) would otherwise leave its file handle open.
+  let firstTaken = false;
   async function* parts(): AsyncGenerator<Uint8Array> {
     for (let i = 0; i < ranges.length; i++) {
       yield heads[i];
+      if (i === 0) firstTaken = true;
+      // Cancelling the answer mid-part returns this `yield*`, which cancels that part's stream.
       yield* i === 0 ? first : await read!(ranges[i]);
     }
     yield tail;
   }
-  return new Response(ReadableStream.from(parts()), { status: 206, headers });
+  const it = parts();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await it.next();
+      if (next.done) controller.close();
+      else controller.enqueue(next.value);
+    },
+    async cancel(reason) {
+      await it.return(undefined);
+      if (!firstTaken) await first.cancel(reason).catch(() => {});
+    },
+  });
+  return new Response(body, { status: 206, headers });
 }
 
 /**

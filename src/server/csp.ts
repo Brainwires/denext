@@ -24,23 +24,34 @@
 // same strict hash-based CSP: `resolveStreamingCsp` computes it from the buffered
 // shell prefix (head + shell, which holds every framework inline `<style>`) and adds
 // one fixed `'sha256-…'` for the {@link swapRuntimeHash} constant — the sole inline
-// `<script>` a streamed response emits. Script sources stay constrained exactly as on
+// `<script>` a streamed response emits, apart from the late-styles runtime
+// (./late-style-sheets.ts), another constant listed by its hash only when a render-time style
+// sheet is registered (React Native mode on the App Router). Script sources stay constrained exactly as on
 // the buffered path: `script-src` is `'self'` + route opt-ins + that one constant
 // hash, never a per-output hash of streamed content.
 
 import type { CspSetting, RouteCsp } from "./segment-config.ts";
-import { swapRuntimeHash } from "./swap-runtime.ts";
+import { sha256Base64, swapRuntimeHash } from "./swap-runtime.ts";
+import { LATE_STYLES_RUNTIME_BODY } from "./late-style-sheets.ts";
+import { hasServerStyleSheets } from "../runtime/server-style-sheets.ts";
 import { mintedScriptWorkerNonce, scriptWorkerNonce } from "../runtime/script.ts";
+import { currentContext } from "./request-context.ts";
 
 export type { CspSetting, RouteCsp };
+/** SHA-256 of a text as base64 (the form a CSP `'sha256-…'` source expects). */
+export { sha256Base64 };
 
-/** SHA-256 of `text` as base64 (the form a CSP `'sha256-…'` source expects). */
-export async function sha256Base64(text: string): Promise<string> {
-  const bytes = new TextEncoder().encode(text);
-  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
-  let binary = "";
-  for (const b of digest) binary += String.fromCharCode(b);
-  return btoa(binary);
+let lateStylesHash: string | undefined;
+
+/**
+ * The `script-src` source for the late-styles runtime (./late-style-sheets.ts), which a streamed
+ * response emits only when a render-time style sheet is registered (React Native mode on the App
+ * Router); null otherwise, so every other app's policy is unchanged.
+ */
+export async function lateStylesRuntimeHash(): Promise<string | null> {
+  if (!hasServerStyleSheets()) return null;
+  lateStylesHash ??= `'sha256-${await sha256Base64(LATE_STYLES_RUNTIME_BODY)}'`;
+  return lateStylesHash;
 }
 
 /**
@@ -174,8 +185,9 @@ export async function computeStreamingCsp(
     styles.map(async (s) => `'sha256-${await sha256Base64(s)}'`),
   );
 
+  const lateStyles = await lateStylesRuntimeHash();
   return assembleCsp(
-    scriptSources([await swapRuntimeHash()], route),
+    scriptSources([await swapRuntimeHash(), ...(lateStyles ? [lateStyles] : [])], route),
     styleSources(styleHashes, route),
     route,
   );
@@ -190,6 +202,8 @@ export async function computeStreamingCsp(
  * @param html The fully buffered document.
  * @param routeCsp The route's resolved {@link CspSetting} (may be undefined).
  * @param globalCsp The app-wide default {@link CspSetting} (may be undefined).
+ * A compat middleware's per-request adjustment (`RequestContext.cspTransform`) applies last.
+ *
  * @returns The `Content-Security-Policy` value, or `undefined` to emit no header.
  */
 export async function resolveCsp(
@@ -198,9 +212,16 @@ export async function resolveCsp(
   globalCsp: CspSetting | undefined,
 ): Promise<string | undefined> {
   const effective = routeCsp ?? globalCsp ?? "strict";
-  if (effective === "off") return undefined;
-  if (effective === "strict") return await computeCsp(html);
-  return await computeCsp(html, effective);
+  const policy = effective === "off"
+    ? undefined
+    : await computeCsp(html, effective === "strict" ? undefined : effective);
+  return requestCsp(policy);
+}
+
+/** The policy after the request's own adjustment (`RequestContext.cspTransform`), if any. */
+function requestCsp(policy: string | undefined): string | undefined {
+  const transform = currentContext()?.cspTransform;
+  return transform ? transform(policy) : policy;
 }
 
 /**
@@ -221,7 +242,8 @@ export async function resolveStreamingCsp(
   globalCsp: CspSetting | undefined,
 ): Promise<string | undefined> {
   const effective = routeCsp ?? globalCsp ?? "strict";
-  if (effective === "off") return undefined;
-  if (effective === "strict") return await computeStreamingCsp(shellHtml);
-  return await computeStreamingCsp(shellHtml, effective);
+  const policy = effective === "off"
+    ? undefined
+    : await computeStreamingCsp(shellHtml, effective === "strict" ? undefined : effective);
+  return requestCsp(policy);
 }

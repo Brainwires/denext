@@ -24,6 +24,7 @@ import {
 } from "../src/build/partytown.ts";
 import { createProdHandler } from "../src/build/prod-server/handler.ts";
 import type { DenextConfig } from "../src/server/config.ts";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 const LIB = "/_denext/~partytown/";
 const ON: DenextConfig = { nextScriptWorkers: true };
@@ -452,12 +453,10 @@ export default function About() {
     );
     await fakePartytown(dir, "@builder.io/partytown");
     const cli = fromFileUrl(new URL("../cli.ts", import.meta.url));
-    const out = await new Deno.Command(Deno.execPath(), {
+    const out = await boundedOutput(Deno.execPath(), {
       args: ["run", "-A", cli, "export", dir],
       cwd: dir,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
+    });
     const log = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
     assert(out.success, log);
     const outDir = join(dir, "out");

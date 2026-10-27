@@ -141,6 +141,25 @@ export interface ModuleParts {
   hasClientAction: boolean;
   /** A `HydrateFallback` export: rendered while a hydrating `clientLoader` runs. */
   hasHydrateFallback: boolean;
+  /**
+   * The name of the module's React Router route-middleware export (`middleware`, or
+   * `unstable_middleware` before React Router 7.9), when it has one.
+   */
+  middlewareExport?: string;
+}
+
+/**
+ * One route of the middleware chain a generated module passes the runtime: the route id, the
+ * data module holding its `middleware` export (relative to the generated module; `null` for
+ * the module's own data module) and the export's name.
+ */
+export interface MiddlewareRef {
+  /** The route id. */
+  id: string;
+  /** The specifier of the route's data module, or `null` for the module's own. */
+  module: string | null;
+  /** The export's name (`middleware` / `unstable_middleware`). */
+  exportName: string;
 }
 
 // ── AST substrate (swc): top-level items, bound names, free identifiers ────────
@@ -590,10 +609,17 @@ function classifyExport(parts: ModuleParts, decl: Node, itemCode: string): void 
     addFree(parts.serverFree, decl, parts.serverTypeOnly);
     const flag = SERVER_FLAG[serverName];
     if (flag) parts[flag] = true;
+    markMiddleware(parts, names);
     return;
   }
   pushClient(parts, itemCode, decl);
   markClientExports(parts, names);
+}
+
+/** Record a route-middleware export among `names` (see {@link ModuleParts.middlewareExport}). */
+function markMiddleware(parts: ModuleParts, names: string[]): void {
+  const name = names.find((n) => n === "middleware" || n === "unstable_middleware");
+  if (name) parts.middlewareExport = name;
 }
 
 /** A client-side statement: kept in the client module, its references seed the helpers. */
@@ -694,6 +720,7 @@ function classifyReExport(parts: ModuleParts, item: Node, itemCode: string): voi
       const flag = SERVER_FLAG[n];
       if (flag) parts[flag] = true;
     }
+    markMiddleware(parts, server);
     return;
   }
   parts.clientStatements.push(itemCode);
@@ -1096,13 +1123,14 @@ function remixRouteExport(id: string, hasServer: boolean): string {
   } };\n`;
 }
 
-function metaExport(id: string, parts: ModuleParts): string {
+function metaExport(id: string, parts: ModuleParts, withMiddleware: boolean): string {
   const args = [
     parts.hasMeta ? "data.meta" : "undefined",
     parts.hasLoader ? "data.loader" : "undefined",
     JSON.stringify(id),
     parts.hasHandle ? "data.handle" : "undefined",
     parts.hasLinks ? "data.links" : "undefined",
+    ...(withMiddleware ? ["__middleware"] : []),
   ];
   return `export const generateMetadata = remixMeta(${args.join(", ")});`;
 }
@@ -1120,21 +1148,27 @@ function routeWrapperSource(
   parts: ModuleParts,
   clientFile: string,
   dataFile: string,
+  middleware?: MiddlewareRef[],
 ): string {
   const hasServer = parts.serverStatements.length > 0;
   const runtimeFn = role === "page" ? "RemixRoute" : "RemixLayout";
+  const chain = middlewareChain(middleware);
   const imports = [`import Route from "./${clientFile}";`];
   if (hasServer) imports.push(`import * as data from "./${dataFile}";`);
-  const withMeta = parts.hasMeta || parts.hasLoader || parts.hasLinks;
+  // Metadata runs the loader before the render, so a route with middleware gets it too.
+  const withMeta = parts.hasMeta || parts.hasLoader || parts.hasLinks || chain !== null;
   const runtime = withMeta ? `${runtimeFn}, remixMeta` : runtimeFn;
   imports.push(`import { ${runtime} } from "denext/remix/server";`);
-  const meta = withMeta ? `\n${metaExport(id, parts)}\n` : "";
+  if (chain?.imports) imports.push(chain.imports.trimEnd());
+  const meta = (chain?.decl ?? "") +
+    (withMeta ? `\n${metaExport(id, parts, chain !== null)}\n` : "");
   const opts = [
     `    id: ${JSON.stringify(id)},`,
     parts.hasLoader ? "    loader: data.loader," : null,
     parts.hasAction ? "    action: data.action," : null,
     parts.hasHandle ? "    handle: data.handle," : null,
     parts.hasShouldRevalidate ? "    shouldRevalidate: data.shouldRevalidate," : null,
+    chain ? "    middleware: __middleware," : null,
     "    Route,",
     "    params: props.params,",
     role === "layout" ? "    children: props.children," : null,
@@ -1159,8 +1193,9 @@ export function pageWrapperSource(
   parts: ModuleParts,
   clientFile: string,
   dataFile: string,
+  middleware?: MiddlewareRef[],
 ): string {
-  return routeWrapperSource("page", id, parts, clientFile, dataFile);
+  return routeWrapperSource("page", id, parts, clientFile, dataFile, middleware);
 }
 
 /** The generated denext `layout.tsx` (server wrapper) around a Remix layout route. */
@@ -1169,8 +1204,9 @@ export function layoutWrapperSource(
   parts: ModuleParts,
   clientFile: string,
   dataFile: string,
+  middleware?: MiddlewareRef[],
 ): string {
-  return routeWrapperSource("layout", id, parts, clientFile, dataFile);
+  return routeWrapperSource("layout", id, parts, clientFile, dataFile, middleware);
 }
 
 /** The generated denext `error.tsx` — renders the client error boundary with the caught error. */
@@ -1192,7 +1228,7 @@ export default function ErrorRoute(props: { error: Error; reset: () => void }) {
 export function rootNeedsClient(parts: ModuleParts): boolean {
   const body = [...parts.helpers.map((h) => h.code), ...parts.clientStatements].join("\n");
   return /\buse[A-Z]\w*\s*\(/.test(body) || /\bon[A-Z]\w+\s*=/.test(body) ||
-    parts.hasLoader || parts.hasAction;
+    parts.hasLoader || parts.hasAction || parts.middlewareExport !== undefined;
 }
 
 /**
@@ -1353,29 +1389,61 @@ function defaultFunctionName(statements: string[]): string | null {
  * method-less API match through to the page). The action's URL params are threaded from
  * the matched pattern.
  */
-export function pageActionRouteSource(dataFile: string): string {
+export function pageActionRouteSource(dataFile: string, middleware?: MiddlewareRef[]): string {
+  const chain = middlewareChain(middleware);
   return `${GEN_HEADER}import * as data from "./${dataFile}";
 import { runActionResponse } from "denext/remix/server";
-
+${chain ? `${chain.imports}${chain.decl}` : ""}
 export function POST(request: Request, ctx: { params: Record<string, string> }) {
-  return runActionResponse(data.action, request, ctx.params);
+  return runActionResponse(data.action, request, ctx.params${chain ? ", __middleware" : ""});
 }
 `;
 }
 
+/**
+ * The imports and the `__middleware` constant of a generated module whose route (or an
+ * ancestor) has React Router middleware; null when none has.
+ */
+function middlewareChain(
+  refs: MiddlewareRef[] | undefined,
+): { imports: string; decl: string } | null {
+  if (!refs?.length) return null;
+  const imports: string[] = [];
+  const entries = refs.map((ref, i) => {
+    const ns = ref.module === null ? "data" : `__mw${i}`;
+    if (ref.module !== null) {
+      imports.push(`import * as ${ns} from ${JSON.stringify(ref.module)};\n`);
+    }
+    return `  { id: ${JSON.stringify(ref.id)}, middleware: ${ns}.${ref.exportName} },\n`;
+  });
+  return {
+    imports: imports.join(""),
+    decl: `\n/** React Router route middleware, outermost route first. */\n` +
+      `const __middleware = [\n${entries.join("")}];\n`,
+  };
+}
+
 /** A denext API `route.ts` for a Remix resource route (a loader/action with no component). */
-export function resourceRouteSource(id: string, dataFile: string, parts: ModuleParts): string {
+export function resourceRouteSource(
+  id: string,
+  dataFile: string,
+  parts: ModuleParts,
+  middleware?: MiddlewareRef[],
+): string {
+  const chain = middlewareChain(middleware);
   const methods: string[] = [];
   if (parts.hasLoader) {
     methods.push(
       `export function GET(request: Request) {\n` +
-        `  return runLoaderResponse(data.loader, request);\n}`,
+        `  return runLoaderResponse(data.loader, request${chain ? ", __middleware" : ""});\n}`,
     );
   }
   if (parts.hasAction) {
     methods.push(
       `export function POST(request: Request) {\n` +
-        `  return runActionResponse(data.action, request);\n}`,
+        `  return runActionResponse(data.action, request${
+          chain ? ", undefined, __middleware" : ""
+        });\n}`,
     );
   }
   const runtime = [
@@ -1385,7 +1453,7 @@ export function resourceRouteSource(id: string, dataFile: string, parts: ModuleP
     .filter(Boolean).join(", ");
   return `${GEN_HEADER}import * as data from "./${dataFile}";
 import { ${runtime} } from "denext/remix/server";
-
+${chain ? `${chain.imports}${chain.decl}` : ""}
 ${remixRouteExport(id, true)}
 ${methods.join("\n\n")}
 `;

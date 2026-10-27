@@ -36,6 +36,7 @@ import {
 import type { DesktopOs } from "./desktop-capabilities.ts";
 import { parsePlist, type PlistNode, renderPlist } from "./plist-value.ts";
 import { parseOtaPublicKey } from "./ota-signing.ts";
+import { loadConfigBeside } from "./desktop-config-beside.ts";
 
 /** Where the runtime looks for the embedded origin + identifier, relative to the project root. */
 export const DESKTOP_APP_CONFIG_FILE = ".deno-desktop/app.json";
@@ -323,19 +324,6 @@ export function laufeyLaunchPath(os: DesktopOs, bundle: string): string {
   return os === "darwin"
     ? join(bundle, "Contents", "Resources", LAUFEY_LAUNCH_FILE)
     : join(bundle, LAUFEY_LAUNCH_FILE);
-}
-
-/** `denext.config.ts` next to the scripts dir of `entryUrl` (a missing config is `undefined`). */
-async function loadConfigBeside(entryUrl: string): Promise<unknown> {
-  try {
-    const mod = await import(new URL("../denext.config.ts", entryUrl).href);
-    return (mod as { default?: unknown }).default;
-  } catch (err) {
-    if (err instanceof Error && /Module not found|Cannot find module/i.test(err.message)) {
-      return undefined;
-    }
-    throw err;
-  }
 }
 
 /**

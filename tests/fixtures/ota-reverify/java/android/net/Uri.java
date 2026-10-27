@@ -19,6 +19,10 @@ public final class Uri {
         return uri.getHost();
     }
 
+    public String getUserInfo() {
+        return uri.getUserInfo();
+    }
+
     public int getPort() {
         return uri.getPort();
     }

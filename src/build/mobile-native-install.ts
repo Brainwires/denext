@@ -12,6 +12,7 @@
 // and reported.
 
 import { join } from "@std/path";
+import { assertInsideProject } from "./project-confine.ts";
 import { posixRelative } from "./mobile-paths.ts";
 import { addSourceFiles } from "./pbxproj.ts";
 import {
@@ -338,6 +339,7 @@ export class NativeInstaller<O extends NativeInstallOptions, R extends NativeIns
   /** Write `content` to `path` (creating its folder), or only remember it in a dry run. */
   async #store(path: string, content: string): Promise<void> {
     if (this.dryRun) return void this.#pending.set(path, content);
+    await assertInsideProject(this.opts.dir, path);
     await Deno.mkdir(join(path, ".."), { recursive: true });
     await Deno.writeTextFile(path, content);
   }
@@ -888,8 +890,10 @@ const MAIN_ACTIVITY_FAMILY = "main-activity";
  * routes load their own pages); the bump keeps an older denext from rewriting it away.
  * Generation 5 added {@linkcode MEMORY_WARNING} to every combination (the OS's low-memory signal
  * reaches the page); the bump keeps an older denext from rewriting it away.
+ * Generation 6 added {@linkcode BRIDGE_ORIGIN_GUARD} to every combination (native plugin calls only
+ * from the app's own origin); the bump keeps an older denext from rewriting it away.
  */
-const MAIN_ACTIVITY_TEMPLATE_VERSION = 5;
+const MAIN_ACTIVITY_TEMPLATE_VERSION = 6;
 
 /**
  * SHA-256 of every MainActivity denext wrote before the marker line existed, with the package
@@ -935,6 +939,8 @@ const SHIPPED_MAIN_ACTIVITY_SHA256: readonly string[] = [
 const RENDERER_RECOVERY = `        super.onCreate(savedInstanceState);
         // denext: a dead WebView renderer recreates the activity instead of ending the app.
         if (bridge != null) bridge.addWebViewListener(new RendererRecovery(this));
+        // denext: native plugin calls only from the app's own origin (see BridgeOriginGuard).
+        if (bridge != null) BridgeOriginGuard.install(this, bridge);
     }
 
     /**
@@ -1019,6 +1025,134 @@ const MEMORY_WARNING = `
         if (bridge != null) bridge.triggerWindowJSEvent("denext:memorywarning");
     }
 `;
+
+/**
+ * What every composed MainActivity from generation 6 adds after {@linkcode MEMORY_WARNING}: the
+ * Android half of the bridge's origin guard (iOS: bridge-frame-guard-native-template.ts).
+ *
+ * Capacitor 8's `MessageHandler` registers its `androidBridge` web-message listener for the app's
+ * origin AND every `server.url` / `server.allowNavigation` origin (`Bridge.getAllowedOriginRules`),
+ * so a page on such a site gets the native bridge and can call every plugin (it already drops
+ * calls from frames other than the main one). This replaces the listener, right after the bridge
+ * is built and before the first page commits, with one for the app's local origin (plus
+ * `server.url` in a debuggable build, for live reload) and the Capacitor config's
+ * `plugins.DenextBridge.allowedOrigins`, forwarding main-frame messages to Capacitor's own
+ * `MessageHandler` (found by its type, as the bridge keeps it private; its responses then go back
+ * through `evaluateJavascript`, Capacitor's own fallback). `plugins.DenextBridge.frameGuard: false`
+ * keeps Capacitor's rules. The app module needs `androidx.webkit` ({@linkcode WEBKIT_DEPENDENCY},
+ * added to `android/app/build.gradle` with the activity). Fully qualified names, as above.
+ */
+const BRIDGE_ORIGIN_GUARD = `
+    /**
+     * denext: native plugin calls only from the app's own origin. Capacitor gives its bridge to
+     * every server.url and server.allowNavigation origin; this narrows it to the app's local
+     * origin (plus server.url in a debuggable build, for live reload) and the Capacitor config's
+     * plugins.DenextBridge.allowedOrigins. plugins.DenextBridge.frameGuard: false turns it off.
+     */
+    static final class BridgeOriginGuard {
+        private static final String BRIDGE_NAME = "androidBridge";
+
+        static void install(android.app.Activity activity, com.getcapacitor.Bridge bridge) {
+            com.getcapacitor.PluginConfig config = bridge.getConfig().getPluginConfiguration("DenextBridge");
+            if (!config.getBoolean("frameGuard", true)) return;
+            if (
+                bridge.getConfig().isUsingLegacyBridge() ||
+                !androidx.webkit.WebViewFeature.isFeatureSupported(androidx.webkit.WebViewFeature.WEB_MESSAGE_LISTENER)
+            ) {
+                android.util.Log.w("denext", "the native bridge is not limited to the app's origin: the legacy bridge is in use");
+                return;
+            }
+            final com.getcapacitor.MessageHandler handler = messageHandler(bridge);
+            if (handler == null) {
+                android.util.Log.w("denext", "the native bridge is not limited to the app's origin: no MessageHandler found");
+                return;
+            }
+            android.webkit.WebView webView = bridge.getWebView();
+            androidx.webkit.WebViewCompat.WebMessageListener listener = (view, message, sourceOrigin, isMainFrame, replyProxy) -> {
+                String data = message.getData();
+                if (isMainFrame && data != null) {
+                    handler.postMessage(data);
+                } else {
+                    android.util.Log.w("denext", "refused a native plugin call from a frame that is not the main one");
+                }
+            };
+            androidx.webkit.WebViewCompat.removeWebMessageListener(webView, BRIDGE_NAME);
+            try {
+                androidx.webkit.WebViewCompat.addWebMessageListener(webView, BRIDGE_NAME, allowedOrigins(activity, bridge, config), listener);
+            } catch (RuntimeException e) {
+                // A rule WebView refused (a malformed allowedOrigins entry): the app's own origin alone.
+                android.util.Log.e("denext", "plugins.DenextBridge.allowedOrigins was refused: " + e.getMessage());
+                androidx.webkit.WebViewCompat.addWebMessageListener(
+                    webView,
+                    BRIDGE_NAME,
+                    java.util.Collections.singleton(localOrigin(bridge)),
+                    listener
+                );
+            }
+        }
+
+        /** The origins plugin calls are accepted from. */
+        static java.util.Set<String> allowedOrigins(
+            android.app.Activity activity,
+            com.getcapacitor.Bridge bridge,
+            com.getcapacitor.PluginConfig config
+        ) {
+            java.util.Set<String> rules = new java.util.LinkedHashSet<>();
+            rules.add(localOrigin(bridge));
+            boolean debuggable = (activity.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+            String server = debuggable ? origin(bridge.getServerUrl()) : null;
+            if (server != null) rules.add(server);
+            for (String entry : config.getArray("allowedOrigins", new String[0])) {
+                String allowed = origin(entry);
+                if (allowed != null) rules.add(allowed);
+            }
+            return rules;
+        }
+
+        /** The origin Capacitor's local server answers on (https://localhost by default). */
+        static String localOrigin(com.getcapacitor.Bridge bridge) {
+            return bridge.getScheme() + "://" + bridge.getHost();
+        }
+
+        /** {@code scheme://host[:port]} of {@code url} (lower-cased), or null. */
+        static String origin(String url) {
+            if (url == null) return null;
+            android.net.Uri uri = android.net.Uri.parse(url);
+            String scheme = uri.getScheme();
+            String host = uri.getHost();
+            if (scheme == null || host == null || host.isEmpty() || uri.getUserInfo() != null) return null;
+            int port = uri.getPort();
+            return scheme.toLowerCase(java.util.Locale.ROOT) + "://" + host.toLowerCase(java.util.Locale.ROOT) +
+                (port == -1 ? "" : ":" + port);
+        }
+
+        /** Capacitor's MessageHandler, which the bridge keeps in a private field (found by type). */
+        static com.getcapacitor.MessageHandler messageHandler(com.getcapacitor.Bridge bridge) {
+            for (java.lang.reflect.Field field : com.getcapacitor.Bridge.class.getDeclaredFields()) {
+                if (field.getType() != com.getcapacitor.MessageHandler.class) continue;
+                try {
+                    field.setAccessible(true);
+                    return (com.getcapacitor.MessageHandler) field.get(bridge);
+                } catch (Exception e) {
+                    return null;
+                }
+            }
+            return null;
+        }
+    }
+`;
+
+/** The dependency {@linkcode BRIDGE_ORIGIN_GUARD} compiles against (Capacitor's own is not exported). */
+export const WEBKIT_DEPENDENCY = "implementation 'androidx.webkit:webkit:1.14.0'";
+
+/** `gradle` with {@linkcode WEBKIT_DEPENDENCY} in its dependencies, or null without that block. */
+export function withWebkitDependency(gradle: string): string | null {
+  if (gradle.includes("androidx.webkit:webkit")) return gradle;
+  const block = /^dependencies\s*\{[^\n]*\n/m.exec(gradle);
+  if (!block) return null;
+  const at = block.index + block[0].length;
+  return `${gradle.slice(0, at)}    ${WEBKIT_DEPENDENCY}\n${gradle.slice(at)}`;
+}
 
 /**
  * The line every composed MainActivity from generation 4 runs last before `super.onCreate`:
@@ -1203,7 +1337,7 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
-${lines}${EXPORT_ROUTES_REGISTRATION}${RENDERER_RECOVERY}${MEMORY_WARNING}${EXPORT_ROUTES}`,
+${lines}${EXPORT_ROUTES_REGISTRATION}${RENDERER_RECOVERY}${MEMORY_WARNING}${BRIDGE_ORIGIN_GUARD}${EXPORT_ROUTES}`,
   );
 }
 
@@ -1310,6 +1444,30 @@ export async function registerInMainActivity(
     new Set(feature === null ? known.features : [...known.features, feature]),
   );
   await inst.edit(path, () => next);
+  await addWebkitDependency(inst);
+}
+
+/**
+ * `android/app/build.gradle` with {@linkcode WEBKIT_DEPENDENCY}: a manual step when it has no
+ * dependencies block, nothing when there is no such file.
+ */
+async function addWebkitDependency(
+  inst: NativeInstaller<NativeInstallOptions, NativeInstallReport>,
+): Promise<void> {
+  const gradle = nativeJoin(inst.opts.dir, "android/app/build.gradle");
+  // No app module build file (not a Gradle project denext can edit): nothing to add it to.
+  if ((await inst.read(gradle)) === undefined) return;
+  let missing = false;
+  await inst.edit(gradle, (text) => {
+    const next = withWebkitDependency(text);
+    missing = next === null;
+    return next ?? text;
+  });
+  if (missing) {
+    inst.report.manual.push(
+      `android/app/build.gradle: add \`${WEBKIT_DEPENDENCY}\` to its dependencies.`,
+    );
+  }
 }
 
 /** Whether the project has `android/app/src/main`; records the skip when it does not. */

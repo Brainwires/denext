@@ -18,6 +18,8 @@
 import { extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { canonicalPath } from "./canonical-path.ts";
 import { actionIdFor } from "../runtime/server-action.ts";
+// Stubs carry the build's salted ids (installs the minter).
+import "../server/action-ids.ts";
 import { composeRedirects } from "./platform-extensions.ts";
 import { platformImportMap } from "./platform-imports.ts";
 
@@ -44,8 +46,12 @@ export type ServerModules = Iterable<readonly [id: string, ref: ServerModuleRef]
 export function generateServerStub(moduleId: string, exports: readonly string[]): string {
   const lines = exports.map((name) =>
     name === "default"
-      ? `export default clientActionStub(${JSON.stringify(actionIdFor(moduleId, "default"))});`
-      : `export const ${name} = clientActionStub(${JSON.stringify(actionIdFor(moduleId, name))});`
+      ? `export default /* @__PURE__ */ clientActionStub(${
+        JSON.stringify(actionIdFor(moduleId, "default"))
+      });`
+      : `export const ${name} = /* @__PURE__ */ clientActionStub(${
+        JSON.stringify(actionIdFor(moduleId, name))
+      });`
   );
   return `import { clientActionStub } from "denext/action-stub";\n${lines.join("\n")}\n`;
 }

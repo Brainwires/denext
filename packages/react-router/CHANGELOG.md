@@ -3,6 +3,15 @@
 All notable changes to this package are documented here. It follows its own
 semver, independent of `@denext/denext`.
 
+## [Unreleased]
+
+- **Load context and route middleware.** `reactRouter({ getLoadContext })` supplies the `context`
+  every loader, action and middleware receives (once per request). A route's `middleware` /
+  `unstable_middleware` export runs outermost route first, before the loader and the action
+  (around the handler on a resource route), with React Router's typed context
+  (`createContext`, `context.get` / `context.set`). Route typegen adds `Route.MiddlewareFunction`
+  and types `context` for `get` / `set`. Requires `@denext/denext` ^4.9.0, which ships them.
+
 ## [0.5.0] - 2026-10-19
 
 - Requires `@denext/denext` ^4.4.0. The plugin reports that it serves the app's routes

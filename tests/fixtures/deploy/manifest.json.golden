@@ -126,7 +126,8 @@
       "ms": 10000,
       "env": "DENEXT_SHUTDOWN_DRAIN_MS"
     },
-    "buildDir": ".denext"
+    "buildDir": ".denext",
+    "idleTrim": true
   },
   "jobs": [
     {
@@ -163,6 +164,14 @@
       "public": false,
       "sources": [
         "lib/db.ts"
+      ]
+    },
+    {
+      "name": "DENEXT_ACTION_ID_SECRET",
+      "required": false,
+      "public": false,
+      "sources": [
+        "stack"
       ]
     },
     {

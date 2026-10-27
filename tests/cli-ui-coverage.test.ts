@@ -4,7 +4,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { activeUiServers, uiCommand } from "../src/cli/commands/ui.ts";
+import { activeUiServers, uiCommand, uiTargetOptions } from "../src/cli/commands/ui.ts";
 import { DEFAULT_UI_PORT } from "../src/ui/server.ts";
 import { openCommand } from "../src/ui/open.ts";
 import { capture, makeCtx, stubExit } from "./_cli-coverage-helpers.ts";
@@ -92,6 +92,64 @@ Deno.test("ui --read-only says so and refuses mutations", async () => {
 Deno.test("ui --quiet prints nothing", async () => {
   const { logs } = await serve({ global: { quiet: true } }, () => {});
   assertEquals(logs, []);
+});
+
+/** A Deno workspace root (no app of its own) with the given member app dirs. */
+async function workspaceRoot(apps: string[]): Promise<string> {
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_ui_ws_" }));
+  await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ workspace: ["./apps/*"] }));
+  for (const app of apps) {
+    await Deno.mkdir(join(dir, "apps", app, "app"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "apps", app, "deno.json"), "{}");
+  }
+  return dir;
+}
+
+Deno.test("ui at a workspace root with one app serves that app and says so on stderr", async () => {
+  const dir = await workspaceRoot(["web"]);
+  const cap = capture();
+  try {
+    const options = await uiTargetOptions({ dir, port: 0, signal: new AbortController().signal });
+    assertEquals(options.dir, join(dir, "apps/web"));
+    assertStringIncludes(cap.errs.join("\n"), "workspace root — serving its app apps/web");
+  } finally {
+    cap.restore();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("ui at a workspace root with several apps names them and exits 1", async () => {
+  const dir = await workspaceRoot(["admin", "web"]);
+  const exit = stubExit();
+  const cap = capture();
+  try {
+    let thrown: unknown;
+    await uiCommand.run(makeCtx({ positionals: [dir], flags: { port: 0, "no-open": true } }))
+      ?.catch?.((e: unknown) => void (thrown = e));
+    assertEquals(exit.calls, [1]);
+    assertEquals(activeUiServers.size, 0, "no server was started");
+    assert(thrown === undefined || String(thrown).includes("__exit__1"));
+    const err = cap.errs.join("\n");
+    assertStringIncludes(err, "denext ui: ");
+    assertStringIncludes(err, "several apps (apps/admin, apps/web)");
+  } finally {
+    cap.restore();
+    exit.restore();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("ui at a plain directory keeps it and prints no workspace note", async () => {
+  const dir = await Deno.realPath(await project());
+  const cap = capture();
+  try {
+    const options = await uiTargetOptions({ dir, port: 0, signal: new AbortController().signal });
+    assertEquals(options.dir, dir);
+    assertEquals(cap.errs, []);
+  } finally {
+    cap.restore();
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("the verb is declared as a non-module-loading, loopback-only GUI", () => {

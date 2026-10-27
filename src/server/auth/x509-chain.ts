@@ -8,9 +8,9 @@
  * for its key and name; a certificate carried in the path is never trusted on its own.
  *
  * Signatures: RSASSA-PKCS1-v1_5 and ECDSA (P-256, P-384) with SHA-256/384/512. Revocation is
- * the caller's: pass a {@linkcode RevocationCheck} (the FIDO Metadata Service passes its CRL
- * cache, {@link ./crl.ts}) and every certificate of the validated path below the anchor is
- * checked against its issuer once the path is found. OCSP is not used.
+ * the caller's: pass a {@linkcode RevocationCheck} (the FIDO Metadata Service passes its OCSP +
+ * CRL checker, {@link ./revocation.ts}) and every certificate of the validated path below the
+ * anchor is checked against its issuer once the path is found.
  *
  * Used by the FIDO Metadata Service checks ({@link ./fido-mds.ts}): the metadata BLOB's
  * signing chain to the pinned FIDO root, and a packed attestation's `x5c` to the
@@ -129,7 +129,7 @@ function tbsFields(parts: Der[]): { serial: Uint8Array; fields: Der[]; rest: Der
  * @returns The parsed fields.
  * @throws {CertificateChainError} Or a `WebAuthnError` on malformed DER.
  */
-function parseCertificate(der: Uint8Array): ParsedCertificate {
+export function parseX509Certificate(der: Uint8Array): ParsedCertificate {
   const cert = derAt(der, 0);
   if (cert.tag !== 0x30 || cert.raw.length !== der.length) fail("not a certificate");
   const [tbs, alg, sig] = derChildren(cert.value);
@@ -363,8 +363,8 @@ export async function verifyCertificateChain(
   revocation?: RevocationCheck,
 ): Promise<ParsedCertificate> {
   if (chain.length === 0 || chain.length > MAX_PATH) fail("bad certificate path length");
-  const [leaf, ...pool] = chain.map(parseCertificate);
-  const roots = anchors.map(parseCertificate);
+  const [leaf, ...pool] = chain.map(parseX509Certificate);
+  const roots = anchors.map(parseX509Certificate);
   let current = leaf;
   const path = [leaf];
   checkUsable(current, now);

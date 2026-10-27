@@ -173,7 +173,7 @@ for (
   const [provider, mode, adapter, setup] of [
     ["sqlite", "npm", "@prisma/adapter-better-sqlite3", "bundles the compat, installs"],
     ["postgresql", "npm", "@prisma/adapter-pg", "(installs, `prisma generate`"],
-    ["sqlserver", "npm", null, "(installs, `prisma generate`"],
+    ["sqlserver", "npm", "@prisma/adapter-mssql", "(installs, `prisma generate`"],
     ["sqlite", "deno-sql", "denext/prisma-adapter", "(installs, `prisma generate`"],
     ["postgresql", "deno-sql", "denext/prisma-adapter", "(installs, `prisma generate`"],
   ] as const
@@ -234,7 +234,9 @@ Deno.test("migrate on a Fresh app reports the generated tree, Tailwind and the f
     assertStringIncludes(out, "Fresh 2.x detected");
     assertStringIncludes(out, "tailwind: ./assets/styles.css → ./assets/styles.gen.css");
     assertStringIncludes(out, "won't migrate (1)");
-    assertStringIncludes(out, "Fresh Partials");
+    // Partials migrate now (app/_fresh/partial.ts); the one won't-migrate item is the Vite plugin.
+    assertStringIncludes(out, "vite.config.ts: x()");
+    assertStringIncludes(out, "partial.ts");
     assertStringIncludes(out, "Fresh modules unchanged");
     // A root `_layout` runs inside the `_app` wrapper, both from app/layout.tsx.
     const root = await Deno.readTextFile(join(dir, "app/layout.tsx"));
@@ -254,7 +256,8 @@ Deno.test("migrate on a Preact app reports the tooling, the routers and the find
     "vite.config.js":
       `import preact from "@preact/preset-vite";\nexport default { plugins: [preact()] };\n`,
     "index.html": `<div id="app"></div><script type="module" src="/src/index.jsx"></script>\n`,
-    "src/index.jsx": `import { options, render } from "preact";\nrender(<p />, document.body);\n`,
+    "src/index.jsx":
+      `import { options, render } from "preact";\noptions.diffed = () => {};\nrender(<p />, document.body);\n`,
   };
   for (const [rel, text] of Object.entries(files)) {
     await Deno.mkdir(join(dir, rel, ".."), { recursive: true });
@@ -275,6 +278,36 @@ Deno.test("migrate on a Preact app reports the tooling, the routers and the find
     assertStringIncludes(out, "won't migrate (1)");
     assertStringIncludes(out, "preact options hooks");
     assertStringIncludes(out, "Source unchanged: `preact`");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate on a Lustre app reports the entry, priv/static and the findings", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_migrate_cli_lustre_" });
+  const files: Record<string, string> = {
+    "gleam.toml": `name = "app"\ntarget = "javascript"\n[dependencies]\nlustre = "5"\nmist = "5"\n`,
+    "src/app.gleam": `import lustre\npub fn main() {\n  lustre.start(app(), "#root", Nil)\n}\n`,
+    "src/ffi.erl": "-module(ffi).\n",
+    "priv/static/logo.svg": "<svg/>\n",
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    await Deno.mkdir(join(dir, rel, ".."), { recursive: true });
+    await Deno.writeTextFile(join(dir, rel), text);
+  }
+  const cap = capture();
+  try {
+    await migrateCommand.run(makeCtx({ positionals: [dir] }));
+  } finally {
+    cap.restore();
+  }
+  try {
+    const out = cap.logs.join("\n");
+    assertStringIncludes(out, `Lustre app "app"`);
+    assertStringIncludes(out, "src/app.gleam's main on #root");
+    assertStringIncludes(out, "priv/static/ → public/: 1 file(s)");
+    assertStringIncludes(out, "won't migrate (2)");
+    assertStringIncludes(out, "Gleam source unchanged");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

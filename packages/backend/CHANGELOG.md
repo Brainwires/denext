@@ -2,6 +2,58 @@
 
 ## Unreleased
 
+### Added
+
+- **Realtime replays what a reconnecting subscriber missed** (`realtime({ replay })`, on by
+  default). Each instance journals the changes it receives (keys only) for `retentionSeconds`
+  (60) and up to `maxChangesPerTable` (10 000); a `useTableChanges` subscription whose connection
+  comes back within the retention is sent `resumed`, then the changes after the last one it was
+  delivered, re-read under its row-level security with the same delete rules as live changes
+  (frames still queued at the drop are sent first, numbered on). A gap the journal no longer
+  covers, or a lost database listener, is an explicit `resync`; a reconnect the server does not
+  answer within 10 seconds (the subscription was dropped, or another instance took the socket)
+  sets `stale`. `replay: false` restores the old behaviour.
+
+### Changed
+
+- **One re-read per identity per burst, whatever the filters.** Subscriptions with the same role
+  and claims share one re-read even when their filters differ: each filter is a boolean column of
+  the one query (it was one query per identity and filter). A combined re-read that fails is
+  retried filter by filter, so a bad filter value still costs only its own subscribers.
+- **Frames to a subscription are spaced by the time since its last one,** so a frame queued just
+  after the previous went out (a truncate and the rows after it) is no longer merged away by the
+  Live hub's coalescing.
+
+### Security
+
+- **A reconnect under a reduced grant forgets the keys it tracked.** A subscriber re-authorized
+  with other claims (a role, tenant or group removed) kept the old set of tracked keys, so a later
+  delete or move-out of a row it could only see before was still sent, with its old image under
+  `old: "full"`. The set is now dropped at the re-authorization and re-seeded under the new claims.
+- **Multi-range object downloads are capped at 8 ranges.** Each range was a separate driver read
+  (a billed S3 GET), so one request with 64 ranges fanned out 64 reads. More than 8 ranges (after
+  coalescing) now get the whole object, a `200`, as nginx's `max_ranges` does.
+- **`rest.rateLimit` counts in its own store.** By default the auto-REST limiter adopted the store
+  `denextAuth({ rateLimit: { store } })` configures, writing to it on every request and, with an
+  in-memory store, taking the sign-in limiters' lockout rule (keys over 5 requests unevictable,
+  new clients refused once 10 000 filled it). It now uses its own bounded in-memory store per
+  process unless `rest.rateLimit.store` names a shared one.
+- **A reconnect is replayed only under the claims it was read under.** A subscriber re-authorized
+  with other claims than it left with (a refresh's `exp` / `iat` / `nbf` / `jti` aside) gets a
+  `resync`: the frames kept for it are dropped and nothing is replayed. A token without `sub` binds
+  a subscription key to its whole set of claims instead of one shared `authenticated:undefined`
+  identity.
+- **The reconnect journal holds keys only.** Never an `old: "full"` table's old row; a key or old
+  key over 1 024 characters is journaled as a resync of its table; expired entries are dropped on
+  every flush, not only when their own table changes again.
+- **`rest.rateLimit`: an anonymous sign-in also counts against its address,** so minting
+  anonymous users does not mint request budgets.
+- **A multi-range download no longer leaks a file handle when the client leaves early.** The
+  first range's reader, opened before the answer starts, was never closed when the answer was
+  cancelled before its bytes were copied.
+- **A TUS part upload to a presigned URL is given up on after 5 minutes,** so a store that stops
+  answering can no longer hold the upload's request forever.
+
 ## 0.7.1 - 2026-10-24
 
 ### Fixed

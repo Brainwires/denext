@@ -221,6 +221,47 @@ apply; `doubleSubmit: true` adds a token cookie the page echoes in
 A plain handler that wants the headers itself can still export `OPTIONS`: it is
 a routable method when no policy covers the route.
 
+## Serving byte ranges
+
+`public/` files already answer `Range` requests (several ranges as one
+`multipart/byteranges` reply, `If-Range` honoured). For bytes your handler
+produces, `parseRanges(header, size)` from `denext/server` reads a `Range`
+header the same way. It returns the inclusive ranges sorted and coalesced;
+`undefined` when the header should be ignored (malformed, not `bytes`, or more
+than 64 ranges: send the whole body); or `null` when none is satisfiable
+(answer `416`).
+
+```ts
+// app/api/files/[id]/route.ts
+import { parseRanges } from "denext/server";
+
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  const bytes = await loadFile((await params).id); // a Uint8Array
+  const ranges = parseRanges(req.headers.get("range") ?? "", bytes.length);
+  if (ranges === null) {
+    return new Response(null, {
+      status: 416,
+      headers: { "content-range": `bytes */${bytes.length}` },
+    });
+  }
+  if (ranges === undefined || ranges.length !== 1) {
+    // no usable Range, or several: the whole body (or a multipart/byteranges reply)
+    return new Response(bytes, { headers: { "accept-ranges": "bytes" } });
+  }
+  const { start, end } = ranges[0];
+  return new Response(bytes.subarray(start, end + 1), {
+    status: 206,
+    headers: {
+      "content-range": `bytes ${start}-${end}/${bytes.length}`,
+      "accept-ranges": "bytes",
+    },
+  });
+}
+```
+
 ## When to use Live channels instead
 
 Reach for a raw stream or socket when the _client_ is not a denext page: a CLI,

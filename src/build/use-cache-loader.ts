@@ -459,10 +459,12 @@ class UseCacheCompiler {
         resolveBare,
         alwaysRewriteImports: true,
       });
-    // Inline `"use server"` functions become server references keyed by the module's own URL
-    // (the ids next-compat's server bundle mints for the same module).
+    // Inline `"use server"` functions become server references keyed by the module's
+    // project-relative path (the ids next-compat's server bundle mints for the same module).
     const code = inlineActions
-      ? (await transformInlineServerActions(rewritten, moduleUrl)).code
+      ? (await transformInlineServerActions(rewritten, moduleUrl, {
+        projectDir: this.opts.projectDir,
+      })).code
       : rewritten;
     await (this.#dir ??= Deno.mkdir(this.opts.cacheDir, { recursive: true }));
     // The copy lives in the cache dir; its `import.meta` keeps naming the module it stands in for,

@@ -5,12 +5,8 @@
 // page that imports only React specifiers (no npm packages, no browser), so it
 // runs on every PR and catches an aliasing/dual-React regression in seconds.
 
-import { assert, assertStringIncludes } from "@std/assert";
-import { buildNextCompatPages, renderNextCompatPage } from "../../src/build/next-compat-build.ts";
-import { watchTests } from "../helpers/watchdog.ts";
-
-// Builds in this process: a stalled one fails its test instead of holding the CI job.
-watchTests();
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { inChild } from "../helpers/isolated.ts";
 
 Deno.test("next-compat build: react + react-dom/server importers resolve to single React", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nc_build_" });
@@ -37,21 +33,31 @@ export default function Page() {
 `,
     );
 
-    const built = await buildNextCompatPages({
-      projectDir: dir,
-      configPath: `${dir}/deno.json`,
-      outDir: `${dir}/.denext`,
-      pages: [{ routePath: "/", filePath: `${dir}/page.tsx` }],
+    // The build and the render run in a bounded child process: an in-process build that stalls
+    // (the Windows pipe-inheritance class, tests/helpers/bounded-build.ts) can't be stopped.
+    const { value } = await inChild<{ pages: number; html: string; clientBundle: string }>({
+      imports: `import { buildNextCompatPages, renderNextCompatPage } from ` +
+        `"@repo/src/build/next-compat-build.ts";`,
+      body: `const built = await buildNextCompatPages(${
+        JSON.stringify({
+          projectDir: dir,
+          configPath: `${dir}/deno.json`,
+          outDir: `${dir}/.denext`,
+          pages: [{ routePath: "/", filePath: `${dir}/page.tsx` }],
+        })
+      });
+      const html = await renderNextCompatPage(built[0], {}, "/_client/index.js");
+      return { pages: built.length, html, clientBundle: built[0].clientBundle };`,
     });
-    assert(built.length === 1, "one page built");
+    assertEquals(value.pages, 1, "one page built");
 
-    const html = await renderNextCompatPage(built[0], {}, "/_client/index.js");
+    const html = value.html;
     assertStringIncludes(html, "compat");
     assertStringIncludes(html, "single-react:yes"); // both React entrypoints agree
     assertStringIncludes(html, "n=3"); // hooks work in the built page
 
     // The client bundle must be denext's runtime, never npm React.
-    const client = await Deno.readTextFile(built[0].clientBundle);
+    const client = await Deno.readTextFile(value.clientBundle);
     assert(
       !/react\.development|react\.production|__SECRET_INTERNALS_DO_NOT_USE/.test(client),
       "client bundle must not contain npm React",

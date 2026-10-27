@@ -2,7 +2,7 @@
 // store-aware issue/read/clear path (the cookie carries only an id), revokeSession /
 // revokeAllSessions, the plugin teardown seam, and the unchanged stateless default.
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertRejects } from "@std/assert";
 import {
   createRequestContext,
   type RequestContext,
@@ -261,6 +261,10 @@ Deno.test("default (no sessionStore): the stateless payload cookie is unchanged"
   assertEquals((payload.user as { id: string }).id, "alice", "the cookie carries the user");
   assertEquals(payload.provider, "credentials");
   assert(typeof payload.expiresAt === "number");
+  // Its own random id rides inside the payload as `rsid` (SAML Single Logout and `revokeSession`
+  // name a session by it) — never under `sid`, the store-id key a 4.8 instance reads as
+  // "store-backed" — and no store id in place of the payload.
+  assertMatch(String(payload.rsid), /^[A-Za-z0-9_-]{22}$/);
   assertEquals("sid" in payload, false);
   assertEquals("sessionId" in payload, false);
   assertEquals(((await sessionUser(config, cookie)) as { id: string }).id, "alice");

@@ -16,6 +16,11 @@ import {
 } from "../src/build/module-graph.ts";
 import { SEPARATOR, toFileUrl } from "@std/path";
 import { inChild } from "./helpers/isolated.ts";
+import { watchTests } from "./helpers/watchdog.ts";
+
+// The module-graph crawls run `deno info` children from this process: a stalled one fails its
+// test instead of holding the CI job.
+watchTests();
 
 Deno.test("shortHash is stable and deterministic", () => {
   assertEquals(shortHash("a/b/c.tsx"), shortHash("a/b/c.tsx"));
@@ -562,7 +567,8 @@ Deno.test({
       assert(value.includes("was still running after 1 s and was killed"), value);
       // Killed, retried once, killed again.
       assert(value.includes("stalled twice"), value);
-      assert(stderr.includes("retrying once: deno info info --unstable-sloppy-imports"), stderr);
+      assert(stderr.includes("retrying once"), stderr);
+      assert(stderr.includes("deno info info --unstable-sloppy-imports"), stderr);
       assertEquals(stderr.split("retrying once").length, 2, stderr);
       assert(Date.now() - t0 < 60_000, `took ${Date.now() - t0} ms`);
     } finally {
@@ -648,6 +654,32 @@ Deno.test({
     assert(value.failed.startsWith("deno info failed (3):\n"), value.failed);
     assert(value.failed.includes("boom: the graph is broken"), value.failed);
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a failed graph crawl is not cached: the next request crawls again (F-L9)", async () => {
+  const { denoInfoGraph } = await import("../src/build/module-graph.ts");
+  const dir = await Deno.makeTempDir({ prefix: "denext_fl9_" });
+  const cwd = Deno.cwd();
+  try {
+    const entry = join(dir, "page.ts");
+    await Deno.writeTextFile(entry, "export const x = 1;\n");
+    // `deno info` runs in the working directory and reads its deno.json: a broken one fails it.
+    await Deno.writeTextFile(join(dir, "deno.json"), "{ broken");
+    Deno.chdir(dir);
+    let failed = false;
+    await denoInfoGraph([entry], { cache: "fl9-retry" }).catch(() => failed = true);
+    assert(failed, "the crawl fails on the broken config");
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    const graph = await denoInfoGraph([entry], { cache: "fl9-retry" });
+    assert(graph.info.modules.some((m) =>
+      m.specifier === toFileUrl(entry).href ||
+      m.specifier.endsWith("/page.ts")
+    ));
+  } finally {
+    Deno.chdir(cwd);
+    resetModuleGraphCache();
     await Deno.remove(dir, { recursive: true });
   }
 });

@@ -25,12 +25,7 @@
       "action": "create"
     }
   ],
-  "wontMigrate": [
-    {
-      "item": "useErrorBoundary",
-      "reason": "Preact's useErrorBoundary never sees an error on denext; catch with <ErrorBoundary> from denext (or an error.tsx) instead (src/index.jsx)"
-    }
-  ],
+  "wontMigrate": [],
   "review": [
     {
       "item": "wouter-preact",

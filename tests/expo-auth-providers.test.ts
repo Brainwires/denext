@@ -237,10 +237,12 @@ Deno.test("providers/google: a failed exchange is an error response", async () =
 
 /**
  * Wait until `ready()` holds: a request is built asynchronously (crypto for the state / PKCE),
- * which on a loaded machine can take more than one tick. Fails after 5 s.
+ * which on a loaded machine can take more than one tick. The deadline only catches a hook that
+ * never settles; it is no timing assumption (a Windows runner at full load has spent seconds
+ * between ticks), so it is a minute.
  */
 async function until(ready: () => boolean): Promise<void> {
-  const deadline = Date.now() + 5000;
+  const deadline = Date.now() + 60_000;
   while (!ready()) {
     if (Date.now() > deadline) throw new Error("timed out waiting for the auth request");
     await tick();

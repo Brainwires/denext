@@ -10,6 +10,8 @@ import {
   SERIAL_SOURCE_EXEMPT,
   SERIAL_SOURCES,
   SERIAL_TESTS,
+  serialTestsFor,
+  WINDOWS_SERIAL_TESTS,
 } from "./serial-tests.ts";
 import {
   MUTATES,
@@ -20,17 +22,24 @@ import {
   sources,
 } from "../scripts/lib/serial-scan.ts";
 import {
+  ALLOW_SKIP_VITEST_ENV,
+  coverageDir,
+  emitEntrySource,
   findVitestFiles,
+  heapEnv,
   isToolchainBuild,
+  profiledModules,
+  reEmitCovered,
   removeTempRoot,
   stockPassDeno,
   tempRootEnv,
   testPasses,
+  vitestSkipAllowed,
   wantsCoverage,
   WATCHDOG_PRELOAD,
   withWatchdog,
 } from "../scripts/test-run.ts";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 
 Deno.test("serial tests: each file that changes process-wide state is listed, and only those", async () => {
   // Stale? `deno task regen` rewrites the list (scripts/gen-serial-tests.ts); then commit it.
@@ -325,6 +334,24 @@ Deno.test("test-run: every Vitest file under tests/ is found, and only toolchain
   assert(!isToolchainBuild({ deno: "2.9.7" }));
 });
 
+Deno.test("test-run: heapEnv gives a Windows pass a larger V8 heap, and nothing elsewhere", () => {
+  const gib = 1024 ** 3;
+  assertEquals(heapEnv("windows", undefined, 8 * gib), {
+    DENO_V8_FLAGS: "--max-old-space-size=6144",
+  });
+  // Clamped to 4–8 GiB, and appended to flags already set.
+  assertEquals(heapEnv("windows", undefined, 2 * gib), {
+    DENO_V8_FLAGS: "--max-old-space-size=4096",
+  });
+  assertEquals(heapEnv("windows", "--stack-size=2000", 64 * gib), {
+    DENO_V8_FLAGS: "--stack-size=2000,--max-old-space-size=8192",
+  });
+  // A heap size the caller chose wins; other OSes are left alone.
+  assertEquals(heapEnv("windows", "--max-old-space-size=3000", 8 * gib), {});
+  assertEquals(heapEnv("linux", undefined, 8 * gib), {});
+  assertEquals(heapEnv("darwin", undefined, 8 * gib), {});
+});
+
 Deno.test("test-run: tempRootEnv points every platform's temp-dir variable at the root", () => {
   assertEquals(tempRootEnv("/r"), { TMPDIR: "/r", TMP: "/r", TEMP: "/r" });
 });
@@ -376,4 +403,129 @@ Deno.test("test-run: the stock test files run on the toolchain whenever it resol
   // `DENEXT_DENO=stock` (null) and a toolchain that could not be had (false): the running Deno.
   assertEquals(stockPassDeno(null, "/usr/bin/deno"), "/usr/bin/deno");
   assertEquals(stockPassDeno(false, "/usr/bin/deno"), "/usr/bin/deno");
+});
+
+/** A call that builds or serves an app in the calling process. */
+const IN_PROCESS_BUILD =
+  /\b(?:startDevServer|startSpaDevServer|startProdServer|serveEphemeral|createTestApp|probeApp|createUnbundledDev|buildNextCompat\w*|bundleSpaInto|startBuild|esbuild\.(?:build|context))\(/;
+
+Deno.test("serial tests: a file that builds in process under watchTests() runs serially on Windows", async () => {
+  const files = await parallelSuiteFiles();
+  const serial = new Set(serialTestsFor("windows"));
+  const missing: string[] = [];
+  for (const [path, src] of files) {
+    if (!path.endsWith(".test.ts") || !src.includes("watchTests(")) continue;
+    // Calls inside a template string run in a child (`inChild`), not here.
+    const code = src.replace(/`(?:\\.|[^`\\])*`/g, "``");
+    if (IN_PROCESS_BUILD.test(code) && !serial.has(path)) missing.push(path);
+  }
+  assertEquals(missing, [], "add them to WINDOWS_SERIAL_TESTS (tests/serial-tests.ts)");
+  for (const path of WINDOWS_SERIAL_TESTS) {
+    assert(files.has(path), `${path} is listed but does not exist`);
+    assert(!SERIAL_TESTS.includes(path), `${path} is serial everywhere already`);
+  }
+  // Only Windows moves them; elsewhere the serial pass is unchanged.
+  assertEquals(serialTestsFor("darwin"), SERIAL_TESTS);
+  assertEquals(serialTestsFor("linux"), SERIAL_TESTS);
+  assertEquals(serialTestsFor("windows"), [...SERIAL_TESTS, ...WINDOWS_SERIAL_TESTS]);
+  const passes = testPasses(["tests/"], serialTestsFor("windows"));
+  for (const path of WINDOWS_SERIAL_TESTS) {
+    assert(passes.serial!.includes(path), path);
+    assert(passes.parallel!.some((a) => a.startsWith("--ignore=") && a.includes(path)), path);
+  }
+});
+
+Deno.test("test-run: DENEXT_DENO=stock fails the Vitest pass unless the skip is explicitly allowed", async () => {
+  assertEquals(ALLOW_SKIP_VITEST_ENV, "DENEXT_ALLOW_SKIP_VITEST");
+  assertEquals(vitestSkipAllowed(undefined), false);
+  assertEquals(vitestSkipAllowed(""), false);
+  assertEquals(vitestSkipAllowed("0"), false);
+  assertEquals(vitestSkipAllowed("1"), true);
+  // The pass reports the skip as a failure (never `return true` without the variable).
+  const src = await Deno.readTextFile(new URL("../scripts/test-run.ts", import.meta.url));
+  const body = src.slice(src.indexOf("async function runVitestPass("));
+  const stockBranch = body.slice(0, body.indexOf("return await deno(args, bin);"));
+  assert(stockBranch.includes("return false;"), stockBranch);
+});
+
+Deno.test("test-run: coverageDir names the profile directory the flags collect into", () => {
+  assertEquals(coverageDir(["--fail-fast", "--coverage=coverage/profile"]), "coverage/profile");
+  assertEquals(coverageDir(["--coverage"]), "coverage");
+  assertEquals(coverageDir(["--fail-fast"]), null);
+});
+
+Deno.test("test-run: profiledModules lists the existing emitted modules under the roots, once", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_profiles_" });
+  try {
+    const src = join(dir, "repo", "src");
+    await Deno.mkdir(join(src, "node_modules"), { recursive: true });
+    for (const f of ["a.ts", "b.tsx", "c.d.ts", "d.js", "node_modules/e.ts"]) {
+      await Deno.writeTextFile(join(src, f), "");
+    }
+    const root = `${toFileUrl(src).href}/`;
+    const profile = (name: string, url: string) =>
+      Deno.writeTextFile(
+        join(dir, `${name}.json`),
+        JSON.stringify({ scriptId: "1", url, functions: [] }, null, 2),
+      );
+    await profile("1", `${root}a.ts`);
+    await profile("2", `${root}a.ts`); // a second profile of the same module
+    await profile("3", `${root}b.tsx`);
+    await profile("4", `${root}c.d.ts`); // nothing to emit
+    await profile("5", `${root}d.js`); // nor here
+    await profile("6", `${root}node_modules/e.ts`);
+    await profile("7", `${root}gone.ts`); // removed since the run
+    await profile("8", toFileUrl(join(dir, "elsewhere.ts")).href); // outside the roots
+    await Deno.writeTextFile(join(dir, "9.json"), "{}"); // no url
+    await Deno.writeTextFile(join(dir, "notes.txt"), `"url": "${root}a.ts"`);
+    assertEquals(await profiledModules(dir, [root]), [`${root}a.ts`, `${root}b.tsx`]);
+    assertEquals(
+      emitEntrySource([`${root}a.ts`, `${root}b.tsx`]),
+      `import ${JSON.stringify(`${root}a.ts`)};\nimport ${JSON.stringify(`${root}b.tsx`)};\n`,
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("test-run: a module another config re-emitted is reported again after reEmitCovered", async () => {
+  // `deno coverage` reads a module's emit from the shared emit cache; a process transpiling it under
+  // another config (a test app's build) overwrites that entry, and the report skips the module.
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_reemit_" }));
+  const deno = Deno.execPath();
+  const run = async (args: string[]) => {
+    const out = await new Deno.Command(deno, { args, cwd: dir, stdin: "null" }).output();
+    return new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
+  };
+  try {
+    await Deno.mkdir(join(dir, "mod"));
+    await Deno.writeTextFile(
+      join(dir, "mod", "lib.ts"),
+      "export function f(x: number): number {\n  return x > 0 ? 1 : 2;\n}\n",
+    );
+    await Deno.writeTextFile(
+      join(dir, "lib_test.ts"),
+      'import { f } from "./mod/lib.ts";\nDeno.test("f", () => void f(1));\n',
+    );
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.writeTextFile(
+      join(dir, "other.json"),
+      '{ "compilerOptions": { "jsxFactory": "h" } }',
+    );
+    await run(["test", "--coverage=cov", "--coverage-raw-data-only", "lib_test.ts"]);
+    await run(["run", "--config", "other.json", "mod/lib.ts"]);
+    assert((await run(["coverage", "cov"])).includes("Missing transpiled source"), "clobbered");
+    const reEmitted = await reEmitCovered(join(dir, "cov"), {
+      bin: deno,
+      config: join(dir, "deno.json"),
+      roots: [`${toFileUrl(join(dir, "mod")).href}/`],
+      tempDir: dir,
+    });
+    assertEquals(reEmitted, 1);
+    const report = await run(["coverage", "cov"]);
+    assert(!report.includes("Missing transpiled source"), report);
+    assert(report.includes("lib.ts"), report);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

@@ -6,6 +6,7 @@ import { currentContext } from "../../server/request-context.ts";
 import { clientIp } from "../../server/request-context.ts";
 import type { VNode } from "../../jsx/types.ts";
 import { HttpError } from "./http-error.ts";
+import { CONTINUE_HEADER, PARTIAL_SEARCH_PARAM } from "./constants.ts";
 import type {
   PageResponse,
   ResolvedFreshConfig,
@@ -14,8 +15,7 @@ import type {
   WebSocketUpgradeOptions,
 } from "./types.ts";
 
-/** The header that marks the response `ctx.next()` stands in for (the page denext renders). */
-export const CONTINUE_HEADER = "x-denext-fresh-continue";
+export { CONTINUE_HEADER } from "./constants.ts";
 
 /** What a page route's handler decided, for the page component to render. */
 export type FreshOutcome =
@@ -37,6 +37,10 @@ export interface MatchedRoute {
   layouts: string[];
   /** Render without the `_app` wrapper. */
   skipApp: boolean;
+  /** Render without the layouts above the route (`skipInheritedLayouts`), code layouts too. */
+  skipLayouts?: boolean;
+  /** A route registered in code (`app.route()`, a handler's `ctx.render()`, `app.onError()`). */
+  code?: boolean;
 }
 
 /** One request's Fresh state, shared by the middleware and the page / layouts / route handler. */
@@ -165,8 +169,11 @@ export class Context<State = Record<string, unknown>, Data = unknown> {
   error: unknown = null;
   /** The connection info. */
   readonly info: Deno.ServeHandlerInfo;
-  /** Fresh partial requests (always false: denext has no partial navigation). */
-  readonly isPartial = false;
+  /**
+   * Whether this is a partial request: Fresh's client navigation fetches a page with the
+   * `fresh-partial` query parameter to take only its `<Partial>` regions.
+   */
+  readonly isPartial: boolean;
   /** Fresh 1.x: what the request resolved to. */
   destination: "route" | "notFound" | "static" | "internal" = "notFound";
   /** Fresh 1.x: the base path. */
@@ -188,6 +195,7 @@ export class Context<State = Record<string, unknown>, Data = unknown> {
   constructor(req: Request, fr: FreshRequest, v1: boolean) {
     this.req = req;
     this.url = new URL(req.url);
+    this.isPartial = this.url.searchParams.has(PARTIAL_SEARCH_PARAM);
     this.#fr = fr;
     this.#v1 = v1;
     this.config = {
@@ -215,7 +223,8 @@ export class Context<State = Record<string, unknown>, Data = unknown> {
 
   /**
    * A redirect response. A same-site path has repeated slashes collapsed, so `//evil.com` stays
-   * on this site.
+   * on this site. A partial request's redirect keeps the `fresh-partial` parameter, so the page
+   * it lands on answers with its partials too.
    *
    * @param pathOrUrl Where to go.
    * @param status The status (302).
@@ -230,6 +239,7 @@ export class Context<State = Record<string, unknown>, Data = unknown> {
       const search = idx > -1 ? pathOrUrl.slice(idx) : "";
       location = `${pathname.replaceAll(/\/+/g, "/")}${search}`;
     }
+    if (this.isPartial) location = withPartialParam(location);
     return new Response(null, { status, headers: { location } });
   }
 
@@ -312,6 +322,14 @@ export class Context<State = Record<string, unknown>, Data = unknown> {
     }
     return response;
   }
+}
+
+/** `location` with the `fresh-partial` parameter added before its fragment. */
+function withPartialParam(location: string): string {
+  const hashAt = location.indexOf("#");
+  const base = hashAt > -1 ? location.slice(0, hashAt) : location;
+  const hash = hashAt > -1 ? location.slice(hashAt) : "";
+  return `${base}${base.includes("?") ? "&" : "?"}${PARTIAL_SEARCH_PARAM}=true${hash}`;
 }
 
 /** A response with a content type (unless `init` sets one). */

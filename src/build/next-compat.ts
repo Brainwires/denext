@@ -92,6 +92,7 @@ import {
   readLocalAliases,
 } from "./bundle.ts";
 import { resolveOnBehalf } from "./esbuild-resolve.ts";
+import { parse as parseJsonc } from "@std/jsonc";
 import {
   type AutoOptimizePackageImports,
   withOptimizedPackageImports,
@@ -385,10 +386,13 @@ function preactRuntimeEntries(u: EntryUrl): Record<string, string> {
     "preact-hooks": u("src/compat/preact/hooks.ts"),
     "preact-compat": u("src/compat/preact/compat.ts"),
     "preact-jsx-runtime": u("src/compat/preact/jsx-runtime.ts"),
+    "preact-render-to-string": u("src/compat/preact/render-to-string.ts"),
     "preact-iso": u("src/compat/preact/iso.ts"),
     "signals": u("src/compat/preact/signals.ts"),
     "fresh": u("src/compat/fresh/mod.ts"),
     "fresh-runtime": u("src/compat/fresh/runtime.ts"),
+    "fresh-partial": u("src/compat/fresh/partial.ts"),
+    "fresh-env": u("src/compat/fresh/env.ts"),
   };
 }
 
@@ -913,10 +917,13 @@ export const DENEXT_RUNTIME_FILES: Readonly<Record<string, string>> = {
   "denext/preact/hooks": "preact-hooks.js",
   "denext/preact/compat": "preact-compat.js",
   "denext/preact/jsx-runtime": "preact-jsx-runtime.js",
+  "denext/preact/render-to-string": "preact-render-to-string.js",
   "denext/preact-iso": "preact-iso.js",
   "denext/signals": "signals.js",
   "denext/fresh": "fresh.js",
   "denext/fresh/runtime": "fresh-runtime.js",
+  "denext/fresh/partial": "fresh-partial.js",
+  "denext/fresh/env": "fresh-env.js",
   // The `denext/expo/*` shims (see expo-shims.ts).
   ...expoRuntimeFiles(),
   // React Native mode's shell overlay (see react-native.ts).
@@ -1290,6 +1297,29 @@ function envPoisonPlugin(isServer: boolean): esbuild.Plugin {
 }
 
 /**
+ * The automatic-runtime import source the compat bundle compiles JSX with: `"preact"` when the
+ * app's config sets `compilerOptions.jsxImportSource: "preact"` (what `denext migrate` writes for
+ * a Preact or Fresh app, whose import map points `preact/jsx-runtime` at
+ * `denext/preact/jsx-runtime`: Preact's `options.vnode` / `options.event` hooks and the signal
+ * DOM-prop binding), else `"react"` (aliased to denext's own runtime downstream). A config that
+ * is missing or does not parse is `"react"`.
+ *
+ * @param configPath The app's `deno.json` / `deno.jsonc` (a path or a `file:` URL).
+ * @returns The import source.
+ */
+export async function compatJsxImportSource(configPath: string): Promise<"react" | "preact"> {
+  const path = configPath.startsWith("file:") ? fromFileUrl(configPath) : configPath;
+  try {
+    const config = parseJsonc(await Deno.readTextFile(path)) as {
+      compilerOptions?: { jsxImportSource?: unknown };
+    } | null;
+    return config?.compilerOptions?.jsxImportSource === "preact" ? "preact" : "react";
+  } catch {
+    return "react";
+  }
+}
+
+/**
  * Bundle `entry` (client hydration entry or SSR render module) with all react
  * imports — including those inside npm packages — rewritten to the single
  * prebuilt denext runtime.
@@ -1333,7 +1363,7 @@ export async function bundleNextCompat(options: BundleNextCompatOptions): Promis
     platform: options.platform === "deno" ? "node" : "browser",
     minify: options.minify ?? false,
     jsx: "automatic",
-    jsxImportSource: "react",
+    jsxImportSource: await compatJsxImportSource(options.configPath),
     alias: options.extraAlias,
     absWorkingDir: options.absWorkingDir,
     define: classDefine(options.classComponents),
@@ -2629,8 +2659,12 @@ function frameworkUrlExternalPlugin(): esbuild.Plugin {
  * intact. Modules with neither directive fall through to the normal loader. Exported for testing.
  *
  * @param options.useCache Compile `"use cache"` (default true).
+ * @param options.projectDir The project root: inline action ids are keyed by the module's
+ *   project-relative path, as the runtime loader keys them.
  */
-export function cacheDirectivePlugin(options: { useCache?: boolean } = {}): esbuild.Plugin {
+export function cacheDirectivePlugin(
+  options: { useCache?: boolean; projectDir?: string } = {},
+): esbuild.Plugin {
   const useCache = options.useCache ?? true;
   return {
     name: "denext-server-directives",
@@ -2644,7 +2678,9 @@ export function cacheDirectivePlugin(options: { useCache?: boolean } = {}): esbu
         const cached = cache
           ? await transformUseCache(source, url)
           : { code: source, changed: false };
-        const inline = await transformInlineServerActions(cached.code, url);
+        const inline = await transformInlineServerActions(cached.code, url, {
+          projectDir: options.projectDir,
+        });
         if (!cached.changed && !inline.changed) return undefined;
         const ext = extname(args.path).slice(1);
         return {
@@ -2800,17 +2836,18 @@ async function sourcePlugins(
   workerBuild: (entryPath: string, outName: string) => Promise<void>,
 ): Promise<esbuild.Plugin[]> {
   const deno = options.platform === "deno";
+  const projectDir = options.absWorkingDir ?? dirname(
+    options.configPath.startsWith("file:") ? fromFileUrl(options.configPath) : options.configPath,
+  );
   const fumadocs = await detectFumadocsMdx(
-    options.absWorkingDir ?? dirname(
-      options.configPath.startsWith("file:") ? fromFileUrl(options.configPath) : options.configPath,
-    ),
+    projectDir,
     (dir, spec) => resolveNodeFrom(dir, spec, SSR_CONDITIONS),
   );
   return [
     ...(options.assets ? [viteAssetPlugin(options.assets, workerBuild, options.configPath)] : []),
     ...(options.cssImportMap ? [cssShimPlugin(options.cssImportMap)] : []),
     ...(fumadocs ? [fumadocsMdxPlugin(fumadocs)] : []),
-    ...(deno ? [cacheDirectivePlugin({ useCache: options.useCache === true })] : []),
+    ...(deno ? [cacheDirectivePlugin({ useCache: options.useCache === true, projectDir })] : []),
     mdxPlugin(options.mdxOptions),
     ...(deno ? [prismaGeneratedClientExternalPlugin(options.configPath)] : []),
   ];
@@ -2860,7 +2897,7 @@ export async function bundleNextCompatModules(
     // browser bundle, moved out of the web root by the export (hidden-sourcemaps.ts).
     ...(!deno && hiddenSourceMapsEnabled() ? { sourcemap: "external" as const } : {}),
     jsx: "automatic",
-    jsxImportSource: "react",
+    jsxImportSource: await compatJsxImportSource(options.configPath),
     absWorkingDir: options.absWorkingDir,
     // Wasm codecs (next/og, next/image) are lazily imported and resolve at SSR
     // runtime — keep them external so esbuild never tries to bundle their .wasm.

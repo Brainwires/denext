@@ -531,7 +531,7 @@ Deno.test("native templates: iOS recomputes the version and enforces the signatu
   assertStringIncludes(store, 'return Data("denext-ota-v3\\n\\(v2)\\n\\(nativeFingerprint)".utf8)');
   assertStringIncludes(
     init,
-    "minNative: minNative,\n                    nativeFingerprint: nativeFingerprint\n                ),",
+    "minNative: minNative,\n                    nativeFingerprint: nativeFingerprint,\n                    expiresAt: expiresAt\n                ),",
   );
   // The key comes from Info.plist only, through CryptoKit.
   assertStringIncludes(store, `static let publicKeyInfoKey = "DenextOtaPublicKey"`);
@@ -550,12 +550,12 @@ Deno.test("native templates: iOS recomputes the version and enforces the signatu
       policy.indexOf("switch publicKey"),
     policy,
   );
-  // Unsigned: a pinned https origin or loopback only — not any https server.
+  // Unsigned: a pinned https origin (or loopback, in a debug build only) — not any https server.
   assertStringIncludes(
     policy,
     `let pinnedHttps = baseUrl.scheme?.lowercased() == "https" && isPinnedOrigin(baseUrl)`,
   );
-  assertStringIncludes(policy, "guard pinnedHttps || loopbackHosts.contains(host) else");
+  assertStringIncludes(policy, "guard pinnedHttps || loopback else");
   assert(!policy.includes(`baseUrl.scheme?.lowercased() == "https" || loopbackHosts`), policy);
   const pinned = body(store, "static func isPinnedOrigin(");
   assertStringIncludes(pinned, "pin.scheme?.lowercased() == url.scheme?.lowercased()");
@@ -608,7 +608,7 @@ Deno.test("native templates: Android recomputes the version and enforces the sig
   );
   assertStringIncludes(
     parse,
-    "DenextOtaStore.signaturePayload(version, required, notes, sequence, minNative, nativeFingerprint)",
+    "DenextOtaStore.signaturePayload(version, required, notes, sequence, minNative, nativeFingerprint, expiresAt)",
   );
   // The key comes from the manifest meta-data only; raw r‖s becomes DER for SHA256withECDSA.
   assertStringIncludes(store, `PUBLIC_KEY_META = "dev.denext.ota.PUBLIC_KEY"`);
@@ -644,10 +644,10 @@ Deno.test("native templates: Android recomputes the version and enforces the sig
   assertStringIncludes(pinnedFn, "pin.getHost().equalsIgnoreCase(String.valueOf(uri.getHost()))");
   assertStringIncludes(pinnedFn, "effectivePort(pin) == effectivePort(uri)");
   assertStringIncludes(store, `String.valueOf(value).split("[\\\\s,]+")`);
-  // 10.0.2.2 (the emulator's host) counts as loopback only in a debuggable build.
+  // Loopback and 10.0.2.2 (the emulator's host) count only in a debuggable build.
   assertStringIncludes(
     policy,
-    "LOOPBACK_HOSTS.contains(host) || (EMULATOR_HOST.equals(host) && isDebuggable())",
+    "(LOOPBACK_HOSTS.contains(host) || EMULATOR_HOST.equals(host)) && isDebuggable()",
   );
   assertStringIncludes(
     store,
@@ -1003,7 +1003,7 @@ Deno.test("native templates: path, cap, release and trial rules (iOS)", () => {
   assert(
     init.indexOf("checkTrust(") <
       init.indexOf(
-        "checkRelease(sequence: sequence, minNative: minNative, nativeFingerprint: nativeFingerprint)",
+        "try DenextOtaStore.checkRelease(",
       ),
     init,
   );
@@ -1054,7 +1054,10 @@ Deno.test("native templates: path, cap, release and trial rules (iOS)", () => {
   // The plugin: foreground-only watchdog, page-bound boot, cancellable download.
   assertStringIncludes(plugin, "UIApplication.willResignActiveNotification");
   assertStringIncludes(plugin, "UIApplication.didBecomeActiveNotification");
-  assertStringIncludes(body(plugin, "@objc func booted("), "version == nil || version == pending");
+  assertStringIncludes(
+    body(plugin, "@objc func booted("),
+    "let version = version, version == pending",
+  );
   assertStringIncludes(body(plugin, "@objc func reset("), "self.downloadTask?.cancel()");
   assertStringIncludes(plugin, `"switched": false`);
   assertStringIncludes(plugin, `"staged": false`);
@@ -1076,7 +1079,7 @@ Deno.test("native templates: path, cap, release and trial rules (Android)", () =
   );
   assert(
     parse.indexOf("store.checkTrust(") <
-      parse.indexOf("store.checkRelease(sequence, minNative, nativeFingerprint);"),
+      parse.indexOf("store.checkRelease(sequence, minNative, nativeFingerprint, expiresAt);"),
     parse,
   );
   assertStringIncludes(
@@ -1140,7 +1143,7 @@ Deno.test("native templates: path, cap, release and trial rules (Android)", () =
   assertStringIncludes(body(plugin, "protected void handleOnResume()"), "resumeWatchdog();");
   assertStringIncludes(
     body(plugin, "public void booted("),
-    "version != null && !version.equals(pending)",
+    "version == null || !version.equals(pending)",
   );
   assertStringIncludes(body(plugin, "public void reset("), "store().cancelDownload();");
   assertStringIncludes(plugin, `result.put("switched", false);`);
@@ -1332,4 +1335,114 @@ Deno.test("add-ota: a LAN origin declares NSLocalNetworkUsageDescription (an app
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("native templates SECURITY (AU6-M2): the downgrade floor includes the bundled UI's sequence", () => {
+  // iOS: the bundled manifest's sequence is read, and checkRelease takes the max of both floors.
+  const iosStore = OTA_IOS_FILES["DenextOtaStore.swift"];
+  assertStringIncludes(iosStore, "lazy var bundledSequence: Int64? = {");
+  assertStringIncludes(
+    body(iosStore, "static func checkRelease("),
+    "[shared.highestSequence, shared.bundledSequence].compactMap({ $0 }).max()",
+  );
+  // Android: the same, through bundledSequence().
+  const androidStore = OTA_ANDROID_FILES["DenextOtaStore.java"];
+  assertStringIncludes(androidStore, "synchronized Long bundledSequence() {");
+  const release = body(androidStore, "void checkRelease(");
+  assertStringIncludes(release, "Long bundled = bundledSequence();");
+  assertStringIncludes(
+    release,
+    "if (bundled != null && (highest == null || bundled > highest)) highest = bundled;",
+  );
+  assert(OTA_TEMPLATE_VERSION >= 10, "the generation is bumped so an older denext keeps it");
+});
+
+Deno.test("native templates SECURITY (AU6-L1): a signed expiresAt is enforced, and required once the bundle has one", () => {
+  const iosStore = OTA_IOS_FILES["DenextOtaStore.swift"];
+  const iosRelease = body(iosStore, "    static func checkRelease(");
+  assertStringIncludes(iosRelease, 'throw OtaError(code: "expired"');
+  assertStringIncludes(iosRelease, "} else if shared.bundledExpiring {");
+  assertStringIncludes(
+    iosStore,
+    'return Data("denext-ota-v4\\n\\(v2)\\n\\(nativeFingerprint ?? "")\\n\\(expiresAt)".utf8)',
+  );
+  assertStringIncludes(
+    iosStore,
+    'if let expiresAt = request.expiresAt { manifest["expiresAt"] = expiresAt }',
+  );
+  const androidStore = OTA_ANDROID_FILES["DenextOtaStore.java"];
+  const androidRelease = body(androidStore, "    void checkRelease(");
+  assertStringIncludes(androidRelease, "@Nullable Long expiresAt");
+  const expiry = androidStore.slice(
+    androidStore.indexOf("        if (expiresAt != null) {\n            long now"),
+  );
+  assertStringIncludes(expiry.slice(0, 600), 'throw new OtaException("expired"');
+  assertStringIncludes(expiry.slice(0, 600), "} else if (bundledExpiring()) {");
+  assertStringIncludes(androidStore, "synchronized boolean bundledExpiring() {");
+  assertStringIncludes(
+    androidStore,
+    'text = "denext-ota-v4\\n" + v2 + "\\n" + (nativeFingerprint == null ? "" : nativeFingerprint) + "\\n" + expiresAt;',
+  );
+  assertStringIncludes(androidStore, 'manifest.put("expiresAt", (long) request.expiresAt);');
+  // The request parse hands expiresAt to both the signature payload and the release check.
+  const androidPlugin = OTA_ANDROID_FILES["DenextOtaPlugin.java"];
+  assertStringIncludes(
+    androidPlugin,
+    "DenextOtaStore.signaturePayload(version, required, notes, sequence, minNative, nativeFingerprint, expiresAt),",
+  );
+  assertStringIncludes(
+    androidPlugin,
+    "store.checkRelease(sequence, minNative, nativeFingerprint, expiresAt);",
+  );
+  assert(OTA_TEMPLATE_VERSION >= 11, "the generation is bumped so an older denext keeps it");
+});
+
+Deno.test("native templates SECURITY (AU6-L2): an unsigned loopback UI is accepted only in a debug build", () => {
+  const iosTrust = body(OTA_IOS_FILES["DenextOtaStore.swift"], "    static func checkTrust(");
+  assertStringIncludes(iosTrust, "let loopback = isDebugBuild && loopbackHosts.contains(host)");
+  assert(!iosTrust.includes("|| loopbackHosts.contains(host)"), iosTrust);
+  assertStringIncludes(
+    OTA_IOS_FILES["DenextOtaStore.swift"],
+    "        #if DEBUG\n        return true\n",
+  );
+  const androidTrust = body(OTA_ANDROID_FILES["DenextOtaStore.java"], "    void checkTrust(");
+  assertStringIncludes(
+    androidTrust,
+    "boolean loopback = (LOOPBACK_HOSTS.contains(host) || EMULATOR_HOST.equals(host)) && isDebuggable();",
+  );
+});
+
+Deno.test("native templates SECURITY (AU6-L3): booted() without a version confirms nothing", () => {
+  const ios = body(OTA_IOS_FILES["DenextOtaPlugin.swift"], "    @objc func booted(");
+  assertStringIncludes(
+    ios,
+    "guard let pending = store.pending, let version = version, version == pending else {",
+  );
+  const android = OTA_ANDROID_FILES["DenextOtaPlugin.java"];
+  const booted = android.slice(android.indexOf("    public void booted(PluginCall call) {"));
+  assertStringIncludes(
+    booted.slice(0, 900),
+    "if (pending == null || version == null || !version.equals(pending)) {",
+  );
+});
+
+Deno.test("native templates SECURITY (AU6-L4): a directory of a downloaded UI does not quarantine it", () => {
+  assertStringIncludes(
+    OTA_IOS_FILES["DenextOtaStore.swift"],
+    "return exists && !isDirectory.boolValue\n                    ? .tampered(",
+  );
+  assertStringIncludes(
+    OTA_ANDROID_FILES["DenextOtaStore.java"],
+    "return target.exists() && !target.isDirectory() ? Verdict.TAMPERED : Verdict.MISSING;",
+  );
+});
+
+Deno.test("native templates SECURITY (AU6-I5): a baseUrl with credentials or a backslash is invalid", () => {
+  assertStringIncludes(
+    OTA_IOS_FILES["DenextOtaStore.swift"],
+    "baseUrl.host != nil, baseUrl.user == nil, baseUrl.password == nil else {",
+  );
+  const android = OTA_ANDROID_FILES["DenextOtaPlugin.java"];
+  assertStringIncludes(android, "baseUrl.indexOf('\\\\') >= 0 ? null : Uri.parse(baseUrl);");
+  assertStringIncludes(android, "base.getUserInfo() != null ||");
 });

@@ -1,7 +1,7 @@
 // Production build, stage 2: per-route stylesheets, the static/interactive partition, and
 // the native (non-compat) route + Flight client bundles.
 
-import { join } from "@std/path";
+import { fromFileUrl, join, relative } from "@std/path";
 import { featureFlags, momentumSafeScrollEnabled } from "../../server/config.ts";
 import { prodMinify } from "../minify.ts";
 import { localModulesOutside } from "../module-graph.ts";
@@ -108,6 +108,7 @@ export async function bundleNativeRoutes(ctx: BuildContext): Promise<void> {
     usesImageBlur: ctx.usesImageBlur,
     usesFormActions: ctx.usesFormActions,
     usesHrefParams: ctx.usesHrefParams,
+    usesHookBoundaries: ctx.usesHookBoundaries,
   });
   // Write shared + island chunks under their own (content-hashed) basenames; identical
   // chunks across routes collapse to one file.
@@ -164,11 +165,31 @@ export async function computeBoundary(ctx: BuildContext): Promise<void> {
   });
   ctx.serverModules = boundary.server;
   ctx.crawledBoundary = boundary;
+  logUnreferencedActions(ctx.projectDir, boundary.server);
   if (!ctx.hasFlight) return;
   ctx.boundary = boundary;
   const outside = await localModulesOutside(ctx.projectDir, ctx.manifest.pages);
   ctx.usesLive = await appImportsLive(ctx.projectDir, outside);
   ctx.usesLiveView = ctx.usesLive && await appUsesLiveView(ctx.projectDir, outside);
+}
+
+/**
+ * Name the `"use server"` exports this build does not expose (no module imports them), so an
+ * action that works in `denext dev` (which warns when one is called) does not vanish silently.
+ */
+function logUnreferencedActions(projectDir: string, server: BuildContext["serverModules"]): void {
+  const dropped: string[] = [];
+  for (const ref of server.values()) {
+    if (!ref.exposed) continue;
+    const exposed = new Set(ref.exposed);
+    const path = relative(projectDir, fromFileUrl(ref.url));
+    for (const name of ref.exports) if (!exposed.has(name)) dropped.push(`${path}#${name}`);
+  }
+  if (dropped.length === 0) return;
+  log(
+    `${dropped.length} Server Action export(s) not exposed (no module imports them; a request ` +
+      `naming one is an unknown action): ${dropped.join(", ")}`,
+  );
 }
 
 /**
@@ -196,6 +217,7 @@ export async function bundleNativeFlight(ctx: BuildContext): Promise<void> {
     usesImageBlur: ctx.usesImageBlur,
     usesFormActions: ctx.usesFormActions,
     usesHrefParams: ctx.usesHrefParams,
+    usesHookBoundaries: ctx.usesHookBoundaries,
     instrumentationClient: ctx.paths.instrumentationClientPath,
   });
   await writeBundleOutput(ctx.clientDir, flightBundle, FLIGHT_BUNDLE_FILE);

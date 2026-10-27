@@ -13,7 +13,9 @@
 
 import { stabilizeSpmPluginPaths } from "./spm-plugin-paths.ts";
 import { dirname, join, resolve } from "@std/path";
+import { assertInsideProject, writeTextInside } from "./project-confine.ts";
 import { posixRelative } from "./mobile-paths.ts";
+import { workspaceVerbTarget } from "./workspace-imports.ts";
 import {
   EMPTY_ENTITLEMENTS,
   withAppDelegatePushForwarding,
@@ -433,7 +435,7 @@ async function wireQuickActions({ dir }: NativeInstallOptions): Promise<NativeIn
   } else if (next === text) {
     report.unchanged.push(rel);
   } else {
-    await Deno.writeTextFile(nativeJoin(dir, rel), next);
+    await writeTextInside(dir, nativeJoin(dir, rel), next);
     report.written.push(rel);
   }
   return report;
@@ -1088,12 +1090,24 @@ async function isCapacitorProject(dir: string): Promise<boolean> {
 }
 
 /**
- * The project root: `dir` resolved against `cwd` when given, else `cwd`. It must hold a
- * `capacitor.config.*` and a `package.json`. An explicit `dir` never falls back to `cwd`:
- * a mistyped `--dir` would otherwise change whichever project the shell happens to be in.
+ * The project root: `dir` resolved against `cwd` when given, else `cwd` — or, when `cwd` is a Deno
+ * workspace root (`denext create --monorepo`), its one member with a `capacitor.config.*` (several
+ * are refused, naming them). It must hold a `capacitor.config.*` and a `package.json`. An explicit
+ * `dir` never falls back to `cwd`: a mistyped `--dir` would otherwise change whichever project the
+ * shell happens to be in.
  */
 export async function findProject(cwd: string, dir: string | undefined): Promise<string> {
-  const root = dir === undefined ? cwd : resolve(cwd, dir);
+  let root = dir === undefined ? cwd : resolve(cwd, dir);
+  if (dir === undefined && !(await isCapacitorProject(root))) {
+    // A monorepo root (`denext create --monorepo --capacitor`): its one Capacitor app.
+    const target = await workspaceVerbTarget(root, {
+      command: "denext mobile",
+      accepts: isCapacitorProject,
+      dirFlag: "--dir",
+    });
+    if ("error" in target) throw new Error(target.error);
+    root = target.dir;
+  }
   if (!(await isCapacitorProject(root))) {
     throw new Error(
       dir === undefined
@@ -1679,6 +1693,29 @@ export function formatCapabilityTable(
 }
 
 /**
+ * The folders and files `mobile add` writes under, at the top of the project: none may be a
+ * symlink that leads out of it (a cloned repository's `ios` → `~/…`), checked before anything is
+ * installed or written. Each file written is checked again as it is written.
+ */
+async function assertMobileWriteRoots(root: string): Promise<void> {
+  const config = await capacitorConfigFile(root);
+  for (
+    const rel of [
+      nativeRel(root, "ios"),
+      nativeRel(root, "android"),
+      "public",
+      "fastlane",
+      "background",
+      "native",
+      ".github",
+      ...(config ? [config] : []),
+    ]
+  ) {
+    await assertInsideProject(root, resolve(root, rel));
+  }
+}
+
+/**
  * Apply `edits` in turn to the file at `rel` under the project root, recording the outcome in
  * `report`. A missing file is skipped, unless `create` gives its initial text and its folder
  * exists.
@@ -1711,6 +1748,7 @@ async function editNative(
     return;
   }
   if (next === existing) return void report.unchanged.push(shown);
+  await assertInsideProject(report.plan.root, path);
   await Deno.writeTextFile(path, next);
   report.written.push(shown);
 }
@@ -1779,6 +1817,7 @@ export async function addMobileCapabilities(
   };
   if (opts.dryRun) return report;
   if (!opts.run) throw new Error("addMobileCapabilities: a command runner is required.");
+  await assertMobileWriteRoots(plan.root);
   if (plan.install) await runChecked(opts.run, plan.install, report.ran);
   for (const step of plan.native.installs) {
     mergeInstall(report, await step.run({ dir: plan.root, force: opts.force }));

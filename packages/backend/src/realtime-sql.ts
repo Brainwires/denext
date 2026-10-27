@@ -106,6 +106,28 @@ export interface RealtimeOptions {
    * against the app. On by default; `false` turns it off; an object sets its limits.
    */
   socket?: boolean | RealtimeSocketOptions;
+  /**
+   * Replay what a `useTableChanges` subscriber missed while its connection was down (on by
+   * default): each server instance keeps a journal of the changes it received (keys only, as the
+   * triggers send them), and a subscription whose browser reconnects within `retentionSeconds`
+   * is sent the changes after the last one it was delivered — re-read as that subscriber, under
+   * the same row-level security and delete rules as live changes. A gap the journal no longer
+   * covers (older than the retention, past `maxChangesPerTable`, or across a lost database
+   * listener) is an explicit `resync`. `false` turns it off: a reconnect is then always a
+   * `resync`.
+   */
+  replay?: boolean | RealtimeReplayOptions;
+}
+
+/** `realtime({ replay })`: the reconnect journal's retention. */
+export interface RealtimeReplayOptions {
+  /**
+   * How long a disconnected subscription is kept for a reconnect, and how long the journal keeps
+   * a change, in seconds (default 60).
+   */
+  retentionSeconds?: number;
+  /** Changes the journal keeps per table (default 10 000): an older gap is a `resync`. */
+  maxChangesPerTable?: number;
 }
 
 /** `realtime({ logical })`: the logical-decoding source's tuning. */
@@ -219,6 +241,8 @@ export interface ResolvedRealtime {
   source: "notify" | "logical";
   /** The logical source's tuning. */
   logical: Required<RealtimeLogicalOptions>;
+  /** The reconnect journal's retention, or `null` when replay is off. */
+  replay: Required<RealtimeReplayOptions> | null;
 }
 
 const EVENTS: readonly TableEvent[] = ["insert", "update", "delete", "truncate"];
@@ -324,6 +348,30 @@ export function resolveRealtime(options: RealtimeOptions): ResolvedRealtime {
     queryTimeoutMs: positiveOption(options.queryTimeoutMs, 5_000, "realtime(): queryTimeoutMs"),
     maxTrackedKeys: positiveOption(options.maxTrackedKeys, 10_000, "realtime(): maxTrackedKeys"),
     socket: resolveSocket(options.socket),
+    replay: resolveReplay(options.replay),
+  };
+}
+
+/** `replay`, validated. */
+function resolveReplay(replay: RealtimeOptions["replay"]): Required<RealtimeReplayOptions> | null {
+  if (replay === false) return null;
+  if (replay !== undefined && replay !== true && (typeof replay !== "object" || replay === null)) {
+    throw new TypeError(
+      "realtime(): replay must be a boolean or { retentionSeconds, maxChangesPerTable }",
+    );
+  }
+  const options = typeof replay === "object" ? replay : {};
+  return {
+    retentionSeconds: positiveOption(
+      options.retentionSeconds,
+      60,
+      "realtime(): replay.retentionSeconds",
+    ),
+    maxChangesPerTable: positiveOption(
+      options.maxChangesPerTable,
+      10_000,
+      "realtime(): replay.maxChangesPerTable",
+    ),
   };
 }
 

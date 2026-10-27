@@ -784,7 +784,9 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "renders HTML to a PDF in the cache folder (UIMarkupTextPrintFormatter + " +
       "UIPrintPageRenderer on iOS, a WebView's print adapter on Android; width / height in " +
       "points, US Letter by default, margins, base64), and on iOS selectPrinterAsync shows the " +
-      "printer picker and printAsync's printerUrl prints there without the dialog. In a " +
+      "printer picker and printAsync's printerUrl prints there without the dialog (only a " +
+      "file in the app's Documents, Caches or temporary folder; Android's printToFileAsync " +
+      "WebView doesn't read file: / content: URLs). In a " +
       "browser printToFileAsync and selectPrinterAsync reject with ERR_UNAVAILABLE, and " +
       "selectPrinterAsync does on Android too (as Expo).",
   },
