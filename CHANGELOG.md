@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **The runtime's `3.0.0-denext.N` releases order after `3.0.0-rc.N`.** The runtime fork follows
+  `3.0.0-rc.6` with `3.0.0-denext.1`, `3.0.0-denext.2`, …, which plain semver sorts below every
+  release candidate. denext's runtime version comparison now puts a `denext.N` prerelease above
+  every `rc.N` one on the `3.0.0` line, so each "from runtime 3.0.0-rc.N" feature (the direction-split
+  network grant, the idle trim, the lifecycle-script jail, no `--unstable-no-legacy-abort`) applies
+  to them, `denext toolchain prune` lists them as the newest, and pinning one maps it to the stock
+  Deno its manifest names instead of reading it as an old `2.9.7-denext.N` build.
+
 ## [4.9.0] - 2026-10-27
 
 ### Breaking
