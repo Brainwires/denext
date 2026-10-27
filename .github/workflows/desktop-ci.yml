@@ -84,6 +84,7 @@ on:
       - "src/build/precompress.ts"
       - "src/build/bundle.ts"
       - "src/build/exited-output.ts"
+      - "src/build/windows-powershell.ts"
       # The vendored esbuild API (the sidecar bundler) and the esbuild the toolchain ships.
       - "src/build/esbuild/**"
       - "src/build/paths.ts"
