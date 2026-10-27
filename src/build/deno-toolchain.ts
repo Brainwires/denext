@@ -30,6 +30,10 @@
 // `denext build --compile` hands it to `deno compile` as `DENORT_BIN`, so a compiled app carries
 // the fork's patches (`Deno.SQL`) like the toolchain itself.
 //
+// The Linux builds are glibc binaries. Before anything is downloaded or run on a Linux host,
+// {@linkcode ensureDenoToolchain} refuses a musl host, and (when the pin records the release's
+// `glibc`) a host whose glibc is older, with the fix ({@linkcode DenoToolchainHostError}).
+//
 // `DENEXT_DENO=stock` opts out; `DENEXT_DENO=<path>` uses that binary unverified (a warning).
 // `DENEXT_TOOLCHAIN_PIN_FILE=<json>` replaces the built-in pin (tests and fork development).
 
@@ -146,6 +150,13 @@ export interface DenoToolchainPin {
    * 2.9.7-denext.20.
    */
   readonly denort?: Readonly<Record<string, DenoToolchainArtifact>>;
+  /**
+   * The newest glibc version (`2.27`) the release's Linux `deno` and `denort` require (the fork
+   * workflow's `GLIBC_CEILING`, which its build asserts). On a Linux host with an older glibc,
+   * {@linkcode ensureDenoToolchain} refuses before downloading anything. Absent in pins from
+   * before the release recorded it: then only a musl host is refused.
+   */
+  readonly glibc?: string;
 }
 
 /** The toolchain denext pins (see the module header). */
@@ -169,9 +180,11 @@ const CACHE_DESCR = "Deno toolchain cache";
 const MAX_DOWNLOAD = 1024 ** 3;
 /** The way out of every toolchain failure. */
 /** What every refusal to run without the toolchain names: the fix, and the explicit opt-outs. */
-const TOOLCHAIN_FIX = "  Fix: run `denext toolchain install` (online), then retry.\n" +
+const TOOLCHAIN_OPT_OUT =
   `  Or opt out explicitly: ${TOOLCHAIN_ENV}=stock runs the deno that started denext (or the ` +
   `\`deno\` on PATH), ${TOOLCHAIN_ENV}=<path> runs that deno binary.`;
+const TOOLCHAIN_FIX = "  Fix: run `denext toolchain install` (online), then retry.\n" +
+  TOOLCHAIN_OPT_OUT;
 /** The one line {@linkcode linkDenoToolchain}'s Windows shim carries (what unlink checks). */
 const SHIM_MARK = "REM denext toolchain shim";
 
@@ -207,6 +220,167 @@ export class DenoToolchainHashError extends Error {
  */
 export class DenoToolchainRequiredError extends Error {
   override name = "DenoToolchainRequiredError";
+}
+
+/**
+ * Raised when this Linux host can't run the pinned toolchain at all: it runs musl libc, or its
+ * glibc is older than the one the release's Linux builds require (the pin's `glibc`). Nothing is
+ * downloaded; the message names the fix (another `denext toolchain install` would not help).
+ */
+export class DenoToolchainHostError extends DenoToolchainRequiredError {
+  override name = "DenoToolchainHostError";
+}
+
+// ---------------------------------------------------------------------------------------------
+// The host's C library (Linux): the toolchain's Linux builds are glibc binaries.
+
+/** A Linux host's C library, as far as {@linkcode probeHostLibc} can tell. */
+export type HostLibc =
+  | { readonly kind: "glibc"; readonly version: string }
+  | { readonly kind: "musl" }
+  | { readonly kind: "unknown" };
+
+/** The dynamic loaders glibc and musl install per architecture (a binary's `PT_INTERP`). */
+const LIBC_LOADERS: Readonly<Record<string, { readonly glibc: string; readonly musl: string }>> = {
+  x86_64: { glibc: "/lib64/ld-linux-x86-64.so.2", musl: "/lib/ld-musl-x86_64.so.1" },
+  aarch64: { glibc: "/lib/ld-linux-aarch64.so.1", musl: "/lib/ld-musl-aarch64.so.1" },
+};
+
+/**
+ * The glibc version in the output of `getconf GNU_LIBC_VERSION` (`glibc 2.39`) or `ldd --version`
+ * (`ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39`, `ldd (GNU libc) 2.34`), else `null` (musl's `ldd`,
+ * an unknown format).
+ *
+ * @param text The command's output.
+ * @returns The `major.minor` version, or `null`.
+ */
+export function parseGlibcVersion(text: string): string | null {
+  const first = text.trim().split("\n")[0].trim();
+  const m = /^glibc (\d+\.\d+)$/.exec(first) ?? /^ldd \(.*\) (\d+\.\d+)$/.exec(first);
+  return m ? m[1] : null;
+}
+
+/**
+ * Compare two glibc versions (`major.minor`) numerically (`2.9` < `2.17` < `2.27`).
+ *
+ * @param a A version.
+ * @param b A version.
+ * @returns Negative, zero or positive as `a` is older than, equal to or newer than `b`.
+ */
+export function compareGlibcVersions(a: string, b: string): number {
+  // glibc versions are `major.minor`: nothing past the minor decides an ordering here.
+  const [aMajor = 0, aMinor = 0] = a.split(".").map(Number);
+  const [bMajor = 0, bMinor = 0] = b.split(".").map(Number);
+  return aMajor - bMajor || aMinor - bMinor;
+}
+
+/** Seams for {@linkcode probeHostLibc} (tests). */
+export interface HostLibcProbe {
+  /** The CPU architecture (default `Deno.build.arch`). */
+  readonly arch?: string;
+  /** Whether a file exists (default: `Deno.stat`; `false` when it can't be read). */
+  readonly exists?: (path: string) => Promise<boolean>;
+  /** A command's stdout + stderr, or `null` when it can't be run (default: `Deno.Command`). */
+  readonly run?: (cmd: string, args: string[]) => Promise<string | null>;
+  /** Ask for the glibc version (runs `getconf`, then `ldd`); else only musl is told apart. */
+  readonly version?: boolean;
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  return (await Deno.stat(path).catch(() => null)) !== null;
+}
+
+async function commandText(cmd: string, args: string[]): Promise<string | null> {
+  try {
+    const out = await new Deno.Command(cmd, {
+      args,
+      env: { LC_ALL: "C" },
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const dec = new TextDecoder();
+    return dec.decode(out.stdout) + dec.decode(out.stderr);
+  } catch {
+    return null; // not installed, or no --allow-run
+  }
+}
+
+/**
+ * Probe a Linux host's C library: musl when musl's dynamic loader is there and glibc's is not
+ * (a glibc host with musl-tools installed, or an image that carries glibc beside musl, is not
+ * musl), else (with `version`) the glibc version `getconf GNU_LIBC_VERSION` or `ldd --version`
+ * reports. Anything it can't tell (no permission, no `getconf` or `ldd`) is `unknown`, which
+ * refuses nothing.
+ *
+ * @param probe Seams.
+ * @returns What the host runs.
+ */
+export async function probeHostLibc(probe: HostLibcProbe = {}): Promise<HostLibc> {
+  const exists = probe.exists ?? fileExists;
+  const run = probe.run ?? commandText;
+  const loaders = LIBC_LOADERS[probe.arch ?? Deno.build.arch];
+  if (loaders && await exists(loaders.musl) && !(await exists(loaders.glibc))) {
+    return { kind: "musl" };
+  }
+  if (probe.version !== false) {
+    for (
+      const [cmd, args] of [["getconf", ["GNU_LIBC_VERSION"]], ["ldd", ["--version"]]] as const
+    ) {
+      const out = await run(cmd, [...args]);
+      const version = out === null ? null : parseGlibcVersion(out);
+      if (version) return { kind: "glibc", version };
+    }
+  }
+  return { kind: "unknown" };
+}
+
+/**
+ * Why `pin`'s Linux toolchain can't run on a host with `host`'s C library, or `null`: musl (the
+ * builds are glibc binaries), or a glibc older than the pin's `glibc`.
+ *
+ * @param pin The pin (its `version` and `glibc`).
+ * @param host The host's C library ({@linkcode probeHostLibc}).
+ * @returns The `denext:` refusal naming the fix, or `null`.
+ */
+export function hostLibcRefusal(pin: DenoToolchainPin, host: HostLibc): string | null {
+  const need = pin.glibc;
+  if (host.kind === "musl") {
+    return `denext: denext's Deno toolchain ${pin.version} is built for glibc Linux, and this ` +
+      "host runs musl libc (Alpine or similar), where it can't start.\n" +
+      "  Fix: run denext on a glibc-based Linux or image (Debian, Ubuntu, Fedora, RHEL / Rocky / " +
+      `Alma, Amazon Linux)${need ? ` with glibc ${need} or newer` : ""}.\n${TOOLCHAIN_OPT_OUT}`;
+  }
+  if (host.kind === "glibc" && need && compareGlibcVersions(host.version, need) < 0) {
+    return `denext: denext's Deno toolchain ${pin.version} needs glibc ${need} or newer, and ` +
+      `this host has glibc ${host.version}.\n` +
+      `  Fix: run denext on a Linux with glibc ${need} or newer, or inside a container image ` +
+      `that has it.\n${TOOLCHAIN_OPT_OUT}`;
+  }
+  return null;
+}
+
+/** This process's full probe, once (the toolchain is resolved more than once per command). */
+let hostLibcOnce: Promise<HostLibc> | undefined;
+
+/**
+ * Refuse, before any download, a Linux host that can't run `pin`'s build for `target`. Only this
+ * host's own target is probed (another target's archive is never run here), unless a test passes
+ * `hostLibc`.
+ */
+async function assertHostRunsToolchain(
+  pin: DenoToolchainPin,
+  target: string,
+  hostLibc: ((version: boolean) => Promise<HostLibc>) | undefined,
+): Promise<void> {
+  if (!target.startsWith("linux-")) return;
+  let probe = hostLibc;
+  if (!probe) {
+    if (Deno.build.os !== "linux" || target !== denoToolchainTarget()) return;
+    probe = (version) => version ? (hostLibcOnce ??= probeHostLibc()) : probeHostLibc({ version });
+  }
+  const refusal = hostLibcRefusal(pin, await probe(pin.glibc !== undefined));
+  if (refusal) throw new DenoToolchainHostError(refusal);
 }
 
 /**
@@ -640,6 +814,11 @@ export interface EnsureDenoToolchainOptions {
   readonly log?: (line: string) => void;
   /** Test seam. */
   readonly fetch?: typeof fetch;
+  /**
+   * Test seam: the host's C library (`version`: whether the glibc version is wanted). By default
+   * only a Linux host resolving its own target is probed ({@linkcode probeHostLibc}).
+   */
+  readonly hostLibc?: (version: boolean) => Promise<HostLibc>;
 }
 
 /** A verified toolchain binary. */
@@ -964,6 +1143,7 @@ export async function ensureDenoToolchain(
   const pin = options.pin ?? loadDenoToolchainPin();
   const target = options.target ?? denoToolchainTarget();
   const artifact = pinnedArtifact(pin, target);
+  await assertHostRunsToolchain(pin, target, options.hostLibc);
   const version = pin.version!;
   const root = options.cacheRoot ?? denoToolchainCacheRoot();
   const dir = binaryDir(root, version, target);
@@ -1267,6 +1447,7 @@ async function pinnedChoice(
     const rt = await ensureDenoToolchain({ ...options, pin, target, cacheRoot });
     return { kind: "toolchain", deno: rt.deno, version: rt.version };
   } catch (err) {
+    if (err instanceof DenoToolchainHostError) throw err; // it names its own fix
     throw new DenoToolchainRequiredError(`${errText(err)}\n${TOOLCHAIN_FIX}`);
   }
 }

@@ -6,6 +6,7 @@
 import {
   assert,
   assertEquals,
+  assertFalse,
   assertRejects,
   assertStringIncludes,
   assertThrows,
@@ -1552,6 +1553,27 @@ Deno.test("pin generator: a 3.0.0-rc.3+ release must record the CLI's identity m
   );
   const old = ownVersionRelease("3.0.0-rc.2");
   assertEquals(toolchainPinFromRelease(old.tag, old.manifest, old.sums)!.version, "3.0.0-rc.2");
+});
+
+Deno.test("toolchainPinFromRelease: pins the manifest's cli.glibc when the release records it", () => {
+  const plain = ownVersionRelease("3.0.0-rc.2");
+  // A release from before the ceiling was recorded: no field, so denext checks only for musl.
+  assertFalse("glibc" in toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!);
+  plain.manifest.cli.glibc = null;
+  assertFalse("glibc" in toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!);
+  plain.manifest.cli.glibc = "2.27";
+  const pin = toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!;
+  assertEquals(pin.glibc, "2.27");
+  // Written before the targets, so the pin file reads top-down.
+  assertEquals(Object.keys(pin).indexOf("glibc"), Object.keys(pin).indexOf("deno") + 1);
+  for (const bad of ["2", "2.27.1", "GLIBC_2.27", 2.27, ""]) {
+    plain.manifest.cli.glibc = bad;
+    assertThrows(
+      () => toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums),
+      Error,
+      "cli.glibc",
+    );
+  }
 });
 
 Deno.test("toolchainPinFromRelease refuses any inconsistency", () => {

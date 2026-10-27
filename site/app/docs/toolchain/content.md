@@ -204,6 +204,15 @@ command on the Deno that started it. `denext toolchain status` says which Deno a
 
 `DENO_BIN`, when you set it, still decides which `deno` the CLI's own child processes run.
 
+On Linux the toolchain is a glibc build. Before it downloads or runs it, denext checks the host:
+on a musl system (Alpine and the like) it stops, and when the pin records the release's glibc
+floor it reads the host's version (`getconf GNU_LIBC_VERSION`, else `ldd --version`) and stops
+on an older glibc. Both errors say what the host has and what the toolchain needs; the fix is a
+glibc-based distribution or image at that version or newer, or one of the two opt-outs above.
+Releases from `3.0.0-denext.2` on record the floor (glibc 2.27, the same as upstream Deno's
+Linux builds: RHEL / Rocky / Alma 8 and 9, Amazon Linux 2023, Debian 10+ and Ubuntu 18.04+ all
+run it); with an older pin only musl is refused.
+
 ## esbuild
 
 denext's bundling (the SPA and compatibility builds, dev's dependency pre-bundle, `analyze`,

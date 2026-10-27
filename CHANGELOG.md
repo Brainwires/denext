@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **The toolchain checks a Linux host's C library before downloading.** denext's Deno toolchain is
+  a glibc build: on a musl host (Alpine and the like) denext now stops before any download with
+  an error that names the fix (a glibc-based distribution or image, or `DENEXT_DENO=stock` /
+  `DENEXT_DENO=<path>`), instead of downloading a binary that can't start. When the pin records
+  the release's glibc floor (the new optional `glibc` field, which `desktop:pin-runtime` copies
+  from the release manifest's `cli.glibc`), a host with an older glibc is refused the same way,
+  naming both versions. Pins without the field keep working unchanged on glibc hosts.
+
 ## [4.9.0] - 2026-10-27
 
 ### Breaking

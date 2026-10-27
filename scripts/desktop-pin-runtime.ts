@@ -144,6 +144,8 @@ export interface ToolchainPinFile {
   targets: Record<string, CliPinArtifact>;
   /** The `denort` archives per `<os>-<arch>` (2.9.7-denext.20 on). */
   denort?: Record<string, DenortPinArtifact>;
+  /** The newest glibc the Linux builds require (the manifest's `cli.glibc`, when recorded). */
+  glibc?: string;
 }
 
 /** Parse GNU `sha256sum` output into file → digest. */
@@ -416,6 +418,22 @@ function cliEsbuild(where: string, e: Loose): PinEsbuild | undefined {
 }
 
 /**
+ * The manifest's `cli.glibc`: the newest glibc version the release's Linux `deno` and `denort`
+ * require (the fork workflow's `GLIBC_CEILING`), pinned so denext refuses an older Linux host
+ * before downloading. Absent or `null` in a release that did not record it.
+ */
+function cliGlibc(cli: Loose): string | undefined {
+  const glibc = cli?.glibc;
+  if (glibc === undefined || glibc === null) return undefined;
+  if (typeof glibc !== "string" || !/^\d+\.\d+$/.test(glibc)) {
+    fail(
+      `the manifest's cli.glibc ${JSON.stringify(glibc)} is not a glibc version (want e.g. 2.27)`,
+    );
+  }
+  return glibc;
+}
+
+/**
  * Build the toolchain pin (`deno-toolchain-pin.json`) from the same release's manifest `cli`
  * section (and its `denort` section, 2.9.7-denext.20 on), cross-checking every CLI and denort
  * archive against SHA256SUMS. A release without a `cli` section (before 2.9.7-denext.15) gives
@@ -441,12 +459,14 @@ export function toolchainPinFromRelease(
     return null;
   }
   checkCliIdentity(version, m.cli);
+  const glibc = cliGlibc(m.cli);
   return {
     schema: 1,
     version,
     tag,
     repository: `https://github.com/${REPO}`,
     deno,
+    ...(glibc ? { glibc } : {}),
     targets,
     ...(denort ? { denort } : {}),
   };

@@ -14,10 +14,12 @@ import {
 import { join, toFileUrl } from "@std/path";
 import { parse as parseYaml } from "@std/yaml";
 import {
+  compareGlibcVersions,
   DENO_TOOLCHAIN,
   denortTargetKey,
   DenoToolchainDownloadError,
   DenoToolchainHashError,
+  DenoToolchainHostError,
   type DenoToolchainPin,
   DenoToolchainRequiredError,
   denoToolchainStatus,
@@ -25,8 +27,12 @@ import {
   DenoToolchainUnavailableError,
   ensureDenort,
   ensureDenoToolchain,
+  type HostLibc,
+  hostLibcRefusal,
   linkDenoToolchain,
   loadDenoToolchainPin,
+  parseGlibcVersion,
+  probeHostLibc,
   resolveDenoToolchain,
   staleToolchainLink,
   TOOLCHAIN_STAMP,
@@ -938,4 +944,194 @@ Deno.test("the desktop runtime accepts the toolchain under its own version (3.0.
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+// ---------------------------------------------------------------------------------------------
+// The host's C library: a musl host, or a glibc older than the pin's, is refused before download.
+
+Deno.test("parseGlibcVersion reads getconf and ldd, and nothing else", () => {
+  assertEquals(parseGlibcVersion("glibc 2.39\n"), "2.39");
+  assertEquals(
+    parseGlibcVersion("ldd (Ubuntu GLIBC 2.39-0ubuntu8.9) 2.39\nCopyright (C) 2024"),
+    "2.39",
+  );
+  assertEquals(parseGlibcVersion("ldd (GNU libc) 2.34\n"), "2.34");
+  assertEquals(parseGlibcVersion("ldd (Debian GLIBC 2.36-9+deb12u7) 2.36"), "2.36");
+  for (
+    const text of [
+      "",
+      "musl libc (x86_64)\nVersion 1.2.4\n",
+      "getconf: Unrecognized variable `GNU_LIBC_VERSION'",
+      "glibc 2",
+      "glibc 2.39 extra",
+    ]
+  ) assertEquals(parseGlibcVersion(text), null, text);
+});
+
+Deno.test("compareGlibcVersions is numeric", () => {
+  assert(compareGlibcVersions("2.9", "2.17") < 0);
+  assert(compareGlibcVersions("2.17", "2.27") < 0);
+  assert(compareGlibcVersions("2.35", "2.27") > 0);
+  assertEquals(compareGlibcVersions("2.27", "2.27"), 0);
+  assertEquals(compareGlibcVersions("2.27", "2.27.0"), 0);
+});
+
+/** probeHostLibc seams: the files that exist and each command's output (absent = can't run). */
+function hostSeams(files: string[], outputs: Record<string, string>) {
+  const ran: string[] = [];
+  return {
+    ran,
+    exists: (path: string) => Promise.resolve(files.includes(path)),
+    run: (cmd: string, _args: string[]) => {
+      ran.push(cmd);
+      return Promise.resolve(cmd in outputs ? outputs[cmd] : null);
+    },
+  };
+}
+
+Deno.test("probeHostLibc: musl only when glibc's loader is missing; the version from getconf, else ldd", async () => {
+  const MUSL = "/lib/ld-musl-x86_64.so.1";
+  const GLIBC = "/lib64/ld-linux-x86-64.so.2";
+  const alpine = hostSeams([MUSL], { ldd: "musl libc (x86_64)\nVersion 1.2.4\n" });
+  assertEquals(await probeHostLibc({ arch: "x86_64", ...alpine }), { kind: "musl" });
+  assertEquals(alpine.ran, [], "decided from the loaders alone");
+
+  // musl-tools on Debian, or an Alpine image that carries glibc: not musl.
+  const both = hostSeams([MUSL, GLIBC], { getconf: "glibc 2.36\n" });
+  assertEquals(await probeHostLibc({ arch: "x86_64", ...both }), {
+    kind: "glibc",
+    version: "2.36",
+  });
+
+  const noGetconf = hostSeams([GLIBC], { ldd: "ldd (GNU libc) 2.17\n" });
+  assertEquals(await probeHostLibc({ arch: "x86_64", ...noGetconf }), {
+    kind: "glibc",
+    version: "2.17",
+  });
+  assertEquals(noGetconf.ran, ["getconf", "ldd"]);
+
+  const aarch64 = hostSeams(["/lib/ld-musl-aarch64.so.1"], {});
+  assertEquals(await probeHostLibc({ arch: "aarch64", ...aarch64 }), { kind: "musl" });
+
+  const nothing = hostSeams([], {});
+  assertEquals(await probeHostLibc({ arch: "x86_64", ...nothing }), { kind: "unknown" });
+
+  const fileOnly = hostSeams([GLIBC], { getconf: "glibc 2.17\n" });
+  assertEquals(await probeHostLibc({ arch: "x86_64", version: false, ...fileOnly }), {
+    kind: "unknown",
+  });
+  assertEquals(fileOnly.ran, [], "no command without `version`");
+});
+
+Deno.test("hostLibcRefusal: musl always, an older glibc only against a pinned glibc", () => {
+  const pin: DenoToolchainPin = { schema: 1, version: VERSION, glibc: "2.27", targets: {} };
+  const unpinned: DenoToolchainPin = { schema: 1, version: VERSION, targets: {} };
+  const glibc = (version: string): HostLibc => ({ kind: "glibc", version });
+
+  const old = hostLibcRefusal(pin, glibc("2.17"))!;
+  assert(
+    old.startsWith(`denext: denext's Deno toolchain ${VERSION} needs glibc 2.27 or newer`),
+    old,
+  );
+  assertStringIncludes(old, "this host has glibc 2.17");
+  assertStringIncludes(old, "Fix: run denext on a Linux with glibc 2.27 or newer");
+  assertStringIncludes(old, "DENEXT_DENO=stock");
+  assertFalse(old.includes("denext toolchain install"), "installing again would not help");
+  assertStringIncludes(hostLibcRefusal(pin, glibc("2.9"))!, "glibc 2.9");
+
+  for (const ok of ["2.27", "2.28", "2.35", "3.0"]) {
+    assertEquals(hostLibcRefusal(pin, glibc(ok)), null);
+  }
+  assertEquals(hostLibcRefusal(pin, { kind: "unknown" }), null);
+  assertEquals(hostLibcRefusal(unpinned, glibc("2.17")), null, "no ceiling recorded: no check");
+
+  const musl = hostLibcRefusal(pin, { kind: "musl" })!;
+  assertStringIncludes(musl, "is built for glibc Linux, and this host runs musl libc");
+  assertStringIncludes(musl, "with glibc 2.27 or newer");
+  assertStringIncludes(musl, "DENEXT_DENO=<path>");
+  const muslUnpinned = hostLibcRefusal(unpinned, { kind: "musl" })!;
+  assertStringIncludes(muslUnpinned, "runs musl libc");
+  assertFalse(muslUnpinned.includes("with glibc"));
+});
+
+Deno.test("ensureDenoToolchain: a host that can't run the build is refused before any download", async () => {
+  const f = await fixture(await zipped());
+  const pin = { ...f.pin, glibc: "2.27" };
+  const host = (libc: HostLibc) => {
+    const asked: boolean[] = [];
+    return { asked, hostLibc: (version: boolean) => (asked.push(version), Promise.resolve(libc)) };
+  };
+  try {
+    const old = host({ kind: "glibc", version: "2.17" });
+    const err = await assertRejects(
+      () => ensure(f, { pin, hostLibc: old.hostLibc }),
+      DenoToolchainHostError,
+      "needs glibc 2.27 or newer",
+    );
+    assert(err instanceof DenoToolchainRequiredError);
+    assertEquals(old.asked, [true], "the version is wanted when the pin records one");
+    await assertRejects(
+      () => ensure(f, { pin, hostLibc: host({ kind: "musl" }).hostLibc }),
+      DenoToolchainHostError,
+      "musl libc",
+    );
+    assertEquals(f.hits(), 0, "nothing was downloaded");
+    assertEquals(await names(f.root), []);
+
+    // Not a Linux target: never probed.
+    const mac = host({ kind: "musl" });
+    const both = { ...pin, targets: { ...pin.targets, "darwin-aarch64": pin.targets[TARGET] } };
+    await ensure(f, { pin: both, target: "darwin-aarch64", os: "darwin", hostLibc: mac.hostLibc });
+    assertEquals(mac.asked, []);
+
+    // A glibc at the ceiling, and an older one under a pin that records no ceiling (only the
+    // musl check, without asking for the version), both install.
+    const ok = await ensure(f, {
+      pin,
+      hostLibc: host({ kind: "glibc", version: "2.27" }).hostLibc,
+    });
+    assertEquals(ok.cached, false);
+    const legacy = host({ kind: "glibc", version: "2.17" });
+    assertEquals((await ensure(f, { hostLibc: legacy.hostLibc })).cached, true);
+    assertEquals(legacy.asked, [false]);
+    // A cached binary is refused too: the check comes before the cache, not just the download.
+    await assertRejects(
+      () => ensure(f, { pin, hostLibc: old.hostLibc }),
+      DenoToolchainHostError,
+    );
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test("resolveDenoToolchain: a host refusal keeps its own fix", async () => {
+  const f = await fixture(await zipped());
+  try {
+    const message = await refusal(resolveDenoToolchain({
+      env: envOf({}),
+      pin: { ...f.pin, glibc: "2.27" },
+      target: TARGET,
+      os: "linux",
+      cacheRoot: f.root,
+      log: quiet,
+      missingGrants: allGranted,
+      hostLibc: () => Promise.resolve({ kind: "glibc", version: "2.17" }),
+    }));
+    assertStringIncludes(message, "needs glibc 2.27 or newer");
+    assertStringIncludes(message, "DENEXT_DENO=stock");
+    assertFalse(message.includes("denext toolchain install"), message);
+    assertEquals(f.hits(), 0);
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test({
+  name: "probeHostLibc on this Linux host: glibc with a version (CI runs glibc)",
+  ignore: Deno.build.os !== "linux",
+  async fn() {
+    const libc = await probeHostLibc();
+    assertEquals(libc.kind, "glibc");
+    assert(libc.kind === "glibc" && /^\d+\.\d+$/.test(libc.version), JSON.stringify(libc));
+  },
 });
