@@ -22,6 +22,7 @@ import { GLEAM_TOOLCHAIN } from "../src/build/gleam-toolchain.ts";
 import { FASTLANE_TOOLCHAIN } from "../src/build/fastlane-toolchain.ts";
 import { denoCacheDir } from "../src/build/deno-cache-dir.ts";
 import { boundedOutput } from "./helpers/bounded-command.ts";
+import { SYMLINK_GATE } from "./helpers/symlink.ts";
 
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
 // The CLI child runs on Deno's real module cache through links (see isolatedDenoDir); POSIX only.
@@ -142,24 +143,43 @@ Deno.test("listToolchainCache + removeToolchainEntries: sizes, versions only, de
         "fastlane 2.240.1 60",
       ],
     );
-    // A shim whose binary is gone is swept with the removal; a live one stays.
-    const shims = join(roots.deno, "path-shims");
-    await Deno.mkdir(join(shims, "dead"), { recursive: true });
-    await Deno.symlink(join(listed[0].path, "x86_64-target", "bin"), join(shims, "dead", "deno"));
-    await Deno.mkdir(join(shims, "live"), { recursive: true });
-    await Deno.symlink(join(listed[1].path, "x86_64-target", "bin"), join(shims, "live", "deno"));
     const out = await removeToolchainEntries([listed[0], listed[3]], roots);
     assertEquals(out.map((o) => o.error), [undefined, undefined]);
     assertEquals(await exists(listed[0].path), false);
     assertEquals(await exists(listed[3].path), false);
     assert(await exists(listed[1].path));
-    assertEquals(await exists(join(shims, "dead")), false);
-    assert(await exists(join(shims, "live")));
     assert(await exists(join(roots.deno, ".package-cache-mutate")));
     // Already gone is not an error.
     assertEquals((await removeToolchainEntries([listed[0]], roots))[0].error, undefined);
     assertEquals(await diskUsage(join(dir, "nowhere")), 0);
     assertEquals(await listToolchainCache({ deno: join(dir, "a"), desktop: join(dir, "b") }), []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: SYMLINK_GATE.name(
+    "removeToolchainEntries: a shim whose binary is gone is swept; a live one stays",
+  ),
+  ignore: SYMLINK_GATE.ignore,
+}, async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-prune-shims-" });
+  try {
+    const roots = await fakeCache(dir, [
+      ["deno", "2.9.7-denext.9", 100],
+      ["deno", "2.9.7-denext.10", 200],
+    ]);
+    const listed = await listToolchainCache(roots);
+    const shims = join(roots.deno, "path-shims");
+    await Deno.mkdir(join(shims, "dead"), { recursive: true });
+    await Deno.symlink(join(listed[0].path, "x86_64-target", "bin"), join(shims, "dead", "deno"));
+    await Deno.mkdir(join(shims, "live"), { recursive: true });
+    await Deno.symlink(join(listed[1].path, "x86_64-target", "bin"), join(shims, "live", "deno"));
+    const out = await removeToolchainEntries([listed[0]], roots);
+    assertEquals(out.map((o) => o.error), [undefined]);
+    assertEquals(await exists(join(shims, "dead")), false);
+    assert(await exists(join(shims, "live")));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

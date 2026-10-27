@@ -8,7 +8,68 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A route-pattern href or a blur placeholder the build's scan missed says so.** A library's
+  `<Link href={{ pathname: "/blog/[slug]", params }}>` in an app whose own sources write none
+  navigated to the literal pattern, and a library's server-rendered `placeholder="blur"` stayed
+  painted; they now report `denext: error 8` / `error 9`, as the form-action and hook-boundary
+  gates do (errors 6 and 7).
+- **Live handshakes waiting on `live.authorize` count against the connection caps.** A slow hook
+  let one address hold any number of pending handshakes past `live.limits.maxConnectionsPerIp`
+  (each was re-checked only after the hook); a pending handshake now holds its slot, in the total
+  too.
+- **A workspace member outside the root is skipped.** A `"../x"` member, which Deno refuses, was
+  still read for its imports and named oddly in the workspace-root hints.
+- **A cached Deno Desktop runtime is re-hashed once a week.** Without `--verify-runtime` only file
+  sizes were checked, so a same-size change by another local process went unnoticed; the first use
+  seven days after the last full check now re-hashes every file (and re-downloads on a mismatch).
+- **A wildcard `desktop.app.bridgeOrigins` entry warns.** `"*"` and `"<scheme>://*"` open the
+  native bridge past the app's own origin; config validation now says so (once per process), and
+  the desktop guide documents both forms.
+- **`denext add` takes its jail exceptions out when the add fails.** They go into deno.json before
+  `deno add` runs the install scripts; a failed add left them behind. The file is now put back
+  (unless `deno add` changed it too, which is said).
+- **Function form actions: the submitting button decides, and a held submit keeps its moment.**
+  `form.requestSubmit(button)` (or Enter) with no click ran the form's own action, not the
+  button's `formAction`; a submit that beat the on-demand form-action chunk built its `FormData`
+  and started `useFormStatus`'s pending state only when the chunk arrived; and `useFormStatus`
+  under a form whose only function action is a button's `formAction` never went pending. The
+  submit is now handled at the form for both, and taken when it happens.
+- **Builds keep the project's `.npmrc` supply-chain gates.** A build child runs with a config in
+  `.denext/` (`module-config.json`, `css-config.json`, the compile config), where Deno finds no
+  project `.npmrc`, so `paranoid=true` or `advisory-check=required` set there did not hold for it.
+  Its `supplyChain` now carries the six supply-chain keys of the root's `.npmrc`, merged with
+  deno.json's (the stricter wins); nothing else of the file, which may hold credentials, is copied.
+- **An npm workspace's members are read for jail exceptions.** Only a deno.json `workspace` was;
+  a package.json `workspaces` (array, or Yarn's `{ packages }`) now brings in each member's
+  dependencies too.
+- **The jail is planned for the runtime installs run on.** `denext add` and `denext doctor`
+  assumed the pinned toolchain; under `DENEXT_DENO=stock`, `DENEXT_DENO=<path>` or a `DENO_BIN`
+  they now read that Deno's version (stock Deno has no jail, another release of denext's Deno has
+  its own defaults) and say which one they planned for.
+- **An unreviewed package's network failure names the hosts.** `denext doctor --install-log`
+  advice for a package outside the reviewed list showed `"net": ["<host>"]`; it now lists the
+  hosts the log shows the script failing to reach (plain DNS names only, since the script prints
+  that log), and on a runtime without host lists says to install on one rather than grant
+  `"net": true`. On a runtime with host lists, a built-in package still configured with
+  `"net": true` is flagged with its narrower exception.
+- **The user-level `~/.npmrc` counts for the lifecycle-script jail.** The runtime reads
+  `jail-scripts` / `paranoid` from it, but denext's exception planning and `denext doctor` read
+  only the project's `.npmrc` and the environment, so a jail turned off (or `paranoid` turned on)
+  there was misreported. npm's `userconfig` setting names another file.
+- **An unsupported Linux host stops before the download, not after it.** denext's Linux binaries
+  need glibc 2.35 or later; on musl (Alpine) or an older glibc (RHEL 9, Amazon Linux 2023, Debian
+  11, Ubuntu 20.04) the toolchain and the Deno Desktop runtime downloaded, verified and then failed
+  to exec with `GLIBC_2.35 not found`. denext now probes the host's C library first and stops with
+  the supported distributions named; `denext doctor` reports it as `linux libc`.
+
 ### Security
+
+- **`denext ui`'s `/config/next` panel no longer offers to translate a value that reads this
+  machine's paths.** A `next.config` value or rule built from `HOME`, `TMPDIR`, `USERPROFILE` and
+  the like was shown and translated with the evaluating machine's path in it; it is now held back
+  and listed for a hand port, as `denext migrate` does.
 
 - **signtool never gets a `.pfx` password on its command line.** `denext build --compile --sign`
   and the desktop package scripts passed `DENEXT_WINDOWS_CERT_PASSWORD` to `signtool` as `/p`,

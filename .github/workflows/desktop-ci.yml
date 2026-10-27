@@ -65,6 +65,7 @@ on:
       - "src/build/deno-cache-dir.ts"
       - "src/build/deno-toolchain.ts"
       - "src/build/deno-toolchain-pin.json"
+      - "src/build/linux-libc.ts"
       - "src/build/deno-version.ts"
       - "src/build/net-permissions.ts"
       - "src/build/file-lock.ts"

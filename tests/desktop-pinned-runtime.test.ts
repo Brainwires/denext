@@ -24,6 +24,8 @@ import {
   renameRetrying,
   resolveDesktopRuntimeEnv,
   RUNTIME_MARKER,
+  RUNTIME_VERIFIED_AT,
+  runtimeRehashDue,
   verifiedRuntime,
 } from "../src/build/desktop-runtime.ts";
 import {
@@ -344,6 +346,34 @@ Deno.test("ensureDesktopRuntime re-downloads a damaged cache (cheap size check, 
     await Deno.writeTextFile(join(rt.dir, RUNTIME_MARKER), JSON.stringify(marker));
     assertEquals((await ensure(f)).cached, false);
     assertEquals(f.hits(), 4);
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test("ensureDesktopRuntime re-hashes a cached runtime once a week without --verify", async () => {
+  const f = await fixture(await fixtureArchive());
+  try {
+    const day = 24 * 60 * 60 * 1000;
+    const t0 = Date.UTC(2026, 9, 1);
+    const rt = await ensure(f, { now: () => t0 });
+    assertEquals(await runtimeRehashDue(rt.dir, t0 + day), false);
+    // Same size, different bytes: within the week the size check is all that runs…
+    await Deno.writeTextFile(rt.runtimeLib, "RUNTIME");
+    assertEquals((await ensure(f, { now: () => t0 + day })).cached, true);
+    // …and past it the scheduled re-hash catches the change and re-downloads.
+    assert(await runtimeRehashDue(rt.dir, t0 + 8 * day));
+    const fixed = await ensure(f, { now: () => t0 + 8 * day });
+    assertEquals(fixed.cached, false);
+    assertEquals(await Deno.readTextFile(rt.runtimeLib), "runtime");
+    // A clean scheduled re-hash restarts the clock; a missing or garbled record is due at once.
+    assertEquals((await ensure(f, { now: () => t0 + 16 * day })).cached, true);
+    assertEquals(await runtimeRehashDue(rt.dir, t0 + 17 * day), false);
+    await Deno.writeTextFile(join(rt.dir, RUNTIME_VERIFIED_AT), "soon");
+    assert(await runtimeRehashDue(rt.dir, t0 + 17 * day));
+    await Deno.remove(join(rt.dir, RUNTIME_VERIFIED_AT));
+    assert(await runtimeRehashDue(rt.dir, t0 + 17 * day));
+    assertEquals(f.hits(), 2);
   } finally {
     await f.close();
   }

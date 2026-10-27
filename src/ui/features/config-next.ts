@@ -14,7 +14,11 @@
 // other config change goes through.
 
 import { readConfigModel } from "../../build/config-edit.ts";
-import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "../../build/next-config-eval.ts";
+import {
+  evalNextConfigProgram,
+  LOAD_NEXT_CONFIG,
+  machineEnvIn,
+} from "../../build/next-config-eval.ts";
 import { CONFIG_FILES } from "../../build/paths.ts";
 import { Fragment, h } from "../../jsx/jsx-runtime.ts";
 import type { VNode } from "../../jsx/types.ts";
@@ -98,6 +102,12 @@ export interface NextConfigRead {
   readonly other: readonly string[];
   /** The config could not be evaluated (a timeout, a missing dep, a side effect). */
   readonly failed: boolean;
+  /**
+   * Keys (or rules of a rule list) held back because their evaluated value reads a machine-path
+   * variable (`HOME`, `TMPDIR`, …), each with the variables: translated, it would carry this
+   * machine's path into `denext.config.ts`. Filled in by {@linkcode withoutMachinePaths}.
+   */
+  readonly machineEnv?: Readonly<Record<string, readonly string[]>>;
 }
 
 /** Reads and evaluates one `next.config.*`. */
@@ -123,6 +133,45 @@ const evalNextConfig: NextConfigEvaluator = async (dir, file) => {
     return unreadable(file);
   }
 };
+
+/**
+ * `read` without the honored values and rules that read a machine-path variable — the evaluator
+ * hands the config placeholders for those (`build/next-config-eval.ts`), as `denext migrate`'s
+ * does — listed in `machineEnv` instead, so no Translate button writes this machine's path into
+ * the denext config and no table shows the placeholder. A rule list keeps the rules that read no
+ * machine path (one left empty is dropped).
+ *
+ * @param read What the evaluator found.
+ * @returns The same, filtered.
+ */
+function withoutMachinePaths(read: NextConfigRead): NextConfigRead {
+  const machineEnv: Record<string, readonly string[]> = { ...read.machineEnv };
+  const fields = Object.fromEntries(
+    Object.entries(read.fields).filter(([key, value]) => {
+      const vars = machineEnvIn(value);
+      if (vars.length) machineEnv[key] = vars;
+      return vars.length === 0;
+    }),
+  );
+  const rules: Record<string, unknown> = {};
+  for (const [key, list] of Object.entries(read.rules)) {
+    const vars = machineEnvIn(list);
+    if (vars.length === 0) {
+      rules[key] = list;
+      continue;
+    }
+    machineEnv[key] = vars;
+    const kept = Array.isArray(list) ? list.filter((rule) => machineEnvIn(rule).length === 0) : [];
+    if (kept.length) rules[key] = kept;
+  }
+  return { ...read, fields, rules, machineEnv };
+}
+
+/** The note for a key {@linkcode withoutMachinePaths} held back. */
+function machineEnvNote(vars: readonly string[]): string {
+  return `a rule or value reads ${vars.join(", ")} — this machine's path — and is not ` +
+    "offered for translation. Port it by hand (read the variable at run time).";
+}
 
 /** The evaluator this panel uses. */
 let evaluate: NextConfigEvaluator = evalNextConfig;
@@ -307,6 +356,26 @@ function Dropped({ names }: { readonly names: readonly string[] }): VNode {
   );
 }
 
+/** The "reads this machine's paths" table: what {@linkcode withoutMachinePaths} held back. */
+function MachinePaths(
+  { machineEnv }: { readonly machineEnv: Readonly<Record<string, readonly string[]>> },
+): VNode {
+  const rows = Object.entries(machineEnv).map(([name, vars]) =>
+    h(
+      "tr",
+      { key: name },
+      h("td", null, h(Mono, null, name)),
+      h("td", null, machineEnvNote(vars)),
+    )
+  );
+  return h(
+    Fragment,
+    null,
+    h("h2", null, "Reads this machine's paths"),
+    h(Table, { head: ["key", "why it is not translated"], rows }),
+  );
+}
+
 /** A compat app's `next.config.*`: missing, unreadable, or tabled with its translations. */
 function TranslatePreview(
   { ctx, read }: { readonly ctx: UiContext; readonly read: NextConfigRead | null },
@@ -329,6 +398,9 @@ function TranslatePreview(
     null,
     h("p", { class: "lead mono" }, read.file),
     h(Translatable, { ctx, read }),
+    Object.keys(read.machineEnv ?? {}).length > 0
+      ? h(MachinePaths, { machineEnv: read.machineEnv! })
+      : null,
     read.other.length > 0 ? h(Dropped, { names: read.other }) : null,
   );
 }
@@ -393,6 +465,11 @@ function payload(compat: Compat, read: NextConfigRead | null): Record<string, un
     honored: read?.fields ?? {},
     rules: read?.rules ?? {},
     dropped: (read?.other ?? []).map((key) => ({ key, note: DROP_NOTES[key] ?? "" })),
+    machinePaths: Object.entries(read?.machineEnv ?? {}).map(([key, vars]) => ({
+      key,
+      vars,
+      note: machineEnvNote(vars),
+    })),
   };
 }
 
@@ -410,7 +487,8 @@ const panelResponse = panelResponder("next.config", "/config/next");
  */
 export async function nextConfigPanel(_request: Request, ctx: UiContext): Promise<Response> {
   const compat = await detect(ctx.dir);
-  const read = compat.compat && compat.file ? await evaluate(ctx.dir, compat.file) : null;
+  const evaluated = compat.compat && compat.file ? await evaluate(ctx.dir, compat.file) : null;
+  const read = evaluated && !evaluated.failed ? withoutMachinePaths(evaluated) : evaluated;
   if (ctx.json) return jsonResponse({ ok: true, ...payload(compat, read) });
   const view = compat.compat ? h(NextConfigView, { ctx, compat, read }) : h(NotCompatView, null);
   return panelResponse(ctx, renderView(view));

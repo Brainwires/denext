@@ -10,7 +10,9 @@
 //
 //   1. reuses `<DENO_DIR>/denext-desktop-runtime/<version>/<target>-<backend>/` when its marker
 //      matches the pin and every recorded file is present at its recorded size (no network);
-//      `verify` re-hashes every file instead;
+//      `verify` re-hashes every file instead, and so does the first use after
+//      {@linkcode REHASH_INTERVAL_MS} since the last full check (`.denext-verified-at`), so a
+//      same-size change by another local process is caught within a week even without it;
 //   2. else streams the archive into a private temp dir under the version dir, refusing it the
 //      moment it exceeds the pinned size, then checks size AND SHA-256 before anything else
 //      touches it; nothing is extracted from an unverified archive;
@@ -52,6 +54,7 @@ import {
 } from "./deno-version.ts";
 import { denoSupportsNetSplit, NET_SPLIT_RELEASE, supportsNetSplit } from "./net-permissions.ts";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
+import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
 
 /** A runtime backend (`deno desktop --backend`). */
 export type DesktopRuntimeBackend = "webview" | "cef";
@@ -100,6 +103,37 @@ export const DESKTOP_RUNTIME_ATTEST_ENV = "DENEXT_DESKTOP_RUNTIME_ATTEST";
 
 /** The marker a verified cache entry carries (at its root, beside the runtime lib). */
 export const RUNTIME_MARKER = ".denext-runtime.json";
+
+/** When a cached runtime last re-hashed clean (epoch ms), beside its marker. */
+export const RUNTIME_VERIFIED_AT = ".denext-verified-at";
+
+/** How long a cached runtime is trusted on its file sizes alone before it is re-hashed. */
+const REHASH_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether the cached runtime at `dir` is due a full re-hash: it has never had one recorded, the
+ * record is unreadable, or the last one is {@linkcode REHASH_INTERVAL_MS} old (or from the future).
+ *
+ * @param dir The cache directory.
+ * @param now The clock (test seam).
+ * @returns Whether to re-hash every file this time.
+ */
+export async function runtimeRehashDue(dir: string, now: number = Date.now()): Promise<boolean> {
+  const text = await Deno.readTextFile(join(dir, RUNTIME_VERIFIED_AT)).catch(() => null);
+  const at = text === null ? NaN : Number(text.trim());
+  return !Number.isFinite(at) || at > now || now - at >= REHASH_INTERVAL_MS;
+}
+
+/** Record a clean full re-hash of `dir` (best effort: a failure only means re-hashing sooner). */
+async function recordRehash(dir: string, now: number = Date.now()): Promise<void> {
+  const tmp = join(dir, `${RUNTIME_VERIFIED_AT}.${crypto.randomUUID()}.tmp`);
+  try {
+    await Deno.writeTextFile(tmp, `${now}\n`);
+    await Deno.rename(tmp, join(dir, RUNTIME_VERIFIED_AT));
+  } catch {
+    await Deno.remove(tmp).catch(() => {});
+  }
+}
 
 /** What the stock runtime lacks (named in every opt-out message). */
 const STOCK_LACKS = "no stable app origin or persistent browser storage, deep links, " +
@@ -578,6 +612,10 @@ export interface EnsureDesktopRuntimeOptions {
   readonly capture?: CaptureRunner;
   /** Whether to apply the macOS laufey re-sign (default: a macOS host and a darwin target). */
   readonly harmonize?: boolean;
+  /** Test seam: the host OS and C library the Linux check sees ({@linkcode assertLinuxLibc}). */
+  readonly host?: { readonly os?: string; readonly libc?: LinuxLibc };
+  /** The clock, in epoch ms, for the re-hash schedule (test seam). */
+  readonly now?: () => number;
 }
 
 /** Everything one install needs, resolved from {@linkcode EnsureDesktopRuntimeOptions}. */
@@ -627,6 +665,15 @@ async function stageRuntime(plan: InstallPlan, archive: string, staged: string):
 /** Download, verify, stage and atomically install the runtime at `plan.dir`. */
 async function installRuntime(plan: InstallPlan): Promise<void> {
   const { artifact, pin, opts, dir } = plan;
+  // A Linux runtime on a host that can't run it (musl, an older glibc): say so before the
+  // download. A cross-target runtime (packaging Linux from a Mac) is not checked.
+  if (opts.target.includes("-linux-")) {
+    await assertLinuxLibc(
+      `the Deno Desktop runtime ${pin.version}`,
+      minGlibcFor(pin),
+      opts.host,
+    );
+  }
   const versionDir = dirname(dir);
   await Deno.mkdir(versionDir, { recursive: true });
   await sweepLeftovers(versionDir);
@@ -664,6 +711,8 @@ export async function ensureDesktopRuntime(
   const artifact = pinnedArtifact(pin, options.target, options.backend);
   const cacheRoot = options.cacheRoot ?? cacheRootFor();
   const dir = desktopRuntimeDir(cacheRoot, pin, options.target, options.backend);
+  // Re-hashed under `verify`, and on the schedule (REHASH_INTERVAL_MS) without it.
+  const full = options.verify === true || await runtimeRehashDue(dir, options.now?.());
   const plan: InstallPlan = {
     opts: options,
     pin,
@@ -671,18 +720,17 @@ export async function ensureDesktopRuntime(
     runtimeLib: pin.targets[options.target].runtimeLib,
     dir,
     log: options.log ?? ((l: string) => console.error(l)),
-    // Verified (re-hashed under `verify`) and, when provenance is asked for, attested.
+    // Verified (re-hashed when `full`) and, when provenance is asked for, attested.
     acceptable: async () => {
-      const m = await verifiedRuntime(dir, pin, artifact, options.verify === true);
+      const m = await verifiedRuntime(dir, pin, artifact, full);
       return m !== null && (!options.attest || m.attested);
     },
   };
-  const resolved = (cached: boolean) => ({
-    dir,
-    runtimeLib: join(dir, plan.runtimeLib),
-    laufeyDir: join(dir, "laufey"),
-    cached,
-  });
+  const resolved = async (cached: boolean) => {
+    // A clean full check (or a fresh install, hashed as it was staged) restarts the schedule.
+    if (full || !cached) await recordRehash(dir, options.now?.());
+    return { dir, runtimeLib: join(dir, plan.runtimeLib), laufeyDir: join(dir, "laufey"), cached };
+  };
   // Cargo's cache locks: reading a cached tree is Shared; adding a missing one is
   // DownloadExclusive (readers of other versions carry on); replacing an existing (bad) tree is
   // MutateExclusive. Each re-checks after it is granted — the process it waited on may have

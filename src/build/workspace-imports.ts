@@ -6,9 +6,10 @@
 // carry: the root's imports, each member's `exports` under its `name`, and each member's own
 // imports scoped to its directory.
 
-import { dirname, isAbsolute, join, resolve, toFileUrl } from "@std/path";
+import { dirname, isAbsolute, join, relative, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import { CONFIG_FILES } from "./config-files.ts";
+import { withNpmrcSupplyChain } from "./npmrc-supply-chain.ts";
 
 /** What {@linkcode workspaceImports} adds to a merged config. */
 export interface WorkspaceImports {
@@ -72,10 +73,20 @@ function memberDirsSync(root: string, entry: string): string[] {
   return out.sort();
 }
 
-/** Every member directory a workspace root lists (resolved, de-duplicated). */
+/**
+ * Every member directory a workspace root lists (resolved, de-duplicated), but none outside the
+ * root (`../x`): Deno refuses such a member, so its imports are never read and no hint names it.
+ */
 function allMemberDirs(root: string, members: readonly string[]): string[] {
   const dirs = new Set<string>();
-  for (const entry of members) for (const d of memberDirsSync(root, entry)) dirs.add(resolve(d));
+  const base = resolve(root);
+  for (const entry of members) {
+    for (const d of memberDirsSync(root, entry)) {
+      const dir = resolve(d);
+      const rel = relative(base, dir);
+      if (!/^\.\.(?:[\\/]|$)/.test(rel) && !isAbsolute(rel)) dirs.add(dir);
+    }
+  }
   return [...dirs];
 }
 
@@ -163,11 +174,50 @@ export async function workspaceOf(dir: string): Promise<WorkspaceDirs | null> {
 }
 
 /**
+ * A package.json's npm `workspaces` entries (`["packages/*"]`, or Yarn's `{ packages: [...] }`).
+ *
+ * @param pkg The parsed package.json (or null).
+ * @returns The entries, or null when it declares none.
+ */
+function npmWorkspaceEntries(pkg: Record<string, unknown> | null): string[] | null {
+  const ws = pkg?.workspaces;
+  const list = Array.isArray(ws) ? ws : (ws as { packages?: unknown } | undefined)?.packages;
+  return Array.isArray(list) ? list.filter((m): m is string => typeof m === "string") : null;
+}
+
+/** The npm workspace `dir`'s own package.json declares, or null. */
+function npmWorkspaceAt(dir: string): WorkspaceDirs | null {
+  const members = npmWorkspaceEntries(readObject(join(dir, "package.json")));
+  return members ? { root: dir, members: allMemberDirs(dir, members) } : null;
+}
+
+/**
+ * The npm workspace (package.json `workspaces`, which Deno installs for as it does a deno.json
+ * `workspace`) `dir` belongs to, as its root or a listed member; null otherwise. Members are
+ * expanded as {@linkcode memberDirs} does (a path, or a `dir/*` glob) and none outside the root.
+ *
+ * @param dir A project directory.
+ * @returns The root and member directories.
+ */
+export function npmWorkspaceOf(dir: string): Promise<WorkspaceDirs | null> {
+  const appDir = resolve(dir);
+  const own = npmWorkspaceAt(appDir);
+  if (own) return Promise.resolve(own);
+  for (let up = dirname(appDir), below = appDir; up !== below; below = up, up = dirname(up)) {
+    const ws = npmWorkspaceAt(up);
+    if (ws) return Promise.resolve(ws.members.includes(appDir) ? ws : null);
+  }
+  return Promise.resolve(null);
+}
+
+/**
  * The npm supply-chain settings a config denext generates for a re-exec (`module-config.json`,
  * `css-config.json`, the compile config) must carry, so a build child resolves npm packages
  * under the project's own policy (`paranoid`, `advisoryCheck: "required"`, the jail and its
  * exceptions) and not Deno's defaults. Deno reads `supplyChain` from the workspace root's
- * config alone, so a member app takes the root's. Relative `jailScripts.packages.*.write` paths
+ * config alone, so a member app takes the root's. The root's `.npmrc`, which Deno does not
+ * find next to a config in `.denext/`, adds its supply-chain keys (never the file itself, which
+ * may hold registry credentials): {@linkcode withNpmrcSupplyChain}. Relative `jailScripts.packages.*.write` paths
  * are made absolute against that config's directory (the generated file lives elsewhere); `~`
  * paths stay for the runtime to resolve.
  *
@@ -181,7 +231,9 @@ export async function supplyChainConfig(
   const ws = await findWorkspace(appDir);
   const root = ws?.root ?? appDir;
   const config = ws ? ws.config : await readObject(resolve(appConfigPath));
-  const value = config?.supplyChain;
+  // The child's config lives in `.denext/`, where Deno looks for no project `.npmrc`.
+  const npmrc = await Deno.readTextFile(join(root, ".npmrc")).catch(() => null);
+  const value = withNpmrcSupplyChain(config?.supplyChain, npmrc);
   if (value === undefined || value === null) return {};
   const copy = structuredClone(value) as Record<string, unknown>;
   const jail = copy?.jailScripts as { packages?: Record<string, { write?: unknown }> } | undefined;
