@@ -837,16 +837,28 @@ Deno.test("realtime: subscribe-time seed queries are bounded — a few at once, 
     env.sql.delay.seed = 0;
 
     // A signed-out connection opening (and closing) subscriptions as fast as it can: a burst of
-    // 32, then about 8 a second.
+    // 32, then 8 a second. The clock is held still, so a slow host's loop refills nothing.
     const anon = env.hub.conn();
-    let admitted = 0;
-    for (let i = 0; i < 48; i++) {
-      if ((await env.hub.subscribe(anon, "notes")).ok) admitted++;
-      env.hub.unsubscribe(anon);
+    const realNow = Date.now;
+    let clock = realNow();
+    Date.now = () => clock;
+    try {
+      const burst = async (n: number) => {
+        let admitted = 0;
+        for (let i = 0; i < n; i++) {
+          if ((await env.hub.subscribe(anon, "notes")).ok) admitted++;
+          env.hub.unsubscribe(anon);
+        }
+        return admitted;
+      };
+      assertEquals(await burst(48), 32);
+      assertEquals((await env.hub.subscribe(anon, "notes")).ok, false);
+      clock += 1000;
+      assertEquals(await burst(12), 8, "a second refills eight");
+      assert((await env.hub.subscribe(env.hub.conn(), "notes")).ok, "another connection's budget");
+    } finally {
+      Date.now = realNow;
     }
-    assert(admitted >= 32 && admitted < 40, `admitted ${admitted}`);
-    assertEquals((await env.hub.subscribe(anon, "notes")).ok, false);
-    assert((await env.hub.subscribe(env.hub.conn(), "notes")).ok, "another connection's budget");
   } finally {
     await env.done();
   }
