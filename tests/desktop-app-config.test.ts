@@ -26,9 +26,13 @@ import {
   unpackagedLaunchEnv,
   writeLaufeyLaunchConfig,
 } from "../src/build/desktop-app-config.ts";
+import { strictLaunchRuntime } from "../src/build/desktop-launch-policy.ts";
 import { desktopOriginCheck } from "../src/cli/commands/doctor.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
+
+/** What a launch file written with the default gate carries for the strict policy. */
+const STRICT = strictLaunchRuntime() ? { strictPolicy: true } : {};
 
 const T3 = { desktop: { app: { origin: "T3Code://App/", identifier: "com.t3.code" } } };
 
@@ -300,6 +304,7 @@ Deno.test("sync + launch file: driven from a package script's import.meta.url", 
       inspectable: false,
       // The bridge pinned to the app origin alone, not laufey's default of every t3code:// origin.
       bridgeOrigins: ["t3code://app"],
+      ...STRICT,
     });
     const linux = join(dir, "dist", "t3-x64");
     await Deno.mkdir(linux, { recursive: true });
@@ -323,6 +328,7 @@ Deno.test("launch file: without a config it still turns DevTools off", async () 
     assertEquals(JSON.parse(await Deno.readTextFile(written!)), {
       inspectable: false,
       bridgeOrigins: ["app://localhost"],
+      ...STRICT,
     });
     assertEquals(await syncDesktopAppConfig(entry), {
       appJson: "none",
@@ -502,6 +508,7 @@ Deno.test("launch file: desktop.linux.requireSandbox is written for Linux only",
       inspectable: false,
       bridgeOrigins: ["app://localhost"],
       requireSandbox: true,
+      ...STRICT,
     });
     for (const os of ["darwin", "windows"] as const) {
       const other = await writeLaufeyLaunchConfig(entry, os, join(dir, os));
@@ -509,6 +516,69 @@ Deno.test("launch file: desktop.linux.requireSandbox is written for Linux only",
     }
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("launch file: strictPolicy on a strict runtime, passkeyRpIds from the passkeys capability", async () => {
+  const dirs: string[] = [];
+  const warn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...a: unknown[]) => void warnings.push(a.join(" "));
+  try {
+    // A project per config: the config module is imported once per URL.
+    const write = async (config: unknown, strict: boolean, os: "linux" | "darwin" = "linux") => {
+      const dir = await project();
+      dirs.push(dir);
+      await Deno.mkdir(join(dir, "scripts"));
+      await Deno.writeTextFile(
+        join(dir, "denext.config.ts"),
+        `export default ${JSON.stringify(config)};\n`,
+      );
+      const entry = toFileUrl(join(dir, "scripts", "package-linux.ts")).href;
+      const at = await writeLaufeyLaunchConfig(entry, os, join(dir, "out"), { strict });
+      return JSON.parse(await Deno.readTextFile(at!));
+    };
+    const passkeys = {
+      desktop: {
+        app: {
+          origin: "myapp://app",
+          identifier: "com.example.app",
+          bridgeOrigins: ["https://idp.example"],
+        },
+        capabilities: { passkeys: { rpIds: ["Example.com", "example.com", "auth.example.com"] } },
+      },
+    };
+    // Strict: the policy key, the bridge pinned to the app origin + the configured ones, and the
+    // RP IDs (lowercased, de-duplicated) laufey checks before the OS sees a ceremony.
+    assertEquals(await write(passkeys, true), {
+      appId: "com.example.app",
+      customSchemes: ["myapp"],
+      inspectable: false,
+      bridgeOrigins: ["myapp://app", "https://idp.example"],
+      passkeyRpIds: ["example.com", "auth.example.com"],
+      strictPolicy: true,
+    });
+    // An older runtime: the same pins, no strictPolicy (it would only be reported as unknown).
+    const loose = await write(passkeys, false, "darwin");
+    assertEquals(loose.strictPolicy, undefined);
+    assertEquals(loose.passkeyRpIds, ["example.com", "auth.example.com"]);
+    // Passkeys off: no passkeyRpIds (under strict laufey refuses every ceremony without it).
+    const off = await write({ desktop: { capabilities: { passkeys: false } } }, true);
+    assertEquals([off.passkeyRpIds, off.strictPolicy, off.bridgeOrigins], [
+      undefined,
+      true,
+      ["app://localhost"],
+    ]);
+    assertEquals(warnings, []);
+    // An empty list is written as the empty pin (every ceremony refused), and warned about.
+    const empty = await write({ desktop: { capabilities: { passkeys: { rpIds: [] } } } }, true);
+    assertEquals(empty.passkeyRpIds, []);
+    assertEquals(warnings.length, 1);
+    assertStringIncludes(warnings[0], "refuses every passkey ceremony");
+    assertStringIncludes(warnings[0], "rpIds");
+  } finally {
+    console.warn = warn;
+    for (const dir of dirs) await Deno.remove(dir, { recursive: true });
   }
 });
 

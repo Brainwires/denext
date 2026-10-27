@@ -39,6 +39,7 @@ import {
 } from "./desktop-runtime.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
 import { compareDenoVersions, denoReleaseVersion } from "./deno-version.ts";
+import type { LaunchPolicyProblem } from "./desktop-launch-policy.ts";
 import {
   CEF_SIGNING_FIX,
   cefCertificateProblem,
@@ -219,6 +220,11 @@ export interface DesktopDoctorOptions {
   readonly pin?: DesktopRuntimePin;
   /** Runs PowerShell for the Windows CEF signing check (default: `powershell.exe`). */
   readonly powershell?: PowerShellRunner;
+  /**
+   * The project's packaged launch-policy gaps (`launchPolicyProblems`); the `launch-policy` check
+   * runs only when given and it answers a list (`null`: not a desktop project).
+   */
+  readonly launchPolicy?: () => Promise<readonly LaunchPolicyProblem[] | null>;
 }
 
 /** The laufey API level that added `Deno.desktop.platformFeatures()`. */
@@ -1287,7 +1293,8 @@ export async function runDesktopDoctor(
     )
     : null;
   const cefSigning = os === "windows" && runtime.status.backend === "cef";
-  const checks = ["runtime", ...(linux ? linuxCheckNames(runtime) : [])];
+  const policy = await launchPolicyFindings(options);
+  const checks = ["runtime", ...policy.checks, ...(linux ? linuxCheckNames(runtime) : [])];
   if (cefSigning) checks.push("cef-signing");
   return {
     os,
@@ -1296,11 +1303,29 @@ export async function runDesktopDoctor(
     checks,
     findings: [
       ...runtimeFindings(runtime, linuxChecks),
+      ...policy.findings,
       ...(linux ? linuxFindings(linux, runtime) : []),
       ...(cefSigning
         ? await cefSigningFindings(options.env ?? ((k) => Deno.env.get(k)), options.powershell)
         : []),
     ],
+  };
+}
+
+/** The `launch-policy` check: none without `options.launchPolicy` or off a desktop project. */
+async function launchPolicyFindings(
+  options: DesktopDoctorOptions,
+): Promise<{ checks: string[]; findings: DesktopDoctorFinding[] }> {
+  const problems = options.launchPolicy ? await options.launchPolicy() : null;
+  if (problems === null) return { checks: [], findings: [] };
+  return {
+    checks: ["launch-policy"],
+    findings: problems.map((p) => ({
+      check: "launch-policy",
+      level: "warning",
+      message: p.message,
+      fix: p.fix,
+    })),
   };
 }
 

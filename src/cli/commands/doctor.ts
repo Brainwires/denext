@@ -27,8 +27,19 @@ import { checkPrivacyManifest } from "../../build/mobile-privacy.ts";
 import { MOBILE_CAPABILITIES } from "../../build/mobile-capabilities.ts";
 import { capacitorConfigFile } from "../../build/capacitor-config.ts";
 import { leakedCssShimKeys } from "../../build/css-config-guard.ts";
-import { DESKTOP_APP_CONFIG_FILE, desktopAppIdentity } from "../../build/desktop-app-config.ts";
-import { readJson } from "../../build/json-edit.ts";
+import {
+  DESKTOP_APP_CONFIG_FILE,
+  desktopAppIdentity,
+  desktopBridgeOrigins,
+} from "../../build/desktop-app-config.ts";
+import {
+  desktopPasskeyRpIds,
+  isDesktopProject,
+  launchPolicyProblems,
+  readProjectDenoJson as readDenoJson,
+  stalePackageScripts,
+  strictLaunchRuntime,
+} from "../../build/desktop-launch-policy.ts";
 import { DENEXT_EXCLUDE } from "../../build/dep-age.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
 import { denoToolchainStatus } from "../../build/deno-toolchain.ts";
@@ -501,20 +512,6 @@ function passingJailDetail(
       `default from runtime ${JAIL_DEFAULT_RELEASE}): ${JAIL_DOCS_URL}`;
 }
 
-/** The project's parsed `deno.json` (else `deno.jsonc`), or `null`. */
-async function readDenoJson(dir: string): Promise<Record<string, unknown> | null> {
-  for (const name of ["deno.json", "deno.jsonc"]) {
-    const text = await Deno.readTextFile(join(dir, name)).catch(() => null);
-    if (text === null) continue;
-    try {
-      return readJson(text) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
 /**
  * What is out of line for a configured `desktop.app.origin`: the embedded `.deno-desktop/app.json`
  * (missing or stale), deno.json's `compile.include` (not listing it), and deno.json's own
@@ -580,6 +577,50 @@ export async function desktopOriginCheck(dir: string, config: unknown): Promise<
 }
 
 /**
+ * The packaged launch-policy check, for a desktop project (null otherwise): whether the
+ * `laufey-launch.json` the package scripts write would pin the window's bridge (`bridgeOrigins`)
+ * and, with passkeys enabled, their relying parties (`passkeyRpIds`), which the strict launch
+ * policy (runtime 3.0.0-denext.1+) otherwise fails closed on; and whether the scripts write it at
+ * all. Advisory.
+ *
+ * @param dir The project directory.
+ * @param config The loaded project config.
+ * @returns The check, or `null` for a project without a desktop target.
+ */
+export async function desktopLaunchPolicyCheck(
+  dir: string,
+  config: unknown,
+): Promise<Check | null> {
+  if (!await isDesktopProject(dir)) return null;
+  const problems = launchPolicyProblems(
+    config,
+    desktopBridgeOrigins,
+    await stalePackageScripts(dir),
+  );
+  const pinned = desktopPasskeyRpIds(config) === null
+    ? "bridgeOrigins"
+    : "bridgeOrigins + passkeyRpIds";
+  return {
+    name: "desktop launch policy",
+    ok: problems.length === 0,
+    detail: problems.length === 0
+      ? `${pinned} pinned${strictLaunchRuntime() ? " (strictPolicy: the rest fails closed)" : ""}`
+      : problems.map((p) => `${p.message} — ${p.fix}`).join("; "),
+    critical: false,
+  };
+}
+
+/** The desktop checks that apply to the project: the app origin, the runtime, the launch policy. */
+async function desktopChecks(dir: string, config: unknown): Promise<Check[]> {
+  const checks = [
+    await desktopOriginCheck(dir, config),
+    await desktopRuntimeCheck(dir),
+    await desktopLaunchPolicyCheck(dir, config),
+  ];
+  return checks.filter((c): c is Check => c !== null);
+}
+
+/**
  * The pinned Deno Desktop runtime check, for a desktop project (a `desktop.ts` entry or a deno.json
  * `desktop` block; null otherwise): the pinned runtime version, whether it is cached and verified
  * for this host, and whether the `deno` that runs `deno desktop` is its exact Deno version.
@@ -589,8 +630,7 @@ export async function desktopRuntimeCheck(
   dir: string,
   options: Partial<Parameters<typeof desktopRuntimeStatus>[0]> = {},
 ): Promise<Check | null> {
-  const hasEntry = (await Deno.stat(join(dir, "desktop.ts")).catch(() => null))?.isFile === true;
-  if (!hasEntry && (await readDenoJson(dir))?.desktop === undefined) return null;
+  if (!await isDesktopProject(dir)) return null;
   const status = await desktopRuntimeStatus({
     projectDir: dir,
     deno: denoExecutable(),
@@ -748,10 +788,7 @@ export async function collectDoctorReport(
   if (platformFiles) checks.push(platformFiles);
   const privacy = await privacyManifestCheck(dir);
   if (privacy) checks.push(privacy);
-  const desktopOrigin = await desktopOriginCheck(dir, paths.config);
-  if (desktopOrigin) checks.push(desktopOrigin);
-  const desktopRuntime = await desktopRuntimeCheck(dir);
-  if (desktopRuntime) checks.push(desktopRuntime);
+  checks.push(...await desktopChecks(dir, paths.config));
   const signing = await compileSigningCheck(paths.config);
   if (signing) checks.push(signing);
   const depAge = await depAgeExemptionCheck(paths.projectDir);

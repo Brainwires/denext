@@ -127,6 +127,7 @@ export {
   DESKTOP_APP_CONFIG_FILE,
   type DesktopAppSyncReport,
   LAUFEY_LAUNCH_FILE,
+  type LaufeyLaunchWriteOptions,
   syncDesktopAppConfig,
   writeLaufeyLaunchConfig,
 } from "./desktop-app-config.ts";

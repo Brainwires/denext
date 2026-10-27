@@ -1318,8 +1318,16 @@ export default {
           is required and must name the relying party your passkeys belong to (the instance's
           application domain, which is not the Frontend API host the publishable key encodes, so
           denext does not guess it); <code>passkeys: true</code>{" "}
-          is a config error, and an empty list refuses every request. On macOS the app's signature
-          needs the <code>com.apple.developer.associated-domains</code> entitlement{" "}
+          is a config error, and an empty list refuses every request. The list is enforced twice: by
+          the capability, and natively by the window&apos;s backend, which reads it from the
+          packaged <code>laufey-launch.json</code>{" "}
+          (<code>"passkeyRpIds"</code>) and refuses any other RP ID before the OS sees it. From
+          runtime 3.0.0-denext.1 that file also carries{" "}
+          <code>"strictPolicy": true</code>, so a launch file without the list fails closed: every
+          ceremony is <code>invalid_rp</code>. <code>denext doctor</code> and{" "}
+          <code>denext desktop doctor</code> flag passkeys enabled with no{" "}
+          <code>rpIds</code>. On macOS the app's signature needs the{" "}
+          <code>com.apple.developer.associated-domains</code> entitlement{" "}
           (<code>webcredentials:&lt;rp-id&gt;</code>) with a provisioning profile, and the RP's{" "}
           <code>apple-app-site-association</code> must list{" "}
           <code>&lt;TeamID&gt;.&lt;bundle id&gt;</code>
@@ -2089,7 +2097,16 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
       <Callout kind="note">
         <strong>The secure store on Linux.</strong> <code>secure-store</code>{" "}
         is the pinned runtime&apos;s own: the Secret Service through libsecret, which every desktop
-        ships (the <code>.deb</code> / <code>.rpm</code> depend on <code>libsecret-1-0</code> /{" "}
+        ships. From runtime 3.0.0-denext.1 each item is also keyed by the app id (<code>
+          laufey-app-id
+        </code>, from{" "}
+        <code>desktop.app.identifier</code>), so two apps using the same service and account no
+        longer share it; an item an older build wrote under the shared attributes moves into the
+        app&apos;s namespace when the app first looks it up during its first run of the updated
+        build, and only when that app had run here before (a newly installed app never takes another
+        app&apos;s item). An app without an identifier has no namespace: it neither moves nor sees
+        the shared items. (The <code>.deb</code> / <code>.rpm</code> depend on{" "}
+        <code>libsecret-1-0</code> /{" "}
         <code>libsecret</code>; the stock runtime has no Linux secure store). It needs a Secret
         Service provider: GNOME Keyring, or KWallet with its Secret Service enabled. When there is
         none, or its keyring is locked, every call rejects with <code>backend_unavailable</code>
@@ -3294,8 +3311,20 @@ export default {
           handlers) serves the app origin only. To let another document call a binding, such as an
           identity provider page the window navigates to, list its origin in{" "}
           <code>desktop.app.bridgeOrigins</code> and in that binding&apos;s{" "}
-          <code>bind(name, fn, {"{ origins }"})</code>. <code>denext desktop run</code> and{" "}
-          <code>dev</code> write the same <code>app.json</code>.
+          <code>bind(name, fn, {"{ origins }"})</code>. From runtime 3.0.0-denext.1 the file also
+          sets{" "}
+          <code>"strictPolicy": true</code>: whatever policy it leaves out fails closed, so a launch
+          file without <code>bridgeOrigins</code>{" "}
+          (and without a custom scheme) gives the bridge to no document, and one without{" "}
+          <code>"passkeyRpIds"</code> (the <code>passkeys</code> capability&apos;s{" "}
+          <code>rpIds</code>) refuses every passkey ceremony. denext&apos;s packaging always writes
+          {" "}
+          <code>bridgeOrigins</code>, and <code>passkeyRpIds</code> whenever <code>passkeys</code>
+          {" "}
+          is on; <code>denext doctor</code> and <code>denext desktop doctor</code>{" "}
+          flag a project whose launch file would lack either (or whose package scripts don&apos;t
+          write it: <code>denext desktop package --regenerate-scripts</code>).{" "}
+          <code>denext desktop run</code> and <code>dev</code> write the same <code>app.json</code>.
         </li>
         <li>
           <strong>The window stays on the app origin</strong>{" "}
