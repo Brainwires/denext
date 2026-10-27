@@ -324,8 +324,24 @@ export function parseDfAvailable(text: string): number | undefined {
 }
 
 /**
- * Bytes free on the host filesystem holding `dir`: `df -Pk` on macOS / Linux, the drive's free
- * space through PowerShell on Windows.
+ * The bytes PowerShell printed for a drive's free space: a whole number on its own. Empty output
+ * (`Get-PSDrive`'s `Free` is blank for an account that may not query the volume) or anything
+ * else is no answer, never zero bytes free.
+ *
+ * @param text PowerShell's output.
+ * @returns The bytes, or `undefined`.
+ */
+export function parseWindowsFree(text: string): number | undefined {
+  const t = text.trim();
+  if (!/^\d+$/.test(t)) return undefined;
+  const free = Number(t);
+  return Number.isSafeInteger(free) ? free : undefined;
+}
+
+/**
+ * Bytes free on the host filesystem holding `dir`: `df -Pk` on macOS / Linux; on Windows the
+ * drive's space available to this account (.NET's `DriveInfo.AvailableFreeSpace`, which needs no
+ * administrator and counts a disk quota).
  *
  * @param dir A directory on the filesystem to measure.
  * @returns The bytes, or `undefined` when the tool is missing or says nothing usable.
@@ -335,15 +351,16 @@ export async function hostFreeBytes(dir: string): Promise<number | undefined> {
   const drive = windows ? /^([A-Za-z]):/.exec(dir)?.[1] : undefined;
   if (windows && !drive) return undefined;
   const [cmd, args] = windows
-    ? ["powershell", ["-NoProfile", "-Command", `(Get-PSDrive -Name ${drive}).Free`]]
+    ? [
+      "powershell",
+      ["-NoProfile", "-Command", `([System.IO.DriveInfo]::new('${drive}')).AvailableFreeSpace`],
+    ]
     : ["df", ["-Pk", dir]];
   try {
     const out = await new Deno.Command(cmd, { args, stdout: "piped", stderr: "null" }).output();
     if (!out.success) return undefined;
     const text = new TextDecoder().decode(out.stdout);
-    if (!windows) return parseDfAvailable(text);
-    const free = Number(text.trim());
-    return Number.isSafeInteger(free) && free >= 0 ? free : undefined;
+    return windows ? parseWindowsFree(text) : parseDfAvailable(text);
   } catch {
     return undefined;
   }

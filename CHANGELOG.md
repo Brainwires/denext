@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows helpers work when started from PowerShell 7.** An app or the CLI launched from a
+  `pwsh` terminal handed Windows PowerShell 7's module path, so its own modules failed to load
+  (`CouldNotAutoloadMatchingModule`): the desktop `dialogs` file panels, the `shell` trash, the
+  `secure-store` credential vault, `denext stack`'s free-space check and `denext profile`'s
+  browser cleanup on Windows. Each script now loads Windows PowerShell's own modules first (the
+  free-space check uses .NET and no module at all), without changing the child's environment.
+
 ## [4.9.0] - 2026-10-27
 
 ### Breaking

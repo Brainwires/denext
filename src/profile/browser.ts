@@ -20,6 +20,7 @@
 
 import { type Browser, launch } from "@astral/astral";
 import { runToExit } from "../build/exited-output.ts";
+import { withOwnModules } from "../build/windows-powershell.ts";
 
 interface TrackedBrowser {
   browser: Browser;
@@ -32,22 +33,35 @@ const TEARDOWN_SIGNALS: Deno.Signal[] = Deno.build.os === "windows"
   : ["SIGINT", "SIGTERM"];
 let signalHandler: (() => void) | null = null;
 
+/**
+ * The command that prints the pid LISTENing on `port`: `lsof`, or on Windows PowerShell's
+ * `Get-NetTCPConnection`, loaded from Windows PowerShell's own modules whatever module path it
+ * inherited.
+ *
+ * @param port The TCP port (digits only).
+ * @param windows Whether the host is Windows.
+ * @returns `[command, args]`.
+ */
+export function listeningPidCommand(port: string, windows: boolean): [string, string[]] {
+  return windows
+    ? [
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        withOwnModules(`(Get-NetTCPConnection -LocalPort ${port} -State Listen).OwningProcess`),
+      ],
+    ]
+    : ["lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]];
+}
+
 /** Chromium's pid from its debug-port endpoint (the process LISTENing on that port). */
 async function chromiumPid(browser: Browser): Promise<number | null> {
   try {
     const port = new URL(browser.wsEndpoint()).port;
     if (!port) return null;
     // Until the lookup exits: Chromium, started beside it, may hold an inherited copy of its pipes.
-    const [cmd, args] = Deno.build.os === "windows"
-      ? [
-        "powershell",
-        [
-          "-NoProfile",
-          "-Command",
-          `(Get-NetTCPConnection -LocalPort ${port} -State Listen).OwningProcess`,
-        ],
-      ]
-      : ["lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]];
+    const [cmd, args] = listeningPidCommand(port, Deno.build.os === "windows");
     const out = await runToExit(cmd, { args, stderr: "null" });
     const pid = parseInt(new TextDecoder().decode(out.stdout).trim().split(/\s+/)[0], 10);
     return Number.isFinite(pid) ? pid : null;
