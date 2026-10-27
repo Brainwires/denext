@@ -23,7 +23,7 @@ import {
   type ServicesSnapshot,
   stopServices,
 } from "../src/server/service-loader.ts";
-import { supervisionStatus } from "../src/server/supervise.ts";
+import { forgetStoppedSupervisors, supervisionStatus } from "../src/server/supervise.ts";
 import { runHealthChecks } from "../src/server/health.ts";
 import { loadInstrumentation } from "../src/server/instrumentation.ts";
 import { startDevServer } from "../src/build/dev-server.ts";
@@ -275,6 +275,8 @@ Deno.test("bootServices: a tree that gives up fails the health check and calls o
     console.error = error;
     console.warn = warn;
     await stopServices();
+    // A failed tree stays listed by design (its status says why); the next test starts clean.
+    forgetStoppedSupervisors();
     await removeTempDir(dir);
   }
   assertEquals((await runHealthChecks()).checks.services, undefined);

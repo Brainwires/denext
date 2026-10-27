@@ -48,6 +48,7 @@ import {
 import { resetLocalNotificationsForTesting } from "../src/mobile/local-notifications.ts";
 import { resetFileTransfersForTesting } from "../src/mobile/file-transfer.ts";
 import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
+import { resetStorageFallbackWarningsForTesting } from "../src/desktop/native.ts";
 import { isDesktopBridgeError } from "../src/desktop/client.ts";
 import {
   createFakeDesktopRuntime,
@@ -67,6 +68,7 @@ async function inDesktop(
   } finally {
     resetDesktopBridgeForTesting();
     resetLocalNotificationsForTesting();
+    resetStorageFallbackWarningsForTesting();
     restore();
   }
 }
