@@ -31,15 +31,19 @@ watchTests();
  * runtime mock, a self-denial module's), recognizable in a bundle.
  */
 const PREFIX = "tanstack-start-import-protection:";
+/** What the fake's `mockRuntimeModuleIdFromViolation` was handed, in order. */
+const runtimeViolations: Array<{ specifier: string; trace: Array<{ file: string }> }> = [];
 const fakeMocks: StartMocks = {
   MOCK_MODULE_ID: `${PREFIX}mock`,
   MOCK_EDGE_PREFIX: `${PREFIX}mock-edge:`,
   MOCK_RUNTIME_PREFIX: `${PREFIX}mock-runtime:`,
   MOCK_BUILD_PREFIX: `${PREFIX}mock:build:`,
-  mockRuntimeModuleIdFromViolation: (info, mode) =>
-    info.env === "client" && mode !== "off"
+  mockRuntimeModuleIdFromViolation: (info, mode) => {
+    runtimeViolations.push(info as (typeof runtimeViolations)[number]);
+    return info.env === "client" && mode !== "off"
       ? `${PREFIX}mock-runtime:${encodeURIComponent(JSON.stringify({ ...info, mode }))}`
-      : `${PREFIX}mock`,
+      : `${PREFIX}mock`;
+  },
   makeMockEdgeModuleId: (exports, runtimeId) =>
     `${PREFIX}mock-edge:${encodeURIComponent(JSON.stringify({ exports, runtimeId }))}`,
   loadSilentMockModule: () => ({ code: `export default { silent: "SILENT_MOCK" };` }),
@@ -104,8 +108,8 @@ async function app(): Promise<string> {
 const protect = (dir: string, options: ImportProtectionOptions, command: ProtectionCommand) =>
   compileImportProtection(options, dir, join(dir, "src"), command);
 
-/** Build the browser bundle of `src/bad.ts` under `protection`. */
-function build(dir: string, protection: ImportProtection): Promise<unknown> {
+/** Build the browser bundle of `src/<entry>` (default `bad.ts`) under `protection`. */
+function build(dir: string, protection: ImportProtection, entry = "bad.ts"): Promise<unknown> {
   const start = startBuild({
     env: "client",
     toolchain,
@@ -123,7 +127,7 @@ function build(dir: string, protection: ImportProtection): Promise<unknown> {
     clientDir: join(dir, ".denext", "client"),
     entries: [{
       id: "client",
-      source: `import { run } from ${JSON.stringify(join(dir, "src", "bad.ts"))};\nrun();\n`,
+      source: `import { run } from ${JSON.stringify(join(dir, "src", entry))};\nrun();\n`,
     }],
     extraPlugins: [start.plugin],
   });
@@ -249,6 +253,36 @@ Deno.test({
   }
 });
 
+Deno.test({
+  name: "tanstack-start import protection: a dev mock's runtime message lists the import trace",
+}, async () => {
+  const dir = await app();
+  try {
+    // entry → routes/page.ts → bad.ts, which imports the denied file and the denied specifier.
+    await Deno.mkdir(join(dir, "src", "routes"));
+    await Deno.writeTextFile(
+      join(dir, "src", "routes", "page.ts"),
+      `export { run } from "../bad.ts";\n`,
+    );
+    runtimeViolations.length = 0;
+    await warned(() => build(dir, protect(dir, {}, "dev"), join("routes", "page.ts")));
+    // What Start's `mockRuntimeModuleIdFromViolation` got (its message lists the trace).
+    const metas = runtimeViolations.splice(0);
+    assertEquals(metas.length, 2, JSON.stringify(metas));
+    const page = join(dir, "src", "routes", "page.ts");
+    const bad = join(dir, "src", "bad.ts");
+    const db = join(dir, "src", "db.server.ts");
+    const bySpecifier = new Map(metas.map((m) => [m.specifier, m.trace.map((s) => s.file)]));
+    // A denied specifier: the app modules from the entry to its importer, as in Start.
+    assertEquals(bySpecifier.get("@tanstack/react-start/server"), [page, bad]);
+    // A denied file: on to the file itself.
+    assertEquals(bySpecifier.get("src/db.server.ts"), [page, bad, db]);
+  } finally {
+    await stopNextCompat().catch(() => {});
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
 for (
   const behavior of ["mock", { build: "mock" }] as ImportProtectionOptions["behavior"][]
 ) {
@@ -309,6 +343,11 @@ Deno.test({
     "[import-protection] Mocked import used in dev client",
   );
   assertStringIncludes(r.reported as string, 'Denied import: "./db.server.ts"');
+  // With the import trace the plugin hands it, root-relative, entry first.
+  assertStringIncludes(
+    r.tracedReported as string,
+    "Trace:\n  1. src/routes/page.ts\n  2. src/a.ts",
+  );
   // On the server, and with mockAccess "off", it is Start's silent mock.
   assertEquals(r.serverRuntime, "tanstack-start-import-protection:mock");
   assertEquals(r.offRuntime, "tanstack-start-import-protection:mock");

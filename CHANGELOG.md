@@ -15,6 +15,10 @@ and this project adheres to
   `desktop.app.bridgeOrigins`) or, with passkeys enabled, an RP list (`rpIds` empty), or whose
   `scripts/package-*.ts` never write denext's launch file, is flagged with the fix
   (`desktop doctor`: the `launch-policy` check, a warning per gap).
+- **`@denext/tanstack-start`: a mocked import's runtime message lists the import trace.** In
+  `denext dev`, using a mock that stands in for a denied import (or a denied file) in the browser
+  reports, with Start's `[import-protection] Mocked import used in dev client` message, the app
+  modules from the entry to the importer, as Start's own dev server does.
 
 ### Changed
 
