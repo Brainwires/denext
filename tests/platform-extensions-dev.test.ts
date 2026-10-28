@@ -94,10 +94,11 @@ Deno.test("denext dev: ?__denext_platform pins the target; SSR and the Flight is
     "components/Badge.ios.tsx": badge("IOS_BADGE"),
   });
   const controller = new AbortController();
+  let server: Deno.HttpServer | undefined;
   try {
     const paths = await resolveProject(dir);
     const port = await new Promise<number>((resolve) => {
-      startDevServer({
+      server = startDevServer({
         paths,
         port: 0,
         hostname: "127.0.0.1",
@@ -131,7 +132,7 @@ Deno.test("denext dev: ?__denext_platform pins the target; SSR and the Flight is
     );
   } finally {
     controller.abort();
-    await new Promise((r) => setTimeout(r, 100));
+    await server?.finished;
     await removeTempDir(dir);
   }
 });
@@ -140,8 +141,9 @@ Deno.test("denext dev: ?__denext_platform pins the target; SSR and the Flight is
 async function devServer(dir: string, opts: { unbundled?: boolean } = {}) {
   const controller = new AbortController();
   const paths = await resolveProject(dir);
+  let server: Deno.HttpServer | undefined;
   const port = await new Promise<number>((resolve) => {
-    startDevServer({
+    server = startDevServer({
       paths,
       port: 0,
       hostname: "127.0.0.1",
@@ -155,7 +157,7 @@ async function devServer(dir: string, opts: { unbundled?: boolean } = {}) {
       await (await fetch(`http://127.0.0.1:${port}${path}`, { headers })).text(),
     stop: async () => {
       controller.abort();
-      await new Promise((r) => setTimeout(r, 100));
+      await server?.finished;
     },
   };
 }
@@ -307,10 +309,11 @@ Deno.test("denext dev: a platform file created or removed mid-session outside ap
     "components/Badge.tsx": `export function Badge(){ return <b>PLAIN_BADGE</b>; }\n`,
   });
   const controller = new AbortController();
+  let server: Deno.HttpServer | undefined;
   try {
     const paths = await resolveProject(dir);
     const port = await new Promise<number>((resolve) => {
-      startDevServer({
+      server = startDevServer({
         paths,
         port: 0,
         hostname: "127.0.0.1",
@@ -345,7 +348,7 @@ Deno.test("denext dev: a platform file created or removed mid-session outside ap
     await eventually("the plain file served", async () => !(await shell()).includes("Badge.ios"));
   } finally {
     controller.abort();
-    await new Promise((r) => setTimeout(r, 100));
+    await server?.finished;
     await removeTempDir(dir);
   }
 });
@@ -362,10 +365,11 @@ Deno.test("denext dev: a stylesheet only a platform file imports reaches that se
     "components/ios.css": `.ios-only { color: blue; }\n`,
   });
   const controller = new AbortController();
+  let server: Deno.HttpServer | undefined;
   try {
     const paths = await resolveProject(dir);
     const port = await new Promise<number>((resolve) => {
-      startDevServer({
+      server = startDevServer({
         paths,
         port: 0,
         hostname: "127.0.0.1",
@@ -383,7 +387,7 @@ Deno.test("denext dev: a stylesheet only a platform file imports reaches that se
     assert(!web.includes(".ios-only"), "the web route CSS keeps the plain file's sheet");
   } finally {
     controller.abort();
-    await new Promise((r) => setTimeout(r, 100));
+    await server?.finished;
     await removeTempDir(dir);
   }
 });
@@ -407,10 +411,11 @@ Deno.test("denext dev: an edit to a component outside app/ updates the page", as
   // The crawls cache one graph per name for the process: start from this project's alone.
   resetModuleGraphCache();
   const controller = new AbortController();
+  let server: Deno.HttpServer | undefined;
   try {
     const paths = await resolveProject(dir);
     const port = await new Promise<number>((resolve) => {
-      startDevServer({
+      server = startDevServer({
         paths,
         port: 0,
         hostname: "127.0.0.1",
@@ -456,7 +461,7 @@ Deno.test("denext dev: an edit to a component outside app/ updates the page", as
     await reading;
   } finally {
     controller.abort();
-    await new Promise((r) => setTimeout(r, 100));
+    await server?.finished;
     await removeTempDir(dir);
   }
 });
