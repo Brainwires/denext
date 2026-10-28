@@ -32,6 +32,22 @@ and this project adheres to
   `PKI` modules: the import stopped at `ConvertTo-SecureString` and nothing was signed. The import
   and the removal afterwards now call .NET directly and need no PowerShell module, and the CEF
   signature and certificate-trust checks put Windows PowerShell's own modules first.
+- **The rest of denext's captured child output is read until the child exits.** The macOS
+  signing and notarization checks, the Windows certificate-store and Authenticode probes, the
+  `wix --version` check, `desktop doctor`'s probes, the toolchain version probe, `denext patch`'s
+  `deno info` / `deno cache`, fastlane's `bundle`, `mobile inspect`, `stack`'s docker and free-space
+  probes now stop reading 5 s after the child exits at the latest. A process that inherited the
+  child's pipes (another child spawned at the same moment on Windows, or one the child left
+  running) can no longer keep them waiting.
+- **A sidecar's `"auto"` port that another process takes first is picked again.** The port is
+  picked by binding port 0 and releasing it, so another process could bind it before the sidecar
+  did; the sidecar then failed on an address in use and kept retrying the same port. A picked port
+  that is already held is picked again, and a start that ends before ready while another process
+  holds the port starts again at once on a fresh port (up to 3 times per run of starts), with the
+  `spa.proxy` target, `sidecarInfo` and the status following it.
+- **`desktop dev --inspect-renderer` picks the renderer's port right before the window opens.**
+  The free port was picked before the build, so another process had the whole build to take it;
+  it is now picked after the build, and a picked port that is already held is picked again.
 - **A command that read a quick child's output no longer waits up to 5 s to exit.** The reader
   that collects a child's output until it exits (`deno info`, `deno bundle`, the type check and
   the other children denext runs) started its 5 s drain timer when the exit was reported after

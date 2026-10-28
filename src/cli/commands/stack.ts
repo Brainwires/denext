@@ -34,6 +34,7 @@ import {
   terminalIo,
 } from "./stack-io.ts";
 import { passwdAction, rollAction } from "./stack-ops.ts";
+import { runToExit } from "../../build/exited-output.ts";
 
 /**
  * Run `docker` (the default {@linkcode StackIo.docker}): streamed through, or captured.
@@ -51,8 +52,9 @@ export async function dockerCli(
   const io = capture ? "piped" : "inherit";
   let out: Deno.CommandOutput;
   try {
-    // `output()` throws a missing binary synchronously, so a `.catch()` on it never sees one.
-    out = await new Deno.Command("docker", { args, cwd, stdout: io, stderr: io }).output();
+    // A captured run is read until docker exits, not until every copy of its pipes closes (a
+    // process docker leaves running, or one spawned beside it on Windows, can hold them).
+    out = await runToExit("docker", { args, cwd, stdout: io, stderr: io });
   } catch (error) {
     throw error instanceof Deno.errors.NotFound ? new Error(NO_DOCKER) : error;
   }

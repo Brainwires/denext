@@ -19,6 +19,7 @@ import {
   stringOf,
 } from "./plist-value.ts";
 import { loadConfigBeside, readDenoJson } from "./desktop-installers.ts";
+import { runToExit } from "./exited-output.ts";
 
 /** One entitlement's value as `desktop.macos.entitlements` writes it. */
 type EntitlementValue = string | number | boolean | string[];
@@ -267,11 +268,7 @@ function withDefault(dict: PlistDict, key: string, text: string): PlistDict {
 
 /** `security cms -D -i <profile>`: a signed profile's XML payload. */
 async function securityDecode(path: string): Promise<string> {
-  const out = await new Deno.Command("security", {
-    args: ["cms", "-D", "-i", path],
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  const out = await runToExit("security", { args: ["cms", "-D", "-i", path] });
   if (!out.success) {
     throw new Error(
       `security cms could not read the provisioning profile ${path}: ` +
@@ -476,11 +473,10 @@ export interface MacosSigningEntitlementsOptions {
 /** `codesign -d --entitlements - --xml <path>`: the signed entitlements, or "" when it has none. */
 async function codesignEntitlements(path: string): Promise<string> {
   try {
-    const out = await new Deno.Command("codesign", {
+    const out = await runToExit("codesign", {
       args: ["-d", "--entitlements", "-", "--xml", path],
-      stdout: "piped",
       stderr: "null",
-    }).output();
+    });
     return out.success ? new TextDecoder().decode(out.stdout) : "";
   } catch {
     return ""; // no codesign (not macOS): nothing to keep

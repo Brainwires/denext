@@ -86,17 +86,35 @@ export async function exitedOutput(
   });
 }
 
-/** {@linkcode runToExit}'s options: `Deno.CommandOptions` without a writable stdin. */
+/** {@linkcode runToExit}'s options: `Deno.CommandOptions` with stdin given as `input`. */
 export type RunToExitOptions = Omit<Deno.CommandOptions, "stdin"> & {
-  /** The child's stdin: `"null"` (the default) or `"inherit"`; nothing writes to it. */
+  /**
+   * The child's stdin: `"null"` (the default) or `"inherit"`. Ignored when `input` is given.
+   */
   readonly stdin?: "null" | "inherit";
+  /**
+   * Bytes (or UTF-8 text) written to the child's stdin, which is then closed. A child that exits
+   * without reading them all is not an error: its status says how it ended.
+   */
+  readonly input?: string | Uint8Array;
 };
+
+/** Write `input` to `stdin` and close it; a child that stopped reading is not an error. */
+async function feed(stdin: WritableStream<Uint8Array>, input: string | Uint8Array): Promise<void> {
+  const writer = stdin.getWriter();
+  try {
+    await writer.write(typeof input === "string" ? new TextEncoder().encode(input) : input);
+    await writer.close();
+  } catch {
+    await writer.abort().catch(() => {}); // the child closed its end (exited, or read no more)
+  }
+}
 
 /**
  * Run `cmd` to its exit and collect its output, like `new Deno.Command(cmd, options).output()`
  * but read with {@linkcode exitedOutput}, so a pipe handle another process inherited cannot keep
  * it waiting. stdout and stderr default to `"piped"` as `output()`'s do; stdin defaults to
- * `"null"`, so the child inherits no handle it does not need.
+ * `"null"`, so the child inherits no handle it does not need, unless `input` is given.
  *
  * @param cmd The program.
  * @param options How to run it.
@@ -108,20 +126,67 @@ export async function runToExit(
   options: RunToExitOptions = {},
   graceMs: number = DRAIN_AFTER_EXIT_MS,
 ): Promise<Deno.CommandOutput> {
-  const stdout = options.stdout ?? "piped";
-  const stderr = options.stderr ?? "piped";
+  const { input, ...rest } = options;
+  const stdout = rest.stdout ?? "piped";
+  const stderr = rest.stderr ?? "piped";
   const child = new Deno.Command(cmd, {
-    ...options,
-    stdin: options.stdin ?? "null",
+    ...rest,
+    stdin: input !== undefined ? "piped" : rest.stdin ?? "null",
     stdout,
     stderr,
   })
     .spawn();
+  // Written beside the reads, so a child that answers before it has read everything cannot
+  // fill its output pipe while this side is still blocked writing.
+  // Not awaited past the exit: a write still blocked then (another process holds the read end)
+  // must not keep this waiting either; `feed` never rejects.
+  if (input !== undefined) void feed(child.stdin, input);
   return await exitedOutput(
     child,
     { stdout: stdout === "piped", stderr: stderr === "piped" },
     graceMs,
   );
+}
+
+/** A child's status and its piped output as text, from {@linkcode runToExitText}. */
+export interface TextOutput {
+  /** Whether it exited 0. */
+  readonly success: boolean;
+  /** Its exit code. */
+  readonly code: number;
+  /** Its stdout as UTF-8 text (`""` when not piped). */
+  readonly stdout: string;
+  /** Its stderr as UTF-8 text (`""` when not piped). */
+  readonly stderr: string;
+}
+
+/**
+ * {@linkcode runToExit} with the output decoded as UTF-8 text.
+ *
+ * @param cmd The program.
+ * @param options How to run it.
+ * @param graceMs How long to keep reading the pipes after the exit.
+ * @returns The status and text; rejects when the program cannot be started.
+ */
+export async function runToExitText(
+  cmd: string | URL,
+  options: RunToExitOptions = {},
+  graceMs: number = DRAIN_AFTER_EXIT_MS,
+): Promise<TextOutput> {
+  const out = await runToExit(cmd, options, graceMs);
+  const text = (read: () => Uint8Array) => {
+    try {
+      return new TextDecoder().decode(read());
+    } catch {
+      return ""; // not piped
+    }
+  };
+  return {
+    success: out.success,
+    code: out.code,
+    stdout: text(() => out.stdout),
+    stderr: text(() => out.stderr),
+  };
 }
 
 /** How a child's stderr is spawned by {@linkcode quietThenExplain}. */

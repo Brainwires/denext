@@ -14,6 +14,8 @@
 // PowerShell 7, `powershell.exe` inherits 7's module path, and then cannot load
 // `Microsoft.PowerShell.Security` (`Get-AuthenticodeSignature`) or `Microsoft.PowerShell.Utility`.
 
+import { runToExit } from "./exited-output.ts";
+
 /** Runs a PowerShell script with extra environment; `null` when PowerShell did not run. */
 export type PowerShellRunner = (
   script: string,
@@ -32,14 +34,12 @@ const defaultPowerShell: PowerShellRunner = async (script, env) => {
   let binary = "";
   for (const b of utf16) binary += String.fromCharCode(b);
   try {
-    const out = await new Deno.Command("powershell.exe", {
+    const out = await runToExit("powershell.exe", {
       args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", btoa(binary)],
       env,
-      stdin: "null",
-      stdout: "piped",
       stderr: "null",
       signal: AbortSignal.timeout(20_000),
-    }).output();
+    });
     return { code: out.code, stdout: new TextDecoder().decode(out.stdout) };
   } catch {
     return null;

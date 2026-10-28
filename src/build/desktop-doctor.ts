@@ -46,6 +46,7 @@ import {
   certificateTrust,
   type PowerShellRunner,
 } from "./desktop-windows-trust.ts";
+import { runToExitText } from "./exited-output.ts";
 
 /** One problem, with its fix. */
 export interface DesktopDoctorFinding {
@@ -267,15 +268,11 @@ const LAUNCHER_BADGE_READERS = ["com.canonical.Unity", "org.kde.plasmashell"];
 /** The default runner: `Deno.Command`, stdout and stderr captured, killed after 8 s. */
 export const defaultDoctorRunner: DoctorRunner = async (cmd, args) => {
   try {
-    const out = await new Deno.Command(cmd, {
+    const { code, stdout, stderr } = await runToExitText(cmd, {
       args: [...args],
-      stdin: "null",
-      stdout: "piped",
-      stderr: "piped",
       signal: AbortSignal.timeout(8_000),
-    }).output();
-    const text = new TextDecoder();
-    return { code: out.code, stdout: text.decode(out.stdout), stderr: text.decode(out.stderr) };
+    });
+    return { code, stdout, stderr };
   } catch {
     return null;
   }

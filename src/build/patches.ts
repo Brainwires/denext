@@ -41,6 +41,7 @@ import {
   reverseFileDiff,
 } from "./patch-diff.ts";
 import { absolutizeSpecifiers, applyEdits, type Edit, parseModule } from "./swc-ast.ts";
+import { runToExit } from "./exited-output.ts";
 
 /** The project-relative directory patches live in. */
 const PATCHES_DIR = "patches";
@@ -158,11 +159,7 @@ async function packageVersion(dir: string): Promise<string> {
 let denoDirPromise: Promise<string> | undefined;
 function denoDir(): Promise<string> {
   return denoDirPromise ??= (async () => {
-    const out = await new Deno.Command(denoExecutable(), {
-      args: ["info", "--json"],
-      stdout: "piped",
-      stderr: "null",
-    }).output();
+    const out = await runToExit(denoExecutable(), { args: ["info", "--json"], stderr: "null" });
     return String(JSON.parse(new TextDecoder().decode(out.stdout)).denoDir);
   })();
 }
@@ -175,11 +172,10 @@ async function npmPristineDir(pkg: string, version: string): Promise<string> {
   const dir = join(await denoDir(), "npm", "registry.npmjs.org", ...pkg.split("/"), version);
   if (await exists(join(dir, "package.json"))) return dir;
   const spec = `npm:${pkg}@${version}`;
-  const res = await new Deno.Command(denoExecutable(), {
+  const res = await runToExit(denoExecutable(), {
     args: ["cache", "--node-modules-dir=none", ...minDepAgeArgs(), spec],
     stdout: "null",
-    stderr: "piped",
-  }).output();
+  });
   if (!res.success || !(await exists(join(dir, "package.json")))) {
     throw new Error(
       `denext patch: could not fetch a pristine ${spec} into Deno's cache:\n` +
