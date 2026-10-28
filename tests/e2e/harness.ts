@@ -14,6 +14,7 @@ import { serveEphemeral } from "../../src/build/prod-server.ts";
 import { startDevServer } from "../../src/build/dev-server.ts";
 import { startSpaDevServer } from "../../src/build/spa.ts";
 import { resolveProject } from "../../src/build/paths.ts";
+import { boundPort, listenedPort } from "../helpers/port.ts";
 
 // Signal-safe headless-Chromium launch lives in the framework (used by `denext
 // profile` too); the harness just re-exports it under its historical name.
@@ -504,6 +505,59 @@ export async function startCliServer(
       (stderr.text() ? `\nserver stderr:\n${stderr.text()}` : ""),
   );
   return { origin, close };
+}
+
+/** A CLI server a test started on `--port 0`, on the port it said it bound. */
+export interface PortZeroServer {
+  /** The port the server printed. */
+  port: number;
+  /** Whether the server process has exited. */
+  exited: () => boolean;
+  /** Kill the whole tree (the re-exec'd grandchild holds the port and the pipes). */
+  close: () => Promise<void>;
+}
+
+/**
+ * Spawn `deno <args>` in `cwd` (args ending in `--port 0`) and wait for the port it says it bound
+ * ({@linkcode boundPort}): no port is picked and released first, so no other server can take it
+ * meanwhile. The output's tail is kept for the failure message.
+ *
+ * @param args The `deno` arguments (a `denext dev` / `start` with `--port 0`).
+ * @param cwd Where to run it.
+ * @param timeoutMs How long the server may take to say its port.
+ */
+export async function spawnOnBoundPort(
+  args: string[],
+  cwd: string,
+  timeoutMs = 300_000,
+): Promise<PortZeroServer> {
+  const child = new Deno.Command(DENO, { args, cwd, stdout: "piped", stderr: "piped" }).spawn();
+  let tail = "";
+  let seen: number | undefined; // read before the tail is cut
+  const read = async (stream: ReadableStream<Uint8Array>) => {
+    const dec = new TextDecoder();
+    try {
+      for await (const c of stream) {
+        tail += dec.decode(c, { stream: true });
+        seen ??= listenedPort(tail);
+        tail = tail.slice(-4000);
+      }
+    } catch { /* cancelled on teardown */ }
+  };
+  void read(child.stdout);
+  void read(child.stderr);
+  let gone = false;
+  child.status.then(() => gone = true, () => gone = true);
+  const close = async () => {
+    await killTree(child.pid);
+    await child.status.catch(() => {});
+  };
+  const port = await boundPort(() => seen, () => gone, timeoutMs);
+  if (port === undefined) {
+    await close();
+    throw new Error(`the server never said which port it bound; its output ended with:\n${tail}`);
+  }
+  return { port, exited: () => gone, close };
 }
 
 /**

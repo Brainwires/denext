@@ -17,7 +17,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import type { Page } from "@astral/astral";
-import { launchBrowser, pollFor, runDeno, startCliServer } from "./harness.ts";
+import { launchBrowser, pollFor, runDeno, spawnOnBoundPort, startCliServer } from "./harness.ts";
 import { clerkTestKeys } from "./clerk-keys.ts";
 
 const EXAMPLE = fromFileUrl(new URL("../../examples/clerk", import.meta.url));
@@ -154,34 +154,14 @@ function callApi(page: Page, withToken = true): Promise<{ status: number; body: 
 
 /** `denext dev` for the example on a free port, once it answers. */
 async function startDev(): Promise<{ origin: string; close(): Promise<void> }> {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = (listener.addr as Deno.NetAddr).port;
-  listener.close();
-  const child = new Deno.Command(Deno.execPath(), {
-    args: [
-      "run",
-      "-A",
-      "--node-modules-dir=none",
-      CLI,
-      "dev",
-      ".",
-      "--host",
-      "127.0.0.1",
-      "--port",
-      String(port),
-    ],
-    cwd: EXAMPLE,
-    stdout: "null",
-    stderr: "null",
-  }).spawn();
-  const origin = `http://127.0.0.1:${port}`;
-  const close = async () => {
-    try {
-      child.kill("SIGTERM");
-    } catch { /* gone */ }
-    await child.status;
-  };
-  for (let i = 0; i < 180; i++) {
+  // `--port 0`, then the port the server says it bound: nothing picked for it can be taken.
+  const server = await spawnOnBoundPort(
+    ["run", "-A", "--node-modules-dir=none", CLI, "dev", ".", "--host", "127.0.0.1", "--port", "0"],
+    EXAMPLE,
+  );
+  const origin = `http://127.0.0.1:${server.port}`;
+  const close = server.close;
+  for (let i = 0; i < 180 && !server.exited(); i++) {
     try {
       const res = await fetch(origin + "/api/me");
       await res.body?.cancel();

@@ -23,9 +23,9 @@ import { fromFileUrl, join } from "@std/path";
 import {
   assertNoConsoleErrors,
   collectConsoleErrors,
-  killTree,
   launchBrowser,
   runDeno,
+  spawnOnBoundPort,
   startCliServer,
 } from "./harness.ts";
 
@@ -500,21 +500,14 @@ Deno.test({
 
 /** `denext dev` for the example on a free port, once it answers. */
 async function startDev(): Promise<{ origin: string; close(): Promise<void> }> {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = (listener.addr as Deno.NetAddr).port;
-  listener.close();
-  const child = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", CLI, "dev", ".", "--host", "127.0.0.1", "--port", String(port)],
-    cwd: EXAMPLE,
-    stdout: "null",
-    stderr: "null",
-  }).spawn();
-  const origin = `http://127.0.0.1:${port}`;
-  const close = async () => {
-    await killTree(child.pid);
-    await child.status.catch(() => {});
-  };
-  for (let i = 0; i < 240; i++) {
+  // `--port 0`, then the port the server says it bound: nothing picked for it can be taken.
+  const server = await spawnOnBoundPort(
+    ["run", "-A", CLI, "dev", ".", "--host", "127.0.0.1", "--port", "0"],
+    EXAMPLE,
+  );
+  const origin = `http://127.0.0.1:${server.port}`;
+  const close = server.close;
+  for (let i = 0; i < 240 && !server.exited(); i++) {
     try {
       const res = await fetch(origin + "/_tss/client.js");
       await res.body?.cancel();
