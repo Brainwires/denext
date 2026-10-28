@@ -112,6 +112,10 @@ and this project adheres to
   engine. Each now has a 30 s deadline, after which the `docker` process and its children are
   killed and the command stops naming Docker as unresponsive. The work you asked for (`up`,
   `logs --follow`, a backup or restore) is not bounded.
+- **`denext test --ignore=…` no longer runs the tests under `.deno/`.** A `--ignore` on the
+  command line replaces `deno.json`'s `exclude` instead of adding to it, so the `.deno/` entry a
+  scaffold writes stopped applying and `deno test` ran the `_test.ts` files of the packages the
+  type check copies there. `denext test` now adds `.deno/` to a `--ignore` that doesn't name it.
 
 ### Security
 

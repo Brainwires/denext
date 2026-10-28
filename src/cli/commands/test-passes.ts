@@ -70,6 +70,33 @@ export function splitTestArgs(args: readonly string[]): TestArgs {
 }
 
 /**
+ * What `deno test` must never walk although a command-line `--ignore` would let it: `.deno/`,
+ * where the toolchain's type-check leaves an `npm-compat` copy of the `@jsr/*` packages with their
+ * own `_test.ts` files. A scaffold's `deno.json` excludes it, but a `--ignore=…` on the command line
+ * REPLACES the config's `exclude` / `test.exclude` instead of adding to it.
+ */
+const TOOL_CACHE_IGNORES: readonly string[] = [".deno/"];
+
+/**
+ * `args` with {@linkcode TOOL_CACHE_IGNORES} added to each `--ignore=…` before `--` that does not
+ * already name them; arguments without one are returned as they are (the config's `exclude`
+ * applies then).
+ *
+ * @param args The forwarded `deno test` arguments.
+ * @returns The arguments to run.
+ */
+export function ignoringToolCaches(args: readonly string[]): string[] {
+  const end = args.indexOf("--");
+  return args.map((arg, i) => {
+    if ((end !== -1 && i >= end) || !arg.startsWith("--ignore=")) return arg;
+    const listed = arg.slice("--ignore=".length).split(",").filter(Boolean);
+    const named = new Set(listed.map((p) => p.replace(/^\.\//, "").replace(/\/+$/, "")));
+    const missing = TOOL_CACHE_IGNORES.filter((d) => !named.has(d.replace(/\/+$/, "")));
+    return missing.length === 0 ? arg : `--ignore=${[...listed, ...missing].join(",")}`;
+  });
+}
+
+/**
  * The directory `--coverage[=<dir>]` writes (`coverage` without a value), or undefined.
  *
  * @param args The forwarded `deno test` arguments.
@@ -117,7 +144,7 @@ export function planTestRun(
   onToolchain: boolean,
 ): TestPlan {
   const { flags, paths, tail } = splitTestArgs(args);
-  const single: TestPlan = { passes: [["test", "-A", ...args]], report: [] };
+  const single: TestPlan = { passes: [["test", "-A", ...ignoringToolCaches(args)]], report: [] };
   const help = flags.includes("--help") || flags.includes("-h");
   if (paths.length > 0 || vitestFiles.length === 0 || help) return single;
   const skipped = (why: string): TestPlan => ({
@@ -131,7 +158,7 @@ export function planTestRun(
   }
   const dir = coverageDir(flags);
   const combine = dir !== undefined && !flags.includes("--coverage-raw-data-only");
-  const passFlags = combine ? [...flags, "--coverage-raw-data-only"] : [...flags];
+  const passFlags = ignoringToolCaches(combine ? [...flags, "--coverage-raw-data-only"] : flags);
   return {
     passes: [
       ["test", "-A", ...passFlags, ...tail],
