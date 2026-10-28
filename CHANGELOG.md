@@ -29,6 +29,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A monorepo app a glob member names builds with its npm packages hoisted to the root.** In a
+  Deno workspace such as `{ "workspace": ["./apps/*"], "nodeModulesDir": "manual" }`, an app's
+  bare `import ms from "ms"` (a dependency in its package.json, installed in the root's
+  `node_modules`) failed the esbuild build with "not in import map": the config the loader builds
+  a glob member on now carries the app's and the root's package.json dependencies and the root's
+  `nodeModulesDir`, and npm packages resolve from the nearest `node_modules` when the app has
+  none of its own, as Deno resolves them.
 - **Windows signing with a password-protected `.pfx` works when started from PowerShell 7.**
   signtool signing imports the `.pfx` into the user's certificate store through Windows
   PowerShell, which, started from a PowerShell 7 session (a pwsh terminal, a CI runner's default

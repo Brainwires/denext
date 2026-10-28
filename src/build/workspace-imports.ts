@@ -285,6 +285,18 @@ export function workspaceImportsSync(appConfigPath: string): WorkspaceImports {
 }
 
 /**
+ * The root directory of the Deno workspace that lists the app at `appConfigPath` as a member (a
+ * glob member included), or `null`: outside a workspace, the root itself, or not a member.
+ *
+ * @param appConfigPath The app's `deno.json` / `deno.jsonc`.
+ */
+export function workspaceRootSync(appConfigPath: string): string | null {
+  const appDir = resolve(dirname(appConfigPath));
+  const ws = findWorkspace(appDir);
+  return ws && ws.root !== appDir ? ws.root : null;
+}
+
+/**
  * The other members of the Deno workspace `appDir` belongs to (absolute directories that
  * exist): the packages an app may import by name, which `denext dev` watches beside the app.
  * Empty outside a workspace.

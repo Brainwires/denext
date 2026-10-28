@@ -52,16 +52,6 @@ Low findings from the 4.8 supply-chain audit:
   - A sidecar whose `run.exec` is one of the project's files bakes an unscoped `--allow-run` (its
     copy's path in the cache folder is only known at launch). Scope it once the runtime can take
     a launch-time path.
-- **Monorepo leftover (Low): a glob-member app's npm packages through the esbuild loader.** The
-  stand-in config a glob member builds on (`.deno.denext-loader-<pid>.json`) loses the app's
-  package.json dependencies: `@luca/esbuild-deno-loader` reads them only beside a config named
-  `deno.json`, so a bare `import ms from "ms"` fails with "not in import map", and it looks for
-  npm packages only in `<absWorkingDir>/node_modules`, never the workspace root's hoisted one.
-  Carrying the root's `nodeModulesDir` is not enough. Map the app's (and the root's) package.json
-  dependencies into the stand-in's imports and let esbuild's own resolution walk up to the root
-  `node_modules`; the failing case is a root `deno.json` `{ "workspace": ["./apps/*"],
-  "nodeModulesDir": "manual" }`, `ms` in the root's `node_modules`, `apps/web/package.json`
-  depending on it.
 
 ## Mobile and React Native
 
