@@ -100,8 +100,10 @@ async function project(): Promise<string> {
 
 Deno.test({
   name: "the tools drive a real denext ui child: overview, preview, refused change, apply",
-  sanitizeResources: false,
-  sanitizeOps: false,
+  // On (Deno 2.8 turned both off by default): stopping the bridges leaves no child, pipe or
+  // exit wait behind.
+  sanitizeOps: true,
+  sanitizeResources: true,
 }, async () => {
   const dir = await project();
   const tools = uiTools(() => dir);
@@ -137,15 +139,15 @@ Deno.test({
     assert((await Deno.stat(join(dir, "app", "about", "page.tsx"))).isFile);
   } finally {
     const { stopUiBridges } = await import("../src/mcp/ui.ts");
-    stopUiBridges();
+    await stopUiBridges();
     await removeTempDir(dir);
   }
 });
 
 Deno.test({
   name: "the bridge holds the UI's gates: --read-only refuses a change; no session, no answer",
-  sanitizeResources: false,
-  sanitizeOps: false,
+  sanitizeOps: true,
+  sanitizeResources: true,
 }, async () => {
   const dir = await project();
   const bridge = new UiBridge(dir, { readOnly: true });
@@ -162,7 +164,8 @@ Deno.test({
     assertEquals(res.status, 401);
     await res.body?.cancel();
   } finally {
-    bridge.stop();
+    await bridge.stop();
+    await bridge.stop(); // idempotent
     await removeTempDir(dir);
   }
 });

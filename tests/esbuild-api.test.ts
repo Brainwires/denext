@@ -83,6 +83,25 @@ Deno.test("esbuild API: transform (a >1 MiB input goes through a temp file) and 
   }
 });
 
+Deno.test({
+  name: "esbuild API: stop() resolves once the child has exited (the sanitizers see nothing open)",
+  // On here (Deno 2.8 turned both off by default): a stop() that only signalled the child left
+  // the process and its exit wait open past the test.
+  sanitizeOps: true,
+  sanitizeResources: true,
+}, async () => {
+  try {
+    assertEquals(
+      (await esbuild.transform("let a: number = 1", { loader: "ts" })).code,
+      "let a = 1;\n",
+    );
+  } finally {
+    await esbuild.stop();
+  }
+  // A second stop() with no child running is a no-op.
+  await esbuild.stop();
+});
+
 Deno.test("esbuild API: initialize once, browser-only options refused, sync APIs absent", async () => {
   try {
     await assertRejects(

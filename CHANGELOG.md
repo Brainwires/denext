@@ -25,6 +25,15 @@ and this project adheres to
 
 ### Fixed
 
+- **esbuild's `stop()` resolves once its child has exited.** `stop()` from denext's esbuild API
+  (and `stopNextCompat()` / `withEsbuild()`, which call it) signalled the long-lived esbuild
+  process and returned at once, so a Deno test that awaited it still ended with the process and
+  its exit wait open, which the op and resource sanitizers report. It now waits for the exit.
+- **Stopping the `denext_ui_*` MCP tools' `denext ui` child waits for it to exit.** The bridge
+  behind those tools signalled the child and returned, leaving the process, its exit wait and its
+  output pipe open for a moment; a caller that removed the project directory next could race it
+  (Windows refuses to remove a directory a process still holds). Stopping it now resolves once
+  the child has exited and its pipe is closed.
 - **Windows signing with a password-protected `.pfx` works when started from PowerShell 7.**
   signtool signing imports the `.pfx` into the user's certificate store through Windows
   PowerShell, which, started from a PowerShell 7 session (a pwsh terminal, a CI runner's default
