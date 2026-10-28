@@ -79,8 +79,12 @@ on every streamed-hole reveal.
   what `captureOwnerStack()` (from `denext/react`, the `react` alias) returns while
   a component renders in development, formatted as React 19's
   `\n    at Name (file:line:column)` lines, each location being where that owner
-  wrote the JSX of the element below it; it returns `null` in production, outside a
-  client render (an event handler, an effect) and during a server render.
+  wrote the JSX of the element below it; it returns `null` in production and outside a
+  render (an event handler, an effect). Under `denext dev` it answers during a server
+  render too (a Server Component, an SSR pass, an `await` inside an async component
+  included): the owners are the Server Components above it, by the same rule. A server
+  module compiles JSX to `jsx`, so its frames carry the name only
+  (`\n    at Page`); a call site appears where the element came from `jsxDEV`.
 - **Effect annotations** — an effect/memo/callback/deferred cell shows its `deps`
   (`[] (once)` when empty) and a `cleanup ƒ` row when it currently holds one.
 
@@ -675,9 +679,10 @@ function and type is listed in the [API reference](/docs/api).
 
 ## Limitations
 
-- **The owner stack falls back to the render-parent chain** for an element made
-  with `h()` / `createElement` (framework-generated elements and library code
-  included), which records no owner.
+- **An element made with `h()` / `createElement` is owned by the component whose render
+  first returns it**, not the one that made it: one built outside any render (a
+  module-level constant) is owned by the first component that returns it, where React
+  gives it none, and its frame carries no JSX call site.
 - **Cross-module hook naming follows static relative imports only.** A hook
   imported by a bare, `npm:`/`jsr:`, URL specifier (or, in SPA mode, an import-map
   alias), through a namespace import, or through a barrel's `export *` still consumed an unknowable

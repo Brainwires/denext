@@ -25,11 +25,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   An async generator resumed by `throw()` / `return()` at a plain `yield` runs its `catch` /
   `finally` in the caller's context, not its own, and a module whose top-level evaluation throws
   leaves its context current.
-- **`captureOwnerStack()` returns `null` during a server render**, and an element made with
-  `h()` / `createElement` gets its owner when a render returns it (the component whose render
-  result first holds it), not when it is made: one built outside any render (a module-level
-  constant) is owned by the first component that returns it, where React gives it none, and its
-  frame carries no JSX call site.
+- **In `captureOwnerStack()`, an element made with `h()` / `createElement` gets its owner when
+  a render returns it** (the component whose render result first holds it), not when it is
+  made: one built outside any render (a module-level constant) is owned by the first component
+  that returns it, where React gives it none, and its frame carries no JSX call site. During a server render (under `denext dev`) a frame names the
+  component only, since server modules compile JSX to `jsx`, not `jsxDEV`.
 - **A native App Router or SPA build leaves out three runtimes the app's own sources never name**
   (on denext's Deno toolchain, whose `deno bundle` takes `--define`): the clearing of `next/image`
   blur placeholders in server-only trees (kept when a source names `blurDataURL` or a

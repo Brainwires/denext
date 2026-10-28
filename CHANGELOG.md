@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`captureOwnerStack()` during a server render.** Under `denext dev` a Server Component, or a
+  component an SSR pass renders, gets React's owner stack: the Server Components that own its
+  element, nearest first, as `\n    at Name` lines (with the JSX call site where `jsxDEV`
+  recorded it), across an `await` in an async component too. An element made with `h()` /
+  `createElement` is owned by the component whose render returned it, as on the client.
+  Production `start` installs nothing and still returns `null`.
+
 ## [4.9.0] - 2026-10-27
 
 ### Breaking
