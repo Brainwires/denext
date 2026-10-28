@@ -15,6 +15,11 @@ and this project adheres to
   `desktop.app.bridgeOrigins`) or, with passkeys enabled, an RP list (`rpIds` empty), or whose
   `scripts/package-*.ts` never write denext's launch file, is flagged with the fix
   (`desktop doctor`: the `launch-policy` check, a warning per gap).
+- **`denext desktop add passkeys --rp-id <domain>`.** The option writes the relying parties to
+  `desktop.capabilities.passkeys.rpIds`, where `add` used to leave an empty list that refuses
+  every passkey ceremony. It can be repeated, each ID must be a registrable domain (no scheme,
+  port, path or IP address; an internationalised name is written in its punycode form), and a
+  later run adds to the list it finds. The launch-policy fix in `doctor` names it.
 
 ### Changed
 
@@ -25,6 +30,23 @@ and this project adheres to
 
 ### Fixed
 
+- **Other `@denext` exemptions from the dependency-age hold are flagged.** `denext doctor` and
+  `denext upgrade` looked only for the `"jsr:@denext/*"` entry older scaffolds wrote in
+  `minimumDependencyAge.exclude`. Any other `@denext` entry there (`"jsr:@denext/denext"`, …)
+  lets a just-published release in before the hold has passed too; denext never writes one, so
+  both commands now name it and leave it for you to remove (`upgrade --json` lists it as
+  `denextExemptions`).
+- **A packages-only `jailScripts` object no longer counts as turning the jail on (runtime
+  `3.0.0-rc.6` and later).** From `3.0.0-rc.6` an object that lists only `packages` (or
+  `knownPackages`) configures the default jail without asking for it, but denext still read it as
+  on: next to `jail-scripts=false` in `.npmrc` it wrote exceptions, and `doctor` flagged missing
+  ones, for a jail that was off. denext now reads it as the installing runtime does; on older
+  runtimes any object still turns the jail on.
+- **`migrate --check` flags a `next.config` that reads an unset machine-path variable.** Only the
+  machine-path variables this machine set were masked during evaluation, so a config reading
+  `HOME` on Windows (or `USERPROFILE` elsewhere) got `undefined` and its rule was inlined without a
+  note. `HOME`, `USERPROFILE`, `TMPDIR`, `TEMP`, `TMP`, `APPDATA` and `LOCALAPPDATA` now read as
+  placeholders whether or not they are set, so the rule is left out and flagged for a hand port.
 - **Windows signing with a password-protected `.pfx` works when started from PowerShell 7.**
   signtool signing imports the `.pfx` into the user's certificate store through Windows
   PowerShell, which, started from a PowerShell 7 session (a pwsh terminal, a CI runner's default

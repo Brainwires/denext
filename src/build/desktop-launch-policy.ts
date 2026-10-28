@@ -91,7 +91,7 @@ export function desktopPasskeyRpIds(config: unknown): string[] | null {
 /** The fix for a passkeys capability that lists no relying party. */
 export const PASSKEY_RP_IDS_FIX =
   'list the relying parties in desktop.capabilities.passkeys = { rpIds: ["example.com"] } ' +
-  "(or set passkeys: false)";
+  "(`denext desktop add passkeys --rp-id example.com` writes it; or set passkeys: false)";
 
 /** One gap in the packaged launch policy, with its fix. */
 export interface LaunchPolicyProblem {

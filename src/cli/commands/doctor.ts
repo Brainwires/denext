@@ -40,7 +40,7 @@ import {
   stalePackageScripts,
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
-import { DENEXT_EXCLUDE } from "../../build/dep-age.ts";
+import { DENEXT_EXCLUDE, denextExemptions } from "../../build/dep-age.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
 import { DENO_TOOLCHAIN, denoToolchainStatus } from "../../build/deno-toolchain.ts";
 import {
@@ -337,21 +337,36 @@ export async function platformFilesCheck(
 }
 
 /**
- * The dependency-age exemption check: a `deno.json` that lists `"jsr:@denext/*"` in
- * `minimumDependencyAge.exclude` (what `create` / `migrate` wrote before 4.5.2) lets a
- * just-published `@denext/*` release in before Deno's hold has passed. Null without one.
+ * The dependency-age exemption check: a `deno.json` whose `minimumDependencyAge.exclude` lists a
+ * `@denext` entry lets a just-published `@denext` release in before Deno's hold has passed.
+ * `"jsr:@denext/*"` is what `create` / `migrate` wrote before 4.5.2 (`denext upgrade` removes
+ * it); any other (`"jsr:@denext/denext"`, …) denext never writes, so it is the user's to remove.
+ * Null without one.
  */
 export async function depAgeExemptionCheck(dir: string): Promise<Check | null> {
-  const age = (await readDenoJson(dir))?.minimumDependencyAge as { exclude?: unknown } | undefined;
-  const exclude = age && typeof age === "object" && Array.isArray(age.exclude) ? age.exclude : [];
-  if (!exclude.includes(DENEXT_EXCLUDE)) return null;
+  const entries = denextExemptions((await readDenoJson(dir))?.minimumDependencyAge);
+  if (!entries.length) return null;
+  const others = entries.filter((e) => e !== DENEXT_EXCLUDE);
+  const fixes = [
+    ...entries.includes(DENEXT_EXCLUDE)
+      ? [`\`denext upgrade\` removes "${DENEXT_EXCLUDE}" and pins versions old enough`]
+      : [],
+    ...others.length
+      ? [
+        `remove ${others.map((e) => `"${e}"`).join(", ")} from minimumDependencyAge.exclude ` +
+        "yourself (denext never writes it)",
+      ]
+      : [],
+  ];
   return {
     name: "dependency age",
     ok: false,
-    detail: `deno.json exempts "${DENEXT_EXCLUDE}" from Deno's minimum dependency age, so a ` +
-      "just-published @denext/* release resolves before the hold has passed; fix: " +
-      "`denext upgrade` removes the entry and pins versions old enough (keep it only if you " +
-      "publish denext yourself)",
+    detail:
+      `deno.json exempts ${
+        entries.map((e) => `"${e}"`).join(", ")
+      } from Deno's minimum dependency age, so a just-published @denext release resolves before ` +
+      `the hold has passed; fix: ${fixes.join("; ")} (keep an entry only if you publish denext ` +
+      "yourself)",
     critical: false,
   };
 }
@@ -414,7 +429,10 @@ export async function jailScriptsCheck(
   // The runtime the installs run on, not the pin, unless the caller names one.
   const runtime = options.version !== undefined ? null : await jailRuntime(options.runtime);
   const version = runtime ? runtime.version : options.version;
-  const project = await readJailProject(dir, options.env ? { env: options.env } : {});
+  const project = await readJailProject(dir, {
+    version,
+    ...options.env ? { env: options.env } : {},
+  });
   const explained = installLogAdvice(project, options, version, os);
   const required = (await requiredJailExceptions(project, undefined, version))
     .filter(grantsSomething);

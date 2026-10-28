@@ -18,6 +18,7 @@ import { memberDirs } from "../../build/workspace-imports.ts";
 import { assertInsideProject } from "../../build/project-confine.ts";
 import {
   DENEXT_EXCLUDE,
+  denextExemptions,
   type DepAgeRule,
   holdMessage,
   readProjectRule,
@@ -108,6 +109,11 @@ interface UpgradeOutcome {
   readonly lock: boolean | undefined;
   /** The configs whose `"jsr:@denext/*"` exclude entry was (or would be) removed. */
   readonly stripped: readonly string[];
+  /**
+   * The other `@denext` entries in a config's `minimumDependencyAge.exclude`, by config: denext
+   * never writes them, so they are flagged, not removed.
+   */
+  readonly exemptions: readonly { readonly path: string; readonly entries: readonly string[] }[];
   /** The clock the plan was made at (for the hold lines). */
   readonly now: Date;
   /** The editor settings that get (or would get) the TypeScript 7 language server, if any. */
@@ -214,6 +220,7 @@ function outcomeJson(
     written: o.written,
     files: files.changedFiles,
     ...(o.stripped.length ? { removedExclude: o.stripped } : {}),
+    ...(o.exemptions.length ? { denextExemptions: o.exemptions } : {}),
     ...(o.lock === undefined ? {} : { lockRefreshed: o.lock }),
     ...(o.editor ? { editorSettings: o.editor } : {}),
     ...(o.denoExclude ? { denoExclude: o.denoExclude } : {}),
@@ -233,6 +240,7 @@ function printOutcome(
   if (json) return void console.log(JSON.stringify(outcomeJson(o, files)));
   report(o.plan, o.path, o.check, o.written, o.now);
   reportExclude(o.dir, o.stripped, o.written);
+  reportExemptions(o.dir, o.exemptions);
   reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved, outside);
   reportEditor(o.dir, o.editor);
   reportProjectRepairs(o);
@@ -307,6 +315,11 @@ export async function runUpgrade(
   // picks only versions the hold lets in.
   const files = read.map((f) => ({ ...f, ...stripDenextExclude(f.text) }));
   const stripped = files.filter((f) => f.removed).map((f) => f.path);
+  const exemptions = files.flatMap((f) => {
+    const entries = denextExemptions(configObject(f.text)?.minimumDependencyAge)
+      .filter((e) => e !== DENEXT_EXCLUDE);
+    return entries.length ? [{ path: f.path, entries }] : [];
+  });
   const now = options.now ?? new Date();
   const rule = options.rule ?? await readProjectRule(dir, now, files[0].text);
   const plan = await planUpgrade(
@@ -320,7 +333,18 @@ export async function runUpgrade(
   const changedFiles = plan.ok ? await applyToFiles(read, files, plan.steps, written) : [];
   const repairs = await projectRepairs(dir, path, plan.ok, !check && ctx.flags["dry-run"] !== true);
   const lock = written && await hasLockfile(dir) ? await refreshLock(dir) : undefined;
-  const outcome = { dir, path, plan, check, written, lock, stripped, now, ...repairs };
+  const outcome = {
+    dir,
+    path,
+    plan,
+    check,
+    written,
+    lock,
+    stripped,
+    exemptions,
+    now,
+    ...repairs,
+  };
   printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved, outside });
   if (!plan.ok) return 1;
   return check && changed ? 1 : 0;
@@ -440,6 +464,29 @@ function reportExclude(dir: string, stripped: readonly string[], written: boolea
   );
 }
 
+/** A config's parsed object, or null when it doesn't parse. */
+function configObject(text: string): Record<string, unknown> | null {
+  try {
+    const doc = parseJsonc(text);
+    return doc !== null && typeof doc === "object" ? doc as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The other `@denext` exemptions from the hold: flagged, never removed (denext didn't write them). */
+function reportExemptions(dir: string, exemptions: UpgradeOutcome["exemptions"]): void {
+  for (const { path, entries } of exemptions) {
+    console.error(
+      `\ndenext upgrade: ${relative(dir, path) || path} exempts ${
+        entries.map((e) => `"${e}"`).join(", ")
+      } from minimumDependencyAge, so a just-published @denext release resolves before Deno's ` +
+        "dependency-age hold has passed. denext never writes such an entry; remove it unless you " +
+        "publish denext yourself: https://denext.dev/docs/toolchain#supply-chain-hold",
+    );
+  }
+}
+
 /** The workspace part of the human output: the member configs touched, and those not read. */
 function reportWorkspace(
   dir: string,
@@ -498,7 +545,8 @@ export const upgradeCommand: CommandSpec = {
     "--dry-run prints the plan; --check exits 1 when anything is out of date.\n" +
     "Only versions Deno's minimum dependency age already lets in are pinned (a newer one is\n" +
     "named, with when it becomes eligible; a pin still held moves down to one that resolves),\n" +
-    'and the "jsr:@denext/*" entry older projects carry in minimumDependencyAge.exclude is removed.\n' +
+    'and the "jsr:@denext/*" entry older projects carry in minimumDependencyAge.exclude is removed\n' +
+    '(any other @denext entry there, such as "jsr:@denext/denext", is flagged, never removed).\n' +
     'A missing ".deno/" entry is added to the top-level "exclude", and the lifecycle-script jail\n' +
     "exceptions the dependencies need (sharp, Prisma's engines, …) are written, as create does.\n" +
     'A .vscode/settings.json that turns the Deno LSP on and sets no "deno.unstable" gets\n' +

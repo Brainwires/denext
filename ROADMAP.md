@@ -13,17 +13,6 @@
 - **Deno's next minor:** rebase denext's patches onto it and cut the next `3.0.0-rc.N`. That release
   replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
 
-## Supply chain (lifecycle-script jail)
-
-Low findings from the 4.8 supply-chain audit:
-
-- **Other `@denext` exemptions from the dependency-age hold go unnoticed.** `doctor` and `upgrade`
-  look for the literal `"jsr:@denext/*"` denext once wrote; flag `"jsr:@denext/denext"` and other
-  `@denext` entries too (denext never writes them).
-- **From runtime `3.0.0-rc.6` a packages-only `jailScripts` object no longer asks for the jail.**
-  `readJailSetting` still counts it as on, so next to `jail-scripts=false`
-  denext writes exceptions and `doctor` flags missing ones for a jail that is off.
-
 ## Deno Desktop
 
 - **A Windows Hello passkey ceremony in the release checks:** the Windows test machine is a

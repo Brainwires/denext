@@ -564,7 +564,8 @@ that Deno may hold them.
 
 Projects made by `denext create` / `migrate` from 3.0 to 4.5.1 exempted `jsr:@denext/*` in
 `minimumDependencyAge.exclude`. `denext upgrade` removes that one entry (your other entries stay)
-and says why. **If you publish denext yourself** and want your own releases resolved the moment
+and says why. Any other `@denext` entry (`"jsr:@denext/denext"`, …) denext never writes, so
+`denext upgrade` and `denext doctor` flag it and leave it for you to remove. **If you publish denext yourself** and want your own releases resolved the moment
 they are out, add it back to the project's `deno.json`, knowing it lets any just-published
 `@denext/*` version in:
 
@@ -654,10 +655,9 @@ From runtime `3.0.0-rc.6`, puppeteer's and msw's exceptions read:
 or `executables`.)
 Up to `3.0.0-rc.5` an exceptions object counts as asking for the jail: on Windows an install then
 prints a one-line warning that the script's other programs are not confined. From `3.0.0-rc.6` an
-object that only lists `packages` configures the default jail and prints nothing. denext itself
-still reads such an object as turning the jail on (`readJailSetting`): it writes exceptions, and
-`denext doctor` flags missing ones, even next to `jail-scripts=false` in `.npmrc`, until that is
-fixed.
+object that only lists `packages` configures the default jail and prints nothing, and denext reads
+it the same way: next to `jail-scripts=false` in `.npmrc` it writes no exceptions and
+`denext doctor` flags none missing.
 
 **On Windows** the jail can't confine a script's other programs (`curl`, a compiler, a
 downloaded binary): the scrubbed environment, the scratch `HOME` and every `deno` the script

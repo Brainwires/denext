@@ -37,6 +37,7 @@ const REPO_ROOT = fromFileUrl(new URL("..", import.meta.url));
 /** A runtime that jails by default, and one that jails only on request. */
 const RC5 = "3.0.0-rc.5";
 const RC3 = "3.0.0-rc.3";
+const RC6 = "3.0.0-rc.6";
 /** No environment: a test never inherits the runner's `npm_config_*`. */
 const NO_ENV = () => undefined;
 
@@ -161,6 +162,7 @@ Deno.test("jail: settings merge as the runtime merges them, the stricter one win
   const obj = readJailSetting({
     denoJson: { supplyChain: { jailScripts: { packages: { sharp: { net: true } } } } },
     npmrc: "jail-scripts=false",
+    version: RC5,
   });
   assertEquals([obj.state, obj.packages], ["on", { sharp: { net: true } }]);
   assertEquals(readJailSetting({ denoJson: { supplyChain: { paranoid: true } } }).state, "on");
@@ -176,6 +178,57 @@ Deno.test("jail: settings merge as the runtime merges them, the stricter one win
   assertFalse(jailEffective({ state: "off", packages: {} }, RC5));
   assert(jailEffective({ state: "default", packages: {} }, RC5));
   assertFalse(jailEffective({ state: "default", packages: {} }, RC3));
+});
+
+Deno.test("jail: from runtime 3.0.0-rc.6 a packages-only jailScripts object doesn't ask for the jail", async () => {
+  const packagesOnly = { supplyChain: { jailScripts: { packages: { sharp: { net: true } } } } };
+  const off = readJailSetting({
+    denoJson: packagesOnly,
+    npmrc: "jail-scripts=false",
+    version: RC6,
+  });
+  assertEquals([off.state, off.source, off.packages], [
+    "off",
+    ".npmrc jail-scripts",
+    { sharp: { net: true } },
+  ]);
+  assertEquals(readJailSetting({ denoJson: packagesOnly, version: RC6 }).state, "default");
+  const known = { supplyChain: { jailScripts: { knownPackages: { a: ["a.example"] } } } };
+  assertEquals(readJailSetting({ denoJson: known, version: RC6 }).state, "default");
+  // `net`, or an object with neither list, still asks for it
+  for (const jailScripts of [{ net: false, packages: {} }, { upstreamByName: true }, {}]) {
+    const on = readJailSetting({
+      denoJson: { supplyChain: { jailScripts } },
+      npmrc: "jail-scripts=false",
+      version: RC6,
+    });
+    assertEquals([on.state, on.source], ["on", "deno.json supplyChain.jailScripts"]);
+  }
+  // stock Deno (no jail) keeps the old reading; jailEffective is false there anyway
+  assertEquals(readJailSetting({ denoJson: packagesOnly, version: null }).state, "on");
+  // next to `jail-scripts=false`, nothing is written and doctor flags nothing missing
+  const config = JSON.stringify({ supplyChain: { jailScripts: { packages: {} } } });
+  const dir = await project({
+    "deno.json": config,
+    ".npmrc": "jail-scripts=false\n",
+    "package.json": { dependencies: { re2: "1" } },
+  });
+  try {
+    const r = await applyJailExceptions(dir, { version: RC6, env: NO_ENV });
+    assertEquals([r.action, r.effective], ["off", false]);
+    assertEquals(await Deno.readTextFile(join(dir, "deno.json")), config);
+    const { jailScriptsCheck } = await import("../src/cli/commands/doctor.ts");
+    const check = await jailScriptsCheck(dir, { version: RC6, env: NO_ENV, os: "linux" });
+    assertEquals([check?.ok, check?.detail], [
+      true,
+      "off (.npmrc jail-scripts); re2 runs unconfined",
+    ]);
+    // on rc.5 the same object still turns the jail on
+    const rc5 = await jailScriptsCheck(dir, { version: RC5, env: NO_ENV, os: "linux" });
+    assertEquals(rc5?.ok, false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("jail: npm package names from specifiers", () => {
