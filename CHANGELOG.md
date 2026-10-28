@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **DevTools name a package's custom hooks.** In the default dev loop of an app that imports npm
+  packages, the dependency bundle records each package ES module's `use*` hooks and re-exports,
+  so `const q = useQuery(…)` from `@tanstack/react-query` breadcrumbs into the package's own
+  cells (`useQuery › …`) like a hook of the app's, through the package's barrels. CommonJS and
+  minified package modules stay labelled by the call.
 - **`captureOwnerStack()` during a server render.** Under `denext dev` a Server Component, or a
   component an SSR pass renders, gets React's owner stack: the Server Components that own its
   element, nearest first, as `\n    at Name` lines (with the JSX call site where `jsxDEV`

@@ -154,13 +154,14 @@ chosen:
 | a custom hook imported by a relative path          | the same breadcrumb, read from the module that declares the hook          |
 | a composite (`useTransition`, `useActionState`, …) | its first cell is named; its internal extra cells carry the hook alone    |
 | a hook in a branch or after an early `return`      | named whether or not it ran this render                                   |
-| a package's custom hook (`useQuery` from npm)      | `q · useQuery` on its first cell, `useQuery` on the rest it took          |
+| a package's custom hook (`useQuery` from npm)      | the same breadcrumb, read from the package's own module (see below)       |
 
 The join is checked: a table of how many cells each hook consumes (and with which
 kind tags) is aligned against the component's live cells. A call the metadata pass
 saw in a branch (`if`, `?:`, `&&` / `||` / `??`, `switch`, a loop) or after an early
 `return` may have taken its cells or none. A custom hook whose own calls are not
-known — a package's, one whose module registered no metadata, or one nested more
+known — one whose module registered no metadata (a package the dev loop could not
+instrument, below), or one nested more
 than three custom hooks deep — took however many cells the calls around it leave.
 Every alignment that uses up exactly the live cells is found, and a cell is named
 only when they all agree on it: two unknown hooks in a row leave the cells they
@@ -189,10 +190,19 @@ In the default dev loop an import-map alias (`@/lib/auth`) resolves exactly as t
 resolves the import, a namespace import's member call (`import * as auth`, then
 `auth.useAuth()`) looks in the namespace's module, and a barrel sends the lookup on to the
 declaring module whether it re-exports the hook by name (`export { useAuth } from "./auth"`) or
-with `export * from "./auth"` — up to three barrels deep. A hook imported by a bare specifier (a
-package, `npm:`, `jsr:`), a URL, or an import-map alias in SPA mode is not expanded: it is the
-unknown hook above, labelled by its call. So is an importee that has not registered yet — one
-behind a dynamic `import()` — never a wrong name.
+with `export * from "./auth"` — up to three barrels deep.
+
+A package's custom hook (`import { useQuery } from "@tanstack/react-query"`) is expanded too,
+in the default dev loop of an app that imports npm packages (a migrated Next.js app, a SPA on npm
+React): the dependency bundle the loop builds appends the same metadata to each of the package's
+ES modules that declares or re-exports a `use*` hook, and records which module the specifier
+resolves to, so the call is looked up as `npm:@tanstack/react-query`, then through the package's
+own barrels (three more). A package module that is CommonJS, minified (its hooks lost their
+names), larger than 512 KB or unparsable is loaded as written, and its hooks stay unknown. A hook
+imported by `npm:` with a version, `jsr:`, a URL, an import-map alias in SPA mode, in React
+Native mode or on the bundled dev path is not expanded either: it is the unknown hook above,
+labelled by its call. So is an importee that has not registered yet — one behind a dynamic
+`import()` — never a wrong name.
 
 #### Debug values
 
@@ -683,10 +693,10 @@ function and type is listed in the [API reference](/docs/api).
   first returns it**, not the one that made it: one built outside any render (a
   module-level constant) is owned by the first component that returns it, where React
   gives it none, and its frame carries no JSX call site.
-- **Cross-module hook naming follows static relative imports only.** A hook
-  imported by a bare, `npm:`/`jsr:`, URL specifier (or, in SPA mode, an import-map
-  alias), through a namespace import, or through a barrel's `export *` still consumed an unknowable
-  number of cells, so the component falls back to kind labels. A `.js`-style
+- **Cross-module hook naming follows static imports the dev loop can see.** A hook imported
+  by a versioned `npm:`, a `jsr:` or a URL specifier (or, in SPA mode, an import-map alias), and
+  a package's hook in React Native mode, on the bundled dev path or from a CommonJS or minified
+  package module, still consumed an unknowable number of cells, so it is labelled by its call. A `.js`-style
   specifier also finds its TypeScript sibling (`./auth.js` naming `auth.ts`).
   Expansion is capped at three levels, across modules
   or within one.

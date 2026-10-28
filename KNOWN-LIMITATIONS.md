@@ -324,9 +324,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
   `allowedDevOrigins`; no wildcards), the CVE-2025-48068 defence.
-- **DevTools can't expand a package's custom hook** (one imported by a bare / `npm:` / `jsr:` /
-  URL specifier): its cells are labelled with the call, and cells two such hooks in a row could
-  share stay unnamed. The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
+- **DevTools can't expand every package's custom hook:** a package module that is CommonJS or
+  minified (its hooks lost their names), a hook imported by a versioned `npm:`, `jsr:` or URL
+  specifier, and any package hook in React Native mode or on the bundled dev path keep their
+  cells labelled with the call, and cells two such hooks in a row could share stay unnamed. The
+  bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
   need the App Router dev server. React DevTools' hooks view and Profiler read React internals,
   so they don't work; use denext's panel.
 - **`createTestApp` sets plugins up in `dev` mode**: their build steps run and what they emit is
