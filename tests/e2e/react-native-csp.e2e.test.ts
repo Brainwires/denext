@@ -101,8 +101,6 @@ const adoptedRules = (page: Page) =>
 
 Deno.test({
   name: "e2e: a React Native mode app under the strict CSP — styled, no 'unsafe-inline'",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   if (!dir) return;

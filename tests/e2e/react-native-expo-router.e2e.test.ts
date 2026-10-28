@@ -98,8 +98,6 @@ function collectErrors(page: Page): string[] {
 
 Deno.test({
   name: "e2e: expo-router's Stack / Tabs render denext/navigation's StackView / TabsView",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   if (!dir) return;

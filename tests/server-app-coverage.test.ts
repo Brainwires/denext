@@ -10,10 +10,10 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import {
   applyDefaultSecurityHeaders,
-  createApp,
   hstsHeaderValue,
   routeUsesBoundary,
 } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { AppConfig } from "../src/server/app.ts";
 import type { PageRoute, RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";

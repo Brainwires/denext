@@ -77,8 +77,6 @@ async function stepPprNoStore(ctx: Ctx): Promise<void> {
 
 Deno.test({
   name: "examples/cache-components: cached shell + per-request dynamic hole (PPR)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;

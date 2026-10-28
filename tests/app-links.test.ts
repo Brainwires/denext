@@ -13,7 +13,7 @@ import {
 } from "../src/server/app-links.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { AppLinksConfig } from "../src/server/config.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 
 const FP =

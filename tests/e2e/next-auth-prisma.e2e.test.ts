@@ -149,8 +149,6 @@ async function runApp(appDir: string): Promise<Record<string, unknown>> {
 
 Deno.test({
   name: "e2e: an Auth.js v5 app on @auth/prisma-adapter with database sessions runs unchanged",
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: async () => {
     const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_nextauth_prisma_" }));
     try {

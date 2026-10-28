@@ -109,8 +109,6 @@ for (const compat of [false, true]) {
   Deno.test({
     name: `SPA build (${compat ? "compat esbuild" : "native"}): momentumSafeScroll: false holds ` +
       "against a top-level createRoot in main.tsx",
-    sanitizeOps: false,
-    sanitizeResources: false,
   }, async () => {
     assertEquals(await buildAndRun(false, compat), "installed:false");
     // Control: the same app with the default installs, so the probe can see an install.

@@ -16,8 +16,6 @@ import { buildInChild } from "./helpers/bounded-build.ts";
 
 Deno.test({
   name: "next-compat: Server Action forms on a page with no client module work without JavaScript",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_ncform_" }));
   try {

@@ -336,6 +336,7 @@ Deno.test("desktop handler: onRequest intercepts before serving; a null result f
       new URL("http://127.0.0.1/_denext/client/index.js"),
     );
     assertEquals(asset.status, 200);
+    await asset.body?.cancel(); // a file body
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -687,8 +688,6 @@ Deno.test("resolveOutDir: relative to importMetaUrl when given, else cwd", () =>
 
 Deno.test({
   name: "desktop handler (release path): a gzip API response from the backend is relayed decodable",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   // The T3 Code 3.0.0 black screen: the backend gzipped `/api/orchestration/shell`, `fetch`
   // decoded it, and the proxy relayed the plain bytes still labelled `Content-Encoding: gzip`

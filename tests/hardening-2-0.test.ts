@@ -13,7 +13,7 @@ import { actionIdFor, describeActionId } from "../src/runtime/server-action.ts";
 import { denoReleaseVersion, denoVersionOk, MIN_DENO_VERSION } from "../src/build/deno-version.ts";
 import { envAll, envGet } from "../src/runtime/env-safe.ts";
 import { devErrorPage } from "../src/build/dev-server/error-page.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { Suspense } from "../src/runtime/suspense.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";

@@ -61,8 +61,6 @@ async function ogImageRendersPng(origin: string) {
 
 Deno.test({
   name: "examples/image: optimizer, width allowlist, srcSet, and OG image",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;

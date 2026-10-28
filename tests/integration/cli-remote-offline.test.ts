@@ -52,8 +52,6 @@ Deno.test({
     enabled ? "" : " (skipped: set DENEXT_TEST_REMOTE_CLI=1)"
   }`,
   ignore: !enabled,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const tmp = await Deno.makeTempDir({ prefix: "denext_remote_cli_" });
     const { server, origin } = serveCheckout();

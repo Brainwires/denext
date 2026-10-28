@@ -107,8 +107,6 @@ const text = (page: Page, id: string) =>
 
 Deno.test({
   name: "e2e: React Native mode on the App Router — SSR with react-native-web's sheet, hydration",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   if (!dir) return;

@@ -35,6 +35,7 @@ import { encoder, lineIndex, parseModule, positionAt } from "../src/build/swc-as
 import { registerFamily } from "../src/client/refresh-runtime.ts";
 import { createUnbundledState } from "../src/build/dev-unbundled/state.ts";
 import { transform } from "../src/build/dev-unbundled/transform.ts";
+import { stop as stopEsbuild } from "../src/build/esbuild/mod.ts";
 import {
   clearComponentMeta,
   componentMetaById,
@@ -580,6 +581,7 @@ Deno.test("unbundled transform: an import's `from` is exactly the importee's fam
     assertEquals(hooksOut.selfAccepting, false);
     assert(!st.accepting.has(hooks));
   } finally {
+    await stopEsbuild(); // the transform's long-lived esbuild service
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -778,6 +780,7 @@ Deno.test("unbundled transform: a hook imported through an import-map alias reco
     const compOut = await transform(st, comp);
     assertEquals(recordedFroms(compOut.code), [toFileUrl(hooks).href]);
   } finally {
+    await stopEsbuild(); // the transform's long-lived esbuild service
     await Deno.remove(dir, { recursive: true });
   }
 });

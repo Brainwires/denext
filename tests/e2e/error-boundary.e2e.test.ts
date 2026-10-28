@@ -15,8 +15,6 @@ const FIXTURE = fromFileUrl(new URL("./fixtures/error-boundary", import.meta.url
 
 Deno.test({
   name: "e2e: error.tsx catches a render throw in place (+reset); notFound serves the 404 UI",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

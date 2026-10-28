@@ -19,8 +19,6 @@ const EXAMPLE = fromFileUrl(new URL("../../examples/actions", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/actions shows an optimistic row + pending button, then reconciles",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   const browser = await launchBrowser();

@@ -29,7 +29,7 @@ import type { DevState } from "../src/build/dev-server/state.ts";
 import { transformImageBytes } from "../src/server/image-optimizer.ts";
 import { swcParse } from "../src/build/swc-ast.ts";
 import { tagClientModules } from "../src/runtime/client-reference.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { serveWithPortFallback } from "../src/server/serve-utils.ts";
 import { clearJobs, defineJob, registerJob, scheduleJobs } from "../src/server/jobs.ts";

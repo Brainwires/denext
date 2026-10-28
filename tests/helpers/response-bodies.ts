@@ -24,7 +24,9 @@ export function responseBodies(): ResponseBodies {
     async release() {
       await Promise.all(
         handed.splice(0).map((r) =>
-          r.bodyUsed || !r.body || r.body.locked ? undefined : r.body.cancel().catch(() => {})
+          !(r instanceof Response) || r.bodyUsed || !r.body || r.body.locked
+            ? undefined
+            : r.body.cancel().catch(() => {})
         ),
       );
     },

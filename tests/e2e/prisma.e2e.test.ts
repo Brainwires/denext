@@ -23,8 +23,6 @@ const READY_TIMEOUT_MS = 60_000;
 
 Deno.test({
   name: "e2e: examples/prisma runs Prisma ORM over the better-sqlite3 compat",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   // Start from a fresh database so the seeded rows are deterministic.
   try {

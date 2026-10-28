@@ -113,8 +113,6 @@ async function editAndWait(
 
 Deno.test({
   name: "e2e: React Native mode Fast Refresh — a component edit keeps state, no reload",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup("rn-hmr");
   if (!dir) return;
@@ -210,8 +208,6 @@ const shown = (id: string) =>
 
 Deno.test({
   name: "e2e: React Native mode Fast Refresh — an expo-router route edit keeps the stack",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   // --legacy-peer-deps: expo-router peers on expo, react-native and native modules that React
   // Native mode never loads.

@@ -7,7 +7,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { handleApi } from "../src/server/api.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { NextResponse } from "../src/compat/next/server.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { ApiMatch } from "../src/router/match.ts";

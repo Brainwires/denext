@@ -78,8 +78,6 @@ for (const compat of [false, true]) {
   for (const mode of ["export", "build"] as const) {
     Deno.test({
       name: `SPA ${mode} (${path} path): plugins are set up and their prepare steps run first`,
-      sanitizeResources: false,
-      sanitizeOps: false,
     }, async () => {
       resetPlugins();
       const dir = await spaProject(compat);

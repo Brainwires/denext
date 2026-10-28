@@ -8,7 +8,7 @@ import { parseFlight } from "../src/client/flight-client.ts";
 import { createRoot, setDocument } from "../src/client/reconciler.ts";
 import { useId } from "../src/runtime/hooks/use-id.ts";
 import { makeDom } from "./helpers/dom.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { clientIdFor } from "../src/build/module-graph.ts";
 import { toFileUrl } from "@std/path";

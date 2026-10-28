@@ -20,8 +20,6 @@ const text = (id: string) => `((${q(id)} || {}).textContent || '')`;
 
 Deno.test({
   name: "e2e: a root-less islands page keeps island state across action refreshes",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

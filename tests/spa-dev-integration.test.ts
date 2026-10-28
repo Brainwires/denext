@@ -144,8 +144,6 @@ async function stepDevJson({ origin, dir }: Ctx): Promise<void> {
 
 Deno.test({
   name: "SPA dev server serves the shell + unbundled client entry",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await copySpa();
   const server = await startSpaDevOnDir(dir, { DENEXT_DEV_TYPECHECK: "0" });

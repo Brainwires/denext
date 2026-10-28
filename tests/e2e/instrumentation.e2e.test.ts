@@ -15,8 +15,6 @@ const EXAMPLE = fromFileUrl(new URL("../../examples/instrumentation", import.met
 
 Deno.test({
   name: "e2e: examples/instrumentation wires register() + onRequestError",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   try {

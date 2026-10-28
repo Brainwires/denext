@@ -31,8 +31,6 @@ Deno.test("google fonts: the virtual module layers per-family loaders over the r
 Deno.test({
   name:
     "google fonts: an app import of an uncurated family bundles (the plugin claims only app imports)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   // Stand-in for the runtime alias plugin: the virtual module's own `next/font/google`
   // imports must reach it, the app's must not.

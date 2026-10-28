@@ -13,8 +13,6 @@ const EXAMPLE = fromFileUrl(new URL("../../examples/streaming", import.meta.url)
 
 Deno.test({
   name: "e2e: examples/streaming renders async Server Components and streams a shell",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   const browser = await launchBrowser();

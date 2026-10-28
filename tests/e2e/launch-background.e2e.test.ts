@@ -116,8 +116,6 @@ async function firstFrame(
 
 Deno.test({
   name: "launch background: the export's first painted frame is the app config's colour",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const engines = ENGINES.filter(installed);
     if (engines.length < ENGINES.length && Deno.env.get("CI")) {

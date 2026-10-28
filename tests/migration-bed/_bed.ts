@@ -165,7 +165,9 @@ async function run(
   const status = await child.status;
   clearTimeout(timer);
   // An orphaned grandchild can hold the pipes open after the kill — do not wait on it forever.
-  await Promise.race([drained, new Promise((r) => setTimeout(r, 3000))]);
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([drained, new Promise((r) => grace = setTimeout(r, 3000))]);
+  clearTimeout(grace);
   const total = chunks.reduce((n, c) => n + c.length, 0);
   const bytes = new Uint8Array(total);
   let offset = 0;

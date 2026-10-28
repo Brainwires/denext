@@ -7,7 +7,7 @@ import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import type { DenextPlugin } from "../src/plugin/mod.ts";
 import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plugin/mod.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { denextAuth } from "../src/server/auth/mod.ts";
 import { credentials } from "../src/server/auth/providers.ts";

@@ -11,7 +11,7 @@ import {
   resetPlugins,
   runPluginTeardown,
 } from "../src/plugin/mod.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { backend, fs } from "../packages/backend/mod.ts";
 import type { StorageOptions } from "../packages/backend/mod.ts";

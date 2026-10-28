@@ -44,7 +44,6 @@ Deno.test("toolchainRuntimeFlags: the toolchain child opts in to Deno.serve's ne
 
 Deno.test({
   name: "the server loop under the toolchain's flags: no legacy-abort warning, same request signal",
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "dnx-legacy-abort-" });
   try {

@@ -169,14 +169,10 @@ async function checkLustreApp(t: Deno.TestContext, dir: string): Promise<void> {
 
 Deno.test({
   name: "e2e: examples/lustre runs a Lustre island, custom element and server component",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, (t) => checkLustreApp(t, EXAMPLE));
 
 Deno.test({
   name: "e2e: examples/lustre under compatibilityMode: true (the Next drop-in path)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await exampleCopy(async (dir) => {
     const config = join(dir, "denext.config.ts");
@@ -197,8 +193,6 @@ Deno.test({
 
 Deno.test({
   name: `e2e: examples/lustre on Lustre's main (${LUSTRE_MAIN_COMMIT.slice(0, 8)})`,
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await exampleCopy(async (dir) => {
     const toml = join(dir, "gleam", "gleam.toml");

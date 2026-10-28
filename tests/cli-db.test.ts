@@ -411,8 +411,6 @@ Deno.test("cli.ts: denext migration / db dispatch, unknown actions", async () =>
 
 Deno.test({
   name: "denext gen: types through the backend's hooks, keys and bearer-jwt through its verb",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const { GEN_ACTIONS } = await import("../src/cli/commands/gen.ts");
   const { applyPlugins, resetPlugins, runPluginTeardown } = await import("../src/plugin/mod.ts");

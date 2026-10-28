@@ -101,8 +101,6 @@ function collectErrors(page: Page): string[] {
 
 Deno.test({
   name: "e2e: React Native mode's core additions run over the real react-native-web",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   if (!dir) return;

@@ -87,8 +87,6 @@ async function stepHardeningHeaders(ctx: Ctx): Promise<void> {
 
 Deno.test({
   name: "prod server serves a precompressed .gz client asset on gzip negotiation",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   await copyAppSource();
 

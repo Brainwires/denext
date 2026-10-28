@@ -12,7 +12,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { ApiRoute, PageRoute, RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { __useCache, inMemoryCacheStore, PageCache, setCacheStore } from "../src/server/cache.ts";

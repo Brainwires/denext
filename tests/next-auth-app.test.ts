@@ -128,8 +128,6 @@ async function runApp(appDir: string): Promise<Record<string, unknown>> {
 
 Deno.test({
   name: "next-auth app: a Next.js app on Auth.js v5 runs unchanged on denext",
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext-next-auth-app-" });
     try {

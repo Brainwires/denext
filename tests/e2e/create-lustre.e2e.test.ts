@@ -35,8 +35,6 @@ async function pointAtThisCheckout(dir: string): Promise<void> {
 
 Deno.test({
   name: "e2e: denext create --template lustre scaffolds an app that builds and serves",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-create-lustre-" }));
   try {

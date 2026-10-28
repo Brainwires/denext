@@ -12,7 +12,8 @@ import {
   unstable_cache,
 } from "../src/server/cache.ts";
 import { cookies } from "../src/server/request-context.ts";
-import { createApp, type RequestLogInfo } from "../src/server/app.ts";
+import type { RequestLogInfo } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import type { PageProps } from "../src/server/types.ts";

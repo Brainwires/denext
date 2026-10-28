@@ -17,7 +17,7 @@ import {
   fsUrlPath,
   loaderFor,
 } from "../src/build/dev-unbundled/state.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { foldPrereleases, isStable, withLinkRef } from "../scripts/release.ts";
 import { VERSION } from "../mod.ts";

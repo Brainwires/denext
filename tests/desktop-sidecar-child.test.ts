@@ -409,8 +409,6 @@ const FIXTURE = new URL("./fixtures/sidecar-child/", import.meta.url);
 
 Deno.test({
   name: "worker sidecar: spawnSelf starts a child of the app that runs the module headless",
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: async () => {
     const entry = new URL("desktop.ts", FIXTURE).href;
     const definition: SidecarDefinition = {

@@ -5,6 +5,10 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
 import { fromFileUrl } from "@std/path";
 import { buildInChild } from "../helpers/bounded-build.ts";
+import { releaseFetchBodies } from "../helpers/unread-bodies.ts";
+
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
 
 const APP = fromFileUrl(new URL("../../examples/typed-api", import.meta.url));
 
@@ -176,8 +180,6 @@ async function stepOpenApi(ctx: Ctx): Promise<void> {
 
 Deno.test({
   name: "examples/typed-api: typed routes, batch, live refs, openapi",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   await buildInChild(APP);
   const ac = new AbortController();

@@ -98,8 +98,6 @@ Deno.test("the guard is skipped on the old runner's Postgres path and for other 
 
 Deno.test({
   name: "an old generated jobs/migrate.ts refuses down scripts; generate migration replaces it",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "dnx-legacy-migrate-" });
   const db = join(dir, "app.db");

@@ -438,8 +438,6 @@ Deno.test("expo-sqlite: the manifest's omitted exports are absent; the sync API 
 
 Deno.test({
   name: "sqlite web: the real @sqlite.org/sqlite-wasm in a worker (in memory without OPFS)",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const saved = g.Capacitor;
     delete g.Capacitor;

@@ -4,7 +4,7 @@
 // REST were all cut at the app's 30 s default (an Edge Function's 150 s was unreachable).
 
 import { assertEquals } from "@std/assert";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { holdRequestDeadline, setRequestTimeout } from "../src/server/request-context.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { deadlineHandler, surfaceDeadlines } from "../packages/backend/src/timeouts.ts";
@@ -19,7 +19,18 @@ const EMPTY: RouteManifest = {
   rootNotFound: null,
   rootGlobalError: null,
 };
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+// The handlers' own work: a 503'd request's handler is not stopped (it ignores the signal), so
+// what it still had to sleep is dropped when the test ends rather than left running past it.
+const sleeping = new Set<ReturnType<typeof setTimeout>>();
+const sleep = (ms: number) =>
+  new Promise((r) => {
+    const t = setTimeout(() => (sleeping.delete(t), r(undefined)), ms);
+    sleeping.add(t);
+  });
+Deno.test.afterEach(() => {
+  for (const t of sleeping) clearTimeout(t);
+  sleeping.clear();
+});
 
 /** An app whose only handler sets `deadline` (when given), then answers after `work` ms. */
 function app(requestTimeout: number, deadline: number | undefined, work: number) {

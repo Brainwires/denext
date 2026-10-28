@@ -12,8 +12,6 @@ const EXAMPLE = fromFileUrl(new URL("../../examples/image", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/image loads an optimized WebP via /_denext/image",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   const browser = await launchBrowser();

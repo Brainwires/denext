@@ -17,8 +17,6 @@ const EXAMPLE = fromFileUrl(new URL("../../examples/live", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/live syncs count, presence, channel and subscription across tabs",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   const browser = await launchBrowser();

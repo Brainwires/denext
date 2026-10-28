@@ -177,8 +177,6 @@ async function notesScenario(engine: Engine, browser: Browser, origin: string): 
 
 Deno.test({
   name: "e2e: spa.shell takes typing before the app starts and hands it over (Chromium, WebKit)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const engines = ENGINES.filter(installed);
   if (engines.length < ENGINES.length) {

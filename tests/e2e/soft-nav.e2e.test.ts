@@ -19,8 +19,6 @@ const clickLink = (href: string) =>
 
 Deno.test({
   name: "e2e: soft navigation preserves layout state, buffers an async segment, restores on back",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

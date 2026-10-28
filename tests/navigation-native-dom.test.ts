@@ -564,6 +564,7 @@ Deno.test("StackLayout in a tab: registers so a re-tap pops to its root", async 
     assertEquals(hist.log.at(-1), "go -1", "popToTop goes back through history");
     root.unmount();
     assertEquals(scope.handles.size, 0, "unregistered on unmount");
+    await settle(); // the history's popstate for that `go` lands inside the test
   });
 });
 

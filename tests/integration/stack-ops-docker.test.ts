@@ -166,8 +166,6 @@ function ctx(dir: string, positionals: string[], flags: Record<string, string | 
 Deno.test({
   name: "stack ops on a real Postgres: passwd, health, full backup (Postgres + MinIO) and restore",
   ignore: !(await dockerReady()),
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext-stackops-it-" });
     try {
