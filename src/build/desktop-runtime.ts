@@ -35,13 +35,13 @@ import {
   cacheDirChain,
   DownloadIdleError,
   downloadProgress,
-  downloadTimeoutMs,
   fetchWithConnectDeadline,
-  IDLE_TIMEOUT_MS,
   readJsonFile,
+  responseBody,
   sha256File,
   streamHashed,
   sweepLeftovers,
+  withDownloadRetries,
 } from "./verified-download.ts";
 import { readJson } from "./json-edit.ts";
 import { runToExit } from "./exited-output.ts";
@@ -285,23 +285,24 @@ const errText = (err: unknown) => err instanceof Error ? err.message : String(er
 async function openDownload(
   artifact: DesktopRuntimeArtifact,
   fetchImpl: typeof fetch,
+  connectMs: number,
 ): Promise<ReadableStream<Uint8Array>> {
   let res: Response;
   try {
     // No response headers within the connect deadline: given up on, never a hung build.
-    res = await fetchWithConnectDeadline(fetchImpl, artifact.url);
+    res = await fetchWithConnectDeadline(fetchImpl, artifact.url, undefined, connectMs);
   } catch (err) {
     throw new DesktopRuntimeDownloadError(
       `denext: could not download the Deno Desktop runtime (${artifact.file}) from ` +
         `${artifact.url}: ${errText(err)}.\n  Are you offline?${DOWNLOAD_HINT}`,
+      { cause: err },
     );
   }
-  if (res.ok && res.body) return res.body;
-  await res.body?.cancel();
-  throw new DesktopRuntimeDownloadError(
-    `denext: downloading the Deno Desktop runtime failed: GET ${artifact.url} → ` +
-      `${res.status} ${res.statusText}${DOWNLOAD_HINT}`,
-  );
+  return await responseBody(res, artifact.url, (status) =>
+    new DesktopRuntimeDownloadError(
+      `denext: downloading the Deno Desktop runtime failed: ${status.message}${DOWNLOAD_HINT}`,
+      { cause: status },
+    ));
 }
 
 /**
@@ -313,6 +314,7 @@ function streamToFile(
   dest: string,
   maxSize: number,
   what: string,
+  idleMs: number,
 ): Promise<{ size: number; sha256: string }> {
   // A progress line on a terminal (bytes and percent); nothing in a log or CI.
   const progress = downloadProgress(`Deno Desktop runtime ${what}`, maxSize);
@@ -334,24 +336,43 @@ function streamToFile(
                 ? " (DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS raises the deadline)"
                 : ""
             }${DOWNLOAD_HINT}`,
+          { cause: err },
         ),
     },
     (bytes) => progress.update(bytes),
-    downloadTimeoutMs(
-      "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS",
-      IDLE_TIMEOUT_MS,
-    ),
+    idleMs,
   ).finally(() => progress.done());
 }
 
-/** Download `artifact` to `dest`, refusing anything but exactly its pinned size and SHA-256. */
+/**
+ * Download `artifact` to `dest`, refusing anything but exactly its pinned size and SHA-256. A
+ * stalled or broken connection is retried on a new one, the partial file deleted first.
+ */
 async function downloadVerified(
   artifact: DesktopRuntimeArtifact,
   dest: string,
   fetchImpl: typeof fetch,
+  log?: (line: string) => void,
 ): Promise<void> {
-  const body = await openDownload(artifact, fetchImpl);
-  const got = await streamToFile(body, dest, artifact.size, artifact.file);
+  const got = await withDownloadRetries(
+    `the Deno Desktop runtime ${artifact.file}`,
+    async ({ fetch: fetchOnce, deadlines }) => {
+      try {
+        const body = await openDownload(artifact, fetchOnce, deadlines.connectMs);
+        return await streamToFile(body, dest, artifact.size, artifact.file, deadlines.idleMs);
+      } catch (err) {
+        await Deno.remove(dest).catch(() => {});
+        throw err;
+      }
+    },
+    fetchImpl,
+    (report) =>
+      new DesktopRuntimeDownloadError(
+        `denext: could not download the Deno Desktop runtime (${artifact.file}) from ` +
+          `${artifact.url}${report}\n  Are you offline?${DOWNLOAD_HINT}`,
+      ),
+    { log },
+  );
   if (got.size !== artifact.size) {
     throw new DesktopRuntimeDownloadError(
       `denext: refusing the Deno Desktop runtime ${artifact.file}: got ${got.size} bytes, pinned ` +
@@ -684,7 +705,7 @@ async function installRuntime(plan: InstallPlan): Promise<void> {
       `  denext: downloading the Deno Desktop runtime ${pin.version} (${opts.target}, ` +
         `${opts.backend}, ${(artifact.size / 1024 / 1024).toFixed(1)} MB)…`,
     );
-    await downloadVerified(artifact, archive, opts.fetch ?? fetch);
+    await downloadVerified(artifact, archive, opts.fetch ?? fetch, plan.log);
     if (opts.attest) await attest(archive, pin, opts.run ?? defaultRunner);
     const staged = join(tmp, "runtime");
     await stageRuntime(plan, archive, staged);

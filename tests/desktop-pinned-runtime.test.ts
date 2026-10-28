@@ -253,7 +253,8 @@ Deno.test("ensureDesktopRuntime gives up on a stalled download: no headers, or n
       )
     );
     const idle = await assertRejects(() => ensure(f), DesktopRuntimeDownloadError);
-    assertStringIncludes(idle.message, "interrupted");
+    // Every attempt (each on a new connection) stalled the same way: the report lists them.
+    assertStringIncludes(idle.message, "attempt 4: no data for 0.2 s");
     assertStringIncludes(idle.message, "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS");
     assertDownloadHint(idle.message);
     assertEquals(await tree(join(f.cacheRoot, f.pin.version)), []);
@@ -294,8 +295,10 @@ Deno.test("ensureDesktopRuntime refuses an oversized and a truncated download", 
         }),
       )
     );
+    // A broken connection is retried on a new one; every attempt broke, so each is reported.
     const cut = (await assertRejects(() => ensure(f), DesktopRuntimeDownloadError)).message;
-    assertStringIncludes(cut, "interrupted");
+    assertStringIncludes(cut, "(4 attempts, each on a new connection):");
+    assertStringIncludes(cut, "\n    attempt 4: ");
     assertDownloadHint(cut);
     f.setBody(() => new Response("nope", { status: 404 }));
     const http = (await assertRejects(() => ensure(f), DesktopRuntimeDownloadError)).message;
