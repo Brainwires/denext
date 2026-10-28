@@ -109,7 +109,7 @@ URIs:
 
 ```ts
 // denext.config.ts
-import { denextAuth, google, sqliteAuthAdapter } from "denext/server";
+import { denextAuth, google, sqliteAuthAdapter } from "@denext/auth";
 
 export default {
   cors: { origins: ["capacitor://localhost", "https://localhost"] },

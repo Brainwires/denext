@@ -332,7 +332,7 @@ so a future reviewer knows they were considered, not missed.
 ## 15. First-party auth — next-auth / Auth.js CVE parity
 
 denext ships its **own** OAuth2 / OIDC / JWT / Credentials layer on HMAC-signed
-cookie sessions (`src/server/auth/`); it does **not** use next-auth/Auth.js. So
+cookie sessions (`packages/auth/src/`); it does **not** use next-auth/Auth.js. So
 the next-auth CVE history is a question of whether **our** implementation shares
 the flaw. Source audit + the live `tests/auth.test.ts`,
 `tests/auth-crypto.test.ts`, `tests/auth-magic-link.test.ts`,

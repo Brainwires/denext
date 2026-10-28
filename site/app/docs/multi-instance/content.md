@@ -44,7 +44,8 @@ export default { cache: { store: redisCacheStore({ url: Deno.env.get("REDIS_URL"
 
 ```ts
 // the auth stores, on the same server (one shared connection)
-import { denextAuth, redisClient, redisRateLimitStore, redisSessionStore } from "denext/server";
+import { redisClient } from "denext/server";
+import { denextAuth, redisRateLimitStore, redisSessionStore } from "@denext/auth";
 const redis = redisClient(Deno.env.get("REDIS_URL")); // redis://user:pass@host:6379/0, rediss:// for TLS
 denextAuth({
   // …
@@ -72,7 +73,8 @@ Redis expires when the window closes, counted in one `MULTI` block.
 
 ```ts
 // Deno Deploy: the project's KV database, shared by every isolate and region
-import { denoKvCacheStore, denoKvRateLimitStore, denoKvSessionStore } from "denext/server";
+import { denoKvCacheStore } from "denext/server";
+import { denoKvRateLimitStore, denoKvSessionStore } from "@denext/auth";
 export default { cache: { store: denoKvCacheStore() } }; // or { kv: await Deno.openKv(url) }
 ```
 

@@ -228,7 +228,7 @@ A plain handler still works and is still typed: return `TypedResponse<T>` / take
 (`export const maxBodyBytes = N | false`); `redirect()`/`notFound()` inside one are HTTP
 responses; a thrown `ApiError(status, code, { data })` is a typed JSON error envelope.
 `createApi().use(…)` stacks middlewares from `denext/server`: `requireSession({ role })`,
-`requireBearer({ scope })`, `rateLimit(…)`, `cors(policy)` (the app `cors` shape, scoped to the
+`requireBearer({ scope })` (from `@denext/auth`), `rateLimit(…)`, `cors(policy)` (the app `cors` shape, scoped to the
 method it guards: its preflight is answered before `middleware.ts`, and it replaces the route's
 and the app's policy there) and `csrf()` (a cookie-carrying cross-origin mutation is a 403
 `csrf_failed`, the Server Actions rule; `{ doubleSubmit: true }` also wants an `x-csrf-token`
@@ -354,7 +354,8 @@ const session = await getSession<{ userId: string }>({
 if (!session.data) redirect("/login");
 await session.set({ userId: user.id }); // sign in
 
-// With the `denextAuth({ … })` plugin the same three calls cover server, middleware and API:
+// With the `denextAuth({ … })` plugin (from `@denext/auth`) the same three calls cover server,
+// middleware and API; without it they throw an AuthPluginMissingError naming @denext/auth:
 const s = await auth(); // anywhere on the server; null while a second factor is pending
 // middleware.ts — a Response to redirect (302 + ?error=forbidden), or null to continue:
 export const middleware = (request: Request) => requireAuth(request, { role: "admin" });
@@ -372,13 +373,23 @@ window the same provider signs in via `installClerkDesktopBridge({ nativeClerk: 
 `capacitor://localhost` + `https://localhost` to `allowed_origins`). See
 [`examples/clerk`](https://github.com/Brainwires/denext/tree/main/examples/clerk).
 
+**The auth plugin is its own package, `@denext/auth`** (since 5.0): `denextAuth()`, the providers,
+adapters, stores, SAML, `/auth/v1`, passkeys, MFA, the mailers and the `next-auth` compat import
+from `"@denext/auth"`, pinned at denext's own version (`"@denext/auth": "jsr:@denext/auth@^5.0.0"`
+beside `"denext": "jsr:@denext/denext@^5.0.0"`; `create` writes it, `denext plugin add
+@denext/auth` wires it). `auth()`, `requireAuth`, `requireSession`, `getSession`, the session types,
+the rate-limit stores, `hashPassword` and the Supabase key helpers stay in `denext/server`. A 4.x
+project: `denext upgrade` splits the imports and moves the aliases:
+https://denext.dev/docs/upgrading-to-5
+
 **next-auth (Auth.js v5 / NextAuth.js v4):** `NextAuth()`, `next-auth/react`, `next-auth/jwt`
 and every `next-auth/providers/*` module but 3 run unchanged on `denextAuth` (the OAuth / OIDC
 ones generated from `@auth/core` by `deno task gen:auth-providers`); `next-auth/providers/passkey`
 turns on denext's passkeys and `signIn("passkey")` / `signIn("passkey", { action: "register" })`
 from `next-auth/webauthn` drive them (through an Auth.js adapter the ceremony's challenge lives in
 `cache.store`, so a shared store needs no sticky sessions). A provider's `checks` decide PKCE and
-the OIDC `nonce`, as in Auth.js (`Reddit({ checks: ["state"] })`). Set `AUTH_URL`. See
+the OIDC `nonce`, as in Auth.js (`Reddit({ checks: ["state"] })`). Set `AUTH_URL`. `denext migrate`
+maps `next-auth` / `next-auth/*` to `jsr:@denext/auth@<range>/next-auth/*`. See
 https://denext.dev/docs/auth.
 
 Persist users with an adapter (`sqliteAuthAdapter({ path })` on `node:sqlite`, or
@@ -389,7 +400,7 @@ for `@denext/openapi` (declare the matching `securitySchemes: { bearerAuth: … 
 `openapi()` options). `credentials()` with no `authorize` verifies against the adapter
 (`getUserByEmail` + `getCredential` + the hasher). Passwordless: `providers: [magicLink(),
 emailOtp()]` plus `sendVerificationRequest` (`smtpMailer({ host, user, pass, from })` from
-`denext/server`, TLS required, or your own); a magic link opens a click-to-confirm page by
+`@denext/auth`, TLS required, or your own); a magic link opens a click-to-confirm page by
 default, so a mail scanner's pre-fetch can't spend it (`magicLink({ confirm: false })` opts out). Passkeys: `passkeys: true` (or `{ rpId, rpName, userVerification }`) mounts
 `/auth/passkey/*`, and `registerPasskey()` / `signInWithPasskey()` from `denext/client` (check
 `passkeysSupported()`) sign in usernameless or complete a pending second factor; a native app
@@ -895,9 +906,10 @@ PrismaDenoSql(Deno.env.get("DATABASE_URL")!) })` with `PrismaDenoSql` from `dene
 Postgres (every replica sharing one database): `postgresClient(url)` from `denext/server` is a
 tagged-template client on `Deno.SQL`, built into denext's managed Deno toolchain (on stock Deno:
 `fromPostgresJs(postgres(url))` with `npm:postgres`); `postgresAuthAdapter`, `postgresSessionStore`,
-`postgresRateLimitStore` and `postgresCacheStore` take `{ sql | url, schema? }` and create their
+`postgresRateLimitStore` (those three from `@denext/auth`) and `postgresCacheStore` take `{ sql | url, schema? }` and create their
 tables by migration on first use (under the migration lock). The same cache / session / rate-limit
-stores ship on Redis 7+ (`redisCacheStore` / `redisSessionStore` / `redisRateLimitStore`, `{ client |
+stores ship on Redis 7+ (`redisCacheStore` / `redisSessionStore` / `redisRateLimitStore`, the
+session and rate-limit ones from `@denext/auth`, `{ client |
 url, prefix? }`, on denext's zero-npm RESP client `redisClient(url)`) and Deno KV (`denoKvCacheStore`
 / `denoKvSessionStore` / `denoKvRateLimitStore`, `{ kv | path, prefix? }`); `cacheStoreContract` /
 `sessionStoreContract` / `rateLimitStoreContract` from `denext/testing` test your own. Live across

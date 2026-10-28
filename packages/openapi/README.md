@@ -144,7 +144,8 @@ denext's own bearer middleware, `requireBearer(authConfig)`, is already tagged w
 `[{ bearerAuth: [] }]`, so applying it is all it takes:
 
 ```ts
-import { createApi, requireBearer } from "@denext/denext/server";
+import { createApi } from "@denext/denext/server";
+import { requireBearer } from "@denext/auth";
 import { authConfig } from "./auth.ts"; // the config you pass to denextAuth()
 
 const authed = createApi().use(requireBearer(authConfig, { scope: "pets:write" }));

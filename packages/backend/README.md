@@ -74,7 +74,7 @@ const src = await getFileUrl("avatars", key, { transform: { width: 256 } });
 
 ```ts
 // denext.config.ts
-import { denextAuth, github } from "denext/server";
+import { denextAuth, github } from "@denext/auth";
 import { backend, backendAuthAdapter } from "@denext/backend";
 
 export default {

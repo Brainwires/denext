@@ -62,8 +62,8 @@ A bucket name is lowercase letters, digits, `-` and `_`. Each bucket takes:
 
 `op` is `"upload"`, `"download"`, `"delete"` or `"list"` (for a listing, `key` is the prefix); a
 copy is `download` on the source and `upload` on the destination, a move adds `delete` on the
-source. `session` is `auth()` from [`denextAuth`](/docs/auth) — `null` when signed out or when the
-app has no auth. A supabase-js caller's access token counts: its session is the one `auth()` reads
+source. `session` is `auth()` from [`denextAuth`](/docs/auth) (`@denext/auth`) — `null` when
+signed out or when the app has no auth. A supabase-js caller's access token counts: its session is the one `auth()` reads
 from the bearer (a revoked token, or one still owing a second factor, is `null`), or, without
 `denextAuth`, the token's verified claims. `identity` is who the request acts as:
 `{ role: "anon" | "authenticated", claims, userId? }`, the claims shaped like a Supabase access
@@ -482,7 +482,7 @@ environment.
 
 ```ts
 // denext.config.ts
-import { denextAuth, github } from "denext/server";
+import { denextAuth, github } from "@denext/auth";
 import { backend, backendAuthAdapter } from "@denext/backend";
 
 export default {
@@ -1325,7 +1325,7 @@ For one budget across replicas, give the routes a shared store of their own
 `denext/server`):
 
 ```ts
-import { postgresRateLimitStore } from "denext/server";
+import { postgresRateLimitStore } from "@denext/auth";
 
 backend({
   postgres: {},
@@ -1340,7 +1340,7 @@ backend({
 cross-site one is refused (`403`, `csrf_failed`). A request whose identity is a Supabase access
 token or the secret key needs no such check, nor does a native app's bearer token
 (`Authorization: Bearer nat_…`, which `auth()` reads instead of the cookie);
-the exemption uses `auth()`'s own parser (`nativeBearerToken` from `denext/server`), so it applies
+the exemption uses `auth()`'s own parser (`nativeBearerToken` from `@denext/auth`), so it applies
 exactly when the session comes from the token, never from the cookie.
 
 **Errors** are PostgREST-shaped JSON — `{ code, message, details, hint }` — with Postgres's

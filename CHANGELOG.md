@@ -8,6 +8,42 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Breaking (5.0)
+
+- **The auth layer is its own package, `@denext/auth`.** `denextAuth()`, the providers, the
+  adapters and stores, SAML, the GoTrue-compatible `/auth/v1`, passkeys, MFA, the mailers and the
+  `next-auth` compat left `@denext/denext` (which is 2.1 MiB smaller, back under JSR's 20 MiB
+  package cap with room to grow). `@denext/auth` is versioned with denext and pins that
+  `@denext/denext` version exactly; import its names from `"@denext/auth"`.
+  - The `denext/auth` entry point and the `denext/next-auth/*` subpaths are gone: the `next-auth`
+    compat is `@denext/auth/next-auth/*`.
+  - `denext/server` keeps `auth()`, `requireAuth()`, `requireSession()` and `getSession()`, the
+    `AuthSession` / `AuthUser` / `AuthSessionSaml` / `SessionStore` types, `inMemoryRateLimitStore`
+    and `RateLimitStore`, `hashPassword()` / `verifyPassword()` and the Supabase key helpers
+    (`generateSupabaseKeys()`, `signSupabaseJwt()`, …). Every other auth name it re-exported moved.
+  - `auth()`, `requireAuth()` and `requireSession()` read through the `denextAuth()` plugin and,
+    without it, throw `AuthPluginMissingError` (new in `denext/server`) naming `@denext/auth` and
+    how to add it, instead of reading as signed out. A `getLoadContext` that `denext migrate`
+    ported from a Remix custom server reads `req.user` through a `requestAuth()` helper that stays
+    signed out without the plugin.
+  - `denext create` writes `"@denext/auth": "jsr:@denext/auth@^<version>"` beside denext;
+    `denext migrate` writes it too and maps `next-auth` / `next-auth/*` to
+    `jsr:@denext/auth@^<version>/next-auth/*`; `denext plugin add @denext/auth` wires
+    `denextAuth({ … })` (the catalog now names each first-party plugin's factory). Like every
+    `@denext/*` pin, it is held by Deno's minimum dependency age.
+  - `denext upgrade` from 4.x into 5.0 pins `@denext/auth` (the newest version that admits the
+    denext it picks and that the hold lets in), splits each import of the moved names from
+    `denext/server`, `denext/auth`, `@denext/denext/server` or a pinned
+    `jsr:@denext/denext@…/server` between `denext/server` and `@denext/auth`, replaces the
+    `denext/auth` import-map entry and points the `next-auth` aliases at `@denext/auth` (the app's
+    `next-auth` imports stay as written). A namespace import, `export *` or dynamic `import()` is
+    named for a hand edit. `--dry-run`, `--check` and `--json` report the rewrite.
+  - `@denext/backend` imports the auth names it uses from `@denext/auth`, and reads a request as
+    anonymous when no `denextAuth()` plugin is configured.
+  - Plugin authors: `@denext/denext/auth-kit` (server) and `@denext/denext/auth-kit/client` are the
+    internals `@denext/auth` builds on; they move with each release and are not a stable API.
+  - See https://denext.dev/docs/upgrading-to-5.
+
 ### Added
 
 - **`denext doctor` and `denext desktop doctor` check the launch policy.** A desktop project whose

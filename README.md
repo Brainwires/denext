@@ -234,7 +234,7 @@ WebSocket when a cache tag is invalidated from anywhere — a Server Action, a w
 push; `useLive`, `usePresence` and `useLiveOptimistic` ride the same socket, across instances.
 → [Live](https://denext.dev/docs/live)
 
-**Auth.** `denextAuth()` mounts `/auth/*` with twelve OAuth/OIDC presets, SAML 2.0 identity
+**Auth.** `denextAuth()` (the `@denext/auth` package) mounts `/auth/*` with twelve OAuth/OIDC presets, SAML 2.0 identity
 providers, email and password, magic links and one-time codes (sent with `smtpMailer()` or your
 own mailer), passkeys, TOTP second factor with backup codes, email verification and password
 reset, revocable sessions, roles, bearer API tokens, native sign-in for the shells, rate limits

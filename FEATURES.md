@@ -184,7 +184,7 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `Deno.Kv` (chunked large values, version-checked commits). The exported contract suites
   `cacheStoreContract` / `sessionStoreContract` / `rateLimitStoreContract` (`denext/testing`)
   run against every shipped store and prove a community one. — `src/server/redis.ts`,
-  `redis-cache.ts`, `deno-kv.ts`, `deno-kv-cache.ts`, `src/server/auth/redis-*.ts`,
+  `redis-cache.ts`, `deno-kv.ts`, `deno-kv-cache.ts`, `packages/auth/src/redis-*.ts`,
   `deno-kv-stores.ts`, `src/testing/store-contracts.ts`.
 
 ## Server features
@@ -193,7 +193,8 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   `Response`).
 - **Server Actions** (`"use server"`, progressive-enhancement forms,
   CSRF-defended).
-- **Authentication** — first-party **`denextAuth`** plugin: OAuth 2.0 / OIDC
+- **Authentication** — first-party **`denextAuth`** plugin (its own package, `@denext/auth`,
+  versioned with denext): OAuth 2.0 / OIDC
   (Authorization Code + PKCE) with **twelve provider presets** (Google, GitHub,
   Microsoft Entra, Apple, Discord, GitLab, Slack, Auth0, Okta, Keycloak,
   Facebook, generic **OIDC**) plus an email-password **Credentials** provider and
@@ -404,7 +405,7 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   `backend({ postgres: {} })` (reads `DATABASE_URL`) opens one client for the app and
   `backendAuthAdapter()` puts auth's tables on it. — `src/server/postgres.ts`,
   `postgres-migrate.ts`, `postgres-cache.ts`, `postgres-job-history.ts`,
-  `src/server/auth/postgres-*.ts`.
+  `packages/auth/src/postgres-*.ts`.
 - **Supabase-compatible row-level security** ⚑ — `db()` from `@denext/backend/server` runs every
   query as the request's user: `authenticated` with the session's claims in `request.jwt.claims`
   (the keys of a Supabase access token), or `anon` when signed out or outside a request, set
@@ -452,7 +453,7 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   `denextAuth()` users: password, OTP and magic links, phone, anonymous, OAuth and stored custom
   providers, Web3, MFA (TOTP, SMS, WebAuthn), passkeys, SAML SSO, the OAuth 2.1 server and the
   admin API. With `storage`, `/storage/v1` speaks Supabase's Storage API (TUS uploads,
-  versioning, `storage: { rls: true }` SQL policies). — `src/server/auth/gotrue/`,
+  versioning, `storage: { rls: true }` SQL policies). — `packages/auth/src/gotrue/`,
   `packages/backend/src/identity.ts`, `storage-api.ts`, `storage-tus.ts`.
 - **Edge Functions, Vault, Queues, vector search, webhooks** — `functions: {}` serves
   `functions/<name>.ts` at `/functions/v1/<name>`, each in its own Deno Worker; `vault: {}`
@@ -877,7 +878,7 @@ Full Next.js Pages Router parity as a plugin (`plugins: [pagesRouter()]`):
 - **`next-auth` (Auth.js v5 / NextAuth.js v4)** — `NextAuth()`, `next-auth/react`,
   `next-auth/jwt`, the adapters and 101 `next-auth/providers/*` modules (every
   Auth.js provider but three, the OAuth / OIDC ones generated from `@auth/core`)
-  run on `denextAuth`, passkeys included. — `src/compat/next-auth/`.
+  run on `denextAuth`, passkeys included. — `packages/auth/next-auth/`.
 - Build-time **react → denext rewrite** (incl. inside npm packages) so the whole
   app runs on **one** React; the RSC/Flight island boundary is preserved.
 - **Tolerant `node_modules` resolver** (`nodeResolve`, default on
