@@ -10,6 +10,8 @@ and this project adheres to
 
 ### Added
 
+- **`broadcastChannelTransport()` returns a `close()`** that closes its `BroadcastChannel`
+  (an open one keeps the process's event loop alive).
 - **`denext doctor` and `denext desktop doctor` check the launch policy.** A desktop project whose
   packaged `laufey-launch.json` would lack `bridgeOrigins` (an unwritable
   `desktop.app.bridgeOrigins`) or, with passkeys enabled, an RP list (`rpIds` empty), or whose
@@ -32,6 +34,36 @@ and this project adheres to
   with that error instead of deciding by the exit code: `DENEXT_INSECURE=1` could not install a
   release without an attestation, and the clear "verification FAILED" message never showed. The
   attestation check now reads only the exit codes.
+- **Leaks the test suite's sanitizers found, now that they are on.** From Deno 2.8 the op and
+  resource sanitizers are off by default; denext's `deno.json` turns both on for its own suite,
+  and these leaks surfaced (each with a test that fails under the sanitizers before the fix):
+  - A download refused as larger than its pin (the Deno toolchain, the Deno Desktop runtime) now
+    cancels the response, so its connection is let go instead of staying open.
+  - `denext desktop dev` and `denext mobile dev` stop listening for Ctrl-C / SIGTERM when the
+    session ends another way (the window closed, the dev server ended or failed to start); a
+    listener left behind kept the process alive and swallowed the next Ctrl-C. `denext ui`
+    likewise stops trapping the signals when its server is shut down another way.
+  - A stopped `denext dev` server's `finished` now waits for a background `deno check` it had
+    started, so no child outlives it (on Windows one held the project directory).
+  - A second esbuild `stop()` made while another was stopping the child resolved at once; it now
+    waits for the exit too.
+  - `smtpMailer` closes the TLS connection when a STARTTLS or implicit-TLS handshake is refused
+    (a certificate that doesn't chain to a trusted CA), instead of leaving it open.
+  - The reconciler cancels the macrotask it scheduled for passive effects (`useEffect`) when they
+    are flushed sooner (`flushSync`, `act`, the next render), and closes its time-slicing
+    `MessageChannel` once a sliced render is done, so neither outlives the work in a
+    non-browser process (a component test).
+  - The fumadocs MDX compile host's dispose resolves once its child has exited.
+  - Live's per-render deadline is cleared when a resolver throws synchronously (it stayed armed
+    for the whole render timeout).
+  - `StackView`'s fallback for a gesture pop that never lands, the tabs' view-transition
+    fallback and the web barcode scanner's next poll are cancelled once they are moot (an
+    unmounted stack, a settled router, a finished scan).
+  - The React Native alias plugin checks for `react-native-svg` / NativeWind on first need, not
+    when it is created.
+- **`createTestApp`'s `close()` (and `await using`) releases the response bodies a test never
+  read**, as a server does when its client goes away: an unread body kept the request's deadline
+  timer running past the test.
 - **esbuild's `stop()` resolves once its child has exited.** `stop()` from denext's esbuild API
   (and `stopNextCompat()` / `withEsbuild()`, which call it) signalled the long-lived esbuild
   process and returned at once, so a Deno test that awaited it still ended with the process and

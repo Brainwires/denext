@@ -45,8 +45,11 @@ export interface DesktopDevDeps {
   readonly startServer: () => Promise<DesktopDevServer>;
   /** Spawn `deno desktop <entry>` with `DENEXT_DESKTOP_DEV_URL` set to `devUrl` (proxy mode). */
   readonly spawnWindow: (devUrl: string) => Promise<DesktopWindow>;
-  /** Resolves when the developer stops the session (Ctrl-C / SIGTERM). */
-  readonly waitForStop: () => Promise<void>;
+  /**
+   * Resolves when the developer stops the session (Ctrl-C / SIGTERM); stops listening once `until`
+   * aborts (the session ended another way).
+   */
+  readonly waitForStop: (until: AbortSignal) => Promise<void>;
   /** Progress output. */
   readonly log: (line: string) => void;
   /** The OS the window runs on (`Deno.build.os` by default): its platform files are served. */
@@ -127,21 +130,27 @@ function desktopDevBanner(server: DesktopDevServer): string {
  * @param deps The process-touching edges (a real dev server / window in the CLI, fakes in tests).
  */
 export async function runDesktopDev(deps: DesktopDevDeps): Promise<void> {
-  // Listen for Ctrl-C from the start, so one pressed during startup still ends the session.
-  const stopped = deps.waitForStop();
-  const server = await deps.startServer();
+  // Listen for Ctrl-C from the start, so one pressed during startup still ends the session; stop
+  // listening when it ends, however it ends.
+  const listening = new AbortController();
+  const stopped = deps.waitForStop(listening.signal);
   try {
-    deps.log(desktopDevBanner(server));
-    // The window names its OS, so the dev server serves `.macos` / `.desktop` files to it.
-    const target = desktopPlatform(deps.os ?? Deno.build.os);
-    const window = await deps.spawnWindow(withDevPlatform(server.url, target));
+    const server = await deps.startServer();
     try {
-      await Promise.race([stopped, window.finished, server.finished]);
+      deps.log(desktopDevBanner(server));
+      // The window names its OS, so the dev server serves `.macos` / `.desktop` files to it.
+      const target = desktopPlatform(deps.os ?? Deno.build.os);
+      const window = await deps.spawnWindow(withDevPlatform(server.url, target));
+      try {
+        await Promise.race([stopped, window.finished, server.finished]);
+      } finally {
+        await window.stop();
+      }
     } finally {
-      await window.stop();
+      // Stop the dev server only if we started it; an attached one is left running.
+      if (!server.attached) await server.stop();
     }
   } finally {
-    // Stop the dev server only if we started it; an attached one is left running.
-    if (!server.attached) await server.stop();
+    listening.abort();
   }
 }

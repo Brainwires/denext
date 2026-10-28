@@ -240,20 +240,44 @@ export function typeCheck(st: DevState, changedPaths: string[]): void {
   const files = typeCheckFiles(changedPaths);
   if (files.length === 0) return;
   const token = ++st.typeCheckToken;
-  void (async () => {
-    if (await isCompat(st)) return;
-    const text = await runTypeCheck(st, files);
-    if (token !== st.typeCheckToken) return; // superseded by a newer edit
-    if (text === null) return; // clean — this edit's refresh/reload already cleared any overlay
-    console.error(explainForTerminal(st, text));
-    pushError(st, {
-      title: "Type error",
-      message: text.split("\n").slice(0, 24).join("\n"),
-      stack: "",
-      ...enrichFrame(st, text),
-      ...explainForOverlay(st, text),
-    });
-  })();
+  trackBackground(
+    st,
+    (async () => {
+      if (await isCompat(st)) return;
+      const text = await runTypeCheck(st, files);
+      if (token !== st.typeCheckToken) return; // superseded by a newer edit
+      if (text === null) return; // clean — this edit's refresh/reload already cleared any overlay
+      console.error(explainForTerminal(st, text));
+      pushError(st, {
+        title: "Type error",
+        message: text.split("\n").slice(0, 24).join("\n"),
+        stack: "",
+        ...enrichFrame(st, text),
+        ...explainForOverlay(st, text),
+      });
+    })(),
+  );
+}
+
+/**
+ * Run `work` in the background of the dev session: the server's `finished` waits for it (see
+ * {@linkcode DevState.background}).
+ *
+ * @param st The dev session.
+ * @param work The run.
+ */
+export function trackBackground(st: Pick<DevState, "background">, work: Promise<void>): void {
+  st.background.add(work);
+  void work.finally(() => st.background.delete(work));
+}
+
+/**
+ * Settles once the session's background runs have (runs started meanwhile included).
+ *
+ * @param st The dev session.
+ */
+export async function backgroundSettled(st: Pick<DevState, "background">): Promise<void> {
+  while (st.background.size > 0) await Promise.allSettled([...st.background]);
 }
 
 /**

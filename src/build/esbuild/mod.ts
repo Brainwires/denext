@@ -83,6 +83,8 @@ interface Service {
 
 let longLivedService: Promise<Service> | undefined;
 let stopService: (() => Promise<void>) | undefined;
+/** The exit of a child being stopped: a concurrent {@linkcode stop} waits for it too. */
+let stopping: Promise<void> | undefined;
 let initializeWasCalled = false;
 let warned = false;
 
@@ -166,6 +168,10 @@ async function startService(): Promise<Service> {
     initializeWasCalled = false;
     longLivedService = undefined;
     stopService = undefined;
+    stopping = closed;
+    void closed.then(() => {
+      if (stopping === closed) stopping = undefined;
+    });
     return closed;
   };
   stopService = stop;
@@ -285,6 +291,8 @@ export const stop: typeof types.stop = async () => {
   const pending = longLivedService;
   if (pending) await pending.catch(() => {});
   await stopService?.();
+  // Another caller's stop() may have begun it (a dev server's shutdown): wait for that exit too.
+  await stopping;
 };
 
 const noSync = (name: string) => () => {

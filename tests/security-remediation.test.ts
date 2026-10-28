@@ -320,6 +320,21 @@ Deno.test("live: withDeadline lets a fast render finish untouched", async () => 
   assertEquals(value, 42);
 });
 
+Deno.test("live: withDeadline turns a resolver's synchronous throw into a rejection, its timer cleared", async () => {
+  // A resolver that throws before returning a promise used to escape withDeadline synchronously,
+  // leaving its deadline timer armed for the whole render timeout (the op sanitizer reports it).
+  let call: Promise<unknown> | "threw";
+  try {
+    call = withDeadline(30_000, () => {
+      throw new Error("boom");
+    });
+  } catch {
+    call = "threw";
+  }
+  assert(call !== "threw", "withDeadline never throws synchronously");
+  await assertRejects(() => call as Promise<unknown>, Error, "boom");
+});
+
 Deno.test("live: renderTimeoutSeconds carries a positive default and is validated", () => {
   assert(sanitizeLimits().renderTimeoutSeconds > 0, "on by default");
   const warn = console.warn;
