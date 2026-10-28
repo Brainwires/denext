@@ -45,7 +45,7 @@ on:
       - "src/build/swc-ast.ts"
       - "src/build/tailwind.ts"
       - "src/server/config.ts"
-      - "src/compat/next-auth/providers/list.ts" # the provider ids scripts/parity/spec.ts lists
+      - "src/build/next-auth-providers.ts" # the provider ids scripts/parity/spec.ts lists
       - "src/client/virtual/**"
       - "src/mobile/**"
       - "src/desktop/window.ts"

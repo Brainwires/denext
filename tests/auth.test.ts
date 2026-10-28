@@ -10,12 +10,12 @@ import {
   runDeferred,
   runWithContext,
 } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { auth, denextAuth, requireAuth } from "../src/server/auth/mod.ts";
-import { credentials, emailOtp, magicLink, oidc } from "../src/server/auth/providers.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { auth, denextAuth, requireAuth } from "../packages/auth/src/mod.ts";
+import { credentials, emailOtp, magicLink, oidc } from "../packages/auth/src/providers.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

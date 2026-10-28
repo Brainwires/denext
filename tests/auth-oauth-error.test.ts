@@ -3,9 +3,9 @@
 // (with `reason: "provider_error"`); free text is `oauth_failed`.
 
 import { assertEquals } from "@std/assert";
-import { github } from "../src/server/auth/providers.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import { github } from "../packages/auth/src/providers.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 
 const ORIGIN = "https://app.test";

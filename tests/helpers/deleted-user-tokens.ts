@@ -6,21 +6,21 @@
 // (tests/helpers/postgres-suites.ts).
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import type { AuthAdapter } from "../../src/server/auth/adapter.ts";
+import type { AuthAdapter } from "../../packages/auth/src/adapter.ts";
 import {
   resolveNative,
   startNativeSession,
   verifyNativeAccessToken,
-} from "../../src/server/auth/native.ts";
-import { verifyAccessTokenSession } from "../../src/server/auth/gotrue/access.ts";
+} from "../../packages/auth/src/native.ts";
+import { verifyAccessTokenSession } from "../../packages/auth/src/gotrue/access.ts";
 import {
   generateSupabaseKeys,
   resolveSupabaseKeys,
   signSupabaseJwt,
   SupabaseKeyError,
   type SupabaseKeys,
-} from "../../src/server/auth/gotrue/keys.ts";
-import type { AuthConfig } from "../../src/server/auth/types.ts";
+} from "../../src/server/supabase-keys.ts";
+import type { AuthConfig } from "../../packages/auth/src/types.ts";
 
 /** What a case gets: the adapter, and a way to delete a user's row alone. */
 interface DeletedUserFixture {

@@ -143,7 +143,7 @@ Deno.test("precheck: which changes trigger the bundle budget, doc-lint and the t
   assert(reachesClientBundle("src/client/client-runtime.ts"));
   assert(reachesClientBundle("src/build/build.ts"));
   assertFalse(reachesClientBundle("src/cli/commands/analyze.ts"));
-  assertFalse(reachesClientBundle("src/server/auth/session.ts"));
+  assertFalse(reachesClientBundle("packages/auth/src/session.ts"));
   assertFalse(reachesClientBundle("tests/build.test.ts"));
   assertFalse(reachesClientBundle("src/runtime/x.vitest.ts"));
 

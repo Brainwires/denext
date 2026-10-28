@@ -5,15 +5,15 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
-import { issueApiToken, revokeApiToken } from "../src/server/auth/api-token.ts";
-import { resetPassword } from "../src/server/auth/email.ts";
-import { issueVerificationToken } from "../src/server/auth/verification.ts";
-import { hashPassword } from "../src/server/auth/password.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import type { AuthConfig, AuthEvents, SignInFailedReason } from "../src/server/auth/types.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
+import { issueApiToken, revokeApiToken } from "../packages/auth/src/api-token.ts";
+import { resetPassword } from "../packages/auth/src/email.ts";
+import { issueVerificationToken } from "../packages/auth/src/verification.ts";
+import { hashPassword } from "../src/server/password.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import type { AuthConfig, AuthEvents, SignInFailedReason } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

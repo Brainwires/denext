@@ -6,12 +6,12 @@
 // existing account, an SSO user whose session must come from its IdP).
 
 import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "@std/assert";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { saml } from "../src/server/auth/providers.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { isSsoUser } from "../src/server/auth/sso-user.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { saml } from "../packages/auth/src/providers.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { isSsoUser } from "../packages/auth/src/sso-user.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { encode, marker, responseXml, rsaKey, sign, type TestKey } from "./_saml-helpers.ts";
 import { requestIdOf } from "./_saml-idp.ts";

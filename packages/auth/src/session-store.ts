@@ -1,0 +1,126 @@
+/**
+ * Server-side auth sessions (opt-in): a pluggable {@linkcode SessionStore} that makes
+ * sessions **revocable**. By default denext sessions are stateless — the signed cookie
+ * carries the whole `{ user, provider, expiresAt }` payload, which is what makes
+ * zero-config edge/serverless/multi-replica deploys work, but it also means a session
+ * can't be invalidated before it expires (a stolen cookie or a password change can't
+ * kick a live session). Pass `sessionStore` to `denextAuth` and the cookie carries only
+ * a random session id; the payload lives in the store, so `revokeSession` /
+ * `revokeAllSessions` end sessions immediately.
+ *
+ * **Multi-replica:** the in-memory store is per-process — a session created on one
+ * replica is invisible to the others. Point every replica at one shared store (the
+ * `node:sqlite` file on a single node, or your own `SessionStore` over Redis/Postgres).
+ *
+ * @module
+ */
+
+import type { AuthSession } from "./types.ts";
+import type { SessionStore } from "@denext/denext/auth-kit";
+
+export type { SessionStore };
+
+/** The stores {@linkcode markWithoutAuthLevel} marked. */
+const withoutAuthLevel = new WeakSet<SessionStore>();
+
+/**
+ * Mark `store` as one that keeps only who a session is and when it expires — not its sign-in
+ * time (`authTime`), its methods (`amr`) or whether it still owes a second factor
+ * (`mfaPending`), so a pending session would read back as a complete one. `denextAuth` refuses
+ * to run MFA over such a store. The Auth.js adapter bridge's session rows are one.
+ *
+ * @param store The store.
+ * @returns The same store.
+ */
+export function markWithoutAuthLevel<T extends SessionStore>(store: T): T {
+  withoutAuthLevel.add(store);
+  return store;
+}
+
+/**
+ * Whether `store` round-trips a session's `authTime`, `amr` and `mfaPending` (every store but
+ * one {@linkcode markWithoutAuthLevel} marked).
+ *
+ * @param store The store.
+ * @returns `false` for a store that drops them.
+ */
+export function keepsAuthLevel(store: SessionStore): boolean {
+  return !withoutAuthLevel.has(store);
+}
+
+/** Options for {@linkcode inMemorySessionStore}. */
+export interface InMemorySessionStoreOptions {
+  /** Max live sessions before the oldest are evicted (FIFO). Default 10000. */
+  maxEntries?: number;
+  /** Min ms between proactive sweeps of expired sessions (default 30000; `0` = every write). */
+  sweepIntervalMs?: number;
+}
+
+const DEFAULT_MAX_ENTRIES = 10_000;
+const SWEEP_INTERVAL = 30_000;
+
+/** Whether `session` has passed its `expiresAt` (epoch seconds). */
+export function sessionExpired(session: AuthSession, nowMs = Date.now()): boolean {
+  return typeof session.expiresAt !== "number" || session.expiresAt * 1000 <= nowMs;
+}
+
+/**
+ * The per-process, in-memory {@linkcode SessionStore}. Bounded: past `maxEntries` expired
+ * sessions are dropped first, then the least recently used live ones; expired ones are
+ * also swept on a throttled schedule.
+ * Sessions don't survive a restart and aren't shared across replicas — use
+ * {@link ../auth/sqlite-session-store.ts | sqliteSessionStore} (or your own) for that.
+ *
+ * @param options Size cap + sweep interval.
+ * @returns A store to pass as `denextAuth({ sessionStore })`.
+ */
+export function inMemorySessionStore(options: InMemorySessionStoreOptions = {}): SessionStore {
+  const maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
+  const sweepInterval = options.sweepIntervalMs ?? SWEEP_INTERVAL;
+  const sessions = new Map<string, AuthSession>();
+  let lastSweep = 0;
+
+  const maybeSweep = (): void => {
+    const now = Date.now();
+    if (now - lastSweep < sweepInterval) return;
+    lastSweep = now;
+    for (const [id, s] of sessions) if (sessionExpired(s, now)) sessions.delete(id);
+  };
+
+  return {
+    create(id, session) {
+      maybeSweep();
+      sessions.delete(id);
+      sessions.set(id, session);
+      if (sessions.size > maxEntries) {
+        // Drop expired sessions first; only then the least recently used live ones.
+        for (const [k, s] of sessions) if (sessionExpired(s)) sessions.delete(k);
+        while (sessions.size > maxEntries) sessions.delete(sessions.keys().next().value as string);
+      }
+    },
+    update(id, session) {
+      // Write-only-if-present: a record deleted by `revokeSession`/`revokeAllSessions`
+      // while this request was in flight must NOT come back (see the interface doc).
+      const current = sessions.get(id);
+      if (!current || sessionExpired(current)) return false;
+      sessions.delete(id); // re-insert: the rewritten row is the youngest, like `create`
+      sessions.set(id, session);
+      return true;
+    },
+    get(id) {
+      const s = sessions.get(id);
+      if (!s) return undefined;
+      if (sessionExpired(s)) {
+        sessions.delete(id);
+        return undefined;
+      }
+      sessions.delete(id); // re-insert: eviction order is least-recently-USED, not created
+      sessions.set(id, s);
+      return s;
+    },
+    delete: (id) => void sessions.delete(id),
+    deleteByUser(userId) {
+      for (const [id, s] of sessions) if (s.user.id === userId) sessions.delete(id);
+    },
+  };
+}

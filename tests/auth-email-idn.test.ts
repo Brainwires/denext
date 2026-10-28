@@ -6,12 +6,12 @@
 // and a password reset never found it. Every path now goes through one `emailKey`.
 
 import { assert, assertEquals } from "@std/assert";
-import { emailKey } from "../src/server/auth/email-key.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { hashPassword } from "../src/server/auth/password.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import type { AuthConfig, CredentialsProvider } from "../src/server/auth/types.ts";
-import { normalizeEmailIdentifier } from "../src/server/auth/verification.ts";
+import { emailKey } from "../src/server/email-key.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { hashPassword } from "../src/server/password.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import type { AuthConfig, CredentialsProvider } from "../packages/auth/src/types.ts";
+import { normalizeEmailIdentifier } from "../packages/auth/src/verification.ts";
 import {
   createRequestContext,
   type RequestContext,

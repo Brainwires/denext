@@ -8,8 +8,8 @@
 
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import {
   type NativeTokens,
   refreshNativeSession,
@@ -17,9 +17,9 @@ import {
   resolveNative,
   startNativeSession,
   verifyNativeAccessToken,
-} from "../src/server/auth/native.ts";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
-import type { AuthConfig, AuthNativeConfig } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/native.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
+import type { AuthConfig, AuthNativeConfig } from "../packages/auth/src/types.ts";
 
 const SECRET = "test-secret-value-at-least-32-chars-long";
 const REDIRECT = "com.example.app://auth/callback";

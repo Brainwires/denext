@@ -2,12 +2,8 @@
 // wrong-password / malformed-input rejection (never a throw), and the parameter caps.
 
 import { assert, assertEquals, assertNotEquals, assertStringIncludes } from "@std/assert";
-import {
-  __observeScryptForTests,
-  hashPassword,
-  verifyPassword,
-} from "../src/server/auth/password.ts";
-import { scryptHasher } from "../src/server/auth/hasher.ts";
+import { __observeScryptForTests, hashPassword, verifyPassword } from "../src/server/password.ts";
+import { scryptHasher } from "../packages/auth/src/hasher.ts";
 
 /**
  * The scrypt derivations `fn` completed, as `N=…,r=…,p=…` in order. Equal work is the same

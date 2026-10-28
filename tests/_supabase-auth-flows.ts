@@ -9,9 +9,9 @@ import {
   assertNotEquals,
   assertStringIncludes,
 } from "@std/assert";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { CLIENT_FLOWS } from "./_supabase-auth-flows-client.ts";
 import { OAUTH_FLOWS } from "./_supabase-auth-flows-oauth.ts";
 import {

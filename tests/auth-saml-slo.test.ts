@@ -4,11 +4,11 @@
 // sessions its NameID (and SessionIndex) started and answers a signed LogoutResponse.
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { saml } from "../src/server/auth/providers.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { saml } from "../packages/auth/src/providers.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { encode, marker, responseXml, rsaKey, sign, type TestKey } from "./_saml-helpers.ts";
 import {
@@ -23,11 +23,14 @@ import {
 import { requestIdOf } from "./_saml-idp.ts";
 import { getCacheStore, setCacheStore } from "../src/server/cache.ts";
 import { sqliteCacheStore } from "../src/server/sqlite-cache.ts";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
-import { cookieSessionOptions, resolveAuthOptions } from "../src/server/auth/options.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
+import { cookieSessionOptions, resolveAuthOptions } from "../packages/auth/src/options.ts";
 import { getSession } from "../src/server/session.ts";
-import { readAuthSession } from "../src/server/auth/session.ts";
-import { REVOCATION_FLOOR_SECONDS, REVOCATIONS_MARKER } from "../src/server/auth/sid-revocation.ts";
+import { readAuthSession } from "../packages/auth/src/session.ts";
+import {
+  REVOCATION_FLOOR_SECONDS,
+  REVOCATIONS_MARKER,
+} from "../packages/auth/src/sid-revocation.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";
@@ -331,7 +334,7 @@ Deno.test("a session from another provider signs out locally only", async () => 
   const a = await app();
   const user = await a.adapter.createUser({ email: "x@y.test" });
   const ctx = createRequestContext(new Request(`${ORIGIN}/`));
-  const { issueAuthSession } = await import("../src/server/auth/session.ts");
+  const { issueAuthSession } = await import("../packages/auth/src/session.ts");
   await runWithContext(
     ctx,
     () =>
@@ -692,7 +695,7 @@ Deno.test("a cookie from before sids still reads; a logout naming it ends it thr
 /** An in-memory adapter that counts its revocation lookups. */
 /**
  * An adapter counting the revocation lookups of session ids, and apart from them those of the
- * marker `revokeSession(sid)` writes (src/server/auth/sid-revocation.ts).
+ * marker `revokeSession(sid)` writes (packages/auth/src/sid-revocation.ts).
  */
 function countingAdapter(): {
   adapter: AuthAdapter;
@@ -718,7 +721,7 @@ Deno.test("an app without SAML Single Logout makes no revocation lookup; one wit
   const plain = await app({ signingKey: false, adapter: plainCount.adapter });
   const user = await plain.adapter.createUser({ email: "x@y.test" });
   const ctx = createRequestContext(new Request(`${ORIGIN}/`));
-  const { issueAuthSession } = await import("../src/server/auth/session.ts");
+  const { issueAuthSession } = await import("../packages/auth/src/session.ts");
   await runWithContext(
     ctx,
     () =>

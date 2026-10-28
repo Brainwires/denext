@@ -7,9 +7,9 @@
 // what an OAuth client's token may and may not call, userinfo and discovery.
 
 import { assert, assertEquals, assertExists, assertNotEquals } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp, totpCode } from "./_supabase-auth-app.ts";
 
 interface Call {

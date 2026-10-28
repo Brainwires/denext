@@ -10,7 +10,7 @@
 // flows stay silent until a real mailer is configured (denext logs the failed delivery
 // through `logger.error`, never the link).
 
-import type { SendVerificationRequest, VerificationRequestParams } from "denext/server";
+import type { SendVerificationRequest, VerificationRequestParams } from "@denext/auth";
 import { isProduction } from "./env.ts";
 
 /** One captured message. */

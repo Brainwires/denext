@@ -7,22 +7,22 @@
 // is to the second) and fails without the stamp.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import type { AdapterUser, AuthAdapter } from "../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { markVerified, resetPassword } from "../src/server/auth/email.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
-import { hashPassword } from "../src/server/auth/password.ts";
-import { inMemorySessionStore } from "../src/server/auth/session-store.ts";
+import type { AdapterUser, AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { markVerified, resetPassword } from "../packages/auth/src/email.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { hashPassword } from "../src/server/password.ts";
+import { inMemorySessionStore } from "../packages/auth/src/session-store.ts";
 import {
   buildSessionPayload,
   endedByUser,
   endUserSessions,
   readAuthSession,
-} from "../src/server/auth/session.ts";
-import { denextAuth, revokeAllSessions } from "../src/server/auth/mod.ts";
-import { issueVerificationToken } from "../src/server/auth/verification.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/session.ts";
+import { denextAuth, revokeAllSessions } from "../packages/auth/src/mod.ts";
+import { issueVerificationToken } from "../packages/auth/src/verification.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 

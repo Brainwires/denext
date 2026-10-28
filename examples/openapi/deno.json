@@ -29,7 +29,14 @@
     "@denext/denext/cli/command": "../../src/cli/command.ts",
     "@denext/openapi": "../../packages/openapi/mod.ts",
     "@std/path": "jsr:@std/path@^1.0.0",
-    "zod": "npm:zod@^4"
+    "zod": "npm:zod@^4",
+    "@denext/auth": "../../packages/auth/mod.ts",
+    "@denext/denext/auth-kit": "../../src/server/auth-kit.ts",
+    "@denext/denext/auth-kit/client": "../../src/client/auth-kit.ts",
+    "@denext/denext/client": "../../src/client/mod.ts",
+    "@denext/denext/jsx-runtime": "../../src/jsx/jsx-runtime.ts",
+    "@denext/denext/next/server": "../../src/compat/next/server.ts",
+    "@std/encoding": "jsr:@std/encoding@^1.0.0"
   },
   "lint": {
     "plugins": [

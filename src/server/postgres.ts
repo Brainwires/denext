@@ -11,7 +11,8 @@
  * ```ts
  * // deno.json imports: "postgres": "npm:postgres@^3"
  * import postgres from "postgres";
- * import { fromPostgresJs, postgresAuthAdapter } from "denext/server";
+ * import { fromPostgresJs } from "denext/server";
+ * import { postgresAuthAdapter } from "@denext/auth";
  * const sql = fromPostgresJs(postgres(Deno.env.get("DATABASE_URL")!));
  * denextAuth({ ..., adapter: postgresAuthAdapter({ sql }) });
  * ```

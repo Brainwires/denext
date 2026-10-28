@@ -9,3 +9,10 @@ Deno.test("denext create maps denext/deploy beside denext/server", () => {
   assertEquals(imports["denext/deploy"], `${imports["denext"]}/deploy`);
   assertEquals(imports["denext/server"], `${imports["denext"]}/server`);
 });
+
+Deno.test("denext create maps @denext/auth at denext's own range, and no denext/auth", () => {
+  const imports = JSON.parse(denoJson({ dir: "app" })).imports as Record<string, string>;
+  const range = imports["denext"].slice("jsr:@denext/denext@".length);
+  assertEquals(imports["@denext/auth"], `jsr:@denext/auth@${range}`);
+  assertEquals(imports["denext/auth"], undefined);
+});

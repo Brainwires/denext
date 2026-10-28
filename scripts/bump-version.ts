@@ -19,6 +19,9 @@
 //   - deno.json              the exact `jsr:@denext/docs-corpus@<version>` import (denext X.Y.Z
 //                            ships with @denext/docs-corpus X.Y.Z, rc versions included); both
 //                            are set outright even when they had drifted from the old version
+//   - packages/auth/deno.json @denext/auth's version and its exact `jsr:@denext/denext@<version>`
+//                            pin (auth X.Y.Z is built on denext X.Y.Z's internals), set outright
+//                            the same way
 //   - ROADMAP.md             the "development is <version>" status line
 //
 // And at a STABLE release only: the prerelease specifiers the docs teach with — README.md,
@@ -199,9 +202,16 @@ const CORPUS_SPOTS: Array<[file: string, re: RegExp]> = [
   ["deno.json", /(?<="jsr:@denext\/docs-corpus@)[^"]*(?=")/],
 ];
 
+/** `@denext/auth`'s version and its exact pin of denext: both are denext's version. */
+const AUTH_SPOTS: Array<[file: string, re: RegExp]> = [
+  ["packages/auth/deno.json", /(?<="version":\s*")[^"]*(?=")/],
+  ["packages/auth/deno.json", /(?<="jsr:@denext\/denext@)[^"]*(?=")/],
+];
+
 /**
- * Set `@denext/docs-corpus`'s version (and denext's pin of it) to `newVersion` where the
- * old-version replace did not: a spot that had drifted from `oldVersion`. One hit per spot set.
+ * Set the versions that ARE denext's — `@denext/docs-corpus`'s (and denext's pin of it),
+ * `@denext/auth`'s (and its pin of denext) — to `newVersion` where the old-version replace did
+ * not: a spot that had drifted from `oldVersion`. One hit per spot set.
  */
 async function syncCorpusVersion(
   oldVersion: string,
@@ -209,10 +219,10 @@ async function syncCorpusVersion(
   dry: boolean,
 ): Promise<Array<{ file: string; hits: number }>> {
   const out: Array<{ file: string; hits: number }> = [];
-  for (const [file, re] of CORPUS_SPOTS) {
+  for (const [file, re] of [...CORPUS_SPOTS, ...AUTH_SPOTS]) {
     const text = await readOrNull(join(ROOT, file));
     const current = text === null ? null : re.exec(text)?.[0];
-    if (current === undefined) throw new Error(`${file}: no @denext/docs-corpus version to set`);
+    if (current === undefined) throw new Error(`${file}: no version to set at ${re}`);
     if (current === null || current === oldVersion || current === newVersion) continue;
     if (!dry) await Deno.writeTextFile(join(ROOT, file), text!.replace(re, newVersion));
     out.push({ file, hits: 1 });

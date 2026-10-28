@@ -24,20 +24,23 @@ import {
   setCacheStore,
   withCacheScope,
 } from "../src/server/cache.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { auth, denextAuth, requireAuth, revokeAllSessions } from "../src/server/auth/mod.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { auth, denextAuth, requireAuth, revokeAllSessions } from "../packages/auth/src/mod.ts";
 import {
   matchRedirectUri,
   refreshNativeSession,
   resolveNative,
   startNativeSession,
-} from "../src/server/auth/native.ts";
-import { hashPassword } from "../src/server/auth/password.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { inMemorySessionStore } from "../src/server/auth/session-store.ts";
-import { NATIVE_SESSION_RETENTION, sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/native.ts";
+import { hashPassword } from "../src/server/password.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { inMemorySessionStore } from "../packages/auth/src/session-store.ts";
+import {
+  NATIVE_SESSION_RETENTION,
+  sqliteAuthAdapter,
+} from "../packages/auth/src/sqlite-adapter.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 import { requireSession } from "../src/server/api-middleware.ts";
 import type { CorsConfig } from "../src/server/config.ts";
 import { resolveCors } from "../src/server/cors.ts";

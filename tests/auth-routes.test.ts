@@ -6,6 +6,7 @@
 
 import { assert, assertEquals, assertMatch, assertNotEquals } from "@std/assert";
 import type { PluginContext, PluginRequestHandler } from "../src/plugin/mod.ts";
+import { hashPassword } from "../src/server/mod.ts";
 import {
   type AuthAdapter,
   type AuthConfig,
@@ -14,12 +15,11 @@ import {
   emailOtp,
   enrollTotp,
   github,
-  hashPassword,
   inMemoryAuthAdapter,
   magicLink,
   requestEmailVerification,
   type VerificationRequestParams,
-} from "../src/server/mod.ts";
+} from "../packages/auth/mod.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
 import {
   createRequestContext,

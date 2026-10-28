@@ -9,9 +9,9 @@
 
 import { type ApiMiddleware, type ApiMiddlewareInput, tagMiddlewareDocs } from "./define-api.ts";
 import { ApiError } from "./api-error.ts";
-import { hasRole, updateAuthSession } from "./auth/mod.ts";
-import type { AuthSession } from "./auth/types.ts";
-import { inMemoryRateLimitStore, type RateLimitStore } from "./auth/rate-limit.ts";
+import { hasRole, updatedSession } from "./auth-registry.ts";
+import type { AuthSession } from "./auth-session.ts";
+import { inMemoryRateLimitStore, type RateLimitStore } from "./rate-limit-store.ts";
 import { ipBucket, limitAddrOf, remoteAddrOf } from "./remote-addr.ts";
 import type { CorsConfig } from "./config.ts";
 import { CORS_POLICY, resolveCors } from "./cors.ts";
@@ -22,8 +22,8 @@ import {
   currentLimitPolicy,
   trustsForwardedHeaders,
 } from "./request-context.ts";
-import { randomToken } from "./auth/oauth.ts";
-import { constantTimeEqualHex } from "./auth/hash.ts";
+import { randomToken } from "./random-token.ts";
+import { constantTimeEqualHex } from "./hash.ts";
 import { getCookies } from "@std/http/cookie";
 import { requestOrigin } from "./absolute-url.ts";
 
@@ -59,7 +59,7 @@ export function requireSession(
   const unauthorized = options.message ?? "Unauthorized";
   const forbidden = options.forbiddenMessage ?? "Forbidden";
   const mw: ApiMiddleware<object, { session: AuthSession }> = async () => {
-    const session = await updateAuthSession();
+    const session = await updatedSession();
     if (!session) throw new ApiError(401, "unauthorized", { message: unauthorized });
     if (!hasRole(session, options.role)) {
       throw new ApiError(403, "forbidden", { message: forbidden });

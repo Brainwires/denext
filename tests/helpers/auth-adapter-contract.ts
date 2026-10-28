@@ -12,8 +12,8 @@ import type {
   AuthAdapter,
   VerificationTokenRecord,
   VerificationTokenRef,
-} from "../../src/server/auth/adapter.ts";
-import type { AuthSession } from "../../src/server/auth/types.ts";
+} from "../../packages/auth/src/adapter.ts";
+import type { AuthSession } from "../../packages/auth/src/types.ts";
 import { OAUTH_SERVER_CASES } from "./auth-adapter-contract-oauth-server.ts";
 import { at, withPinnedClock } from "./contract-clock.ts";
 
@@ -984,7 +984,7 @@ async function runCases(
 }
 
 /**
- * Run the shared {@link ../../src/server/auth/adapter.ts | AuthAdapter} contract against
+ * Run the shared {@link ../../packages/auth/src/adapter.ts | AuthAdapter} contract against
  * one implementation: users, accounts, verification tokens, credentials, API tokens, MFA
  * (including the consume-once guarantees), native app sessions + `deleteUser`, SAML SSO
  * providers / sessions / message ids, the `sessions` store, and `close()`.

@@ -12,12 +12,12 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { getSession } from "../src/server/session.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { issueAuthSession, readAuthSession, refreshIfStale } from "../src/server/auth/session.ts";
-import { cookieSessionOptions, resolveAuthOptions } from "../src/server/auth/options.ts";
-import { inMemorySessionStore } from "../src/server/auth/session-store.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { issueAuthSession, readAuthSession, refreshIfStale } from "../packages/auth/src/session.ts";
+import { cookieSessionOptions, resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { inMemorySessionStore } from "../packages/auth/src/session-store.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

@@ -12,7 +12,7 @@ import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
 import type { ApiModule } from "../src/server/types.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { ApiMatch } from "../src/router/match.ts";
-import { inMemoryRateLimitStore } from "../src/server/auth/rate-limit.ts";
+import { inMemoryRateLimitStore } from "../packages/auth/src/rate-limit.ts";
 import { parseCidr, setRemoteAddr } from "../src/server/remote-addr.ts";
 
 /** A loopback reverse proxy, listed as the trusted source of the app's limit header. */

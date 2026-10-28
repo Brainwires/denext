@@ -110,7 +110,7 @@ Deno.test("next-auth migrate: a v4 app's aliases, --check findings and CLI repor
         ["next-auth/adapters", "adapters.ts"],
       ]
     ) {
-      assert(String(imports[spec]).endsWith(`/src/compat/next-auth/${file}`), spec);
+      assert(String(imports[spec]).endsWith(`/packages/auth/next-auth/${file}`), spec);
     }
     // The adapters stay the app's own npm dependencies.
     assert(String(imports["@auth/drizzle-adapter"]).startsWith("npm:@auth/drizzle-adapter@"));

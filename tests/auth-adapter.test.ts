@@ -3,15 +3,15 @@
 // and `callbacks.signIn`.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import type { AdapterAccount, AdapterUser, AuthAdapter } from "../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import type { AdapterAccount, AdapterUser, AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import {
   accountNotLinkedCode,
   AccountNotLinkedError,
   resolveSignInUser,
-} from "../src/server/auth/adapter-link.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
-import type { AuthConfig, AuthUser, OAuthProvider } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/adapter-link.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
+import type { AuthConfig, AuthUser, OAuthProvider } from "../packages/auth/src/types.ts";
 import { adapterContract } from "./helpers/auth-adapter-contract.ts";
 
 const SECRET = "0123456789abcdef0123456789abcdef";

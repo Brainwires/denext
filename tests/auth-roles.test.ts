@@ -8,13 +8,13 @@ import {
   type RequestContext,
   runWithContext,
 } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { auth, denextAuth, hasRole, requireAuth } from "../src/server/auth/mod.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { auth, denextAuth, hasRole, requireAuth } from "../packages/auth/src/mod.ts";
 import { requireSession } from "../src/server/api-middleware.ts";
-import { credentials } from "../src/server/auth/providers.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
 import { type ApiError, isApiError } from "../src/server/api-error.ts";
 import type { ApiMiddlewareInput } from "../src/server/define-api.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

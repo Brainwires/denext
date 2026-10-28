@@ -5,7 +5,7 @@
 // clock jumps forward on every read, so each case crosses many second boundaries.
 
 import { adapterContract } from "./helpers/auth-adapter-contract.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 
 Deno.test("the adapter contract holds while the clock ticks between a write and its assertion", async (t) => {
   const realNow = Date.now;

@@ -1,11 +1,5 @@
-import {
-  auth,
-  type AuthSession,
-  type MfaStatus,
-  mfaStatus,
-  type PageProps,
-  type TotpEnrollment,
-} from "denext/server";
+import { auth, type AuthSession, type PageProps } from "denext/server";
+import { type MfaStatus, mfaStatus, type TotpEnrollment } from "@denext/auth";
 import { authConfig } from "../../../lib/auth-config.ts";
 import { onceKey, takeOnce } from "../../../lib/once.ts";
 import { ErrorNote } from "../../error-note.tsx";

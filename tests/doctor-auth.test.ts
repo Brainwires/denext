@@ -4,14 +4,14 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { authChecks, samlLogoutStoreCheck } from "../src/cli/commands/doctor-auth.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { saml } from "../src/server/auth/providers.ts";
-import { sqliteSessionStore } from "../src/server/auth/sqlite-session-store.ts";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { saml } from "../packages/auth/src/providers.ts";
+import { sqliteSessionStore } from "../packages/auth/src/sqlite-session-store.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
 import type { DenextConfig } from "../src/server/config.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { rsaKey } from "./_saml-helpers.ts";
 import { spKey } from "./_saml-enc-helpers.ts";
 

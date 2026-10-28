@@ -5,7 +5,7 @@
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { denoKvCacheStore } from "../src/server/deno-kv-cache.ts";
-import { denoKvRateLimitStore, denoKvSessionStore } from "../src/server/auth/deno-kv-stores.ts";
+import { denoKvRateLimitStore, denoKvSessionStore } from "../packages/auth/src/deno-kv-stores.ts";
 import { DenoKvUnsupportedError, type KvLike, retryCommit } from "../src/server/deno-kv.ts";
 import {
   cacheStoreContract,

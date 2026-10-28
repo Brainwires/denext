@@ -4,9 +4,9 @@
 // (SSRF-safe fetch, refresh of a stale copy), and a login through a stored provider.
 
 import { assert, assertEquals, assertExists, assertMatch, assertStringIncludes } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 import { ACS, requestIdOf, type TestIdp, testIdp } from "./_saml-idp.ts";
 

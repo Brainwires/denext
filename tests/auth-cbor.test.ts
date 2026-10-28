@@ -1,10 +1,10 @@
-// The strict CBOR decoder behind passkeys (src/server/auth/cbor.ts): RFC 8949 Appendix A's
+// The strict CBOR decoder behind passkeys (packages/auth/src/cbor.ts): RFC 8949 Appendix A's
 // examples for every type it accepts, decoded to the values the RFC lists, and the refusals —
 // indefinite lengths, tags, floats, `undefined`, integers past 2^53, truncation, trailing bytes,
 // duplicate map keys, invalid UTF-8, hostile lengths and nesting depth.
 
 import { assertEquals, assertThrows } from "@std/assert";
-import { CborError, decodeCbor, decodeCborPrefix } from "../src/server/auth/cbor.ts";
+import { CborError, decodeCbor, decodeCborPrefix } from "../packages/auth/src/cbor.ts";
 
 /** Hex → bytes. */
 const hex = (s: string) => Uint8Array.from(s.match(/../g) ?? [], (b) => parseInt(b, 16));

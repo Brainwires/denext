@@ -3,8 +3,8 @@
 // as `bad_metadata`.
 
 import { assertEquals, assertThrows } from "@std/assert";
-import { parseIdpMetadata, SamlError } from "../src/server/auth/saml/mod.ts";
-import { parseCacheDuration, parseValidUntil } from "../src/server/auth/saml/metadata.ts";
+import { parseIdpMetadata, SamlError } from "../packages/auth/src/saml/mod.ts";
+import { parseCacheDuration, parseValidUntil } from "../packages/auth/src/saml/metadata.ts";
 import { rsaKey } from "./_saml-helpers.ts";
 
 const rsa = await rsaKey();

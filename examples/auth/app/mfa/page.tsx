@@ -1,5 +1,6 @@
 import { redirect } from "denext";
-import { auth, type PageProps, pendingMfaSession } from "denext/server";
+import { auth, type PageProps } from "denext/server";
+import { pendingMfaSession } from "@denext/auth";
 import { safeCallback } from "../../lib/callback.ts";
 import { ErrorNote } from "../error-note.tsx";
 

@@ -2452,8 +2452,16 @@
       "npm:ws@8"
     ],
     "members": {
+      "packages/auth": {
+        "dependencies": [
+          "jsr:@denext/denext@4.9.0",
+          "jsr:@std/encoding@1",
+          "jsr:@std/path@1"
+        ]
+      },
       "packages/backend": {
         "dependencies": [
+          "jsr:@denext/auth@^4.9.0",
           "jsr:@denext/denext@^4.9.0",
           "jsr:@std/path@1"
         ]

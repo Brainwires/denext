@@ -2,11 +2,9 @@
 // session index and revocation list in the auth adapter: an adapter without those methods leaves
 // it off (a LogoutRequest ends every session of the user), and the in-memory adapter keeps them
 // per process, lost on a restart and unseen by other instances. The config is read off the plugin
-// object structurally (the CLI's copy of the auth module may not be the app's).
+// object structurally (the auth plugin is the app's `@denext/auth`, not a module of the CLI).
 
 import type { DenextConfig } from "../../server/config.ts";
-import type { AuthAdapter } from "../../server/auth/adapter.ts";
-import { cookieRevocationOf } from "../../server/auth/saml-revocation.ts";
 
 /** One doctor line (the shape `doctor.ts` prints). */
 export interface AuthCheck {
@@ -21,9 +19,24 @@ const AUTH_PLUGIN_CONFIG = Symbol.for("denext.auth.pluginConfig");
 /** The key `inMemoryAuthAdapter()` marks its adapter with. */
 const IN_MEMORY_ADAPTER = Symbol.for("denext.auth.inMemoryAdapter");
 
+/**
+ * The methods an auth adapter needs to revoke one SAML cookie session (`@denext/auth`'s
+ * `cookieRevocationOf` checks the same list).
+ */
+const COOKIE_REVOCATION_METHODS = [
+  "recordSsoSessionIndex",
+  "listSsoSessionIndexBySessionIndex",
+  "listSsoSessionIndexByNameId",
+  "revokeSids",
+  "isSidRevoked",
+] as const;
+
+/** The structural slice of an auth adapter this check reads. */
+type AuthAdapterSlice = Partial<Record<(typeof COOKIE_REVOCATION_METHODS)[number], unknown>>;
+
 /** The structural slice of an auth config this check reads. */
 interface AuthConfigSlice {
-  adapter?: AuthAdapter;
+  adapter?: AuthAdapterSlice;
   sessionStore?: unknown;
   session?: { strategy?: string };
   providers?: { type?: string; sp?: { signingKey?: unknown } }[];
@@ -45,8 +58,8 @@ function logsOutCookieSessions(auth: AuthConfigSlice): boolean {
 }
 
 /** What is wrong with the adapter for Single Logout of cookie sessions, or `null`. */
-function adapterProblem(adapter: AuthAdapter): string | null {
-  if (!cookieRevocationOf(adapter)) {
+function adapterProblem(adapter: AuthAdapterSlice): string | null {
+  if (!COOKIE_REVOCATION_METHODS.every((m) => typeof adapter[m] === "function")) {
     return "the auth adapter keeps no SAML session index (`recordSsoSessionIndex` … " +
       "`isSidRevoked`), so an IdP's LogoutRequest ends every session of the user instead of " +
       "the one it names — use sqliteAuthAdapter, postgresAuthAdapter or backendAuthAdapter";

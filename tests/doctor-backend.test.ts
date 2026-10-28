@@ -6,8 +6,8 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { type BackendCheck, backendChecks } from "../src/cli/commands/doctor-backend.ts";
 import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
-import { installSupabaseKeys } from "../src/server/auth/gotrue/keys.ts";
-import { generateSupabaseKeys } from "../src/server/auth/gotrue/keys.ts";
+import { installSupabaseKeys } from "../src/server/supabase-keys.ts";
+import { generateSupabaseKeys } from "../src/server/supabase-keys.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import { backend, fs } from "../packages/backend/mod.ts";

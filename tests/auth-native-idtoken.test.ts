@@ -6,12 +6,12 @@
 // exchange that later lets account deletion revoke Apple's tokens.
 
 import { assert, assertEquals, assertMatch } from "@std/assert";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { sha256Hex } from "../src/server/auth/hash.ts";
-import type { AuthConfig, AuthNativeConfig } from "../src/server/auth/types.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { sha256Hex } from "../src/server/hash.ts";
+import type { AuthConfig, AuthNativeConfig } from "../packages/auth/src/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 
 const ORIGIN = "https://app.test";

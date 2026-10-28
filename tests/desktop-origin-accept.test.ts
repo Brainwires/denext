@@ -10,12 +10,12 @@ import { configuredDesktopAppOrigin, resolveServerOptions } from "../src/server/
 import { devOriginError, validateDenextConfig } from "../src/server/config-validate.ts";
 import { devOriginAllowed } from "../src/build/dev-server.ts";
 import { effectiveDevOrigins } from "../src/build/dev-server/lan.ts";
-import { isSameOrigin } from "../src/server/auth/routes-shared.ts";
+import { isSameOrigin } from "../packages/auth/src/routes-shared.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { actionEndpoint } from "../src/runtime/server-action.ts";
 import { serverAction } from "../src/runtime/action-stub.ts";
 import { API_BATCH_HEADER, API_BATCH_PATH } from "../src/runtime/api-batch-protocol.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import { batchApp } from "./helpers/batch-app.ts";
 

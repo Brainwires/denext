@@ -11,7 +11,7 @@
 // Opt-in (it downloads supabase-js from npm): DENEXT_TEST_SUPABASE_JS=1. The backend-integration
 // CI job sets it.
 
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import { runFlows } from "./_supabase-auth-flows.ts";
 
 const enabled = Deno.env.get("DENEXT_TEST_SUPABASE_JS") === "1";

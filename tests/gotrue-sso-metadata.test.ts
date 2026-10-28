@@ -7,16 +7,19 @@
 // background timer.
 
 import { assert, assertEquals, assertMatch } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
-import { resetMetadataBackoff, setMetadataClock } from "../src/server/auth/gotrue/sso-metadata.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
+import {
+  resetMetadataBackoff,
+  setMetadataClock,
+} from "../packages/auth/src/gotrue/sso-metadata.ts";
 import {
   ssoMetadataRefreshActive,
   ssoMetadataRefreshTick,
-} from "../src/server/auth/gotrue/sso-refresh.ts";
-import { resolveSupabaseKeys } from "../src/server/auth/gotrue/keys.ts";
-import { installGoTrue, refreshSsoMetadata } from "../src/server/mod.ts";
+} from "../packages/auth/src/gotrue/sso-refresh.ts";
+import { resolveSupabaseKeys } from "../src/server/supabase-keys.ts";
+import { installGoTrue, refreshSsoMetadata } from "../packages/auth/mod.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 import { ACS, requestIdOf, SLO, testIdp } from "./_saml-idp.ts";
 import { spKey } from "./_saml-enc-helpers.ts";

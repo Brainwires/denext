@@ -5,9 +5,9 @@
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
-import { sqliteSessionStore } from "../src/server/auth/sqlite-session-store.ts";
-import type { AuthSession } from "../src/server/auth/types.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
+import { sqliteSessionStore } from "../packages/auth/src/sqlite-session-store.ts";
+import type { AuthSession } from "../packages/auth/src/types.ts";
 import type { SqliteDb, SqlValue } from "../src/server/sqlite-cache.ts";
 import { adapterContract } from "./helpers/auth-adapter-contract.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";

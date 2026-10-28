@@ -18,7 +18,7 @@ import { applyPlugins, resetPlugins, runPluginTeardown } from "../src/plugin/mod
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
 import { resetChannels, setChannelPayloadCap } from "../src/runtime/channel.ts";
 import { unstable_cache } from "../src/server/cache.ts";
 import {

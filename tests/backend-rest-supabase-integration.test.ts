@@ -26,10 +26,10 @@ import type { ModuleLoader } from "../src/server/types.ts";
 import { createApp } from "../src/server/app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { issueAuthSession } from "../src/server/auth/session.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { issueAuthSession } from "../packages/auth/src/session.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { backend } from "../packages/backend/mod.ts";
 import { db } from "../packages/backend/server.ts";
 import { restClient } from "../packages/backend/client.ts";
@@ -42,7 +42,7 @@ import {
   installSupabaseKeys,
   resolveSupabaseKeys,
   signSupabaseJwt,
-} from "../src/server/auth/gotrue/keys.ts";
+} from "../src/server/supabase-keys.ts";
 
 const URL_ = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
 const SQL = builtinSql();

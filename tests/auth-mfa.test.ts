@@ -8,8 +8,8 @@
 
 import { assert, assertEquals, assertMatch, assertNotEquals, assertRejects } from "@std/assert";
 import { decodeBase32 } from "@std/encoding/base32";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import {
   confirmTotp,
   enrollTotp,
@@ -17,17 +17,17 @@ import {
   mfaPendingFor,
   mfaStatus,
   spendMfaAttempt,
-} from "../src/server/auth/mfa.ts";
-import { auth, denextAuth, pendingMfaSession } from "../src/server/auth/mod.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
-import { hashPassword } from "../src/server/auth/password.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { mfaRoutes } from "../src/server/auth/routes-mfa.ts";
-import type { AuthRouteContext } from "../src/server/auth/routes-shared.ts";
-import { readAuthSession } from "../src/server/auth/session.ts";
-import { inMemorySessionStore, type SessionStore } from "../src/server/auth/session-store.ts";
-import { finishSignIn } from "../src/server/auth/sign-in-tail.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/mfa.ts";
+import { auth, denextAuth, pendingMfaSession } from "../packages/auth/src/mod.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { hashPassword } from "../src/server/password.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { mfaRoutes } from "../packages/auth/src/routes-mfa.ts";
+import type { AuthRouteContext } from "../packages/auth/src/routes-shared.ts";
+import { readAuthSession } from "../packages/auth/src/session.ts";
+import { inMemorySessionStore, type SessionStore } from "../packages/auth/src/session-store.ts";
+import { finishSignIn } from "../packages/auth/src/sign-in-tail.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 
 const ORIGIN = "https://app.test";

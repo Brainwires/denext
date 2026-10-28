@@ -5,10 +5,10 @@
 // through the real client are tests/backend-supabase-auth.test.ts.
 
 import { assert, assertEquals, assertExists, assertMatch, assertStringIncludes } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { github, gitlab } from "../src/server/auth/providers.ts";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
-import { parseBanDuration } from "../src/server/auth/gotrue/routes-admin.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { github, gitlab } from "../packages/auth/src/providers.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
+import { parseBanDuration } from "../packages/auth/src/gotrue/routes-admin.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp, totpCode } from "./_supabase-auth-app.ts";
 
 interface Call {

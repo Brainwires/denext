@@ -14,8 +14,8 @@ import {
   rateLimit,
   requireSession,
 } from "../src/server/mod.ts";
-import { requireBearer } from "../src/server/auth/bearer.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { requireBearer } from "../packages/auth/src/bearer.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { ApiRoute } from "../src/router/manifest.ts";
 import type { DenextConfig } from "../src/server/config.ts";

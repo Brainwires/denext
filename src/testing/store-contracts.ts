@@ -21,9 +21,8 @@
  */
 
 import type { CachedPage, CacheStore } from "../server/cache.ts";
-import type { SessionStore } from "../server/auth/session-store.ts";
-import type { RateLimitStore } from "../server/auth/rate-limit.ts";
-import type { AuthSession } from "../server/auth/types.ts";
+import type { AuthSession, SessionStore } from "../server/auth-session.ts";
+import type { RateLimitStore } from "../server/rate-limit-store.ts";
 
 /** Where the cases run: `Deno.TestContext` fits, or any `{ step }` that runs a named case. */
 export interface ContractContext {

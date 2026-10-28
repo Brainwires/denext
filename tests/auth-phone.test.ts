@@ -4,15 +4,15 @@
 // config-time check, `GET /providers`, and the dispatcher's 405 / cross-origin 403.
 
 import { assert, assertEquals, assertNotEquals, assertThrows } from "@std/assert";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { issueApiToken } from "../src/server/auth/api-token.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
-import { normalizePhoneNumber } from "../src/server/auth/phone.ts";
-import { credentials, phoneOtp } from "../src/server/auth/providers.ts";
-import { assertPhoneProviderConfig } from "../src/server/auth/providers-phone.ts";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { type AuthConfig, isPhoneProvider } from "../src/server/auth/types.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { issueApiToken } from "../packages/auth/src/api-token.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { normalizePhoneNumber } from "../packages/auth/src/phone.ts";
+import { credentials, phoneOtp } from "../packages/auth/src/providers.ts";
+import { assertPhoneProviderConfig } from "../packages/auth/src/providers-phone.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { type AuthConfig, isPhoneProvider } from "../packages/auth/src/types.ts";
 import {
   call,
   type CallInit,

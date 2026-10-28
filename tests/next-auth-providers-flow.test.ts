@@ -7,32 +7,32 @@
 // RFC 9207 `iss` response parameter), a foreign audience, an expired token and a replayed nonce.
 
 import { assert, assertEquals } from "@std/assert";
-import { translateConfig } from "../src/compat/next-auth/config.ts";
-import type { Provider } from "../src/compat/next-auth/types.ts";
+import { translateConfig } from "../packages/auth/next-auth/config.ts";
+import type { Provider } from "../packages/auth/next-auth/types.ts";
 import {
   createRequestContext,
   type RequestContext,
   runWithContext,
 } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import type { AuthConfig, AuthUser, OAuthProvider } from "../src/server/auth/types.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import type { AuthConfig, AuthUser, OAuthProvider } from "../packages/auth/src/types.ts";
 import { appConfig, type Idp, makeIdp, ORIGIN, txData } from "./helpers/oauth-flow-harness.ts";
-import Apple from "../src/compat/next-auth/providers/apple.ts";
-import Auth0 from "../src/compat/next-auth/providers/auth0.ts";
-import Discord from "../src/compat/next-auth/providers/discord.ts";
-import GitHub from "../src/compat/next-auth/providers/github.ts";
-import Google from "../src/compat/next-auth/providers/google.ts";
-import Keycloak from "../src/compat/next-auth/providers/keycloak.ts";
-import LinkedIn from "../src/compat/next-auth/providers/linkedin.ts";
-import MicrosoftEntraID from "../src/compat/next-auth/providers/microsoft-entra-id.ts";
-import Okta from "../src/compat/next-auth/providers/okta.ts";
-import Reddit from "../src/compat/next-auth/providers/reddit.ts";
-import Slack from "../src/compat/next-auth/providers/slack.ts";
-import Spotify from "../src/compat/next-auth/providers/spotify.ts";
-import Twitch from "../src/compat/next-auth/providers/twitch.ts";
-import Twitter from "../src/compat/next-auth/providers/twitter.ts";
-import Zoom from "../src/compat/next-auth/providers/zoom.ts";
+import Apple from "../packages/auth/next-auth/providers/apple.ts";
+import Auth0 from "../packages/auth/next-auth/providers/auth0.ts";
+import Discord from "../packages/auth/next-auth/providers/discord.ts";
+import GitHub from "../packages/auth/next-auth/providers/github.ts";
+import Google from "../packages/auth/next-auth/providers/google.ts";
+import Keycloak from "../packages/auth/next-auth/providers/keycloak.ts";
+import LinkedIn from "../packages/auth/next-auth/providers/linkedin.ts";
+import MicrosoftEntraID from "../packages/auth/next-auth/providers/microsoft-entra-id.ts";
+import Okta from "../packages/auth/next-auth/providers/okta.ts";
+import Reddit from "../packages/auth/next-auth/providers/reddit.ts";
+import Slack from "../packages/auth/next-auth/providers/slack.ts";
+import Spotify from "../packages/auth/next-auth/providers/spotify.ts";
+import Twitch from "../packages/auth/next-auth/providers/twitch.ts";
+import Twitter from "../packages/auth/next-auth/providers/twitter.ts";
+import Zoom from "../packages/auth/next-auth/providers/zoom.ts";
 
 const IDP: Idp = await makeIdp();
 const TX = "__Host-denext_auth_tx";

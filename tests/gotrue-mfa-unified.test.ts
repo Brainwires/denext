@@ -6,17 +6,17 @@
 // (no supabase-js), so it runs in the unit suite.
 
 import { assert, assertEquals, assertExists } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import {
   confirmTotp,
   enrollTotp,
   mfaPendingFor,
   verifySecondFactor,
-} from "../src/server/auth/mfa.ts";
-import { sessionFromJwtBearer } from "../src/server/auth/gotrue/access.ts";
+} from "../packages/auth/src/mfa.ts";
+import { sessionFromJwtBearer } from "../packages/auth/src/gotrue/access.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { resolveIdentity } from "../packages/backend/server.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp, totpCode } from "./_supabase-auth-app.ts";
 import { Authenticator } from "./helpers/soft-authenticator.ts";
 

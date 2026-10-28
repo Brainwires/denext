@@ -12,11 +12,11 @@ import { getPluginCommands } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { auth, denextAuth } from "../src/server/auth/mod.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { issueAuthSession } from "../src/server/auth/session.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import { auth, denextAuth } from "../packages/auth/src/mod.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { issueAuthSession } from "../packages/auth/src/session.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import {
   generateSupabaseKeys,
   installedSupabaseKeys,
@@ -25,8 +25,8 @@ import {
   signSupabaseJwt,
   type SupabaseKeys,
   verifySupabaseJwt,
-} from "../src/server/auth/gotrue/keys.ts";
-import { sessionFromClaims } from "../src/server/auth/gotrue/access.ts";
+} from "../src/server/supabase-keys.ts";
+import { sessionFromClaims } from "../packages/auth/src/gotrue/access.ts";
 import { backend } from "../packages/backend/mod.ts";
 import {
   ANON_IDENTITY,

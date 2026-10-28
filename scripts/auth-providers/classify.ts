@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { GeneratedUserinfoRequest } from "../../src/compat/next-auth/providers/generated.ts";
+import type { GeneratedUserinfoRequest } from "../../packages/auth/next-auth/providers/generated.ts";
 
 /** The `@auth/core` release the generated providers follow (`next-auth@5.0.0-beta.32`'s). */
 export const AUTHJS_CORE_VERSION = "0.41.3";

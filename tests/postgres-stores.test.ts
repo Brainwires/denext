@@ -17,10 +17,10 @@ import {
   toNumber,
 } from "../src/server/postgres.ts";
 import { migratePostgres, postgresMigrationStatus } from "../src/server/postgres-migrate.ts";
-import { postgresAuthAdapter } from "../src/server/auth/postgres-adapter.ts";
+import { postgresAuthAdapter } from "../packages/auth/src/postgres-adapter.ts";
 import { postgresCacheStore } from "../src/server/postgres-cache.ts";
-import { postgresRateLimitStore } from "../src/server/auth/postgres-rate-limit.ts";
-import { postgresSessionStore } from "../src/server/auth/postgres-session-store.ts";
+import { postgresRateLimitStore } from "../packages/auth/src/postgres-rate-limit.ts";
+import { postgresSessionStore } from "../packages/auth/src/postgres-session-store.ts";
 
 Deno.test("Postgres stores on a fake client: contract + suites", async (t) => {
   await postgresSuites(t, () => Promise.resolve({ sql: fakeSqlClient() }));

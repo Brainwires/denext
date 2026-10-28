@@ -13,9 +13,9 @@ import {
 } from "../src/testing/mod.ts";
 import { type CacheStore, inMemoryCacheStore } from "../src/server/cache.ts";
 import { sqliteCacheStore } from "../src/server/sqlite-cache.ts";
-import { inMemorySessionStore, type SessionStore } from "../src/server/auth/session-store.ts";
-import { sqliteSessionStore } from "../src/server/auth/sqlite-session-store.ts";
-import { inMemoryRateLimitStore } from "../src/server/auth/rate-limit.ts";
+import { inMemorySessionStore, type SessionStore } from "../packages/auth/src/session-store.ts";
+import { sqliteSessionStore } from "../packages/auth/src/sqlite-session-store.ts";
+import { inMemoryRateLimitStore } from "../packages/auth/src/rate-limit.ts";
 
 /** A fresh SQLite file per case, removed when the test ends. */
 function tempFiles() {

@@ -1,4 +1,4 @@
-// Supabase-compatible keys and JWTs (src/server/auth/gotrue/keys.ts): ES256 / HS256 signing and
+// Supabase-compatible keys and JWTs (src/server/supabase-keys.ts): ES256 / HS256 signing and
 // verification, the refusals that matter (alg none, algorithm confusion, a wrong key, an expired
 // or future token, a role Supabase doesn't define), API key roles in constant time, key rotation
 // by `kid`, the JWKS, generated key sets, and the installed slot.
@@ -18,8 +18,8 @@ import {
   supabaseJwks,
   SupabaseKeyError,
   verifySupabaseJwt,
-} from "../src/server/auth/gotrue/keys.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
+} from "../src/server/supabase-keys.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
 
 const SECRET = "legacy-jwt-secret-at-least-32-characters!";
 const now = () => Math.floor(Date.now() / 1000);

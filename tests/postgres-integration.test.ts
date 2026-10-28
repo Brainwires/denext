@@ -16,7 +16,7 @@
 
 import { assertEquals } from "@std/assert";
 import { builtinSql, fromPostgresJs, type SqlClient } from "../src/server/postgres.ts";
-import { postgresAuthAdapter } from "../src/server/auth/postgres-adapter.ts";
+import { postgresAuthAdapter } from "../packages/auth/src/postgres-adapter.ts";
 import { migratePostgres, postgresMigrationStatus } from "../src/server/postgres-migrate.ts";
 import { type Fresh, postgresSuites } from "./helpers/postgres-suites.ts";
 import { postgresJobHistoryStore } from "../src/server/postgres-job-history.ts";

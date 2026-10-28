@@ -1,4 +1,5 @@
-import type { AuthProvider, PageProps } from "denext/server";
+import type { PageProps } from "denext/server";
+import type { AuthProvider } from "@denext/auth";
 import { oauthProviders } from "../../lib/auth-config.ts";
 import { safeCallback } from "../../lib/callback.ts";
 import { ErrorNote } from "../error-note.tsx";

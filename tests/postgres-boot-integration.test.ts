@@ -16,7 +16,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { builtinSql, type SqlClient } from "../src/server/postgres.ts";
 import { BOOT_DDL_ENV, BootSchemaError, verifyBootSchemas } from "../src/server/postgres-boot.ts";
-import { postgresAuthAdapter } from "../src/server/auth/postgres-adapter.ts";
+import { postgresAuthAdapter } from "../packages/auth/src/postgres-adapter.ts";
 import { postgresCacheStore } from "../src/server/postgres-cache.ts";
 import { postgresJobHistoryStore } from "../src/server/postgres-job-history.ts";
 import { applyPlugins, resetPlugins, runPluginTeardown } from "../src/plugin/mod.ts";
@@ -28,8 +28,8 @@ import { installRealtime } from "../packages/backend/src/realtime.ts";
 import { installWebhooks } from "../packages/backend/src/webhooks.ts";
 import { postgresEnvironment } from "./helpers/postgres-env.ts";
 import { MIGRATION_ACTIONS } from "../src/cli/commands/migration.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { credentials } from "../src/server/auth/providers.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
 import { migratePostgres } from "../src/server/postgres-migrate.ts";
 import { type BackendDbHooks, backendHooks } from "../src/cli/db/project.ts";
 

@@ -14,7 +14,7 @@
 // imports the same object wherever it calls an auth flow itself (API tokens, TOTP, the
 // verification email).
 
-import { type AuthConfig, type AuthProvider, credentials, magicLink, oidc } from "denext/server";
+import { type AuthConfig, type AuthProvider, credentials, magicLink, oidc } from "@denext/auth";
 import { authEvents, authLogger } from "./audit.ts";
 import { isProduction } from "./env.ts";
 import { devMailer } from "./outbox.ts";

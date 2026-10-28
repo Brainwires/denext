@@ -5,8 +5,8 @@
 // single-use nonces, disabled chains and sign-ups, and Solana's Ed25519.
 
 import { assert, assertEquals, assertNotEquals } from "@std/assert";
-import { keccak256 } from "../src/server/auth/gotrue/keccak.ts";
-import { N } from "../src/server/auth/gotrue/secp256k1.ts";
+import { keccak256 } from "../packages/auth/src/gotrue/keccak.ts";
+import { N } from "../packages/auth/src/gotrue/secp256k1.ts";
 import {
   base58Decode,
   base58Encode,
@@ -14,10 +14,10 @@ import {
   recoverEthereumAddress,
   toChecksumAddress,
   validEthereumAddress,
-} from "../src/server/auth/gotrue/web3.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
+} from "../packages/auth/src/gotrue/web3.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 import { ethereumWallet, siweMessage, solanaWallet } from "./_web3-wallet.ts";
 

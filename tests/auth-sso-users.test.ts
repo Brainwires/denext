@@ -7,26 +7,26 @@
 // Raw HTTP into the app (the unit suite); the supabase-js side runs in tests/_supabase-auth-flows.ts.
 
 import { assert, assertEquals, assertInstanceOf, assertNotEquals } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
-import { credentials, emailOtp, magicLink, phoneOtp } from "../src/server/auth/providers.ts";
-import { AccountNotLinkedError, resolveSignInUser } from "../src/server/auth/adapter-link.ts";
-import { requestPasswordReset, resetPassword } from "../src/server/auth/email.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import type { AuthConfig, OAuthProvider } from "../src/server/auth/types.ts";
-import type { GoTrueOptions, GoTrueSmsMessage } from "../src/server/auth/gotrue/options.ts";
-import { inMemorySessionStore } from "../src/server/auth/session-store.ts";
-import { readAuthSession, refreshLiveSession } from "../src/server/auth/session.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { credentials, emailOtp, magicLink, phoneOtp } from "../packages/auth/src/providers.ts";
+import { AccountNotLinkedError, resolveSignInUser } from "../packages/auth/src/adapter-link.ts";
+import { requestPasswordReset, resetPassword } from "../packages/auth/src/email.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import type { AuthConfig, OAuthProvider } from "../packages/auth/src/types.ts";
+import type { GoTrueOptions, GoTrueSmsMessage } from "../packages/auth/src/gotrue/options.ts";
+import { inMemorySessionStore } from "../packages/auth/src/session-store.ts";
+import { readAuthSession, refreshLiveSession } from "../packages/auth/src/session.ts";
 import {
   refreshNativeSession,
   resolveNative,
   startNativeSession,
   verifyNativeAccessToken,
-} from "../src/server/auth/native.ts";
+} from "../packages/auth/src/native.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { auth } from "../src/server/auth/mod.ts";
-import { issueApiToken, verifyApiToken } from "../src/server/auth/api-token.ts";
-import { installedSupabaseKeys, signSupabaseJwt } from "../src/server/auth/gotrue/keys.ts";
+import { auth } from "../packages/auth/src/mod.ts";
+import { issueApiToken, verifyApiToken } from "../packages/auth/src/api-token.ts";
+import { installedSupabaseKeys, signSupabaseJwt } from "../src/server/supabase-keys.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp, totpCode } from "./_supabase-auth-app.ts";
 import { ACS, requestIdOf, type TestIdp, testIdp } from "./_saml-idp.ts";
 

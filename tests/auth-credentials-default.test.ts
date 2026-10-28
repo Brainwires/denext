@@ -6,19 +6,19 @@
 // verify a login, and that a provider WITH `authorize` never touches it.
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { type Hasher, scryptHasher } from "../src/server/auth/hasher.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { hashPassword } from "../src/server/auth/password.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { type Hasher, scryptHasher } from "../packages/auth/src/hasher.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { hashPassword } from "../src/server/password.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
 import {
   createRequestContext,
   type RequestContext,
   runWithContext,
 } from "../src/server/request-context.ts";
-import type { AuthConfig, AuthUser, CredentialsProvider } from "../src/server/auth/types.ts";
+import type { AuthConfig, AuthUser, CredentialsProvider } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

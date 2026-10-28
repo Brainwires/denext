@@ -1,4 +1,4 @@
-// A stateless session's id in the cookie and on the session object (src/server/auth/session.ts):
+// A stateless session's id in the cookie and on the session object (packages/auth/src/session.ts):
 //   - the sealed payload carries it as `rsid`, never `sid` — a 4.8 instance reads any cookie with
 //     a `sid` key as a store id and signs the user out, so a 4.9 cookie must not use it (a rolling
 //     4.8 → 4.9 deploy and a rollback keep every session);
@@ -9,13 +9,17 @@
 //   - a slide and an in-place rewrite keep the id in the cookie, even from a spread copy.
 
 import { assert, assertEquals, assertFalse, assertMatch } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { auth, currentSessionId, denextAuth } from "../src/server/auth/mod.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { readAuthSession, refreshIfStale, replaceAuthSession } from "../src/server/auth/session.ts";
-import { cookieSessionOptions, resolveAuthOptions } from "../src/server/auth/options.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { auth, currentSessionId, denextAuth } from "../packages/auth/src/mod.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import {
+  readAuthSession,
+  refreshIfStale,
+  replaceAuthSession,
+} from "../packages/auth/src/session.ts";
+import { cookieSessionOptions, resolveAuthOptions } from "../packages/auth/src/options.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 import { getSession } from "../src/server/session.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 
@@ -101,7 +105,7 @@ async function mintCookie(config: AuthConfig, data: Record<string, unknown>): Pr
 }
 
 /**
- * v4.8.0's cookie reader, as `src/server/auth/session.ts` had it: any cookie with a `sid` key is a
+ * v4.8.0's cookie reader, as `packages/auth/src/session.ts` had it: any cookie with a `sid` key is a
  * store id, so without a store it reads as signed out; anything else is the stateless payload.
  */
 function read48(data: Record<string, unknown>): AuthSession | null {

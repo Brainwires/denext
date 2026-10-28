@@ -4,9 +4,9 @@
 // the `is_anonymous` claim a cookie session's queries run with.
 
 import { assert, assertEquals, assertNotEquals, assertThrows } from "@std/assert";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { credentials, emailOtp, phoneOtp } from "../src/server/auth/providers.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { credentials, emailOtp, phoneOtp } from "../packages/auth/src/providers.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 import { sessionClaims } from "../packages/backend/src/rls.ts";
 import {
   type NativeHarness,

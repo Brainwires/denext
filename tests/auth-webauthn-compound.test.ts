@@ -8,8 +8,12 @@
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
 import { type Cbor, cbor } from "./helpers/soft-authenticator.ts";
-import { verifyRegistration, WebAuthnError } from "../src/server/auth/webauthn.ts";
-import { checkMdsAttestation, type ResolvedMds, resolveMds } from "../src/server/auth/fido-mds.ts";
+import { verifyRegistration, WebAuthnError } from "../packages/auth/src/webauthn.ts";
+import {
+  checkMdsAttestation,
+  type ResolvedMds,
+  resolveMds,
+} from "../packages/auth/src/fido-mds.ts";
 import {
   b64,
   leafOf,

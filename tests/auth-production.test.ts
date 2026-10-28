@@ -12,18 +12,18 @@ import {
 } from "../src/server/request-context.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
 import { isProductionEnv } from "../src/server/session.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { credentials, magicLink } from "../src/server/auth/providers.ts";
-import { accountRoutes } from "../src/server/auth/routes-account.ts";
-import { emailCallbacks } from "../src/server/auth/routes-email.ts";
-import type { AuthRouteContext } from "../src/server/auth/routes-shared.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { credentials, magicLink } from "../packages/auth/src/providers.ts";
+import { accountRoutes } from "../packages/auth/src/routes-account.ts";
+import { emailCallbacks } from "../packages/auth/src/routes-email.ts";
+import type { AuthRouteContext } from "../packages/auth/src/routes-shared.ts";
 import type {
   AuthConfig,
   EmailProvider,
   VerificationRequestParams,
-} from "../src/server/auth/types.ts";
+} from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const EVIL = "evil.test";

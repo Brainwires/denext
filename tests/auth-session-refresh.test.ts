@@ -10,7 +10,7 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { getSession } from "../src/server/session.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
 import {
   auth,
   denextAuth,
@@ -18,14 +18,14 @@ import {
   revokeAllSessions,
   revokeSession,
   updateAuthSession,
-} from "../src/server/auth/mod.ts";
+} from "../packages/auth/src/mod.ts";
 import { requireSession } from "../src/server/api-middleware.ts";
-import { readAuthSession, refreshIfStale } from "../src/server/auth/session.ts";
-import { cookieSessionOptions, resolveAuthOptions } from "../src/server/auth/options.ts";
-import { inMemorySessionStore, type SessionStore } from "../src/server/auth/session-store.ts";
-import { credentials } from "../src/server/auth/providers.ts";
+import { readAuthSession, refreshIfStale } from "../packages/auth/src/session.ts";
+import { cookieSessionOptions, resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { inMemorySessionStore, type SessionStore } from "../packages/auth/src/session-store.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
 import type { ApiMiddlewareInput } from "../src/server/define-api.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

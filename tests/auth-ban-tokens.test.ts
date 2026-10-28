@@ -3,16 +3,16 @@
 // Each test bans in the store alone (nothing revoked), as a missed revocation would leave it.
 
 import { assert, assertEquals } from "@std/assert";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { issueApiToken, verifyApiToken } from "../src/server/auth/api-token.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { issueApiToken, verifyApiToken } from "../packages/auth/src/api-token.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import {
   refreshNativeSession,
   resolveNative,
   startNativeSession,
   verifyNativeAccessToken,
-} from "../src/server/auth/native.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/native.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 
 const SECRET = "test-secret-value-at-least-32-chars-long";
 

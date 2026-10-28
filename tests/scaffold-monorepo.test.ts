@@ -219,9 +219,10 @@ Deno.test("pinEligibleFiles: one plan moves the pin in every config", async () =
     const ago = (h: number) => new Date(now.getTime() - h * 3_600_000).toISOString();
     // This release is inside Deno's two-day hold; an older one is past it.
     const lookups: UpgradeLookups = {
+      // @denext/auth is versioned with denext, each release pinning its own denext exactly.
       versions: (name) =>
         Promise.resolve(
-          name === "@denext/denext"
+          name === "@denext/denext" || name === "@denext/auth"
             ? {
               latest: VERSION,
               versions: ["4.0.0", VERSION],
@@ -229,7 +230,7 @@ Deno.test("pinEligibleFiles: one plan moves the pin in every config", async () =
             }
             : null,
         ),
-      denextRange: () => Promise.resolve(null),
+      denextRange: (name, version) => Promise.resolve(name === "@denext/auth" ? version : null),
     };
     const out = await pinEligibleFiles(paths, dir, {
       lookups,
@@ -237,11 +238,13 @@ Deno.test("pinEligibleFiles: one plan moves the pin in every config", async () =
       now,
     });
     assert(out.ok, out.error);
-    assertEquals(out.notes.length, 1);
+    // One hold line per package: denext, and @denext/auth beside it.
+    assertEquals(out.notes.length, 2);
     for (const path of paths.slice(0, 3)) {
       const text = await Deno.readTextFile(path);
       assertStringIncludes(text, "jsr:@denext/denext@^4.0.0", path);
       assert(!text.includes(`@denext/denext@^${VERSION}`), path);
+      assert(!text.includes(`@denext/auth@^${VERSION}`), path);
     }
     // Nothing old enough: an error, and no file touched.
     const none: UpgradeLookups = {

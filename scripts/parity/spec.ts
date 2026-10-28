@@ -11,7 +11,7 @@
 // can never silently drift from what the package actually ships.
 
 /** The npm packages installed (with their `@types`) to source the real surface. */
-import { NEXT_AUTH_PROVIDER_MODULES } from "../../src/compat/next-auth/providers/list.ts";
+import { NEXT_AUTH_PROVIDER_MODULES } from "../../src/build/next-auth-providers.ts";
 import type { Baseline, Surface } from "./types.ts";
 
 /**
@@ -328,31 +328,31 @@ export const CATALOG: SpecEntry[] = [
   {
     specifier: "next-auth",
     real: "next-auth",
-    denext: "src/compat/next-auth/index.ts",
+    denext: "packages/auth/next-auth/index.ts",
     group: "next-auth",
   },
   {
     specifier: "next-auth/react",
     real: "next-auth/react",
-    denext: "src/compat/next-auth/react.ts",
+    denext: "packages/auth/next-auth/react.ts",
     group: "next-auth",
   },
   {
     specifier: "next-auth/webauthn",
     real: "next-auth/webauthn",
-    denext: "src/compat/next-auth/webauthn.ts",
+    denext: "packages/auth/next-auth/webauthn.ts",
     group: "next-auth",
   },
   {
     specifier: "next-auth/jwt",
     real: "next-auth/jwt",
-    denext: "src/compat/next-auth/jwt.ts",
+    denext: "packages/auth/next-auth/jwt.ts",
     group: "next-auth",
   },
   ...NEXT_AUTH_PROVIDERS.map((p) => ({
     specifier: `next-auth/providers/${p}`,
     real: `next-auth/providers/${p}`,
-    denext: `src/compat/next-auth/providers/${p}.ts`,
+    denext: `packages/auth/next-auth/providers/${p}.ts`,
     group: "next-auth" as const,
   })),
   // NextAuth.js v4 (`next-auth@4`, installed as `next-auth-v4`): the same shim files, held to
@@ -360,13 +360,13 @@ export const CATALOG: SpecEntry[] = [
   ...NEXT_AUTH_V4_SUBPATHS.map(([sub, file]) => ({
     specifier: `next-auth@4${sub}`,
     real: `next-auth-v4${sub}`,
-    denext: `src/compat/next-auth/${file}`,
+    denext: `packages/auth/next-auth/${file}`,
     group: "next-auth-v4" as const,
   })),
   ...NEXT_AUTH_PROVIDERS.map((p) => ({
     specifier: `next-auth@4/providers/${p}`,
     real: `next-auth-v4/providers/${p}`,
-    denext: `src/compat/next-auth/providers/${p}.ts`,
+    denext: `packages/auth/next-auth/providers/${p}.ts`,
     group: "next-auth-v4" as const,
   })),
   // Preact (`denext migrate` maps each specifier to the denext module beside it).

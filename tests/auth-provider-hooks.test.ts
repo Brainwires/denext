@@ -5,12 +5,12 @@
 // and only HS256.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import { oauthPreset } from "../src/server/auth/providers-presets.ts";
-import { oidc } from "../src/server/auth/providers.ts";
-import { verifyIdToken } from "../src/server/auth/jwt.ts";
-import type { OAuthProvider } from "../src/server/auth/types.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import { oauthPreset } from "../packages/auth/src/providers-presets.ts";
+import { oidc } from "../packages/auth/src/providers.ts";
+import { verifyIdToken } from "../packages/auth/src/jwt.ts";
+import type { OAuthProvider } from "../packages/auth/src/types.ts";
 import { appConfig, callback, signedIn, start, txData } from "./helpers/oauth-flow-harness.ts";
 
 /** What the stubbed provider saw. */

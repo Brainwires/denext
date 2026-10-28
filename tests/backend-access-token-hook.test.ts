@@ -5,12 +5,15 @@
 
 import { assertEquals, assertRejects } from "@std/assert";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { issueAuthSession } from "../src/server/auth/session.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import type { GoTrueAccessTokenHookInput, GoTrueHooks } from "../src/server/auth/gotrue/options.ts";
-import type { AuthConfig, AuthUser } from "../src/server/auth/types.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { issueAuthSession } from "../packages/auth/src/session.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import type {
+  GoTrueAccessTokenHookInput,
+  GoTrueHooks,
+} from "../packages/auth/src/gotrue/options.ts";
+import type { AuthConfig, AuthUser } from "../packages/auth/src/types.ts";
 import { resolveIdentity } from "../packages/backend/server.ts";
 import { installSupabaseAuthHooks } from "../packages/backend/src/identity.ts";
 

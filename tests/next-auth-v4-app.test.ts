@@ -25,7 +25,7 @@ function childScript(appDir: string): string {
 import { createTestClient } from "${src("src/testing/mod.ts")}";
 import { startDevServer } from "${src("src/build/dev-server.ts")}";
 import { resolveProject } from "${src("src/build/paths.ts")}";
-import { activeNextAuth } from "${src("src/compat/next-auth/state.ts")}";
+import { activeNextAuth } from "${src("packages/auth/next-auth/state.ts")}";
 
 const out = {};
 const idpSeen = {};
@@ -194,7 +194,7 @@ Deno.test({
           ["next-auth/react", "react.ts"],
         ]
       ) {
-        assert(String(imports[spec]).endsWith(`/src/compat/next-auth/${file}`), spec);
+        assert(String(imports[spec]).endsWith(`/packages/auth/next-auth/${file}`), spec);
       }
       for (const file of SOURCES) {
         assertEquals(

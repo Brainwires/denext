@@ -655,11 +655,51 @@ export {
   type SafeFetchOptions,
 } from "./safe-fetch.ts";
 
-// First-party auth: OAuth 2.0 / OIDC (+ Credentials) on signed-cookie sessions.
-// `denextAuth(config)` is a plugin (add to `plugins` in denext.config); it
-// auto-mounts `/auth/*`. Read the session anywhere with `auth()`. The same surface is the
-// standalone `denext/auth` entry point.
-export * from "./auth/public.ts";
+// Auth: the session readers and guards. The session is the `denextAuth()` plugin's
+// (`@denext/auth`), registered when it is created; without it these throw an error that names the
+// fix. The session shapes and the store contracts stay here so code type-checks without the
+// plugin.
+export { auth, AuthPluginMissingError, requireAuth } from "./auth-registry.ts";
+export type { RequireAuthOptions } from "./auth-registry.ts";
+// `requireSession()` (the route-handler guard) is exported with the other API middlewares above.
+export type { AuthSession, AuthSessionSaml, AuthUser, SessionStore } from "./auth-session.ts";
+// Fixed-window counters for `rateLimit()` and the auth sign-in limiters (shared stores implement
+// `RateLimitStore`).
+export { inMemoryRateLimitStore } from "./rate-limit-store.ts";
+export type {
+  InMemoryRateLimitStoreOptions,
+  RateLimitStore,
+  RateLimitWindow,
+} from "./rate-limit-store.ts";
+// Password hashing (salted scrypt via node:crypto): what the Credentials provider stores.
+export { hashPassword, verifyPassword } from "./password.ts";
+export type { HashPasswordOptions } from "./password.ts";
+// Supabase-compatible API keys and JWTs (`denext backend keys`, `backend({ supabase })`).
+export {
+  apiKeyRole,
+  canSign,
+  generateSupabaseKeys,
+  installedSupabaseKeys,
+  installSupabaseKeys,
+  looksLikeJwt,
+  opaqueKeyRole,
+  resolveSupabaseKeys,
+  signSupabaseJwt,
+  SUPABASE_KEY_ENV,
+  supabaseJwks,
+  SupabaseKeyError,
+  verifySupabaseJwt,
+} from "./supabase-keys.ts";
+export type {
+  GeneratedSupabaseKeys,
+  SupabaseJwtClaims,
+  SupabaseKeyErrorCode,
+  SupabaseKeys,
+  SupabaseKeysConfig,
+  SupabaseRole,
+  SupabaseSigningKey,
+  VerifySupabaseJwtOptions,
+} from "./supabase-keys.ts";
 
 // Metadata file conventions (sitemap.ts / robots.ts / manifest.ts / favicon.ico).
 export {

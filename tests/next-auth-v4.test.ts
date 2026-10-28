@@ -6,22 +6,25 @@
 // `__Host-` / `HttpOnly` / `Secure` / `SameSite=Lax` defaults.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import NextAuth, { getServerSession, type NextAuthOptions } from "../src/compat/next-auth/index.ts";
+import NextAuth, {
+  getServerSession,
+  type NextAuthOptions,
+} from "../packages/auth/next-auth/index.ts";
 import NextAuthNext, {
   getServerSession as nextGetServerSession,
   unstable_getServerSession,
-} from "../src/compat/next-auth/next.ts";
+} from "../packages/auth/next-auth/next.ts";
 import withAuthDefault, {
   type NextRequestWithAuth,
   withAuth,
-} from "../src/compat/next-auth/middleware.ts";
-import CredentialsProvider from "../src/compat/next-auth/providers/credentials.ts";
+} from "../packages/auth/next-auth/middleware.ts";
+import CredentialsProvider from "../packages/auth/next-auth/providers/credentials.ts";
 import { runApiRoute } from "../packages/pages-router/src/api.ts";
-import { setActiveNextAuth } from "../src/compat/next-auth/state.ts";
+import { setActiveNextAuth } from "../packages/auth/next-auth/state.ts";
 import {
   getCsrfToken as reactGetCsrfToken,
   getSession as reactGetSession,
-} from "../src/compat/next-auth/react.ts";
+} from "../packages/auth/next-auth/react.ts";
 import { type CallInit, inRequest, Jar, ORIGIN, request } from "./helpers/next-auth-harness.ts";
 
 const SECRET = "next-auth-v4-shim-test-secret-at-least-32-chars";

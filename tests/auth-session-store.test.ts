@@ -8,12 +8,12 @@ import {
   type RequestContext,
   runWithContext,
 } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { auth, denextAuth, revokeAllSessions, revokeSession } from "../src/server/auth/mod.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { inMemorySessionStore, type SessionStore } from "../src/server/auth/session-store.ts";
-import { sqliteSessionStore } from "../src/server/auth/sqlite-session-store.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { auth, denextAuth, revokeAllSessions, revokeSession } from "../packages/auth/src/mod.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { inMemorySessionStore, type SessionStore } from "../packages/auth/src/session-store.ts";
+import { sqliteSessionStore } from "../packages/auth/src/sqlite-session-store.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 import type { PluginContext } from "../src/plugin/mod.ts";
 import type { SqliteDb } from "../src/server/sqlite-cache.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";

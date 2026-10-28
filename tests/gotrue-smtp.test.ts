@@ -4,8 +4,8 @@
 // precedence: `hooks.sendEmail`, then `sendVerificationRequest`, then SMTP.
 
 import { assert, assertEquals, assertMatch, assertThrows } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
 import {
   type GoTrueMailInput,
   goTrueSmtpFromEnv,
@@ -13,7 +13,7 @@ import {
   mailKindOf,
   processGoTrueSmtp,
   renderGoTrueTemplate,
-} from "../src/server/auth/gotrue/smtp-mail.ts";
+} from "../packages/auth/src/gotrue/smtp-mail.ts";
 import { type FakeSmtpServer, SMTP_TEST_CA, startFakeSmtp } from "./helpers/fake-smtp.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 

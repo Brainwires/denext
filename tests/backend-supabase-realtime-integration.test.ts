@@ -28,7 +28,7 @@ import {
   resolveSupabaseKeys,
   signSupabaseJwt,
   type SupabaseKeys,
-} from "../src/server/auth/gotrue/keys.ts";
+} from "../src/server/supabase-keys.ts";
 import { migratePostgres } from "../src/server/postgres-migrate.ts";
 import { rlsMigrations } from "../packages/backend/src/rls.ts";
 import { realtimeMigrations } from "../packages/backend/src/realtime-sql.ts";

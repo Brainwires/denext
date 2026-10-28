@@ -17,7 +17,7 @@ import {
   verifyBootSchemas,
 } from "../src/server/postgres-boot.ts";
 import { QUIET_SQL } from "../src/server/postgres-migrate.ts";
-import { postgresAuthAdapter } from "../src/server/auth/postgres-adapter.ts";
+import { postgresAuthAdapter } from "../packages/auth/src/postgres-adapter.ts";
 import { postgresCacheStore } from "../src/server/postgres-cache.ts";
 import { postgresJobHistoryStore } from "../src/server/postgres-job-history.ts";
 import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";

@@ -5,10 +5,10 @@
 // token request's body, and whether the id_token's nonce is required.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { oauthPreset } from "../src/server/auth/providers-presets.ts";
-import { oidc } from "../src/server/auth/providers.ts";
-import { buildAuthorizationUrl, flowChecks } from "../src/server/auth/oauth.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { oauthPreset } from "../packages/auth/src/providers-presets.ts";
+import { oidc } from "../packages/auth/src/providers.ts";
+import { buildAuthorizationUrl, flowChecks } from "../packages/auth/src/oauth.ts";
 import {
   appConfig,
   callback,
@@ -19,7 +19,7 @@ import {
   start,
   txData,
 } from "./helpers/oauth-flow-harness.ts";
-import type { OAuthCheck, OAuthProvider } from "../src/server/auth/types.ts";
+import type { OAuthCheck, OAuthProvider } from "../packages/auth/src/types.ts";
 
 /** One key for the file: the JWKS cache throttles a refetch for an unknown `kid`. */
 const IDP: Idp = await makeIdp();

@@ -3,7 +3,7 @@
 // back to the built-in template.
 
 import { assertEquals, assertThrows } from "@std/assert";
-import { executeGoTemplate, GoTemplateError } from "../src/server/auth/gotrue/go-template.ts";
+import { executeGoTemplate, GoTemplateError } from "../packages/auth/src/gotrue/go-template.ts";
 
 const DATA = {
   Name: "Ada",

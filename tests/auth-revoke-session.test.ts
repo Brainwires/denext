@@ -1,16 +1,16 @@
 // revokeSession(sid) for stateless cookie sessions: the session's own `sid` goes on the auth
 // adapter's revocation list, `currentSessionId()` names the current one on the server only, an
 // adapter without the list is refused, and an app that never revokes one by id pays no
-// per-request lookup (a cached marker, src/server/auth/sid-revocation.ts).
+// per-request lookup (a cached marker, packages/auth/src/sid-revocation.ts).
 
 import { assert, assertEquals, assertFalse, assertRejects } from "@std/assert";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
-import { auth, currentSessionId, denextAuth, revokeSession } from "../src/server/auth/mod.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { inMemorySessionStore } from "../src/server/auth/session-store.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
+import { auth, currentSessionId, denextAuth, revokeSession } from "../packages/auth/src/mod.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { inMemorySessionStore } from "../packages/auth/src/session-store.ts";
 import {
   MARKER_RECHECK_MS,
   MAX_REMEMBERED_ANSWERS,
@@ -24,8 +24,8 @@ import {
   sidRevoked,
   STALE_ANSWER_MS,
   WARN_INTERVAL_MS,
-} from "../src/server/auth/sid-revocation.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/sid-revocation.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { runHealthChecks } from "../src/server/health.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";

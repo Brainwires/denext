@@ -4,9 +4,9 @@
 // raw HTTP, as such a client would make them; everything supabase-js exposes goes through it.
 
 import { assertEquals, assertExists, assertNotEquals } from "@std/assert";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { ORIGIN, type SupabaseAuthApp } from "./_supabase-auth-app.ts";
 import { ethereumWallet, solanaWallet } from "./_web3-wallet.ts";
 

@@ -2,13 +2,13 @@
 // reads its key from `AUTH_<ID>_KEY` and sends Auth.js's sign-in mail through its service's API.
 
 import { assert, assertEquals, assertRejects } from "@std/assert";
-import { translateConfig } from "../src/compat/next-auth/config.ts";
-import ForwardEmail from "../src/compat/next-auth/providers/forwardemail.ts";
-import Loops from "../src/compat/next-auth/providers/loops.ts";
-import Mailgun from "../src/compat/next-auth/providers/mailgun.ts";
-import Postmark from "../src/compat/next-auth/providers/postmark.ts";
-import SendGrid from "../src/compat/next-auth/providers/sendgrid.ts";
-import type { Provider } from "../src/compat/next-auth/types.ts";
+import { translateConfig } from "../packages/auth/next-auth/config.ts";
+import ForwardEmail from "../packages/auth/next-auth/providers/forwardemail.ts";
+import Loops from "../packages/auth/next-auth/providers/loops.ts";
+import Mailgun from "../packages/auth/next-auth/providers/mailgun.ts";
+import Postmark from "../packages/auth/next-auth/providers/postmark.ts";
+import SendGrid from "../packages/auth/next-auth/providers/sendgrid.ts";
+import type { Provider } from "../packages/auth/next-auth/types.ts";
 
 const SECRET = "next-auth-email-providers-secret-32-chars";
 

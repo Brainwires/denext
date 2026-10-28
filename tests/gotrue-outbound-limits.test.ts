@@ -5,8 +5,8 @@
 // times, and that the answer past the budget is GoTrue's 429.
 
 import { assertEquals } from "@std/assert";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import type { GoTrueOptions } from "../src/server/auth/gotrue/options.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import type { GoTrueOptions } from "../packages/auth/src/gotrue/options.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp } from "./_supabase-auth-app.ts";
 

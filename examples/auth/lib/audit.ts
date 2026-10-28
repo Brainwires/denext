@@ -13,7 +13,7 @@
 // which is also why `linkAccount` hands a handler the account's IDENTITY and never its
 // provider tokens.
 
-import type { AuthEvents, AuthLogger } from "denext/server";
+import type { AuthEvents, AuthLogger } from "@denext/auth";
 
 /** One structured audit line (send these to your log pipeline, not stdout). */
 function audit(event: string, fields: Record<string, unknown>): void {

@@ -15,8 +15,8 @@
 import { assert, assertEquals } from "@std/assert";
 import { type RedisClient, redisClient, RedisError } from "../src/server/redis.ts";
 import { redisCacheStore } from "../src/server/redis-cache.ts";
-import { redisSessionStore } from "../src/server/auth/redis-session-store.ts";
-import { redisRateLimitStore } from "../src/server/auth/redis-rate-limit.ts";
+import { redisSessionStore } from "../packages/auth/src/redis-session-store.ts";
+import { redisRateLimitStore } from "../packages/auth/src/redis-rate-limit.ts";
 import { liveAcrossTwoReplicas } from "./helpers/live-two-instances.ts";
 import { liveViewStoreContract } from "./helpers/live-view-store-contract.ts";
 import { redisLiveViewStore } from "../src/server/live-view-stores.ts";

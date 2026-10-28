@@ -13,7 +13,7 @@ import {
   spMetadataXml,
   verifySamlResponse,
   type VerifySamlResponseOptions,
-} from "../src/server/auth/saml/mod.ts";
+} from "../packages/auth/src/saml/mod.ts";
 import {
   encode,
   IDP_ENTITY,

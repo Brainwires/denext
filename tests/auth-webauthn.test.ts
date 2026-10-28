@@ -1,4 +1,4 @@
-// WebAuthn relying-party verification (src/server/auth/webauthn.ts) against the W3C WebAuthn
+// WebAuthn relying-party verification (packages/auth/src/webauthn.ts) against the W3C WebAuthn
 // Level 3 §16 test vectors (tests/fixtures/webauthn-l3-vectors.json, copied from the spec):
 // every supported registration + authentication verifies — ES256 with `none`, packed self and
 // packed x5c attestation, tpm, android-key, apple and fido-u2f, a 1023-byte credential ID, RS256,
@@ -21,7 +21,7 @@ import {
   verifyRegistration,
   WebAuthnError,
   type WebAuthnErrorCode,
-} from "../src/server/auth/webauthn.ts";
+} from "../packages/auth/src/webauthn.ts";
 
 /** Hex → bytes. */
 const hex = (s: string) => Uint8Array.from(s.match(/../g) ?? [], (b) => parseInt(b, 16));

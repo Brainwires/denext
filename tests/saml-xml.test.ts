@@ -3,8 +3,8 @@
 // (`xmllint --exc-c14n`, output committed in tests/fixtures/saml/c14n-exc.txt).
 
 import { assertEquals, assertThrows } from "@std/assert";
-import { compareCodePoints, excC14n } from "../src/server/auth/saml/c14n.ts";
-import { SamlError } from "../src/server/auth/saml/errors.ts";
+import { compareCodePoints, excC14n } from "../packages/auth/src/saml/c14n.ts";
+import { SamlError } from "../packages/auth/src/saml/errors.ts";
 import {
   isNcName,
   lookupNamespace,
@@ -12,7 +12,7 @@ import {
   MAX_XML_DEPTH,
   parseXml,
   type XmlElement,
-} from "../src/server/auth/saml/xml.ts";
+} from "../packages/auth/src/saml/xml.ts";
 
 function code(fn: () => unknown): string {
   const err = assertThrows(fn, SamlError);

@@ -4,8 +4,8 @@
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { denextAuth, requireAuth } from "../src/server/auth/mod.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { denextAuth, requireAuth } from "../packages/auth/src/mod.ts";
 import {
   apple,
   auth0,
@@ -20,15 +20,15 @@ import {
   oidc,
   okta,
   slack,
-} from "../src/server/auth/providers.ts";
+} from "../packages/auth/src/providers.ts";
 import type {
   Auth0Options,
   GitLabOptions,
   KeycloakOptions,
   MicrosoftEntraOptions,
   OktaOptions,
-} from "../src/server/auth/providers.ts";
-import type { AuthConfig, OAuthProvider } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/providers.ts";
+import type { AuthConfig, OAuthProvider } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SECRET = "test-secret-value-at-least-32-chars-long";

@@ -9,11 +9,11 @@ import {
   endpointHosts,
   type ProviderEndpoints,
   resolveProviderEndpoints,
-} from "../src/server/auth/discovery.ts";
-import { getJwks } from "../src/server/auth/jwks-cache.ts";
-import { makeHostPinnedFetch, type ProviderFetch } from "../src/server/auth/flow.ts";
-import { base64UrlEncode } from "../src/server/auth/oauth.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
+} from "../packages/auth/src/discovery.ts";
+import { getJwks } from "../packages/auth/src/jwks-cache.ts";
+import { makeHostPinnedFetch, type ProviderFetch } from "../packages/auth/src/flow.ts";
+import { base64UrlEncode } from "../packages/auth/src/oauth.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
 import {
   createRequestContext,
   type RequestContext,
@@ -24,7 +24,7 @@ import type {
   AuthUser,
   OAuthProvider,
   ProfileInput,
-} from "../src/server/auth/types.ts";
+} from "../packages/auth/src/types.ts";
 
 // deno-lint-ignore no-explicit-any
 type Any = any;

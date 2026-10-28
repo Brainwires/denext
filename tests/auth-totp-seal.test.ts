@@ -16,24 +16,24 @@ import {
 } from "@std/assert";
 import { decodeBase32 } from "@std/encoding/base32";
 import { DatabaseSync } from "node:sqlite";
-import type { AuthAdapter, MfaFactorRecord } from "../src/server/auth/adapter.ts";
-import { factorAad } from "../src/server/auth/factors.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
+import type { AuthAdapter, MfaFactorRecord } from "../packages/auth/src/adapter.ts";
+import { factorAad } from "../packages/auth/src/factors.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import {
   confirmTotp,
   enrollTotp,
   mfaPendingFor,
   mfaStatus,
   verifySecondFactor,
-} from "../src/server/auth/mfa.ts";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
-import { generateTotpSecret } from "../src/server/auth/totp.ts";
+} from "../packages/auth/src/mfa.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
+import { generateTotpSecret } from "../packages/auth/src/totp.ts";
 import {
   isSealedTotpSecret,
   openTotpSecret,
   sealTotpSecret,
-} from "../src/server/auth/totp-seal.ts";
-import type { AuthConfig, AuthSession } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/totp-seal.ts";
+import type { AuthConfig, AuthSession } from "../packages/auth/src/types.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
 const KEY_A = "first-auth-secret-at-least-32-characters";

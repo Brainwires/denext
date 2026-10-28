@@ -12,10 +12,10 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { emailOtp, magicLink } from "../src/server/auth/providers.ts";
-import type { AuthConfig, VerificationRequestParams } from "../src/server/auth/types.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { emailOtp, magicLink } from "../packages/auth/src/providers.ts";
+import type { AuthConfig, VerificationRequestParams } from "../packages/auth/src/types.ts";
 
 const ORIGIN = "https://app.test";
 const SESSION = "__Host-denext_auth";

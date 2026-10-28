@@ -21,7 +21,7 @@ function childScript(appDir: string): string {
   const src = (rel: string) => toFileUrl(join(REPO, rel)).href;
   return `
 import { createTestApp, createTestClient } from "${src("src/testing/mod.ts")}";
-import { activeNextAuth } from "${src("src/compat/next-auth/state.ts")}";
+import { activeNextAuth } from "${src("packages/auth/next-auth/state.ts")}";
 
 const out = {};
 const app = await createTestApp(${JSON.stringify(appDir)});
@@ -136,8 +136,8 @@ Deno.test({
       await copy(FIXTURE, dir, { overwrite: true });
       await migrateProject(dir, { denextLocalPath: REPO });
       const imports = JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))).imports;
-      assert(String(imports["next-auth"]).endsWith("/src/compat/next-auth/index.ts"));
-      assert(String(imports["next-auth/react"]).endsWith("/src/compat/next-auth/react.ts"));
+      assert(String(imports["next-auth"]).endsWith("/packages/auth/next-auth/index.ts"));
+      assert(String(imports["next-auth/react"]).endsWith("/packages/auth/next-auth/react.ts"));
       const original = await Deno.readTextFile(join(FIXTURE, "auth.ts"));
       assertEquals(await Deno.readTextFile(join(dir, "auth.ts")), original, "source unchanged");
 

@@ -9,11 +9,11 @@ import {
   isApiClientError,
 } from "../src/runtime/api-client.ts";
 import { nativeSession, NativeSessionError } from "../src/runtime/native-session.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { auth, denextAuth } from "../src/server/auth/mod.ts";
-import { hashPassword } from "../src/server/auth/password.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { auth, denextAuth } from "../packages/auth/src/mod.ts";
+import { hashPassword } from "../src/server/password.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 
 const BASE = "https://api.test";

@@ -1,4 +1,4 @@
-// Certificate revocation lists for the FIDO Metadata Service checks (src/server/auth/crl.ts):
+// Certificate revocation lists for the FIDO Metadata Service checks (packages/auth/src/crl.ts):
 // every certificate of a validated path that names a CRL distribution point is checked against
 // its issuer's CRL — a listed one is refused — and `revocation` decides what an unavailable or
 // unusable CRL means (`require` refuses, `best-effort` goes on, `off` fetches nothing). The CRL
@@ -16,15 +16,15 @@ import {
   parseCrl,
   RevocationError,
   type RevocationMode,
-} from "../src/server/auth/crl.ts";
+} from "../packages/auth/src/crl.ts";
 import {
   checkMdsAttestation,
   type ResolvedMds,
   resolveMds,
   revocationCheckOf,
   verifyMdsBlob,
-} from "../src/server/auth/fido-mds.ts";
-import { verifyCertificateChain, verifyWithSpki } from "../src/server/auth/x509-chain.ts";
+} from "../packages/auth/src/fido-mds.ts";
+import { verifyCertificateChain, verifyWithSpki } from "../packages/auth/src/x509-chain.ts";
 import {
   b64,
   leafOf,

@@ -4,22 +4,22 @@
 // refuse an issuer they can't place.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { translateConfig } from "../src/compat/next-auth/config.ts";
-import Auth0 from "../src/compat/next-auth/providers/auth0.ts";
-import Cognito from "../src/compat/next-auth/providers/cognito.ts";
-import Facebook from "../src/compat/next-auth/providers/facebook.ts";
-import GitLab from "../src/compat/next-auth/providers/gitlab.ts";
-import Keycloak from "../src/compat/next-auth/providers/keycloak.ts";
-import LinkedIn from "../src/compat/next-auth/providers/linkedin.ts";
-import Notion from "../src/compat/next-auth/providers/notion.ts";
-import Okta from "../src/compat/next-auth/providers/okta.ts";
-import Slack from "../src/compat/next-auth/providers/slack.ts";
-import Spotify from "../src/compat/next-auth/providers/spotify.ts";
-import Twitch from "../src/compat/next-auth/providers/twitch.ts";
-import Twitter from "../src/compat/next-auth/providers/twitter.ts";
-import Zoom from "../src/compat/next-auth/providers/zoom.ts";
-import type { Provider } from "../src/compat/next-auth/types.ts";
-import type { OAuthProvider } from "../src/server/auth/types.ts";
+import { translateConfig } from "../packages/auth/next-auth/config.ts";
+import Auth0 from "../packages/auth/next-auth/providers/auth0.ts";
+import Cognito from "../packages/auth/next-auth/providers/cognito.ts";
+import Facebook from "../packages/auth/next-auth/providers/facebook.ts";
+import GitLab from "../packages/auth/next-auth/providers/gitlab.ts";
+import Keycloak from "../packages/auth/next-auth/providers/keycloak.ts";
+import LinkedIn from "../packages/auth/next-auth/providers/linkedin.ts";
+import Notion from "../packages/auth/next-auth/providers/notion.ts";
+import Okta from "../packages/auth/next-auth/providers/okta.ts";
+import Slack from "../packages/auth/next-auth/providers/slack.ts";
+import Spotify from "../packages/auth/next-auth/providers/spotify.ts";
+import Twitch from "../packages/auth/next-auth/providers/twitch.ts";
+import Twitter from "../packages/auth/next-auth/providers/twitter.ts";
+import Zoom from "../packages/auth/next-auth/providers/zoom.ts";
+import type { Provider } from "../packages/auth/next-auth/types.ts";
+import type { OAuthProvider } from "../packages/auth/src/types.ts";
 
 const SECRET = "next-auth-providers-test-secret-at-least-32";
 

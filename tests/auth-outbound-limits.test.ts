@@ -4,7 +4,7 @@
 // one address reaches the provider at most budget-many times, whatever identifiers it names.
 
 import { assertEquals } from "@std/assert";
-import { emailOtp, phoneOtp } from "../src/server/auth/providers.ts";
+import { emailOtp, phoneOtp } from "../packages/auth/src/providers.ts";
 import { nativeHarness, post } from "./helpers/auth-native-harness.ts";
 
 /** The per-address send budget (3) times the IP-wide factor (10). */

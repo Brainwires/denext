@@ -8,7 +8,7 @@
 import { assertEquals } from "@std/assert";
 import { createApi } from "../src/server/define-api.ts";
 import { rateLimit } from "../src/server/api-middleware.ts";
-import { inMemoryRateLimitStore } from "../src/server/auth/rate-limit.ts";
+import { inMemoryRateLimitStore } from "../packages/auth/src/rate-limit.ts";
 import { parseCidr, setRemoteAddr } from "../src/server/remote-addr.ts";
 import { synthesizeSubRequest } from "../src/server/sub-request.ts";
 import { createRequestContext } from "../src/server/request-context.ts";

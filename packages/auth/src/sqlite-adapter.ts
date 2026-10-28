@@ -1,0 +1,1368 @@
+/**
+ * The durable {@link ./adapter.ts | AuthAdapter}, on Deno's built-in `node:sqlite` (real
+ * SQLite, zero npm):
+ *
+ * ```ts
+ * import { denextAuth, sqliteAuthAdapter } from "@denext/auth";
+ * denextAuth({ ..., adapter: sqliteAuthAdapter({ path: "auth.db" }) });
+ * ```
+ *
+ * Ten `auth_`-prefixed tables hold users, linked provider accounts, verification tokens,
+ * password hashes, bearer API tokens, TOTP factors, native-app grants and session families,
+ * and passkeys with their single-use challenges. The adapter also exposes
+ * {@linkcode AuthAdapter.sessions} — a {@link ./sqlite-session-store.ts | sqliteSessionStore}
+ * driven over the **same** handle, so one file holds everything and an app that already
+ * had `sessionStore: sqliteSessionStore({ path })` can point the adapter at that same
+ * path with no migration and no logout (the `sessions` DDL is byte-identical). Passing an
+ * adapter still never *makes* sessions stateful on its own — that is
+ * `session: { strategy: "database" }`.
+ *
+ * **Schema policy.** Every open first applies the versioned migrations this release lists
+ * that the file has not recorded (`auth_schema_migrations`; renames and drops, run once each
+ * under SQLite's write lock — see {@link ./sqlite-migrations.ts}), then `CREATE TABLE IF NOT
+ * EXISTS`, then adds each declared column a table is missing with `ALTER TABLE … ADD COLUMN`
+ * (nullable — the only form SQLite can add to a populated table), decided by
+ * `PRAGMA table_info`. Adding a derived column also runs its backfill. No column is retyped,
+ * and nothing but a listed migration renames or drops one.
+ *
+ * Single-node, like the session store: a local file suits one instance. Every replica must
+ * see the same database, so for multi-replica either mount one shared volume or implement
+ * {@link ./adapter.ts | AuthAdapter} over your shared database. TOTP secrets arrive sealed
+ * by the MFA layer (AES-256-GCM under a key derived from the auth `secret`), so the file alone
+ * holds no usable factor; a pre-sealing plaintext row is re-sealed on its next read.
+ *
+ * @module
+ */
+
+import { DatabaseSync } from "node:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import type { SqliteDb, SqlValue } from "@denext/denext/auth-kit";
+import type {
+  AdapterUser,
+  AuthAdapter,
+  MfaRecord,
+  SsoProviderRecord,
+  SsoProviderWrite,
+} from "./adapter.ts";
+import type { SsoIndexMethods, SsoMethods } from "./memory-sso.ts";
+import { emailKey } from "@denext/denext/auth-kit";
+import {
+  OAUTH_SERVER_SQLITE_TABLES,
+  OAUTH_SERVER_USER_TABLES,
+  sqlOAuthServerGroups,
+} from "./sql-adapter-oauth-server.ts";
+import { sqliteSessionStore } from "./sqlite-session-store.ts";
+import { runSchemaMigrations, SQLITE_AUTH_MIGRATIONS } from "./sqlite-migrations.ts";
+import {
+  ACCOUNT_MAP,
+  API_TOKEN_MAP,
+  factorPatchColumns,
+  type FieldMap,
+  fromRow,
+  MFA_FACTOR_MAP,
+  MFA_MAP,
+  NATIVE_GRANT_MAP,
+  NATIVE_SESSION_MAP,
+  NATIVE_SESSION_RETENTION,
+  pageWindow,
+  PASSKEY_CHALLENGE_MAP,
+  PASSKEY_MAP,
+  patchUser,
+  spendBackupCode,
+  SSO_PROVIDER_MAP,
+  SSO_SESSION_INDEX_MAP,
+  SSO_SESSION_MAP,
+  toRow as sharedToRow,
+  USER_MAP,
+  VERIFICATION_MAP,
+  withDomains,
+  withUserId,
+} from "./adapter-rows.ts";
+
+/** Options for {@linkcode sqliteAuthAdapter}. */
+export interface SqliteAuthAdapterOptions {
+  /**
+   * Path to the on-disk database file. Defaults to `auth.db` in the working directory —
+   * user data, so deliberately NOT under `.denext/`, which the build owns. `":memory:"`
+   * gives a private database that dies with the process (tests, demos).
+   */
+  path?: string;
+  /** Advanced/test hook: open the handle yourself instead of node:sqlite. */
+  openDb?: (path: string) => SqliteDb;
+  /**
+   * Clock override, in **epoch seconds** — what expiry is measured against. Defaults to
+   * the system clock; tests pass their own to age a token without sleeping.
+   */
+  now?: () => number;
+  /** Min ms between proactive sweeps of expired verification tokens (default 30000; `0` = every write). */
+  sweepEvery?: number;
+}
+
+const DEFAULT_PATH = "auth.db";
+const SWEEP_INTERVAL = 30_000;
+
+// ---- schema ----------------------------------------------------------------
+
+/** One table this adapter owns, in the form both the creator and the reconciler read. */
+interface TableSpec {
+  /** Table name (always `auth_`-prefixed, so it can share a file with anything else). */
+  name: string;
+  /** Columns in declaration order: `[name, SQL type + column constraints]`. */
+  columns: Array<[name: string, decl: string]>;
+  /** A table-level constraint clause (a composite PRIMARY KEY), when there is one. */
+  constraints?: string;
+  /** Indexes to create once every declared column exists. */
+  indexes?: IndexSpec[];
+  /** Repopulates derived columns after an older database gained one. */
+  backfill?: string;
+}
+
+/** One index this adapter creates, plus how to explain a failure to create it. */
+interface IndexSpec {
+  /** The `CREATE … INDEX IF NOT EXISTS` statement. */
+  sql: string;
+  /**
+   * For a UNIQUE index: a query listing the rows that already violate it, quoted verbatim
+   * in the error an operator sees when creation fails on a pre-existing database.
+   */
+  duplicates?: string;
+}
+
+/** The ten tables, in creation order. */
+const SCHEMA: TableSpec[] = [
+  {
+    name: "auth_users",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["email", "TEXT"],
+      ["email_lc", "TEXT"],
+      ["email_verified", "INTEGER"],
+      ["name", "TEXT"],
+      ["image", "TEXT"],
+      ["roles", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["phone", "TEXT"],
+      ["phone_verified", "INTEGER"],
+      ["user_metadata", "TEXT"],
+      ["app_metadata", "TEXT"],
+      ["is_anonymous", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["last_sign_in_at", "INTEGER"],
+      ["banned_until", "INTEGER"],
+      ["sessions_valid_after", "INTEGER"],
+    ],
+    // Unique WHERE NOT NULL: one account per address, any number of address-less users.
+    indexes: [{
+      sql: "CREATE UNIQUE INDEX IF NOT EXISTS auth_users_email ON auth_users (email_lc) " +
+        "WHERE email_lc IS NOT NULL",
+      duplicates: "SELECT email_lc, count(*) FROM auth_users WHERE email_lc IS NOT NULL " +
+        "GROUP BY email_lc HAVING count(*) > 1",
+    }, {
+      sql: "CREATE UNIQUE INDEX IF NOT EXISTS auth_users_phone ON auth_users (phone) " +
+        "WHERE phone IS NOT NULL",
+      duplicates: "SELECT phone, count(*) FROM auth_users WHERE phone IS NOT NULL " +
+        "GROUP BY phone HAVING count(*) > 1",
+    }],
+    backfill: "UPDATE auth_users SET email_lc = lower(trim(email)) " +
+      "WHERE email_lc IS NULL AND email IS NOT NULL",
+  },
+  {
+    name: "auth_accounts",
+    columns: [
+      ["provider", "TEXT NOT NULL"],
+      ["provider_account_id", "TEXT NOT NULL"],
+      ["user_id", "TEXT NOT NULL"],
+      ["type", "TEXT"],
+      ["access_token", "TEXT"],
+      ["refresh_token", "TEXT"],
+      ["expires_at", "INTEGER"],
+      ["token_type", "TEXT"],
+      ["scope", "TEXT"],
+      ["id_token", "TEXT"],
+      ["identity_id", "TEXT"],
+      ["identity_data", "TEXT"],
+      ["email", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["last_sign_in_at", "INTEGER"],
+    ],
+    constraints: "PRIMARY KEY (provider, provider_account_id)",
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_accounts_user ON auth_accounts (user_id)",
+    }],
+  },
+  {
+    name: "auth_verification_tokens",
+    columns: [
+      ["identifier", "TEXT NOT NULL"],
+      ["purpose", "TEXT NOT NULL"],
+      ["token_hash", "TEXT NOT NULL"],
+      ["expires", "INTEGER NOT NULL"],
+      ["data", "TEXT"],
+    ],
+    // One live token per (identifier, purpose): re-sending a link invalidates the previous
+    // one, so a mailbox can never hold two working password-reset links at once.
+    constraints: "PRIMARY KEY (identifier, purpose)",
+    indexes: [{
+      sql:
+        "CREATE INDEX IF NOT EXISTS auth_verification_expiry ON auth_verification_tokens (expires)",
+    }],
+  },
+  {
+    name: "auth_credentials",
+    columns: [["user_id", "TEXT PRIMARY KEY"], ["password_hash", "TEXT NOT NULL"]],
+  },
+  {
+    name: "auth_api_tokens",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["user_id", "TEXT NOT NULL"],
+      ["name", "TEXT"],
+      ["token_hash", "TEXT NOT NULL"],
+      ["scopes", "TEXT"],
+      ["expires_at", "INTEGER"],
+      ["last_used_at", "INTEGER"],
+      ["revoked_at", "INTEGER"],
+      ["created_at", "INTEGER"],
+      ["sso_session", "INTEGER"],
+    ],
+    indexes: [
+      {
+        sql:
+          "CREATE UNIQUE INDEX IF NOT EXISTS auth_api_tokens_hash ON auth_api_tokens (token_hash)",
+        duplicates: "SELECT token_hash, count(*) FROM auth_api_tokens " +
+          "GROUP BY token_hash HAVING count(*) > 1",
+      },
+      { sql: "CREATE INDEX IF NOT EXISTS auth_api_tokens_user ON auth_api_tokens (user_id)" },
+    ],
+  },
+  {
+    name: "auth_mfa",
+    columns: [
+      ["user_id", "TEXT PRIMARY KEY"],
+      ["secret", "TEXT NOT NULL"],
+      ["confirmed_at", "INTEGER"],
+      ["backup_code_hashes", "TEXT"],
+      ["last_step", "INTEGER"],
+    ],
+  },
+  {
+    name: "auth_mfa_factors",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["user_id", "TEXT NOT NULL"],
+      ["factor_type", "TEXT NOT NULL"],
+      ["status", "TEXT NOT NULL"],
+      ["friendly_name", "TEXT"],
+      ["secret", "TEXT"],
+      ["phone", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["last_step", "INTEGER"],
+      ["last_challenged_at", "INTEGER"],
+    ],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_mfa_factors_user ON auth_mfa_factors (user_id)",
+    }],
+  },
+  {
+    name: "auth_native_grants",
+    columns: [
+      ["kind", "TEXT NOT NULL"],
+      ["hash", "TEXT NOT NULL"],
+      ["expires_at", "INTEGER NOT NULL"],
+      ["data", "TEXT"],
+    ],
+    constraints: "PRIMARY KEY (kind, hash)",
+    indexes: [{
+      sql:
+        "CREATE INDEX IF NOT EXISTS auth_native_grants_expiry ON auth_native_grants (expires_at)",
+    }],
+  },
+  {
+    name: "auth_native_sessions",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["user_id", "TEXT NOT NULL"],
+      ["generation", "INTEGER NOT NULL"],
+      ["salt", "TEXT NOT NULL"],
+      ["session", "TEXT NOT NULL"],
+      ["created_at", "INTEGER"],
+      ["expires_at", "INTEGER"],
+      ["revoked_at", "INTEGER"],
+      ["rotated_at", "INTEGER"],
+    ],
+    indexes: [
+      {
+        sql:
+          "CREATE INDEX IF NOT EXISTS auth_native_sessions_user ON auth_native_sessions (user_id)",
+      },
+      {
+        sql: "CREATE INDEX IF NOT EXISTS auth_native_sessions_expiry " +
+          "ON auth_native_sessions (expires_at)",
+      },
+      {
+        sql: "CREATE INDEX IF NOT EXISTS auth_native_sessions_revoked " +
+          "ON auth_native_sessions (revoked_at)",
+      },
+    ],
+  },
+  {
+    name: "auth_passkeys",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["user_id", "TEXT NOT NULL"],
+      ["public_key", "TEXT NOT NULL"],
+      ["alg", "INTEGER NOT NULL"],
+      ["sign_count", "INTEGER NOT NULL"],
+      ["backup_eligible", "INTEGER"],
+      ["backed_up", "INTEGER"],
+      ["transports", "TEXT"],
+      ["aaguid", "TEXT"],
+      ["name", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["last_used_at", "INTEGER"],
+    ],
+    indexes: [{ sql: "CREATE INDEX IF NOT EXISTS auth_passkeys_user ON auth_passkeys (user_id)" }],
+  },
+  {
+    name: "auth_passkey_challenges",
+    columns: [
+      ["hash", "TEXT PRIMARY KEY"],
+      ["expires_at", "INTEGER NOT NULL"],
+      ["data", "TEXT"],
+    ],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_passkey_challenges_expiry " +
+        "ON auth_passkey_challenges (expires_at)",
+    }],
+  },
+  // The /auth/v1 OAuth server, stored providers and Web3 nonces.
+  ...OAUTH_SERVER_SQLITE_TABLES,
+];
+
+/** The SAML SSO tables of `/auth/v1`: providers, their domains, session origins, message ids. */
+const SSO_SCHEMA: TableSpec[] = [
+  {
+    name: "auth_sso_providers",
+    columns: [
+      ["id", "TEXT PRIMARY KEY"],
+      ["entity_id", "TEXT NOT NULL"],
+      ["metadata_xml", "TEXT NOT NULL"],
+      ["metadata_url", "TEXT"],
+      ["attribute_mapping", "TEXT"],
+      ["name_id_format", "TEXT"],
+      ["created_at", "INTEGER"],
+      ["updated_at", "INTEGER"],
+      ["metadata_valid_until", "INTEGER"],
+      ["metadata_refresh_after", "INTEGER"],
+    ],
+    indexes: [{
+      sql: "CREATE UNIQUE INDEX IF NOT EXISTS auth_sso_providers_entity " +
+        "ON auth_sso_providers (entity_id)",
+    }],
+  },
+  {
+    name: "auth_sso_domains",
+    columns: [["domain", "TEXT PRIMARY KEY"], ["provider_id", "TEXT NOT NULL"]],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_sso_domains_provider ON auth_sso_domains (provider_id)",
+    }],
+  },
+  {
+    name: "auth_sso_sessions",
+    columns: [
+      ["session_id", "TEXT PRIMARY KEY"],
+      ["provider_id", "TEXT NOT NULL"],
+      ["name_id", "TEXT NOT NULL"],
+      ["session_index", "TEXT"],
+      ["user_id", "TEXT NOT NULL"],
+      ["expires_at", "INTEGER NOT NULL"],
+    ],
+    indexes: [
+      {
+        sql: "CREATE INDEX IF NOT EXISTS auth_sso_sessions_name " +
+          "ON auth_sso_sessions (provider_id, name_id)",
+      },
+      { sql: "CREATE INDEX IF NOT EXISTS auth_sso_sessions_user ON auth_sso_sessions (user_id)" },
+      {
+        sql:
+          "CREATE INDEX IF NOT EXISTS auth_sso_sessions_expiry ON auth_sso_sessions (expires_at)",
+      },
+    ],
+  },
+  {
+    // SAML Single Logout of stateless cookie sessions: which session a sign-in started.
+    name: "auth_sso_cookie_sessions",
+    columns: [
+      ["sid", "TEXT PRIMARY KEY"],
+      ["provider_id", "TEXT NOT NULL"],
+      ["name_id", "TEXT NOT NULL"],
+      ["session_index", "TEXT"],
+      ["expires_at", "INTEGER NOT NULL"],
+    ],
+    indexes: [
+      {
+        sql: "CREATE INDEX IF NOT EXISTS auth_sso_cookie_sessions_name " +
+          "ON auth_sso_cookie_sessions (provider_id, name_id, session_index)",
+      },
+      {
+        sql: "CREATE INDEX IF NOT EXISTS auth_sso_cookie_sessions_expiry " +
+          "ON auth_sso_cookie_sessions (expires_at)",
+      },
+    ],
+  },
+  {
+    // ...and the revoked ones, kept until they expire.
+    name: "auth_revoked_sessions",
+    columns: [["sid", "TEXT PRIMARY KEY"], ["expires_at", "INTEGER NOT NULL"]],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_revoked_sessions_expiry " +
+        "ON auth_revoked_sessions (expires_at)",
+    }],
+  },
+  {
+    name: "auth_saml_message_ids",
+    columns: [["id", "TEXT PRIMARY KEY"], ["expires_at", "INTEGER NOT NULL"]],
+    indexes: [{
+      sql: "CREATE INDEX IF NOT EXISTS auth_saml_message_ids_expiry " +
+        "ON auth_saml_message_ids (expires_at)",
+    }],
+  },
+];
+
+/** Open node:sqlite at `path` behind the {@link SqliteDb} interface this adapter drives. */
+function openNodeSqlite(path: string): SqliteDb {
+  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+  const raw = new DatabaseSync(path);
+  return {
+    exec: (sql: string, params?: SqlValue[]): void =>
+      void (params?.length ? raw.prepare(sql).run(...params) : raw.exec(sql)),
+    query: <T>(sql: string, params?: SqlValue[]): T[] =>
+      raw.prepare(sql).all(...(params ?? [])) as T[],
+    close: () => raw.close(),
+  };
+}
+
+/** Create `spec`, then add any declared column the (older) table is missing. */
+function reconcileTable(db: SqliteDb, spec: TableSpec): void {
+  const cols = spec.columns.map(([name, decl]) => `${name} ${decl}`);
+  if (spec.constraints) cols.push(spec.constraints);
+  db.exec(`CREATE TABLE IF NOT EXISTS ${spec.name} (${cols.join(", ")})`);
+  const present = new Set(
+    db.query<{ name: string }>(`PRAGMA table_info(${spec.name})`).map((row) => row.name),
+  );
+  let added = 0;
+  for (const [name, decl] of spec.columns) {
+    if (present.has(name)) continue;
+    // Only the bare type: SQLite cannot add a NOT NULL / UNIQUE / PRIMARY KEY column to a
+    // populated table, so every additive column is nullable in a database that predates it.
+    db.exec(`ALTER TABLE ${spec.name} ADD COLUMN ${name} ${decl.split(" ")[0]}`);
+    added++;
+  }
+  if (added && spec.backfill) db.exec(spec.backfill);
+  for (const index of spec.indexes ?? []) createIndex(db, spec, index);
+}
+
+/** Indexes already reported as uncreatable, so the operator is told once, not per request. */
+const reportedIndexFailures = new Set<string>();
+
+/**
+ * Create one index, tolerating a failure.
+ *
+ * A UNIQUE index cannot be created over a table that already violates it — an
+ * `auth_users` populated before 2.5 may well hold two rows whose emails differ only in
+ * case. Letting that throw meant `initSchema` failed on EVERY open, so every request
+ * re-ran it and re-threw: one legacy row pair turned the whole app into a permanent 500.
+ * Instead the failure is reported once, with the query that finds the offending rows, and
+ * the adapter runs without that index — uniqueness is still enforced, by the adapter's own
+ * check in {@link saveUser}, just without the database backstop.
+ */
+function createIndex(db: SqliteDb, spec: TableSpec, index: IndexSpec): void {
+  try {
+    db.exec(index.sql);
+  } catch (error) {
+    if (reportedIndexFailures.has(index.sql)) return;
+    reportedIndexFailures.add(index.sql);
+    console.error(
+      `sqliteAuthAdapter: could not create an index on ${spec.name} ` +
+        `(${error instanceof Error ? error.message : String(error)}). ` +
+        (index.duplicates
+          ? `Existing rows violate it — find them with: ${index.duplicates};  ` +
+            "merge or delete the duplicates and restart to get the index. "
+          : "") +
+        "Auth continues without it (slower, and without the database-level guarantee).",
+    );
+  }
+}
+
+/**
+ * Bring a handle up to the current schema (idempotent) and set the usual WAL pragmas: the
+ * versioned migrations first (renames and drops, under the write lock), then the additive
+ * reconcile.
+ */
+function initSchema(db: SqliteDb, path: string, now: () => number): void {
+  try {
+    // busy_timeout first: a second writer (a seed script, `denext job`) waits instead of
+    // failing at once with "database is locked", even when WAL is refused.
+    db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL");
+  } catch { /* a handle that refuses pragmas keeps its defaults */ }
+  runSchemaMigrations(db, SQLITE_AUTH_MIGRATIONS, { now, label: path });
+  for (const spec of [...SCHEMA, ...SSO_SCHEMA]) reconcileTable(db, spec);
+  rekeyInternationalisedEmails(db);
+}
+
+/**
+ * Re-key `email_lc` for rows an older adapter wrote under a Unicode domain.
+ *
+ * Before {@link emailKey} punycoded the domain, `a@bücher.de` was keyed as itself while the
+ * emailed flows already looked it up as `a@xn--bcher-kva.de` — so without this, upgrading
+ * would make every such account unfindable by address. SQL cannot punycode, so the handful
+ * of rows whose key holds a non-ASCII character are re-keyed here; the `backfill` above
+ * runs first, so a column that was just added is covered too. A row whose new key is
+ * already taken (the duplicate the old key hid) is left as it was and reported once, the
+ * way an uncreatable index is.
+ */
+function rekeyInternationalisedEmails(db: SqliteDb): void {
+  const rows = db.query<{ id: string; email: string }>(
+    "SELECT id, email FROM auth_users WHERE email IS NOT NULL AND email_lc GLOB '*[^ -~]*'",
+  );
+  for (const row of rows) {
+    try {
+      db.exec("UPDATE auth_users SET email_lc = ? WHERE id = ?", [emailKey(row.email), row.id]);
+    } catch (error) {
+      const key = `rekey:${row.id}`;
+      if (reportedIndexFailures.has(key)) continue;
+      reportedIndexFailures.add(key);
+      console.error(
+        `sqliteAuthAdapter: could not re-key the email of user ${row.id} to its ASCII ` +
+          `(punycode) form (${error instanceof Error ? error.message : String(error)}). ` +
+          "Another row already holds that address — merge or delete one of them.",
+      );
+    }
+  }
+}
+
+// ---- rows ------------------------------------------------------------------
+
+/**
+ * A record as node:sqlite parameters: the shared field map's values, with booleans as 0/1
+ * (node:sqlite binds no booleans).
+ */
+function toRow<T extends object>(map: FieldMap<T>, record: T): Record<string, SqlValue> {
+  const row: Record<string, SqlValue> = {};
+  for (const [column, value] of Object.entries(sharedToRow(map, record))) {
+    row[column] = typeof value === "boolean" ? (value ? 1 : 0) : value as SqlValue;
+  }
+  return row;
+}
+
+// ---- statements ------------------------------------------------------------
+
+/**
+ * Insert `values` (column name → bound parameter), replacing any row it clashes with.
+ * Table and column names are module constants; every value the caller supplies is a
+ * parameter, never interpolated. The user table writes through {@link upsert} instead,
+ * because there a clash on a DIFFERENT unique index must fail rather than replace.
+ */
+function put(
+  db: SqliteDb,
+  table: string,
+  values: Record<string, SqlValue>,
+): void {
+  const columns = Object.keys(values);
+  db.exec(
+    `INSERT OR REPLACE INTO ${table} (${columns.join(", ")}) ` +
+      `VALUES (${columns.map(() => "?").join(", ")})`,
+    columns.map((column) => values[column]),
+  );
+}
+
+/**
+ * Insert `values`, or update the existing row when `conflict` (a UNIQUE/PK column) clashes
+ * — an atomic write-or-rewrite. Only that one constraint is absorbed: a violation of any
+ * OTHER unique index (the email one) still raises, which is the point.
+ *
+ * @param db The handle.
+ * @param table The table (a module constant, never caller input).
+ * @param values Column name → bound parameter.
+ * @param conflict The column whose clash means "this is a rewrite".
+ */
+function upsert(
+  db: SqliteDb,
+  table: string,
+  values: Record<string, SqlValue>,
+  conflict: string,
+): void {
+  const columns = Object.keys(values);
+  const updates = columns.filter((c) => c !== conflict).map((c) => `${c} = excluded.${c}`);
+  db.exec(
+    `INSERT INTO ${table} (${columns.join(", ")}) ` +
+      `VALUES (${columns.map(() => "?").join(", ")}) ` +
+      `ON CONFLICT(${conflict}) DO UPDATE SET ${updates.join(", ")}`,
+    columns.map((column) => values[column]),
+  );
+}
+
+/** The first row `sql` yields, or `undefined`. */
+function one(
+  db: SqliteDb,
+  sql: string,
+  params: SqlValue[],
+): Record<string, SqlValue> | undefined {
+  return db.query<Record<string, SqlValue>>(sql, params)[0];
+}
+
+/** Everything one adapter instance owns: the lazy handle, the clock and the sweep. */
+interface SqliteState {
+  /** The shared handle, opened (and schema-reconciled) on first use. */
+  db(): SqliteDb;
+  /** Epoch seconds. */
+  now(): number;
+  /** Reclaim expired verification tokens, throttled. */
+  sweep(): void;
+}
+
+// ---- method groups ---------------------------------------------------------
+
+/**
+ * Write a user row, keeping `created_at` and the derived email index in step.
+ *
+ * `INSERT … ON CONFLICT(id) DO UPDATE` rather than `INSERT OR REPLACE` (which would
+ * resolve a clash on the unique email index by deleting the OTHER user — a second user on
+ * one address must FAIL) and rather than delete-then-insert (which left a window in which
+ * the row did not exist, so a concurrent reader on the same file could see the user
+ * vanish, and a failing insert lost it outright). One statement, so the row is either the
+ * old one or the new one and a unique-email violation still raises.
+ */
+function saveUser(state: SqliteState, user: AdapterUser, createdAt: number): AdapterUser {
+  upsert(state.db(), "auth_users", {
+    ...toRow(USER_MAP, user),
+    email_lc: user.email ? emailKey(user.email) : null,
+    created_at: createdAt,
+  }, "id");
+  return { ...user, createdAt };
+}
+
+/** The five required user methods. */
+function userMethods(
+  state: SqliteState,
+): Pick<
+  AuthAdapter,
+  | "createUser"
+  | "getUser"
+  | "getUserByEmail"
+  | "getUserByAccount"
+  | "updateUser"
+  | "getUserByPhone"
+  | "listUsers"
+> {
+  const read = (sql: string, params: SqlValue[]): AdapterUser | undefined => {
+    const row = one(state.db(), sql, params);
+    return row && fromRow(USER_MAP, row);
+  };
+  return {
+    createUser: (user) => saveUser(state, withUserId(user), state.now()),
+    getUser: (id) => read("SELECT * FROM auth_users WHERE id = ?", [id]),
+    getUserByPhone: (phone) => read("SELECT * FROM auth_users WHERE phone = ?", [phone]),
+    listUsers({ page, perPage }) {
+      const { size, offset } = pageWindow(page, perPage);
+      const users = state.db()
+        .query<Record<string, SqlValue>>(
+          "SELECT * FROM auth_users ORDER BY created_at, id LIMIT ? OFFSET ?",
+          [size, offset],
+        )
+        .map((row) => fromRow(USER_MAP, row));
+      const [{ n }] = state.db().query<{ n: number }>("SELECT count(*) AS n FROM auth_users");
+      return { users, total: Number(n) };
+    },
+    getUserByEmail: (email) =>
+      read("SELECT * FROM auth_users WHERE email_lc = ?", [emailKey(email)]),
+    getUserByAccount: (ref) =>
+      read(
+        "SELECT u.* FROM auth_users u JOIN auth_accounts a ON a.user_id = u.id " +
+          "WHERE a.provider = ? AND a.provider_account_id = ?",
+        [ref.provider, ref.providerAccountId],
+      ),
+    updateUser(patch) {
+      const row = one(state.db(), "SELECT * FROM auth_users WHERE id = ?", [patch.id]);
+      const next = patchUser(row, patch, "sqliteAuthAdapter");
+      return saveUser(
+        state,
+        next,
+        typeof row?.created_at === "number" ? row.created_at : state.now(),
+      );
+    },
+  };
+}
+
+/** Link / unlink / list provider accounts. */
+function accountMethods(
+  state: SqliteState,
+): Pick<AuthAdapter, "linkAccount" | "unlinkAccount" | "listAccounts"> {
+  return {
+    linkAccount(account) {
+      put(state.db(), "auth_accounts", {
+        ...toRow(ACCOUNT_MAP, account),
+        created_at: account.createdAt ?? state.now(),
+      });
+    },
+    unlinkAccount(ref) {
+      state.db().exec(
+        "DELETE FROM auth_accounts WHERE provider = ? AND provider_account_id = ?",
+        [ref.provider, ref.providerAccountId],
+      );
+    },
+    listAccounts: (userId) =>
+      state.db()
+        .query<Record<string, SqlValue>>(
+          "SELECT * FROM auth_accounts WHERE user_id = ? ORDER BY provider, provider_account_id",
+          [userId],
+        )
+        .map((row) => fromRow(ACCOUNT_MAP, row)),
+  };
+}
+
+/** Issue and redeem single-use verification tokens. */
+function verificationMethods(
+  state: SqliteState,
+): Pick<AuthAdapter, "createVerificationToken" | "useVerificationToken"> {
+  return {
+    createVerificationToken(token) {
+      put(state.db(), "auth_verification_tokens", toRow(VERIFICATION_MAP, token));
+      state.sweep();
+    },
+    useVerificationToken(ref) {
+      // One statement: the row is read and deleted together, so two concurrent redemptions
+      // of a token can never both see it.
+      const row = state.db().query<Record<string, SqlValue>>(
+        "DELETE FROM auth_verification_tokens " +
+          "WHERE identifier = ? AND purpose = ? AND token_hash = ? RETURNING *",
+        [ref.identifier, ref.purpose, ref.tokenHash],
+      )[0];
+      if (!row) return undefined;
+      const record = fromRow(VERIFICATION_MAP, row);
+      // Consume first, answer second: an expired token is spent too (it is never worth
+      // retrying), but it never resolves — a stale link fails closed.
+      return record.expires <= state.now() ? undefined : record;
+    },
+  };
+}
+
+/** Password-hash storage for the Credentials provider. */
+function credentialMethods(
+  state: SqliteState,
+): Pick<AuthAdapter, "getCredential" | "setCredential" | "deleteCredential"> {
+  return {
+    getCredential(userId) {
+      const row = one(
+        state.db(),
+        "SELECT password_hash FROM auth_credentials WHERE user_id = ?",
+        [userId],
+      );
+      return typeof row?.password_hash === "string" ? row.password_hash : undefined;
+    },
+    setCredential(userId, hash) {
+      put(state.db(), "auth_credentials", { user_id: userId, password_hash: hash });
+    },
+    deleteCredential(userId) {
+      state.db().exec("DELETE FROM auth_credentials WHERE user_id = ?", [userId]);
+    },
+  };
+}
+
+/** The SQL condition (and its parameter) that hides revoked and expired bearer tokens. */
+const TOKEN_LIVE = "revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)";
+
+/** The bearer API-token group. Revoked and expired tokens are invisible to every read. */
+function apiTokenMethods(
+  state: SqliteState,
+): Pick<
+  AuthAdapter,
+  "createApiToken" | "getApiTokenByHash" | "touchApiToken" | "revokeApiToken" | "listApiTokens"
+> {
+  return {
+    createApiToken(token) {
+      put(state.db(), "auth_api_tokens", toRow(API_TOKEN_MAP, token));
+      // Tokens dead for NATIVE_SESSION_RETENTION (revoked, or expired) are reclaimed on every
+      // issue, as native families are on every sign-in: every read already refuses them.
+      const cutoff = state.now() - NATIVE_SESSION_RETENTION;
+      state.db().exec("DELETE FROM auth_api_tokens WHERE revoked_at <= ?", [cutoff]);
+      state.db().exec("DELETE FROM auth_api_tokens WHERE expires_at <= ?", [cutoff]);
+    },
+    getApiTokenByHash(tokenHash) {
+      const row = one(
+        state.db(),
+        `SELECT * FROM auth_api_tokens WHERE token_hash = ? AND ${TOKEN_LIVE}`,
+        [tokenHash, state.now()],
+      );
+      return row && fromRow(API_TOKEN_MAP, row);
+    },
+    touchApiToken(id, lastUsedAt) {
+      state.db().exec("UPDATE auth_api_tokens SET last_used_at = ? WHERE id = ?", [lastUsedAt, id]);
+    },
+    revokeApiToken(id) {
+      const revoked = state.db().query(
+        "UPDATE auth_api_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL " +
+          "RETURNING id",
+        [state.now(), id],
+      );
+      return revoked.length === 1;
+    },
+    listApiTokens: (userId) =>
+      state.db()
+        .query<Record<string, SqlValue>>(
+          `SELECT * FROM auth_api_tokens WHERE user_id = ? AND ${TOKEN_LIVE} ORDER BY created_at, id`,
+          [userId, state.now()],
+        )
+        .map((row) => fromRow(API_TOKEN_MAP, row)),
+  };
+}
+
+/** The TOTP factor group, including the two consume-once guards. */
+function mfaMethods(
+  state: SqliteState,
+): Pick<
+  AuthAdapter,
+  "getMfa" | "setMfa" | "deleteMfa" | "replaceMfaSecret" | "consumeBackupCode" | "claimTotpStep"
+> {
+  const read = (userId: string): MfaRecord | undefined => {
+    const row = one(state.db(), "SELECT * FROM auth_mfa WHERE user_id = ?", [userId]);
+    return row && fromRow(MFA_MAP, row);
+  };
+  return {
+    getMfa: read,
+    setMfa(record) {
+      put(state.db(), "auth_mfa", toRow(MFA_MAP, record));
+    },
+    deleteMfa(userId) {
+      state.db().exec("DELETE FROM auth_mfa WHERE user_id = ?", [userId]);
+    },
+    replaceMfaSecret(userId, expected, next) {
+      // One conditional UPDATE of the one column: it lands only while the stored secret is
+      // still the one that was read, and leaves `last_step` / `backup_code_hashes` alone.
+      const swapped = state.db().query(
+        "UPDATE auth_mfa SET secret = ? WHERE user_id = ? AND secret = ? RETURNING user_id",
+        [next, userId, expected],
+      );
+      return swapped.length === 1;
+    },
+    consumeBackupCode: (userId, matches) =>
+      // Compare-and-swap on the whole list (see spendBackupCode): a concurrent redemption — in
+      // this process or in another one on the same file — loses the swap and retries.
+      spendBackupCode(
+        () => read(userId),
+        (next, before) =>
+          state.db().query(
+            "UPDATE auth_mfa SET backup_code_hashes = ? " +
+              "WHERE user_id = ? AND backup_code_hashes = ? RETURNING user_id",
+            [next, userId, before],
+          ).length === 1,
+        matches,
+      ),
+    claimTotpStep(userId, step) {
+      // Strictly monotonic, decided by the WHERE clause: the step a code verified against
+      // is spent, and so is every older one. The row is claimed or it is not.
+      const claimed = state.db().query(
+        "UPDATE auth_mfa SET last_step = ? WHERE user_id = ? " +
+          "AND (last_step IS NULL OR last_step < ?) RETURNING user_id",
+        [step, userId, step],
+      );
+      return claimed.length === 1;
+    },
+  };
+}
+
+/** The native-app session group: single-use grants plus refresh-token families. */
+function nativeMethods(
+  state: SqliteState,
+): Pick<
+  AuthAdapter,
+  | "createNativeGrant"
+  | "useNativeGrant"
+  | "createNativeSession"
+  | "getNativeSession"
+  | "rotateNativeSession"
+  | "revokeNativeSession"
+  | "revokeNativeSessionsByUser"
+> {
+  return {
+    createNativeGrant(grant) {
+      put(state.db(), "auth_native_grants", toRow(NATIVE_GRANT_MAP, grant));
+      // Grants a minute past their expiry are reclaimed on every write (an indexed delete).
+      state.db().exec("DELETE FROM auth_native_grants WHERE expires_at <= ?", [state.now() - 60]);
+    },
+    useNativeGrant(hash, kind) {
+      // One statement: read and delete together, so a concurrent redemption never sees it.
+      const row = state.db().query<Record<string, SqlValue>>(
+        "DELETE FROM auth_native_grants WHERE kind = ? AND hash = ? RETURNING *",
+        [kind, hash],
+      )[0];
+      if (!row) return undefined;
+      const record = fromRow(NATIVE_GRANT_MAP, row);
+      return record.expiresAt <= state.now() ? undefined : record;
+    },
+    createNativeSession(session) {
+      put(state.db(), "auth_native_sessions", toRow(NATIVE_SESSION_MAP, session));
+      // Families dead for NATIVE_SESSION_RETENTION (expired, or revoked) are reclaimed on
+      // every sign-in, so the table stays bounded. A token of a deleted family is `invalid`,
+      // the same answer a revoked or expired one gets.
+      const cutoff = state.now() - NATIVE_SESSION_RETENTION;
+      state.db().exec("DELETE FROM auth_native_sessions WHERE expires_at <= ?", [cutoff]);
+      state.db().exec("DELETE FROM auth_native_sessions WHERE revoked_at <= ?", [cutoff]);
+    },
+    getNativeSession(id) {
+      const row = one(state.db(), "SELECT * FROM auth_native_sessions WHERE id = ?", [id]);
+      return row && fromRow(NATIVE_SESSION_MAP, row);
+    },
+    rotateNativeSession(id, fromGeneration, expiresAt, rotation) {
+      // The WHERE clause is the compare-and-swap: one refresh with a generation wins. The same
+      // statement records the rotation time.
+      const rotated = state.db().query(
+        "UPDATE auth_native_sessions SET generation = ?, expires_at = ?, " +
+          "rotated_at = COALESCE(?, rotated_at) " +
+          "WHERE id = ? AND generation = ? AND revoked_at IS NULL RETURNING id",
+        [
+          fromGeneration + 1,
+          expiresAt,
+          rotation?.rotatedAt ?? null,
+          id,
+          fromGeneration,
+        ],
+      );
+      return rotated.length === 1;
+    },
+    revokeNativeSession(id) {
+      state.db().exec(
+        "UPDATE auth_native_sessions SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+        [state.now(), id],
+      );
+    },
+    revokeNativeSessionsByUser(userId, exceptId) {
+      state.db().exec(
+        "UPDATE auth_native_sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL" +
+          " AND id IS NOT ?",
+        [state.now(), userId, exceptId ?? null],
+      );
+    },
+  };
+}
+
+/** The `/auth/v1` MFA factors. */
+function factorMethods(
+  state: SqliteState,
+): Pick<
+  AuthAdapter,
+  | "createMfaFactor"
+  | "listMfaFactors"
+  | "updateMfaFactor"
+  | "claimMfaFactorStep"
+  | "deleteMfaFactor"
+> {
+  return {
+    createMfaFactor(record) {
+      put(state.db(), "auth_mfa_factors", toRow(MFA_FACTOR_MAP, record));
+    },
+    listMfaFactors: (userId) =>
+      state.db()
+        .query<Record<string, SqlValue>>(
+          "SELECT * FROM auth_mfa_factors WHERE user_id = ? ORDER BY created_at, id",
+          [userId],
+        )
+        .map((row) => fromRow(MFA_FACTOR_MAP, row)),
+    updateMfaFactor(id, patch) {
+      const sets = factorPatchColumns(patch);
+      if (!sets.length) return;
+      state.db().exec(
+        `UPDATE auth_mfa_factors SET ${sets.map(([c]) => `${c} = ?`).join(", ")} WHERE id = ?`,
+        [...sets.map(([, v]) => v as SqlValue), id],
+      );
+    },
+    claimMfaFactorStep(id, step) {
+      const rows = state.db().query<{ id: string }>(
+        "UPDATE auth_mfa_factors SET last_step = ? WHERE id = ? " +
+          "AND (last_step IS NULL OR last_step < ?) RETURNING id",
+        [step, id, step],
+      );
+      return rows.length === 1;
+    },
+    deleteMfaFactor(id) {
+      state.db().exec("DELETE FROM auth_mfa_factors WHERE id = ?", [id]);
+    },
+  };
+}
+
+/** The passkey group: credential records and single-use challenges. */
+function passkeyMethods(
+  state: SqliteState,
+): Pick<
+  AuthAdapter,
+  | "createPasskey"
+  | "getPasskey"
+  | "listPasskeys"
+  | "updatePasskey"
+  | "deletePasskey"
+  | "createPasskeyChallenge"
+  | "usePasskeyChallenge"
+> {
+  return {
+    createPasskey(record) {
+      // INSERT … ON CONFLICT DO NOTHING: a credential ID registered once can't be taken over.
+      const row = toRow(PASSKEY_MAP, record);
+      const columns = Object.keys(row);
+      const inserted = state.db().query(
+        `INSERT INTO auth_passkeys (${columns.join(", ")}) ` +
+          `VALUES (${columns.map(() => "?").join(", ")}) ON CONFLICT(id) DO NOTHING RETURNING id`,
+        Object.values(row),
+      );
+      return inserted.length === 1;
+    },
+    getPasskey(id) {
+      const row = one(state.db(), "SELECT * FROM auth_passkeys WHERE id = ?", [id]);
+      return row && fromRow(PASSKEY_MAP, row);
+    },
+    listPasskeys: (userId) =>
+      state.db()
+        .query<Record<string, SqlValue>>(
+          "SELECT * FROM auth_passkeys WHERE user_id = ? ORDER BY created_at, id",
+          [userId],
+        )
+        .map((row) => fromRow(PASSKEY_MAP, row)),
+    updatePasskey(id, fromSignCount, update) {
+      // The WHERE clause is the compare-and-swap on the counter.
+      const updated = state.db().query(
+        "UPDATE auth_passkeys SET sign_count = ?, backed_up = ?, last_used_at = ? " +
+          "WHERE id = ? AND sign_count = ? RETURNING id",
+        [update.signCount, update.backedUp ? 1 : 0, update.lastUsedAt, id, fromSignCount],
+      );
+      return updated.length === 1;
+    },
+    deletePasskey(id) {
+      state.db().exec("DELETE FROM auth_passkeys WHERE id = ?", [id]);
+    },
+    createPasskeyChallenge(record) {
+      put(state.db(), "auth_passkey_challenges", toRow(PASSKEY_CHALLENGE_MAP, record));
+      // Challenges a minute past their expiry are reclaimed on every write (an indexed delete).
+      state.db().exec("DELETE FROM auth_passkey_challenges WHERE expires_at <= ?", [
+        state.now() - 60,
+      ]);
+    },
+    usePasskeyChallenge(hash) {
+      // One statement: read and delete together, so a concurrent redemption never sees it.
+      const row = state.db().query<Record<string, SqlValue>>(
+        "DELETE FROM auth_passkey_challenges WHERE hash = ? RETURNING *",
+        [hash],
+      )[0];
+      if (!row) return undefined;
+      const record = fromRow(PASSKEY_CHALLENGE_MAP, row);
+      return record.expiresAt <= state.now() ? undefined : record;
+    },
+  };
+}
+
+/** Run `fn` in one IMMEDIATE transaction (rolled back when it throws). */
+function transaction<T>(db: SqliteDb, fn: () => T): T {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const out = fn();
+    db.exec("COMMIT");
+    return out;
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch { /* the failed statement may already have ended the transaction */ }
+    throw error;
+  }
+}
+
+/** Providers by a WHERE clause, with their domains. */
+function ssoProviders(db: SqliteDb, where: string, params: SqlValue[]): SsoProviderRecord[] {
+  const rows = db.query<Record<string, SqlValue>>(
+    `SELECT * FROM auth_sso_providers ${where} ORDER BY created_at, id`,
+    params,
+  ).map((row) => fromRow(SSO_PROVIDER_MAP, row));
+  if (!rows.length) return [];
+  const ids = rows.map((r) => r.id);
+  const domains = db.query<Record<string, SqlValue>>(
+    `SELECT domain, provider_id FROM auth_sso_domains WHERE provider_id IN (${
+      ids.map(() => "?").join(", ")
+    })`,
+    ids,
+  );
+  return withDomains(rows, domains);
+}
+
+/** Why `record` cannot be written over the rows of other providers, or `ok`. */
+function ssoConflict(db: SqliteDb, record: SsoProviderRecord): SsoProviderWrite {
+  if (
+    one(db, "SELECT id FROM auth_sso_providers WHERE entity_id = ? AND id <> ?", [
+      record.entityId,
+      record.id,
+    ])
+  ) return "entity_id_exists";
+  for (const domain of record.domains) {
+    if (
+      one(db, "SELECT domain FROM auth_sso_domains WHERE domain = ? AND provider_id <> ?", [
+        domain,
+        record.id,
+      ])
+    ) return "domain_exists";
+  }
+  return "ok";
+}
+
+/** Write a provider row and replace its domains (inside a transaction). */
+function writeSsoProvider(db: SqliteDb, record: SsoProviderRecord): void {
+  put(db, "auth_sso_providers", toRow(SSO_PROVIDER_MAP, record));
+  db.exec("DELETE FROM auth_sso_domains WHERE provider_id = ?", [record.id]);
+  for (const domain of record.domains) {
+    db.exec("INSERT INTO auth_sso_domains (domain, provider_id) VALUES (?, ?)", [
+      domain,
+      record.id,
+    ]);
+  }
+}
+
+/** The `/auth/v1` SAML SSO group. */
+function ssoMethods(state: SqliteState): SsoMethods {
+  const save = (record: SsoProviderRecord, mustExist: boolean): SsoProviderWrite =>
+    transaction(state.db(), () => {
+      const db = state.db();
+      const exists = !!one(db, "SELECT id FROM auth_sso_providers WHERE id = ?", [record.id]);
+      if (exists !== mustExist) return mustExist ? "not_found" : "entity_id_exists";
+      const verdict = ssoConflict(db, record);
+      if (verdict === "ok") writeSsoProvider(db, record);
+      return verdict;
+    });
+  return {
+    createSsoProvider: (record) => save(record, false),
+    updateSsoProvider: (record) => save(record, true),
+    getSsoProvider: (id) => ssoProviders(state.db(), "WHERE id = ?", [id])[0],
+    getSsoProviderByEntityId: (entityId) =>
+      ssoProviders(state.db(), "WHERE entity_id = ?", [entityId])[0],
+    getSsoProviderByDomain: (domain) =>
+      ssoProviders(
+        state.db(),
+        "WHERE id = (SELECT provider_id FROM auth_sso_domains WHERE domain = ?)",
+        [domain],
+      )[0],
+    listSsoProviders: () => ssoProviders(state.db(), "", []),
+    deleteSsoProvider: (id) =>
+      transaction(state.db(), () => {
+        const db = state.db();
+        db.exec("DELETE FROM auth_sso_domains WHERE provider_id = ?", [id]);
+        db.exec("DELETE FROM auth_sso_sessions WHERE provider_id = ?", [id]);
+        return db.query("DELETE FROM auth_sso_providers WHERE id = ? RETURNING id", [id])
+          .length === 1;
+      }),
+    createSsoSession(record) {
+      state.db().exec("DELETE FROM auth_sso_sessions WHERE expires_at <= ?", [state.now()]);
+      put(state.db(), "auth_sso_sessions", toRow(SSO_SESSION_MAP, record));
+    },
+    listSsoSessions: (providerId, nameId) =>
+      state.db().query<Record<string, SqlValue>>(
+        "SELECT * FROM auth_sso_sessions WHERE provider_id = ? AND name_id = ? AND expires_at > ?",
+        [providerId, nameId, state.now()],
+      ).map((row) => fromRow(SSO_SESSION_MAP, row)),
+    claimSamlMessageId(id, expiresAt) {
+      const db = state.db();
+      db.exec("DELETE FROM auth_saml_message_ids WHERE expires_at <= ?", [state.now()]);
+      return db.query(
+        "INSERT INTO auth_saml_message_ids (id, expires_at) VALUES (?, ?) " +
+          "ON CONFLICT(id) DO NOTHING RETURNING id",
+        [id, expiresAt],
+      ).length === 1;
+    },
+  };
+}
+
+/** SAML Single Logout's session index and revocation list. */
+function ssoIndexMethods(state: SqliteState): SsoIndexMethods {
+  const select = (where: string, params: SqlValue[]) =>
+    state.db().query<Record<string, SqlValue>>(
+      `SELECT * FROM auth_sso_cookie_sessions WHERE ${where} AND expires_at > ?`,
+      [...params, state.now()],
+    ).map((row) => fromRow(SSO_SESSION_INDEX_MAP, row));
+  return {
+    recordSsoSessionIndex(providerId, nameId, sessionIndex, sid, expiresAt) {
+      const db = state.db();
+      db.exec("DELETE FROM auth_sso_cookie_sessions WHERE expires_at <= ?", [state.now()]);
+      db.exec(
+        "INSERT OR REPLACE INTO auth_sso_cookie_sessions " +
+          "(sid, provider_id, name_id, session_index, expires_at) VALUES (?, ?, ?, ?, ?)",
+        [sid, providerId, nameId, sessionIndex ?? null, expiresAt],
+      );
+    },
+    listSsoSessionIndexBySessionIndex: (providerId, nameId, sessionIndex) =>
+      select("provider_id = ? AND name_id = ? AND session_index = ?", [
+        providerId,
+        nameId,
+        sessionIndex,
+      ]),
+    listSsoSessionIndexByNameId: (providerId, nameId) =>
+      select("provider_id = ? AND name_id = ?", [providerId, nameId]),
+    revokeSids(sids, expiresAt) {
+      transaction(state.db(), () => {
+        const db = state.db();
+        db.exec("DELETE FROM auth_revoked_sessions WHERE expires_at <= ?", [state.now()]);
+        for (const sid of sids) {
+          db.exec(
+            "INSERT INTO auth_revoked_sessions (sid, expires_at) VALUES (?, ?) " +
+              "ON CONFLICT(sid) DO UPDATE SET expires_at = MAX(expires_at, excluded.expires_at)",
+            [sid, expiresAt],
+          );
+        }
+      });
+    },
+    isSidRevoked: (sid) =>
+      !!one(state.db(), "SELECT sid FROM auth_revoked_sessions WHERE sid = ? AND expires_at > ?", [
+        sid,
+        state.now(),
+      ]),
+  };
+}
+
+export { NATIVE_SESSION_RETENTION };
+
+/** The tables keyed by `user_id` that a user's deletion clears. */
+const USER_TABLES = [
+  "auth_accounts",
+  "auth_credentials",
+  "auth_api_tokens",
+  "auth_mfa",
+  "auth_mfa_factors",
+  "auth_native_sessions",
+  "auth_passkeys",
+  "auth_sso_sessions",
+  ...OAUTH_SERVER_USER_TABLES,
+];
+
+/**
+ * Delete a user and every row keyed by them, in ONE transaction: the user row, the tables in
+ * {@link USER_TABLES}, and the verification tokens issued to their address. Either all of it
+ * goes or none does.
+ */
+function deleteUserRows(state: SqliteState, id: string): void {
+  const db = state.db();
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const row = one(db, "SELECT email_lc FROM auth_users WHERE id = ?", [id]);
+    if (typeof row?.email_lc === "string") {
+      db.exec("DELETE FROM auth_verification_tokens WHERE identifier = ?", [row.email_lc]);
+    }
+    for (const table of USER_TABLES) db.exec(`DELETE FROM ${table} WHERE user_id = ?`, [id]);
+    db.exec("DELETE FROM auth_users WHERE id = ?", [id]);
+    db.exec("COMMIT");
+  } catch (error) {
+    try {
+      db.exec("ROLLBACK");
+    } catch { /* the failed statement may already have ended the transaction */ }
+    throw error;
+  }
+}
+
+/** The lazy handle and the throttled sweep for one adapter. */
+function createState(
+  options: SqliteAuthAdapterOptions,
+): SqliteState & { close(): void; facade: SqliteDb } {
+  const path = options.path ?? DEFAULT_PATH;
+  const open = options.openDb ?? openNodeSqlite;
+  const sweepEvery = options.sweepEvery ?? SWEEP_INTERVAL;
+  const now = options.now ?? (() => Math.floor(Date.now() / 1000));
+  let db: SqliteDb | undefined;
+  let closed = false;
+  let lastSweep = 0;
+
+  // Memoize only after a clean open + init; a throw leaves `db` unset so the next access
+  // retries instead of permanently disabling sign-in.
+  const getDb = (): SqliteDb => {
+    // A closed adapter must not silently reopen the file: the server is draining, and a
+    // handle resurrected by a late request would outlive the process's own teardown.
+    if (closed) {
+      throw new Error(
+        "sqliteAuthAdapter: this adapter has been closed (the server drained, or close() " +
+          "was called) — build a new one instead of reusing it.",
+      );
+    }
+    if (db) return db;
+    const opened = open(path);
+    initSchema(opened, path, now);
+    db = opened;
+    return db;
+  };
+  const close = (): void => {
+    db?.close();
+    db = undefined;
+    closed = true;
+  };
+  return {
+    db: getDb,
+    now,
+    close,
+    // The handle the session store is given: stable, so it survives that store's own
+    // close/reopen, and idempotent on close, so neither owner can double-close SQLite.
+    facade: {
+      exec: (sql: string, params?: SqlValue[]) => getDb().exec(sql, params),
+      query: <T>(sql: string, params?: SqlValue[]): T[] => getDb().query<T>(sql, params),
+      close,
+    },
+    sweep() {
+      const at = Date.now();
+      if (at - lastSweep < sweepEvery) return;
+      lastSweep = at;
+      getDb().exec("DELETE FROM auth_verification_tokens WHERE expires <= ?", [now()]);
+    },
+  };
+}
+
+/**
+ * Build the durable {@link ./adapter.ts | AuthAdapter} on Deno's built-in `node:sqlite`:
+ * every method group (users, accounts, verification tokens, credentials, API tokens, MFA,
+ * native app sessions, passkeys, account deletion)
+ * plus a `sessions` store over the **same** database handle and an idempotent `close()`.
+ *
+ * Ids are `crypto.randomUUID()` unless the caller supplies one; emails are matched
+ * case-insensitively and whitespace-trimmed, and a unique index refuses a second user on
+ * one address. The schema is created on first use and evolved additively on every open
+ * (see the module doc). Single-node; TOTP secrets are stored as the MFA layer seals them.
+ *
+ * @param options Database path (or an `openDb` hook), clock override, sweep interval.
+ * @returns The adapter, ready to pass as `denextAuth({ adapter })`.
+ */
+export function sqliteAuthAdapter(options: SqliteAuthAdapterOptions = {}): AuthAdapter {
+  const state = createState(options);
+  // Identical `sessions` DDL over the shared handle: a database written by
+  // sqliteSessionStore({ path }) is this adapter's, and vice versa — no migration step.
+  const sessions = sqliteSessionStore({
+    path: options.path ?? DEFAULT_PATH,
+    openDb: () => state.facade,
+  });
+  return {
+    ...userMethods(state),
+    ...accountMethods(state),
+    ...verificationMethods(state),
+    ...credentialMethods(state),
+    ...apiTokenMethods(state),
+    ...mfaMethods(state),
+    ...factorMethods(state),
+    ...nativeMethods(state),
+    ...passkeyMethods(state),
+    ...ssoMethods(state),
+    ...ssoIndexMethods(state),
+    ...sqlOAuthServerGroups({
+      rows: (sql, params) => Promise.resolve(state.db().query(sql, params as SqlValue[])),
+      table: (name) => name,
+      now: state.now,
+    }),
+    async deleteUser(id) {
+      deleteUserRows(state, id);
+      await sessions.deleteByUser(id);
+    },
+    sessions,
+    close() {
+      sessions.close?.(); // drops that store's memo; the facade's close is the same one
+      state.close();
+    },
+  };
+}

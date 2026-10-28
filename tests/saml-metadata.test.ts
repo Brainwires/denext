@@ -7,9 +7,9 @@ import {
   parseIdpMetadata,
   SamlError,
   spMetadataXml,
-} from "../src/server/auth/saml/mod.ts";
-import { certificateKey } from "../src/server/auth/saml/x509.ts";
-import { parseXml, type XmlElement } from "../src/server/auth/saml/xml.ts";
+} from "../packages/auth/src/saml/mod.ts";
+import { certificateKey } from "../packages/auth/src/saml/x509.ts";
+import { parseXml, type XmlElement } from "../packages/auth/src/saml/xml.ts";
 import * as server from "../src/server/mod.ts";
 import { certificateFor, der, derOid, ecKey, rsaKey, SP } from "./_saml-helpers.ts";
 

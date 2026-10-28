@@ -4,11 +4,11 @@
 // production http on any other host (refused there, as before).
 
 import { assertEquals } from "@std/assert";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { plainHttpCookies } from "../src/server/auth/options.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { plainHttpCookies } from "../packages/auth/src/options.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 
 const SECRET = "auth-cookie-transport-secret-at-least-32";
 const FORCE_PRODUCTION = Symbol.for("denext.testing.forceProduction");

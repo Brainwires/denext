@@ -5,10 +5,10 @@
 // within the per-address captcha budget (`rateLimit.captcha`), spent before the call.
 
 import { assert, assertEquals } from "@std/assert";
-import { verifyCaptcha } from "../src/server/auth/captcha.ts";
-import { resolveAuthOptions } from "../src/server/auth/options.ts";
-import { credentials, emailOtp, phoneOtp } from "../src/server/auth/providers.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import { verifyCaptcha } from "../packages/auth/src/captcha.ts";
+import { resolveAuthOptions } from "../packages/auth/src/options.ts";
+import { credentials, emailOtp, phoneOtp } from "../packages/auth/src/providers.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import { type NativeHarness, nativeHarness, post, visible } from "./helpers/auth-native-harness.ts";
 
 /** A fake provider: `good` is solved, anything else is not; every call is recorded. */

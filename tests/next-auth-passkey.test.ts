@@ -5,17 +5,20 @@
 // `Authenticator` row (and `webauthn` account) through an Auth.js adapter.
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
-import NextAuth from "../src/compat/next-auth/index.ts";
-import { fromAuthJsAdapter } from "../src/compat/next-auth/adapter.ts";
-import { translateConfig } from "../src/compat/next-auth/config.ts";
-import Credentials from "../src/compat/next-auth/providers/credentials.ts";
-import Passkey from "../src/compat/next-auth/providers/passkey.ts";
-import WebAuthn from "../src/compat/next-auth/providers/webauthn.ts";
-import type { AuthJsAdapter, AuthJsAdapterAuthenticator } from "../src/compat/next-auth/adapter.ts";
-import type { NextAuthConfig } from "../src/compat/next-auth/types.ts";
+import NextAuth from "../packages/auth/next-auth/index.ts";
+import { fromAuthJsAdapter } from "../packages/auth/next-auth/adapter.ts";
+import { translateConfig } from "../packages/auth/next-auth/config.ts";
+import Credentials from "../packages/auth/next-auth/providers/credentials.ts";
+import Passkey from "../packages/auth/next-auth/providers/passkey.ts";
+import WebAuthn from "../packages/auth/next-auth/providers/webauthn.ts";
+import type {
+  AuthJsAdapter,
+  AuthJsAdapterAuthenticator,
+} from "../packages/auth/next-auth/adapter.ts";
+import type { NextAuthConfig } from "../packages/auth/next-auth/types.ts";
 import { type CallInit, inRequest, Jar, request } from "./helpers/next-auth-harness.ts";
 import { Authenticator } from "./helpers/soft-authenticator.ts";
-import type { AuthPasskeyConfig } from "../src/server/auth/types.ts";
+import type { AuthPasskeyConfig } from "../packages/auth/src/types.ts";
 import {
   type CacheStore,
   getCacheStore,

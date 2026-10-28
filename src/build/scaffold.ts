@@ -235,6 +235,11 @@ const dep = `jsr:@denext/denext@^${VERSION}`;
 const cli = `${dep}/cli`;
 /** The `denext` import a scaffold pins (`jsr:@denext/denext@^<this version>`). */
 export const SCAFFOLD_DENEXT_DEP: string = dep;
+/**
+ * The `@denext/auth` import a scaffold pins: the same range as denext's, since the package is
+ * versioned with denext and pins it exactly.
+ */
+const SCAFFOLD_AUTH_DEP: string = `jsr:@denext/auth@^${VERSION}`;
 /** The version-pinned CLI specifier generated `deno task`s run. */
 export const SCAFFOLD_DENEXT_CLI: string = cli;
 /** The Capacitor release `--capacitor` scaffolds (CLI, core and both native platforms). */
@@ -308,7 +313,8 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
     "denext/jsx-runtime": `${dep}/jsx-runtime`,
     "denext/jsx-dev-runtime": `${dep}/jsx-dev-runtime`,
     "denext/server": `${dep}/server`,
-    "denext/auth": `${dep}/auth`,
+    // The auth layer (`denextAuth()`, the providers) is its own package, versioned with denext.
+    "@denext/auth": SCAFFOLD_AUTH_DEP,
     "denext/client": `${dep}/client`,
     "denext/testing": `${dep}/testing`,
     // Deploy adapters: `deploy: { adapter: fly({ app }) }` in denext.config.ts.

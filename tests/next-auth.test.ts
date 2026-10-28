@@ -4,33 +4,36 @@
 // token, and a `redirect` callback can't send the browser off-origin.
 
 import { assert, assertEquals, assertNotEquals, assertRejects, assertThrows } from "@std/assert";
-import NextAuth, { CredentialsSignin, type NextAuthConfig } from "../src/compat/next-auth/index.ts";
-import Credentials from "../src/compat/next-auth/providers/credentials.ts";
-import GitHub from "../src/compat/next-auth/providers/github.ts";
-import MicrosoftEntraID from "../src/compat/next-auth/providers/microsoft-entra-id.ts";
-import Resend from "../src/compat/next-auth/providers/resend.ts";
-import Apple from "../src/compat/next-auth/providers/apple.ts";
-import Discord from "../src/compat/next-auth/providers/discord.ts";
-import Email from "../src/compat/next-auth/providers/email.ts";
-import Google from "../src/compat/next-auth/providers/google.ts";
-import Nodemailer, { smtpSettings } from "../src/compat/next-auth/providers/nodemailer.ts";
-import Zoom from "../src/compat/next-auth/providers/zoom.ts";
-import { translateConfig } from "../src/compat/next-auth/config.ts";
-import { decode, encode, getToken } from "../src/compat/next-auth/jwt.ts";
+import NextAuth, {
+  CredentialsSignin,
+  type NextAuthConfig,
+} from "../packages/auth/next-auth/index.ts";
+import Credentials from "../packages/auth/next-auth/providers/credentials.ts";
+import GitHub from "../packages/auth/next-auth/providers/github.ts";
+import MicrosoftEntraID from "../packages/auth/next-auth/providers/microsoft-entra-id.ts";
+import Resend from "../packages/auth/next-auth/providers/resend.ts";
+import Apple from "../packages/auth/next-auth/providers/apple.ts";
+import Discord from "../packages/auth/next-auth/providers/discord.ts";
+import Email from "../packages/auth/next-auth/providers/email.ts";
+import Google from "../packages/auth/next-auth/providers/google.ts";
+import Nodemailer, { smtpSettings } from "../packages/auth/next-auth/providers/nodemailer.ts";
+import Zoom from "../packages/auth/next-auth/providers/zoom.ts";
+import { translateConfig } from "../packages/auth/next-auth/config.ts";
+import { decode, encode, getToken } from "../packages/auth/next-auth/jwt.ts";
 import {
   type AuthJsAdapter,
   type AuthJsUserExtension,
   fromAuthJsAdapter,
-} from "../src/compat/next-auth/adapter.ts";
+} from "../packages/auth/next-auth/adapter.ts";
 import {
   auth as denextAuth,
   denextAuth as configureAuth,
   requireAuth,
   revokeAllSessions,
-} from "../src/server/auth/mod.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import type { OAuthProvider } from "../src/server/auth/types.ts";
+} from "../packages/auth/src/mod.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import type { OAuthProvider } from "../packages/auth/src/types.ts";
 import { type CallInit, inRequest, Jar, ORIGIN, request } from "./helpers/next-auth-harness.ts";
 import { isRedirect } from "../src/runtime/error-boundary.ts";
 
@@ -452,7 +455,7 @@ Deno.test("next-auth security: a jwt callback returning null at sign-in signs no
 });
 
 Deno.test("next-auth security: an Object.prototype name in ?error= is an unknown code, not a 500", async () => {
-  const { translateErrorLocation } = await import("../src/compat/next-auth/flows.ts");
+  const { translateErrorLocation } = await import("../packages/auth/next-auth/flows.ts");
   const a = app();
   for (const code of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
     for (const path of [`/api/auth/error?error=${code}`, `/api/auth/signin?error=${code}`]) {

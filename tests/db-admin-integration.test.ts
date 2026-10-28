@@ -22,7 +22,7 @@ import { builtinSql, type SqlClient, sqlState } from "../src/server/postgres.ts"
 import { handleDbRequest } from "../src/cli/db-admin/handle.ts";
 import { inTransaction } from "../src/cli/db-admin/connection.ts";
 import { ensureRlsMigrated } from "../packages/backend/src/rls.ts";
-import { postgresAuthAdapter } from "../src/server/auth/postgres-adapter.ts";
+import { postgresAuthAdapter } from "../packages/auth/src/postgres-adapter.ts";
 import type {
   DbActor,
   DbFailure,
@@ -32,8 +32,8 @@ import type {
   DbSuccess,
 } from "../src/ui/database/protocol.ts";
 import { postgresEnvironment as environment } from "./helpers/postgres-env.ts";
-import { verifyPassword } from "../src/server/auth/password.ts";
-import { isBanned } from "../src/server/auth/ban.ts";
+import { verifyPassword } from "../src/server/password.ts";
+import { isBanned } from "../packages/auth/src/ban.ts";
 import { startUiServer } from "../src/ui/server.ts";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";

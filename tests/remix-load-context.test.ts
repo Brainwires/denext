@@ -91,13 +91,15 @@ Deno.test("load context: Express reads become denext expressions", async () => {
     // The provider is async (auth, the session) and reads the request, its URL and nothing else.
     has("export default defineLoadContext(async ({ request }) => {");
     has("const requestUrl = new URL(request.url);");
-    has('import { auth, clientIp, cookies, getSession } from "denext/server";');
+    has(
+      'import { AuthPluginMissingError, auth, clientIp, cookies, getSession } from "denext/server";',
+    );
     has("ip: clientIp(),");
     has('userAgent: (request.headers.get("user-agent") ?? undefined),');
     has("host: requestUrl.host,");
     has("session: (await requestSession()),");
     has("userId: (await requestSession()).userId,");
-    has("user: (await auth())?.user,");
+    has("user: (await requestAuth())?.user,");
     has("path: requestUrl.pathname,");
     has("url: (requestUrl.pathname + requestUrl.search),");
     has('page: (requestUrl.searchParams.get("page") ?? undefined),');

@@ -5,7 +5,12 @@
 // doesn't list (to the sign-in page) or with no reachable server (to the error page).
 
 import { assert, assertEquals } from "@std/assert";
-import { getCsrfToken, getProviders, getSession, signIn } from "../src/compat/next-auth/react.ts";
+import {
+  getCsrfToken,
+  getProviders,
+  getSession,
+  signIn,
+} from "../packages/auth/next-auth/react.ts";
 import { type ApiDispatchInit, setApiDispatcher } from "../src/runtime/api-dispatch.ts";
 
 /** A recorded request. */

@@ -4,15 +4,15 @@
 // Sign in with Apple token revocation, `onAccountDeleted`, and `deleteUser` on both adapters.
 
 import { assert, assertEquals } from "@std/assert";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { issueApiToken } from "../src/server/auth/api-token.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { resolveNative, startNativeSession } from "../src/server/auth/native.ts";
-import { hashPassword } from "../src/server/auth/password.ts";
-import { handleAuthRequest } from "../src/server/auth/routes.ts";
-import { inMemorySessionStore, type SessionStore } from "../src/server/auth/session-store.ts";
-import { sqliteAuthAdapter } from "../src/server/auth/sqlite-adapter.ts";
-import type { AccountDeletedPayload, AuthConfig } from "../src/server/auth/types.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { issueApiToken } from "../packages/auth/src/api-token.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { resolveNative, startNativeSession } from "../packages/auth/src/native.ts";
+import { hashPassword } from "../src/server/password.ts";
+import { handleAuthRequest } from "../packages/auth/src/routes.ts";
+import { inMemorySessionStore, type SessionStore } from "../packages/auth/src/session-store.ts";
+import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
+import type { AccountDeletedPayload, AuthConfig } from "../packages/auth/src/types.ts";
 import { resolveCors } from "../src/server/cors.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 

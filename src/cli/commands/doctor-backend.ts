@@ -6,7 +6,7 @@
 
 import { join } from "@std/path";
 import type { DenextConfig } from "../../server/config.ts";
-import { installedSupabaseKeys } from "../../server/auth/gotrue/keys.ts";
+import { installedSupabaseKeys } from "../../server/supabase-keys.ts";
 import { projectMigrationsDir, readMigrationFiles } from "../../server/migration-files.ts";
 import { listMigrations } from "../../server/migration-ops.ts";
 import { postgresMigrationStatus } from "../../server/postgres-migrate.ts";

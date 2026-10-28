@@ -5,6 +5,8 @@
 // or the filesystem; the command wrapper (src/cli/commands/plugin.ts) runs
 // `deno add` and reads/writes the file around these functions.
 
+import CATALOG from "../plugin/catalog.json" with { type: "json" };
+
 /** The resolved names an install works with. */
 export interface PluginNames {
   /** The `deno add` argument (scheme-qualified, e.g. `jsr:@denext/htmx`). */
@@ -54,10 +56,27 @@ export function resolvePluginNames(input: string, opts: ResolveOptions = {}): Pl
   }
 
   const lastSegment = bare.split("/").pop() || bare;
-  const factory = opts.export ?? camelCase(lastSegment);
+  // A first-party plugin names its factory in the catalog (`@denext/auth` → `denextAuth`).
+  const catalogFactory = CATALOG.plugins.find((p) => p.name === bare && "factory" in p) as
+    | { factory?: string }
+    | undefined;
+  const factory = opts.export ?? catalogFactory?.factory ?? camelCase(lastSegment);
   const addSpec = scheme ? input : `jsr:${input}`;
-  return { addSpec, importSpec: bare, factory, call: opts.noCall ? factory : `${factory}()` };
+  const call = opts.noCall
+    ? factory
+    : opts.export === undefined && FIRST_PARTY_CALLS[bare]
+    ? FIRST_PARTY_CALLS[bare]
+    : `${factory}()`;
+  return { addSpec, importSpec: bare, factory, call };
 }
+
+/**
+ * The starter call for a first-party plugin whose options are required: `denextAuth()` needs a
+ * `secret` and at least one provider, and says so at startup until a provider is listed.
+ */
+const FIRST_PARTY_CALLS: Readonly<Record<string, string>> = {
+  "@denext/auth": 'denextAuth({ secret: Deno.env.get("AUTH_SECRET")!, providers: [] })',
+};
 
 /** The result of injecting a plugin into a config source. */
 export interface InjectResult {

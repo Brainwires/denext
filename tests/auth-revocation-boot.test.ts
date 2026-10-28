@@ -1,16 +1,16 @@
 // DENEXT_BOOT_DDL=off: a `denextAuth` whose adapter keeps a revocation list checks that the list
-// can be read before the server serves (src/server/auth/mod.ts). A list whose table is missing
+// can be read before the server serves (packages/auth/src/mod.ts). A list whose table is missing
 // (migration 0009 not applied out of band) fails the start as a BootSchemaError naming it, not as
 // every stateless cookie session reading "signed out" once the first request looks its sid up.
 // Serial: it sets and restores DENEXT_BOOT_DDL (listed in tests/serial-tests.ts).
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
-import type { AuthAdapter } from "../src/server/auth/adapter.ts";
-import { inMemoryAuthAdapter } from "../src/server/auth/memory-adapter.ts";
-import { denextAuth } from "../src/server/auth/mod.ts";
-import { credentials } from "../src/server/auth/providers.ts";
-import { REVOCATIONS_MARKER } from "../src/server/auth/sid-revocation.ts";
-import type { AuthConfig } from "../src/server/auth/types.ts";
+import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
+import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
+import { denextAuth } from "../packages/auth/src/mod.ts";
+import { credentials } from "../packages/auth/src/providers.ts";
+import { REVOCATIONS_MARKER } from "../packages/auth/src/sid-revocation.ts";
+import type { AuthConfig } from "../packages/auth/src/types.ts";
 import type { PluginContext } from "../src/plugin/mod.ts";
 import { BOOT_DDL_ENV, BootSchemaError, verifyBootSchemas } from "../src/server/postgres-boot.ts";
 

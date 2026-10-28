@@ -493,7 +493,7 @@ Deno.test({
   async fn() {
     const { createClient } = await import("@supabase/supabase-js");
     const { generateSupabaseKeys, resolveSupabaseKeys, signSupabaseJwt } = await import(
-      "../src/server/auth/gotrue/keys.ts"
+      "../src/server/supabase-keys.ts"
     );
     const { createApp } = await import("../src/server/app.ts");
     const { scanRoutes } = await import("../src/router/manifest.ts");

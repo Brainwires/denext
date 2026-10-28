@@ -4,7 +4,7 @@
 // `SignInResponse` with `redirect: false` and navigates otherwise; any other provider throws.
 
 import { assertEquals, assertRejects } from "@std/assert";
-import { signIn } from "../src/compat/next-auth/webauthn.ts";
+import { signIn } from "../packages/auth/next-auth/webauthn.ts";
 
 /** What one stubbed browser saw: the POSTs, by path. */
 interface Seen {
