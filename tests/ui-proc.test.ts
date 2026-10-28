@@ -83,18 +83,15 @@ Deno.test({
   sanitizeOps: false,
   sanitizeResources: false,
 }, async () => {
-  const cwd = await Deno.makeTempDir({ prefix: "denext-proc-throw-" });
-  try {
-    const err = await runDeno(["eval", "console.log('a'); console.log('b')"], {
-      cwd,
-      onLine: () => {
-        throw new Error("sink closed");
-      },
-    }).then(() => null, (e: Error) => e);
-    assertEquals(err?.message, "sink closed");
-  } finally {
-    await Deno.remove(cwd, { recursive: true });
-  }
+  // This process's own directory: the child may still be running when the run rejects, and on
+  // Windows a temp dir that is a running process's cwd cannot be removed.
+  const err = await runDeno(["eval", "console.log('a'); console.log('b')"], {
+    cwd: Deno.cwd(),
+    onLine: () => {
+      throw new Error("sink closed");
+    },
+  }).then(() => null, (e: Error) => e);
+  assertEquals(err?.message, "sink closed");
 });
 
 // ── --offline and the grandchild gap ─────────────────────────────────────────
