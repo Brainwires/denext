@@ -1,7 +1,8 @@
 // The release's publish half resumes where it stopped (scripts/lib/release-publish.ts): the JSR
 // wait polls meta.json for the exact version with backoff past the old 45-minute limit, a stop
-// names the command that resumes it, and a re-run picks up the remaining tags and the PR. Git
-// and jsr.io are faked.
+// names the command that resumes it, and a re-run picks up the remaining tags and the PR. Once
+// `v<version>` is on JSR the release publishes `@denext/auth` <version> (`auth-v<version>`), which
+// pins that denext exactly. Git and jsr.io are faked.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
@@ -12,6 +13,8 @@ import {
 } from "../scripts/lib/docs-corpus-package.ts";
 import { memberPin, RUNTIME_MEMBERS } from "../scripts/lib/jsr-pins.ts";
 import {
+  AUTH_DIR,
+  authLockstepRefusal,
   detectResume,
   gateMarkerName,
   gateRefusal,
@@ -29,6 +32,8 @@ import {
 const VERSION = await corpusVersion();
 const TARGET = { version: VERSION, tag: `v${VERSION}`, branch: "development" };
 const LOCAL_HASH = moduleSourceHash(await Deno.readTextFile(CORPUS_MODULE))!;
+const AUTH = await memberPin(AUTH_DIR);
+const DENEXT = "@denext/denext";
 
 /** A fake jsr.io whose listed versions the test changes as time passes. */
 class FakeJsr {
@@ -174,17 +179,28 @@ Deno.test("release resume: a stopped corpus wait names the command that resumes 
   // the pushes and the PR hand-over.
   jsr.list(CORPUS_PACKAGE, VERSION);
   git.calls = [];
-  const resumed = deps(git, jsr);
+  // publish.yml lists denext, then (once auth-v is pushed) auth.
+  const resumed = deps(git, jsr, () => {
+    jsr.list(DENEXT, VERSION);
+    if (git.remote.has(AUTH.tag)) jsr.list(AUTH.name, VERSION);
+  });
   await publishFrom(TARGET, "corpus", resumed.d);
   assertEquals(git.calls, [
     `tag -a ${TARGET.tag} -m denext ${VERSION}`,
     "push origin development",
     `push origin ${TARGET.tag}`,
+    `tag -a ${AUTH.tag} -m ${AUTH.name} ${VERSION} ${TARGET.tag}^{}`,
+    `push origin ${AUTH.tag}`,
   ]);
   assert(resumed.logs.some((l) => l.includes(`✓ Released ${VERSION}`)));
   assert(resumed.logs.some((l) => l.includes("gh pr create --base main --head development")));
-  // Done: a further run only hands over the PR.
-  assertEquals(await detectResume(TARGET, d), "pr");
+  // Done: a further run re-checks auth on JSR (no git) and hands over the PR.
+  assertEquals(await detectResume(TARGET, d), "auth");
+  git.calls = [];
+  const again = deps(git, jsr);
+  await publishFrom(TARGET, "auth", again.d);
+  assertEquals(git.calls, []);
+  assertEquals(again.sleeps, [], "auth is on JSR: no wait");
 });
 
 Deno.test("release resume: a failed push resumes at the push, with the tag already made", async () => {
@@ -198,6 +214,8 @@ Deno.test("release resume: a failed push resumes at the push, with the tag alrea
   assertEquals(await detectResume(TARGET, d), "push");
   git.failPush = false;
   git.calls = [];
+  jsr.list(DENEXT, VERSION);
+  jsr.list(AUTH.name, VERSION); // auth published by hand meanwhile: not tagged again
   await publishFrom(TARGET, "push", d);
   assertEquals(git.calls, ["push origin development", `push origin ${TARGET.tag}`]);
 });
@@ -214,6 +232,109 @@ Deno.test("release resume: an unpublished pin refuses the tag, resumable at the 
   assertEquals(git.calls, []);
 });
 
+/** A git whose `v<version>` is pushed: the release resumes at `auth`. */
+function pushedGit(): FakeGit {
+  const git = new FakeGit();
+  git.local.add(TARGET.tag);
+  git.remote.add(TARGET.tag);
+  return git;
+}
+
+Deno.test("release auth: auth-v waits for denext on JSR, is tagged on the release, then listed", async () => {
+  const git = pushedGit();
+  const jsr = new FakeJsr({});
+  let tagsBeforeDenext: string[] | undefined;
+  const { d, elapsed } = deps(git, jsr, (now) => {
+    if (now >= 50 * MINUTE && !tagsBeforeDenext) {
+      tagsBeforeDenext = [...git.calls];
+      jsr.list(DENEXT, VERSION); // publish.yml's gate + publish of v<version>
+    }
+    if (git.remote.has(AUTH.tag) && now >= 90 * MINUTE) jsr.list(AUTH.name, VERSION);
+  });
+  await publishFrom(TARGET, "auth", d);
+  assertEquals(tagsBeforeDenext, [], "nothing tagged while JSR lacks the denext auth pins");
+  assertEquals(git.calls, [
+    `tag -a ${AUTH.tag} -m ${AUTH.name} ${VERSION} ${TARGET.tag}^{}`,
+    `push origin ${AUTH.tag}`,
+  ]);
+  assert(elapsed() >= 90 * MINUTE, "waited for JSR to list auth, not just the push");
+  assertEquals(AUTH.tag, `auth-v${VERSION}`);
+});
+
+Deno.test("release auth: denext never listed stops before tagging, resumable at auth", async () => {
+  const git = pushedGit();
+  const { d } = deps(git, new FakeJsr({}));
+  const err = await assertRejects(
+    () => publishFrom(TARGET, "auth", { ...d, jsrWaitMs: 10 * MINUTE }),
+    ReleaseAbort,
+  );
+  assertStringIncludes(err.message, `${DENEXT}@${VERSION}`);
+  assertStringIncludes(err.message, resumeCommand(TARGET, "auth"));
+  assertEquals(git.calls, []);
+});
+
+Deno.test("release auth: an unlisted auth publish stops; the resume neither re-tags nor re-pushes", async () => {
+  const git = pushedGit();
+  const jsr = new FakeJsr({ [DENEXT]: [VERSION] });
+  const { d } = deps(git, jsr);
+  const err = await assertRejects(
+    () => publishFrom(TARGET, "auth", { ...d, jsrWaitMs: 10 * MINUTE }),
+    ReleaseAbort,
+  );
+  assertStringIncludes(err.message, `${AUTH.tag} is pushed but jsr.io does not list`);
+  assertStringIncludes(err.message, resumeCommand(TARGET, "auth"));
+  assertEquals(await detectResume(TARGET, d), "auth");
+  git.calls = [];
+  const resumed = deps(git, jsr, () => jsr.list(AUTH.name, VERSION)); // publish.yml re-run
+  await publishFrom(TARGET, "auth", resumed.d);
+  assertEquals(git.calls, [], "the tag exists here and on origin");
+  assert(resumed.logs.some((l) => l.includes(`${AUTH.name}@${VERSION} is on JSR`)));
+  // A failed push of the auth tag names the same resume.
+  const failing = pushedGit();
+  failing.failPush = true;
+  const pushErr = await assertRejects(
+    () => publishFrom(TARGET, "auth", deps(failing, new FakeJsr({ [DENEXT]: [VERSION] })).d),
+    ReleaseAbort,
+  );
+  assertStringIncludes(pushErr.message, `git push (${AUTH.tag}) failed`);
+  assertStringIncludes(pushErr.message, resumeCommand(TARGET, "auth"));
+});
+
+Deno.test("release auth: an auth manifest out of lockstep refuses v<version> before tagging", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-auth-lockstep-" });
+  const write = async (manifest: unknown) => {
+    await Deno.mkdir(`${root}/packages/${AUTH_DIR}`, { recursive: true });
+    await Deno.writeTextFile(`${root}/packages/${AUTH_DIR}/deno.json`, JSON.stringify(manifest));
+  };
+  try {
+    assertEquals(await authLockstepRefusal(VERSION), null, "this checkout is in lockstep");
+    await write({
+      name: AUTH.name,
+      version: "0.0.1",
+      imports: { [DENEXT]: `jsr:${DENEXT}@0.0.1` },
+    });
+    assertStringIncludes((await authLockstepRefusal(VERSION, root))!, `at 0.0.1, not ${VERSION}`);
+    await write({
+      name: AUTH.name,
+      version: VERSION,
+      imports: { [DENEXT]: `jsr:${DENEXT}@^${VERSION}` },
+    });
+    assertStringIncludes((await authLockstepRefusal(VERSION, root))!, "pins the denext");
+    const git = new FakeGit();
+    const { d } = deps(git, new FakeJsr(await pinnedListing(true)));
+    const err = await assertRejects(() => publishFrom(TARGET, "tag", { ...d, root }), ReleaseAbort);
+    assertStringIncludes(err.message, `refusing to tag ${TARGET.tag}`);
+    assertEquals(git.calls, [], "neither v<version> nor auth-v is tagged");
+    const authErr = await assertRejects(
+      () => publishFrom(TARGET, "auth", { ...deps(pushedGit(), new FakeJsr({})).d, root }),
+      ReleaseAbort,
+    );
+    assertStringIncludes(authErr.message, "this one cannot ship auth");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("release resume: a fresh tree is not a resume; --resume-from is validated", async () => {
   const git = new FakeGit();
   git.subject = "feat: something else";
@@ -223,6 +344,9 @@ Deno.test("release resume: a fresh tree is not a resume; --resume-from is valida
   assertEquals(await detectResume(TARGET, d), "push", "a local v-tag resumes at the push");
   assertEquals(resumeFromArg(["4.6.0", "--resume-from", "tag"]), "tag");
   assertEquals(resumeFromArg(["4.6.0", "--resume-from=pr"]), "pr");
+  assertEquals(resumeFromArg(["4.6.0", "--resume-from", "auth"]), "auth");
+  git.remote.add(TARGET.tag);
+  assertEquals(await detectResume(TARGET, d), "auth", "a pushed v-tag resumes at auth");
   assertEquals(resumeFromArg(["4.6.0", "--confirm"]), undefined);
   assertRejects(
     () => Promise.resolve().then(() => resumeFromArg(["--resume-from", "x"])),
@@ -232,7 +356,7 @@ Deno.test("release resume: a fresh tree is not a resume; --resume-from is valida
 
 Deno.test("release resume: no recorded gate pass refuses every resume, naming --regate", () => {
   const current = { version: VERSION, base: "a".repeat(40), tree: "b".repeat(40) };
-  for (const step of ["commit", "corpus", "tag", "push", "pr"] as const) {
+  for (const step of ["commit", "corpus", "tag", "push", "auth", "pr"] as const) {
     const refusal = gateRefusal(null, current, TARGET, step);
     assert(refusal, `${step} resumed without a gate pass`);
     assertStringIncludes(refusal, "never passed");

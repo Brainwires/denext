@@ -1335,7 +1335,9 @@ changes, so dispatch it: `gh workflow run native-plugins.yml --ref development`)
 five. Active `development` runs ahead of `main` by design. A release that stopped resumes with the
 same command (or `--resume-from <step>`), but only with the gate-pass marker the release records
 when the CI gate and its local gate pass, for exactly the tree it publishes (`--regate` re-runs
-both); never make the `release:` commit by hand.
+both); never make the `release:` commit by hand. Once JSR lists `@denext/denext` <version>, the
+script tags and pushes `auth-v<version>` (`@denext/auth` is versioned in lockstep and pins that
+denext exactly, so it publishes second) and waits for JSR to list it (`--resume-from auth`).
 
 **`main` must always be exactly what is published.** So **cutting a version is not
 done until `development` is merged into `main`** — the release flow is: tag
