@@ -104,11 +104,16 @@ Deno.test("cli cache: warmCliModules caches once in a detached child, then stays
   const modules = moduleServer();
   const url = modules.url("bg");
   try {
-    await warmCliModules(url, scratch(dir));
+    const warm = await spawnsOf(() => warmCliModules(url, scratch(dir)));
     // The attempt is recorded at once; the marker when the background cache succeeded.
     const attempt = markers(dir).find((m) => m.endsWith(".cached.attempt"));
     assert(attempt, `markers: ${markers(dir)}`);
     await until(() => markers(dir).some((m) => m.endsWith(".cached")));
+    // The detached child writes the marker, then exits: wait for that too (it is unref'd).
+    for (const child of warm) {
+      child.ref();
+      await child.status;
+    }
     // A cached version is never warmed again: the attempt marker is not rewritten.
     const before = Deno.statSync(join(dir, "denext-cli", attempt)).mtime?.getTime();
     await new Promise((r) => setTimeout(r, 20));
