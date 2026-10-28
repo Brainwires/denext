@@ -25,6 +25,14 @@ and this project adheres to
 
 ### Fixed
 
+- **`install.ps1` with the GitHub CLI installed no longer stops on `gh`'s own error output.**
+  The installer runs under `$ErrorActionPreference = 'Stop'`, and Windows PowerShell 5.1 turns
+  anything a native program writes to stderr into a terminating `NativeCommandError`, even
+  redirected. So when `gh attestation verify` (or `gh auth status`) refused, the script stopped
+  with that error instead of deciding by the exit code: `DENEXT_INSECURE=1` could not install a
+  release without an attestation, and the clear "verification FAILED" message never showed. The
+  attestation check now reads only the exit codes.
+
 - **Windows signing with a password-protected `.pfx` works when started from PowerShell 7.**
   signtool signing imports the `.pfx` into the user's certificate store through Windows
   PowerShell, which, started from a PowerShell 7 session (a pwsh terminal, a CI runner's default

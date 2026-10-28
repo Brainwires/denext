@@ -156,8 +156,10 @@ Deno.test("install.ps1 harness: only a PowerShell host crash is retried, never t
 const GH_STUB = [
   "@echo off",
   'if defined STUB_GH_LOG echo %* >> "%STUB_GH_LOG%"',
-  'if "%1 %2"=="auth status" (if defined STUB_GH_AUTH (exit /b 0) else (exit /b 1))',
-  'if "%1 %2"=="attestation verify" (if "%STUB_GH_VERIFY%"=="ok" (exit /b 0) else (exit /b 1))',
+  // The real CLI writes its refusals to stderr, which Windows PowerShell 5.1 turns into a
+  // terminating NativeCommandError under ErrorActionPreference 'Stop'; the stub does the same.
+  'if "%1 %2"=="auth status" (if defined STUB_GH_AUTH (exit /b 0) else (echo You are not logged into any GitHub hosts. 1>&2& exit /b 1))',
+  'if "%1 %2"=="attestation verify" (if "%STUB_GH_VERIFY%"=="ok" (exit /b 0) else (echo Error: no attestations found 1>&2& exit /b 1))',
   "exit /b 2",
   "",
 ].join("\r\n");
@@ -424,6 +426,7 @@ Deno.test("install.ps1: a signed-in gh must verify the archive's build attestati
       DENEXT_INSECURE: "1",
     });
     assertEquals(forced.code, 0, forced.out);
+    assertStringIncludes(forced.out, "could not be verified");
     // No signed-in gh: a note, or a refusal when it is required.
     const plain = await install(release, join(dir, "plain"), quiet);
     assertEquals(plain.code, 0, plain.out);
