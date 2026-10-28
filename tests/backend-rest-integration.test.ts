@@ -110,8 +110,6 @@ const SCHEMA = `
 Deno.test({
   name: `auto-REST on a real Postgres: RLS per user and anon, the statements, codegen${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await environment();
     const root = await Deno.makeTempDir({ prefix: "dnx-rest-pg-" });
@@ -325,8 +323,6 @@ Deno.test({
   name:
     `auto-REST on a real Postgres: security_invoker views, maxConcurrent, exactCount, CSRF${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await environment();
     const root = await Deno.makeTempDir({ prefix: "dnx-rest-pg-" });

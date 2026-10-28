@@ -14,6 +14,7 @@ import type { AuthConfig } from "../src/server/auth/types.ts";
 import { backend, type BackendOptions } from "../packages/backend/mod.ts";
 import { runPluginTeardown } from "../src/plugin/mod.ts";
 import { ORIGIN, pipelineCaller } from "./_backend-app.ts";
+import { responseBodies } from "./helpers/response-bodies.ts";
 
 export { ORIGIN };
 
@@ -76,12 +77,14 @@ export async function functionsApp(
     load,
     matchExternal: getPluginRequestHandler(),
   });
-  const call = pipelineCaller(handler);
+  const bodies = responseBodies();
+  const call = pipelineCaller(handler, bodies);
   return {
     root,
     handler,
     call,
     async close() {
+      await bodies.release();
       await runPluginTeardown();
       resetPlugins();
       await Deno.remove(root, { recursive: true });

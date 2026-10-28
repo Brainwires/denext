@@ -231,6 +231,9 @@ type Change =
 Deno.test({
   name: `supabase-js realtime against two denext replicas on a real Postgres${label}`,
   ignore: reason !== undefined,
+  // sanitizer: realtime-js's SocketAdapter.disconnect() arms a 10 s fallback timer it never
+  // clears (@supabase/realtime-js 2.117.2), so removeAllChannels() leaves it running; the
+  // toolchain's Deno reports a leaked timer under either sanitizer.
   sanitizeResources: false,
   sanitizeOps: false,
   async fn(t) {
@@ -734,6 +737,9 @@ Deno.test({
     logicalReason ? ` (skipped: ${logicalReason})` : ""
   }`,
   ignore: logicalReason !== undefined,
+  // sanitizer: realtime-js's SocketAdapter.disconnect() arms a 10 s fallback timer it never
+  // clears (@supabase/realtime-js 2.117.2), so removeAllChannels() leaves it running; the
+  // toolchain's Deno reports a leaked timer under either sanitizer.
   sanitizeResources: false,
   sanitizeOps: false,
   async fn() {

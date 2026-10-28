@@ -39,8 +39,6 @@ Deno.test({
     enabled ? "" : " (skipped: set DENEXT_TEST_SUPABASE_JS=1)"
   }`,
   ignore: !enabled,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const { createClient, FunctionsHttpError, FunctionRegion } = await supabaseJs();
     const app = await functionsApp({
@@ -163,8 +161,6 @@ Deno.test({
     enabled ? "" : " (skipped: set DENEXT_TEST_SUPABASE_JS=1)"
   }`,
   ignore: !enabled,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const { createClient, FunctionsHttpError } = await supabaseJs();
     const { installedSupabaseKeys, signSupabaseJwt } = await import("../src/server/mod.ts");

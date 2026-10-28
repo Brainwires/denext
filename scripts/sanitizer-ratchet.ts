@@ -9,12 +9,18 @@
 //
 // The check fails when a file has more opt-outs than its baseline records (a file new to the
 // baseline records none), or more opt-outs without a reason. A reason is a `// sanitizer: <why>`
-// comment on the opt-out's own line or in the comment block directly above it (other opt-out lines
-// between them share it): an opt-out is kept only where the test means it, a deliberately detached
-// child, say. `--update` (`deno task sanitizers:ratchet:update`) lowers every number the tree beats
-// and drops the files that have none left; it never raises one. A raised number is a hand edit of
-// the baseline, visible in review, next to the new opt-out's reason. tests/sanitizer-ratchet.test.ts
-// is the drift test `deno task precheck` runs.
+// comment on the opt-out's own line, at the end of the line above it, or in the comment block
+// directly above it (other opt-out lines between them share it): an opt-out is kept only where the
+// test means it, a deliberately detached child, say. `--update` (`deno task
+// sanitizers:ratchet:update`) lowers every number the tree beats and drops the files that have
+// none left; it never raises one. A raised number is a hand edit of the baseline, visible in
+// review, next to the new opt-out's reason. tests/sanitizer-ratchet.test.ts is the drift test
+// `deno task precheck` runs.
+//
+// From Deno 2.8 the op and resource sanitizers are off unless a run turns them on
+// (`--sanitize-ops` / `--sanitize-resources`, `DENO_TEST_SANITIZE_OPS=1` /
+// `DENO_TEST_SANITIZE_RESOURCES=1`, or `test.sanitizeOps` in deno.json), and a test's own `false`
+// beats all of those; check a fix with them on.
 
 import { walk } from "@std/fs/walk";
 import { fromFileUrl, join, relative, resolve } from "@std/path";
@@ -53,6 +59,7 @@ function hasReason(lines: readonly string[], i: number): boolean {
   if (REASON.test(lines[i])) return true;
   let j = i - 1;
   while (j >= 0 && OPT_OUT_ONLY.test(lines[j])) j--;
+  if (j >= 0 && REASON.test(lines[j])) return true; // ends the line above (`x = // sanitizer: …`)
   for (; j >= 0 && /^\s*\/\//.test(lines[j]); j--) {
     if (REASON.test(lines[j])) return true;
   }

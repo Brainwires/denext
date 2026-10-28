@@ -72,6 +72,13 @@ Deno.test("sanitizer ratchet: counts opt-outs, one per option, and finds their r
     "});",
   ].join("\n");
   assertEquals(scanOptOuts(block), { optOuts: 2, unexplained: [] });
+  // At the end of the line above (a fixture's first line, say).
+  assertEquals(
+    scanOptOuts(
+      `const SRC = \`// sanitizer: it stalls on purpose\nDeno.test({ ${OPS}, fn() {} });`,
+    ),
+    { optOuts: 1, unexplained: [] },
+  );
   // A comment that is no reason, an empty reason, or one separated by code does not count.
   assertEquals(scanOptOuts(`// leaks\n${OPS},`).unexplained, [2]);
   assertEquals(scanOptOuts(`// sanitizer:\n${OPS},`).unexplained, [2]);
