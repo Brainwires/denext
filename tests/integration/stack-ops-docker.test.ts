@@ -9,11 +9,16 @@ import { runStack } from "../../src/cli/commands/stack.ts";
 import { parseEnv } from "../../src/server/env.ts";
 
 async function dockerReady(): Promise<boolean> {
+  const probe = new AbortController();
+  const deadline = setTimeout(() => probe.abort(), 15_000); // cleared below: no timer outlives it
   try {
+    // Bounded: a wedged Docker daemon answers neither, and an unbounded probe at module load held
+    // the whole run (no per-test deadline covers it).
     const out = await new Deno.Command("docker", {
       args: ["compose", "version"],
       stdout: "null",
       stderr: "null",
+      signal: probe.signal,
     }).output();
     if (!out.success) return false;
     // The stack's images are Linux images: a Windows-containers engine (GitHub's windows-latest
@@ -22,11 +27,14 @@ async function dockerReady(): Promise<boolean> {
       args: ["info", "--format", "{{.OSType}}"],
       stdout: "piped",
       stderr: "null",
+      signal: probe.signal,
     })
       .output();
     return info.success && new TextDecoder().decode(info.stdout).trim() === "linux";
   } catch {
     return false;
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
