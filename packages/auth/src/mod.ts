@@ -376,7 +376,7 @@ export function denextAuth(config: AuthConfig): DenextPlugin {
   validateConfig(config);
   activeConfig = config;
   // `auth()`, `requireAuth()` and `requireSession()` from `denext/server` read through this.
-  registerAuthRuntime({ auth, requireAuth, updateAuthSession });
+  registerAuthRuntime({ auth: currentAuth, requireAuth: guardAuth, updateAuthSession });
   const plugin: DenextPlugin = {
     name: "denext-auth",
     setup(ctx) {
@@ -494,7 +494,7 @@ export async function revokeSession(sessionId: string): Promise<void> {
  * @returns The session id, or `null`.
  */
 export async function currentSessionId(): Promise<string | null> {
-  const session = await auth();
+  const session = await currentAuth();
   if (!session || session.nativeSessionId) return null;
   return session.sessionId ?? session.sid ?? null;
 }
@@ -572,7 +572,7 @@ function currentSession(): Promise<AuthSession | null> {
  *
  * @returns The {@link AuthSession}, or `null`.
  */
-export async function auth(): Promise<AuthSession | null> {
+export async function currentAuth(): Promise<AuthSession | null> {
   const session = await currentSession();
   return session?.mfaPending ? null : session;
 }
@@ -621,7 +621,7 @@ function refreshActiveSession(session: AuthSession): Promise<AuthSession | null>
  * @returns The (possibly refreshed) {@link AuthSession}, or `null` when signed out.
  */
 export async function updateAuthSession(): Promise<AuthSession | null> {
-  const session = await auth();
+  const session = await currentAuth();
   return session ? await refreshActiveSession(session) : null;
 }
 
@@ -650,7 +650,7 @@ export async function updateAuthSession(): Promise<AuthSession | null> {
  * @param options Optional sign-in path override and `role` requirement.
  * @returns A redirect `Response` when unauthenticated, or `null` to continue.
  */
-export async function requireAuth(
+export async function guardAuth(
   request: Request,
   options: RequireAuthOptions = {},
 ): Promise<Response | null> {

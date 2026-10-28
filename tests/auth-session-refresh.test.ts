@@ -12,9 +12,9 @@ import {
 import { getSession } from "../src/server/session.ts";
 import { handleAuthRequest } from "../packages/auth/src/routes.ts";
 import {
-  auth,
+  currentAuth as auth,
   denextAuth,
-  requireAuth,
+  guardAuth as requireAuth,
   revokeAllSessions,
   revokeSession,
   updateAuthSession,

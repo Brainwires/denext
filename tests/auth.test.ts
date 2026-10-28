@@ -11,7 +11,11 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { handleAuthRequest } from "../packages/auth/src/routes.ts";
-import { auth, denextAuth, requireAuth } from "../packages/auth/src/mod.ts";
+import {
+  currentAuth as auth,
+  denextAuth,
+  guardAuth as requireAuth,
+} from "../packages/auth/src/mod.ts";
 import { credentials, emailOtp, magicLink, oidc } from "../packages/auth/src/providers.ts";
 import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import { base64UrlEncode } from "../packages/auth/src/oauth.ts";

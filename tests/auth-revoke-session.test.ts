@@ -7,7 +7,12 @@ import { assert, assertEquals, assertFalse, assertRejects } from "@std/assert";
 import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
 import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
 import { sqliteAuthAdapter } from "../packages/auth/src/sqlite-adapter.ts";
-import { auth, currentSessionId, denextAuth, revokeSession } from "../packages/auth/src/mod.ts";
+import {
+  currentAuth as auth,
+  currentSessionId,
+  denextAuth,
+  revokeSession,
+} from "../packages/auth/src/mod.ts";
 import { credentials } from "../packages/auth/src/providers.ts";
 import { handleAuthRequest } from "../packages/auth/src/routes.ts";
 import { inMemorySessionStore } from "../packages/auth/src/session-store.ts";

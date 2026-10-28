@@ -5,8 +5,9 @@
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import jsQRModule from "jsqr";
-import { enrollTotp, inMemoryAuthAdapter, totpAuthUri, totpQrSvg } from "denext/server";
-import type { AuthConfig, AuthSession } from "denext/server";
+import { enrollTotp, inMemoryAuthAdapter, totpAuthUri, totpQrSvg } from "../packages/auth/mod.ts";
+import type { AuthConfig } from "../packages/auth/mod.ts";
+import type { AuthSession } from "denext/server";
 
 /** jsQR's CommonJS default export is the reader itself; its typings describe it as a namespace. */
 const jsQR = jsQRModule as unknown as (

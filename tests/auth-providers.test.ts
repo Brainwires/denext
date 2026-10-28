@@ -5,7 +5,7 @@
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { handleAuthRequest } from "../packages/auth/src/routes.ts";
-import { denextAuth, requireAuth } from "../packages/auth/src/mod.ts";
+import { denextAuth, guardAuth as requireAuth } from "../packages/auth/src/mod.ts";
 import {
   apple,
   auth0,

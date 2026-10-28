@@ -83,18 +83,21 @@ Deno.test("generated providers: the manifest covers exactly the pinned @auth/cor
 });
 
 Deno.test("generated providers: every module, export and doc-lint entry is in place", async () => {
+  // The modules are @denext/auth's exports; the root doc-lint task covers them.
   const denoJson = JSON.parse(await Deno.readTextFile(join(ROOT, "deno.json"))) as {
-    exports: Record<string, string>;
     tasks: Record<string, string>;
+  };
+  const authJson = JSON.parse(await Deno.readTextFile(join(ROOT, "packages/auth/deno.json"))) as {
+    exports: Record<string, string>;
   };
   for (const id of providerModules(manifest)) {
     const path = `${PROVIDERS_DIR}/${id}.ts`;
     await Deno.stat(join(ROOT, path));
-    assertEquals(denoJson.exports[`./next-auth/providers/${id}`], `./${path}`);
+    assertEquals(authJson.exports[`./next-auth/providers/${id}`], `./next-auth/providers/${id}.ts`);
     assert(denoJson.tasks["doc-lint"].includes(` ${path} `), `doc-lint misses ${path}`);
   }
   for (const id of Object.keys(manifest.unsupported)) {
-    assertEquals(denoJson.exports[`./next-auth/providers/${id}`], undefined);
+    assertEquals(authJson.exports[`./next-auth/providers/${id}`], undefined);
   }
 });
 

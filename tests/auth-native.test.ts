@@ -26,7 +26,12 @@ import {
 } from "../src/server/cache.ts";
 import type { AuthAdapter } from "../packages/auth/src/adapter.ts";
 import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
-import { auth, denextAuth, requireAuth, revokeAllSessions } from "../packages/auth/src/mod.ts";
+import {
+  currentAuth as auth,
+  denextAuth,
+  guardAuth as requireAuth,
+  revokeAllSessions,
+} from "../packages/auth/src/mod.ts";
 import {
   matchRedirectUri,
   refreshNativeSession,

@@ -26,9 +26,9 @@ import {
   fromAuthJsAdapter,
 } from "../packages/auth/next-auth/adapter.ts";
 import {
-  auth as denextAuth,
+  currentAuth as denextAuth,
   denextAuth as configureAuth,
-  requireAuth,
+  guardAuth as requireAuth,
   revokeAllSessions,
 } from "../packages/auth/src/mod.ts";
 import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";

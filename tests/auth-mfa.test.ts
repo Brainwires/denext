@@ -18,7 +18,7 @@ import {
   mfaStatus,
   spendMfaAttempt,
 } from "../packages/auth/src/mfa.ts";
-import { auth, denextAuth, pendingMfaSession } from "../packages/auth/src/mod.ts";
+import { currentAuth as auth, denextAuth, pendingMfaSession } from "../packages/auth/src/mod.ts";
 import { resolveAuthOptions } from "../packages/auth/src/options.ts";
 import { hashPassword } from "../src/server/password.ts";
 import { handleAuthRequest } from "../packages/auth/src/routes.ts";

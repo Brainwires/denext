@@ -42,13 +42,14 @@ export interface RequireSessionOptions {
 }
 
 /**
- * Require a signed-in viewer (denext auth): extends the context with `{ session }`, or fails
- * with a 401 `unauthorized` envelope before any schema runs. With `role`, a signed-in caller
+ * Require a signed-in viewer (the `denextAuth()` plugin, `@denext/auth`): extends the context
+ * with `{ session }`, or fails with a 401 `unauthorized` envelope before any schema runs. With `role`, a signed-in caller
  * who holds none of the listed roles fails with a 403 `forbidden` envelope instead.
  *
  * An API route owns its response, so this is also a sliding-expiry path: when
  * `session.updateAge` is configured and the session has aged past it, the session is
  * re-issued and the refreshed cookie rides the API response (see `updateAuthSession`).
+ * Without the plugin the middleware throws an `AuthPluginMissingError` naming `@denext/auth`.
  *
  * @param options The 401 message, and optionally the required `role`(s).
  * @returns A middleware adding `session: AuthSession` to the handler's `ctx`.

@@ -6,7 +6,7 @@
  * @module
  */
 
-import { auth as denextSession, updateAuthSession } from "../src/mod.ts";
+import { currentAuth as denextSession, updateAuthSession } from "../src/mod.ts";
 import { clearAuthSession, replaceAuthSession } from "../src/session.ts";
 import type { AuthSession, AuthUser } from "../src/types.ts";
 import { decode, encode, type JWT } from "./jwt.ts";

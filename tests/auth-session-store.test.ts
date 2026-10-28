@@ -9,7 +9,12 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { handleAuthRequest } from "../packages/auth/src/routes.ts";
-import { auth, denextAuth, revokeAllSessions, revokeSession } from "../packages/auth/src/mod.ts";
+import {
+  currentAuth as auth,
+  denextAuth,
+  revokeAllSessions,
+  revokeSession,
+} from "../packages/auth/src/mod.ts";
 import { credentials } from "../packages/auth/src/providers.ts";
 import { inMemorySessionStore, type SessionStore } from "../packages/auth/src/session-store.ts";
 import { sqliteSessionStore } from "../packages/auth/src/sqlite-session-store.ts";

@@ -119,5 +119,9 @@ Deno.test("plugin catalog: every package's @denext/denext range is the framework
   const version = (JSON.parse(Deno.readTextFileSync("deno.json")) as { version: string }).version;
   const ranged = entries.filter((e) => e.denext !== undefined);
   assert(ranged.length >= 8, "the plugins carry their denext range");
-  for (const e of ranged) assertEquals(e.denext, `^${version}`, `${e.name}'s @denext/denext range`);
+  // @denext/auth is versioned with denext and built on its internals: it pins the version exactly.
+  for (const e of ranged) {
+    const want = e.name === "@denext/auth" ? version : `^${version}`;
+    assertEquals(e.denext, want, `${e.name}'s @denext/denext range`);
+  }
 });

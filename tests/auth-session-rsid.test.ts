@@ -10,7 +10,7 @@
 
 import { assert, assertEquals, assertFalse, assertMatch } from "@std/assert";
 import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
-import { auth, currentSessionId, denextAuth } from "../packages/auth/src/mod.ts";
+import { currentAuth as auth, currentSessionId, denextAuth } from "../packages/auth/src/mod.ts";
 import { credentials } from "../packages/auth/src/providers.ts";
 import { handleAuthRequest } from "../packages/auth/src/routes.ts";
 import {

@@ -9,7 +9,12 @@ import {
   runWithContext,
 } from "../src/server/request-context.ts";
 import { handleAuthRequest } from "../packages/auth/src/routes.ts";
-import { auth, denextAuth, hasRole, requireAuth } from "../packages/auth/src/mod.ts";
+import {
+  currentAuth as auth,
+  denextAuth,
+  guardAuth as requireAuth,
+} from "../packages/auth/src/mod.ts";
+import { hasRole } from "../src/server/auth-registry.ts";
 import { requireSession } from "../src/server/api-middleware.ts";
 import { credentials } from "../packages/auth/src/providers.ts";
 import { type ApiError, isApiError } from "../src/server/api-error.ts";

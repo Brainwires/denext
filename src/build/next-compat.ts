@@ -1021,6 +1021,10 @@ function prefixedAliases(aliases: Readonly<Record<string, string>>): Record<stri
 export const DENEXT_SERVER_SUBPATHS: ReadonlySet<string> = new Set([
   "denext/server",
   "denext/auth",
+  // The internals `@denext/auth` builds on (its next-auth client reaches `auth-kit/client` through
+  // the prebuild's own resolution, never through an app import).
+  "denext/auth-kit",
+  "denext/auth-kit/client",
   "denext/server-only",
   "denext/remix/server",
   "denext/fresh/server",

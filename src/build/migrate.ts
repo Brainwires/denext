@@ -922,7 +922,10 @@ async function localPluginEntries(
   };
   scan(await mfs.readTextFile(join(dir, "mod.ts")).catch(() => ""));
   for (const sub of ["src", ...sourceDirs]) await walkCode(join(dir, sub), scan);
-  for (const spec of denextSpecs) out[spec] = local(spec.slice("@denext/denext/".length));
+  // Sorted: the walk's order is the filesystem's, and the config must not depend on it.
+  for (const spec of [...denextSpecs].sort()) {
+    out[spec] = local(spec.slice("@denext/denext/".length));
+  }
   return out;
 }
 

@@ -397,11 +397,14 @@ export async function assertCatalogMatchesExports(root: string): Promise<void> {
     return out;
   };
   const rootTargets = new Set(Object.keys(await read(`${root}/deno.json`)));
-  const prTargets = new Set(
-    Object.keys(await read(`${root}/packages/pages-router/deno.json`)).map((t) =>
-      `packages/pages-router/${t}`
-    ),
-  );
+  // The workspace members whose exports a catalog entry may name (the Pages Router stand-ins,
+  // and @denext/auth's next-auth shim).
+  const prTargets = new Set<string>();
+  for (const pkg of ["pages-router", "auth"]) {
+    for (const t of Object.keys(await read(`${root}/packages/${pkg}/deno.json`))) {
+      prTargets.add(`packages/${pkg}/${t}`);
+    }
+  }
   const missing: string[] = [];
   for (const e of CATALOG) {
     const known = rootTargets.has(e.denext) || prTargets.has(e.denext);

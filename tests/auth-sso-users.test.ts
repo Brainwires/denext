@@ -24,7 +24,7 @@ import {
   verifyNativeAccessToken,
 } from "../packages/auth/src/native.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { auth } from "../packages/auth/src/mod.ts";
+import { currentAuth as auth } from "../packages/auth/src/mod.ts";
 import { issueApiToken, verifyApiToken } from "../packages/auth/src/api-token.ts";
 import { installedSupabaseKeys, signSupabaseJwt } from "../src/server/supabase-keys.ts";
 import { ORIGIN, type SupabaseAuthApp, supabaseAuthApp, totpCode } from "./_supabase-auth-app.ts";

@@ -10,7 +10,7 @@ import {
 } from "../src/runtime/api-client.ts";
 import { nativeSession, NativeSessionError } from "../src/runtime/native-session.ts";
 import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
-import { auth, denextAuth } from "../packages/auth/src/mod.ts";
+import { currentAuth as auth, denextAuth } from "../packages/auth/src/mod.ts";
 import { hashPassword } from "../src/server/password.ts";
 import { handleAuthRequest } from "../packages/auth/src/routes.ts";
 import type { AuthConfig } from "../packages/auth/src/types.ts";

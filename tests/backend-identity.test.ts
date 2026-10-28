@@ -12,7 +12,7 @@ import { getPluginCommands } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
-import { auth, denextAuth } from "../packages/auth/src/mod.ts";
+import { currentAuth as auth, denextAuth } from "../packages/auth/src/mod.ts";
 import { credentials } from "../packages/auth/src/providers.ts";
 import { issueAuthSession } from "../packages/auth/src/session.ts";
 import { inMemoryAuthAdapter } from "../packages/auth/src/memory-adapter.ts";
