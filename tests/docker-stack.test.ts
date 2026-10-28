@@ -390,7 +390,7 @@ async function detect(files: Record<string, string>): Promise<StackDetection> {
 }
 
 const BACKEND_CONFIG = `import { backend, s3 } from "@denext/backend";
-import { denextAuth } from "denext/server";
+import { denextAuth } from "@denext/auth";
 export default {
   plugins: [backend({
     postgres: {},
