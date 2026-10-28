@@ -97,6 +97,15 @@ and this project adheres to
   11, Ubuntu 20.04) the toolchain and the Deno Desktop runtime downloaded, verified and then failed
   to exec with `GLIBC_2.35 not found`. denext now probes the host's C library first and stops with
   the supported distributions named; `denext doctor` reports it as `linux libc`.
+- **Realtime table changes are no longer lost while a subscription re-authorizes.** The Live
+  hub re-authorizes a channel subscription once its TTL has run out and holds its frames until
+  the answer, keeping only the latest one; it also kept only the latest publish to a key within
+  its 16 ms coalescing window. A realtime subscription's frames are batches of changes, so a
+  burst delivered during a slow re-authorization (a loaded server) lost whole frames: the rows in
+  them never reached `useTableChanges` (which saw a gap and went stale at best). The Supabase
+  socket was not affected. The realtime channel now asks for every frame, in order (`ordered:
+  true`, a new `createChannel` option): the hub delivers each publish and keeps up to 256 held
+  frames in order instead of the last one.
 
 ### Security
 

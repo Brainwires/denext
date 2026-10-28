@@ -323,6 +323,40 @@ Deno.test("realtime: a burst of 500 inserts is coalesced into one re-read per id
   }
 });
 
+Deno.test("realtime: frames sent while a re-authorization runs all arrive, in order", async () => {
+  // The Live hub re-authorizes a subscription when its TTL has run out and holds its frames
+  // meanwhile. It kept only the latest one, so a burst re-read during a slow re-authorization (a
+  // loaded server) lost whole frames of changes: 180 of 250 arrived, and the rest never came.
+  const env = await setUp();
+  try {
+    const ca = env.hub.conn(env.a);
+    await env.hub.subscribe(ca, "notes");
+    const engine = realtimeEngine();
+    const before = engine.stats.frames;
+    const release = env.hub.holdAuth();
+    ca.channelSubs.get("s1")!.authExpires = 0; // the TTL ran out
+    for (let i = 1; i <= 250; i++) {
+      env.sql.insert("notes", { id: i, owner: A, body: `note ${i} ${"x".repeat(60)}` });
+    }
+    await engine.flush();
+    // Every frame of the burst has gone to the hub while the re-authorization is still held.
+    await until(() => engine.stats.frames - before >= 4, 30_000, "the burst's frames sent");
+    await settle();
+    assertEquals(changesOf(ca).length, 0, "held until the re-authorization answers");
+    release();
+    await until(
+      () => changesOf(ca).length === 250,
+      30_000,
+      () => `250 changes, got ${changesOf(ca).length} in ${ca.frames.length} frames`,
+    );
+    assertEquals(changesOf(ca).map((c) => Number(c.key)), [...Array(250)].map((_, i) => i + 1));
+    assertEquals(ca.frames.map((f) => f.seq), ca.frames.map((_, i) => i + 1));
+    assertEquals(ca.errors, []);
+  } finally {
+    await env.done();
+  }
+});
+
 Deno.test("realtime: a subscription key is bound to one identity; malformed or unknown keys are refused", async () => {
   const env = await setUp();
   try {

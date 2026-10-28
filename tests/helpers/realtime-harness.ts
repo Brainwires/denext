@@ -83,6 +83,11 @@ export interface Harness {
   drop(conn: TestConn): void;
   /** Stop the hub. */
   dispose(): void;
+  /**
+   * Hold every (re-)authorization until the returned release is called: a re-authorization in
+   * flight while frames arrive, as on a loaded server.
+   */
+  holdAuth(): () => void;
 }
 
 let peers = 0;
@@ -93,6 +98,7 @@ let peers = 0;
  * @returns The harness.
  */
 export function realtimeHarness(): Harness {
+  let authHeld: Promise<void> = Promise.resolve();
   const hub = createChannelHub<TestConn>({
     limits: () => ({ maxChannelsPerConnection: 64, channelAuthTtlSeconds: 300 }),
     sendFrame: (conn, text) => {
@@ -108,7 +114,7 @@ export function realtimeHarness(): Harness {
       // As the Live hub records an (untrusted) socket peer: by default a loopback/private one is
       // the connection's address, but not one to key per-address limits on.
       setClientAddr(request, conn.ip, conn.limitIp);
-      return Promise.resolve(runWithContext(createRequestContext(request), fn));
+      return authHeld.then(() => runWithContext(createRequestContext(request), fn));
     },
     connContext: (conn) => ({ origin: ORIGIN, url: "", cookie: conn.cookie, peerId: conn.peerId }),
     isConnected: () => true,
@@ -147,6 +153,14 @@ export function realtimeHarness(): Harness {
     },
     unsubscribe: (conn, subId = "s1") => hub.unsubscribe(conn, subId),
     drop: (conn) => hub.drop(conn),
+    holdAuth() {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      authHeld = promise;
+      return () => {
+        authHeld = Promise.resolve();
+        resolve();
+      };
+    },
     dispose() {
       unsubscribe();
       stop();

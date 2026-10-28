@@ -129,3 +129,90 @@ Deno.test("channel hub: onActive fires for a key's first local subscriber, onIdl
     resetChannels();
   }
 });
+
+/** A hub recording each connection's `channel` frames (their `value`), in order. */
+function recordingHub() {
+  const frames = new Map<string, unknown[]>();
+  const hub = createChannelHub<Conn>({
+    limits: () => ({ maxChannelsPerConnection: 16, channelAuthTtlSeconds: 300 }),
+    sendFrame: (conn, text) => {
+      const msg = JSON.parse(text);
+      if (msg.type !== "channel") return;
+      frames.set(conn.peerId, [...frames.get(conn.peerId) ?? [], msg.value]);
+    },
+    sendError: (conn, code) => conn.errors.push(code),
+    refuse: (conn, decision) => conn.errors.push(decision),
+    withConnContext: (_conn, fn) => Promise.resolve(fn()),
+    connContext: (conn) => ({ origin: "", url: "", cookie: "", peerId: conn.peerId }),
+    isConnected: () => true,
+    withRenderSlot: (fn) => fn(),
+    backPressured: () => false,
+    armRecover: () => {},
+  });
+  const conn = (peerId: string): Conn => ({
+    socket: {} as WebSocket,
+    channelSubs: new Map(),
+    peerId,
+    errors: [],
+  });
+  const publish = (channelId: string, seq: number) =>
+    hub.deliver({
+      kind: "publish",
+      channelId,
+      key: "k",
+      encoded: JSON.stringify({ n: seq }),
+      seq,
+      instance: "i",
+    });
+  return { hub, conn, frames: (peerId: string) => frames.get(peerId) ?? [], publish };
+}
+
+/** Wait (bounded) until `done()`. */
+async function until(done: () => boolean): Promise<void> {
+  for (let i = 0; i < 400 && !done(); i++) await new Promise((r) => setTimeout(r, 5));
+}
+
+Deno.test("channel hub: an ordered channel delivers every publish of a burst, in order; others the latest", async () => {
+  resetChannels();
+  createChannel<{ n: number }>({ id: "deltas", authorize: () => true, ordered: true });
+  createChannel<{ n: number }>({ id: "state", authorize: () => true });
+  const { hub, conn, frames, publish } = recordingHub();
+  const [a, b] = [conn("a"), conn("b")];
+  await hub.subscribe(a, { subId: "s", channelId: "deltas", key: "k" });
+  await hub.subscribe(b, { subId: "s", channelId: "state", key: "k" });
+  // Three publishes inside one coalescing window (the flush timer has not run yet).
+  for (const seq of [1, 2, 3]) {
+    publish("deltas", seq);
+    publish("state", seq);
+  }
+  await until(() => frames("a").length === 3 && frames("b").length === 1);
+  assertEquals(frames("a"), [{ n: 1 }, { n: 2 }, { n: 3 }]);
+  assertEquals(frames("b"), [{ n: 3 }], "a state channel keeps latest-wins");
+  hub.dispose();
+  resetChannels();
+});
+
+Deno.test("channel hub: an ordered channel's frames held for a re-authorization all go out after it", async () => {
+  resetChannels();
+  let gate: Promise<boolean> = Promise.resolve(true);
+  createChannel<{ n: number }>({ id: "deltas", authorize: () => gate, ordered: true });
+  const { hub, conn, frames, publish } = recordingHub();
+  const a = conn("a");
+  await hub.subscribe(a, { subId: "s", channelId: "deltas", key: "k" });
+  // The TTL ran out: the next frame starts a re-authorization that is still running while more
+  // frames arrive (each in its own flush).
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  gate = promise;
+  a.channelSubs.get("s")!.authExpires = 0;
+  for (const seq of [1, 2, 3]) {
+    publish("deltas", seq);
+    await until(() => (a.channelSubs.get("s")!.held?.length ?? 0) === seq);
+  }
+  assertEquals(frames("a"), [], "held while the re-authorization runs");
+  resolve(true);
+  await until(() => frames("a").length === 3);
+  assertEquals(frames("a"), [{ n: 1 }, { n: 2 }, { n: 3 }]);
+  assertEquals(a.errors, []);
+  hub.dispose();
+  resetChannels();
+});
