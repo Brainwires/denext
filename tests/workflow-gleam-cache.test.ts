@@ -23,9 +23,12 @@ interface Job {
   steps?: Step[];
 }
 
-/** Whether a step runs the suites that build with the pinned Gleam (the Lustre e2e tests). */
+/**
+ * Whether a step builds with (or installs) the pinned Gleam: the Lustre e2e tests, or
+ * `toolchain install --with gleam` ahead of the unit suites that compile real Gleam.
+ */
 function buildsWithGleam(step: Step): boolean {
-  return /test:e2e|lustre\.e2e|DENEXT_TEST_GLEAM_DOWNLOAD=1/.test(step.run ?? "");
+  return /test:e2e|lustre\.e2e|DENEXT_TEST_GLEAM_DOWNLOAD=1|--with gleam/.test(step.run ?? "");
 }
 
 /** Every job, by `<workflow>#<job>`, of the workflows. */
@@ -53,6 +56,21 @@ async function has(cmd: string): Promise<boolean> {
   }
 }
 
+Deno.test("ci.yml's unit tests run the real Gleam suites, on the pinned Gleam it installs", async () => {
+  const ci = parse(await Deno.readTextFile(join(DIR, "ci.yml"))) as {
+    jobs: Record<string, Job & { steps: Array<Step & { env?: Record<string, string> }> }>;
+  };
+  const steps = ci.jobs.check.steps;
+  const install = steps.findIndex((s) => /toolchain install --with gleam/.test(s.run ?? ""));
+  const unit = steps.findIndex((s) => s.run === "deno task test:unit");
+  assert(
+    install >= 0 && install < unit,
+    "the check job installs the pinned Gleam before its tests",
+  );
+  // The binary in the cached install directory: a broken install fails the suites, never skips.
+  assertEquals(steps[unit].env?.DENEXT_TEST_GLEAM, "${{ steps.gleam-pin.outputs.path }}/gleam");
+});
+
 Deno.test("every job that builds with the pinned Gleam caches it before the build", async () => {
   const gleamJobs = (await jobs()).filter(([, job]) => (job.steps ?? []).some(buildsWithGleam));
   assert(gleamJobs.length > 0, "no workflow job builds with the pinned Gleam");
@@ -78,8 +96,15 @@ Deno.test({
   name: "the gleam-pin step names the CLI's install directory and the pin's version and SHA-256",
   ignore: !(await has("bash")) || !(await has("jq")) || Deno.build.os === "windows",
 }, async () => {
-  const [[name, job]] = (await jobs()).filter(([, j]) => (j.steps ?? []).some(buildsWithGleam));
-  const script = job.steps!.find((s) => s.id === "gleam-pin")!.run!;
+  for (
+    const [name, job] of (await jobs()).filter(([, j]) => (j.steps ?? []).some(buildsWithGleam))
+  ) {
+    await checkPinStep(name, job.steps!.find((s) => s.id === "gleam-pin")!.run!);
+  }
+});
+
+/** Run one job's gleam-pin script as a Linux x64 runner would, and check what it outputs. */
+async function checkPinStep(name: string, script: string): Promise<void> {
   const home = await Deno.makeTempDir({ prefix: "denext-gleam-pin-" });
   try {
     const out = join(home, "github-output");
@@ -97,7 +122,7 @@ Deno.test({
     );
     const target = "linux-x86_64";
     const sha = (pin.targets as Record<string, { sha256: string }>)[target].sha256;
-    assertEquals(outputs.key, `gleam-${target}-${pin.version}-${sha}`);
+    assertEquals(outputs.key, `gleam-${target}-${pin.version}-${sha}`, name);
     // the directory the CLI installs into under the default Linux DENO_DIR
     const status = await gleamToolchainStatus({
       target,
@@ -105,8 +130,8 @@ Deno.test({
       cacheRoot: join(home, ".cache", "deno", "denext-deno"),
       env: () => undefined,
     });
-    assertEquals(outputs.path, dirname(status.path!));
+    assertEquals(outputs.path, dirname(status.path!), name);
   } finally {
     await Deno.remove(home, { recursive: true });
   }
-});
+}
