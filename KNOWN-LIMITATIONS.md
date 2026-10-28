@@ -178,10 +178,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **A Lustre server component (`defineLustreView`) resumes only on the instance that ran it:**
   Lustre's model is an arbitrary Gleam value, so it is never written to the shared view store. A
   reconnect to the same instance within `live.limits.viewResumeSeconds` reattaches the running
-  runtime; a reconnect to another instance, or a later one, runs `init` again. The page's first
-  paint is replaced by Lustre's own render when the view mounts (not adopted), and Lustre's
-  contexts (`provide` / `subscribe`) and client-sent attribute or property changes are not
-  carried over Live.
+  runtime; a reconnect to another instance, or a later one, runs `init` again.
+- **A Lustre server component re-renders after its first mount:** the first paint is adopted, but
+  the whole view a reconnect or a resync sends is rendered anew, so a field focused then loses its
+  focus. A first paint whose markup does not fit the view is re-rendered too.
+- **Lustre's contexts are not carried over Live:** a server component's `provide` / `subscribe`
+  between the view and the page around it never reach the browser. A view has no host attributes
+  or properties to send either: its input is its signed props, so other props render another view.
 - **A stopped Lustre app's timers keep firing:** Lustre gives no way to cancel an app's timers or
   subscriptions from outside. A stopped server component, and (with denext's post-build fix to
   Lustre's client runtime) a stopped `lustreIsland`, ignore what they dispatch, but the timer

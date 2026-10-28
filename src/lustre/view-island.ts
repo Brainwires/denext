@@ -7,13 +7,18 @@
 //
 // On the server it renders the view's first paint (the HTML `defineLustreView` passes it) inside
 // its root, so the page works without JavaScript. In the browser it mounts the view over the Live
-// socket; the server's first message replaces the root's contents with Lustre's own render, and
-// from then on Lustre's reconciler owns them (denext renders the root once and never its children).
+// socket; the server's first message is adopted onto the first paint (its nodes kept, Lustre's
+// handlers attached to them), and from then on Lustre's reconciler owns them (denext renders the
+// root once and never its children).
 
 import { h } from "../jsx/jsx-runtime.ts";
 import type { VNode } from "../jsx/types.ts";
 import { useEffect, useRef, useState } from "../runtime/hooks.ts";
-import { type LustreReconcilerClass, mountLustreView } from "./view-client.ts";
+import {
+  type LustreInsertMetadata,
+  type LustreReconcilerClass,
+  mountLustreView,
+} from "./view-client.ts";
 
 /** The island's props (written by `defineLustreView`'s server render). */
 export interface LustreViewIslandProps {
@@ -34,10 +39,14 @@ export interface LustreViewIslandProps {
  * this in the generated `.denext/lustre-view.ts`; apps don't.
  *
  * @param Reconciler `Reconciler` from the app's `@gleam/lustre/lustre/vdom/reconciler.ffi.mjs`.
+ * @param insertMetadata `insertMetadataChild` from the same module: the server-rendered first
+ *   paint is adopted when the view mounts (its nodes, focus and typed text kept). Without it the
+ *   first `mount` replaces the root's contents.
  * @returns The island component.
  */
 export function lustreViewIsland(
   Reconciler: LustreReconcilerClass,
+  insertMetadata?: LustreInsertMetadata,
 ): (props: LustreViewIslandProps) => VNode {
   return function LustreView(props: LustreViewIslandProps): VNode {
     const root = useRef<Element | null>(null);
@@ -46,7 +55,7 @@ export function lustreViewIsland(
       const el = root.current;
       if (!el) return;
       const spec = { view: props.view, props: props.props, token: props.token, enc: props.enc };
-      const handle = mountLustreView(spec, el, Reconciler);
+      const handle = mountLustreView(spec, el, Reconciler, insertMetadata);
       return () => handle.unmount();
       // A new token (other props, or a new signing key after a restart) is another view.
     }, [props.view, props.token]);

@@ -3,8 +3,11 @@
 // WebSocket / SSE / polling transport). It is a Live transport extension (`registerLiveExtension`),
 // so it ships only in the chunk of the island that uses it.
 //
-// Lustre's own reconciler does the DOM work: on the server's `mount` message (kind 0, the whole
-// view) the view's root is emptied and a `Reconciler` mounts the view into it; each `reconcile`
+// Lustre's own reconciler does the DOM work. On the server's first `mount` message (kind 0, the
+// whole view) the server-rendered first paint is adopted (view-adopt.ts): its nodes stay, focus,
+// caret and typed text with them, and the reconciler attaches the view's handlers to them. A later
+// `mount` (a resync, a reconnect), or a first paint that does not fit the view, empties the root
+// and a `Reconciler` mounts the view into it instead; each `reconcile`
 // (kind 1) is a patch for it; `emit` (kind 2) becomes a DOM event on the root. Lustre's contexts
 // (kinds 3–5) are not carried. Events the reconciler bound turn into Lustre's `EventFired` message
 // with the event's data picked as Lustre's client does (`target.value` / `checked` for input and
@@ -16,6 +19,9 @@
 import type { LiveServerMessage } from "../runtime/live-protocol.ts";
 import { openLiveSocket, registerLiveExtension, sendLiveFrame } from "../client/live-client.ts";
 import { applyViewError, unmountView, viewExtension } from "../client/view-extension.ts";
+import { adoptLustreView, type LustreInsertMetadata } from "./view-adopt.ts";
+
+export type { LustreInsertMetadata, LustreMetadata } from "./view-adopt.ts";
 
 /** What the island mounts a view with (all of it from the server's render of the page). */
 export interface LustreViewSpec {
@@ -33,7 +39,7 @@ export interface LustreViewSpec {
 export interface LustreReconciler {
   /** Render a whole view into the root. */
   mount(vdom: unknown): void;
-  /** Apply a patch to what is mounted. */
+  /** Apply a patch to what is mounted (or adopted). */
   push(patch: unknown): void;
 }
 
@@ -54,6 +60,10 @@ interface ViewState extends LustreViewSpec {
   root: Element;
   Reconciler: LustreReconcilerClass;
   reconciler: LustreReconciler | null;
+  /** Lustre's `insertMetadataChild`: the first paint can be adopted. */
+  insertMetadata?: LustreInsertMetadata;
+  /** The root still holds the server-rendered first paint (no `mount` applied yet). */
+  firstPaint: boolean;
   /** The instance id to resume with. */
   iid?: string;
   /** The server answered the current mount (events go out). */
@@ -142,9 +152,32 @@ function serverEventData(event: Event, include: readonly string[] = []): unknown
   return data;
 }
 
+/**
+ * Adopt the server-rendered first paint as the view: the nodes stay and the reconciler attaches
+ * the view's handlers to them; form fields the visitor edited re-send `input` and `change`.
+ *
+ * @returns `false` when the first paint does not fit the view (the root is then re-rendered).
+ */
+function adoptFirstPaint(v: ViewState, reconciler: LustreReconciler, vdom: unknown): boolean {
+  try {
+    const { patch, edited } = adoptLustreView(v.root, vdom, v.insertMetadata!);
+    reconciler.push(patch);
+    for (const el of edited) {
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    return true;
+  } catch (err) {
+    console.warn(
+      `denext lustre view ${v.view}: re-rendering the first paint:`,
+      (err as Error)?.message,
+    );
+    return false;
+  }
+}
+
 /** Mount the server's whole view into the root, with a new reconciler. */
 function mountView(vid: string, v: ViewState, vdom: unknown): void {
-  v.root.textContent = "";
   const decode = (event: Event, path: string, name: string, include?: string[]) => ({
     kind: EVENT_FIRED,
     path,
@@ -157,7 +190,12 @@ function mountView(vid: string, v: ViewState, vdom: unknown): void {
     }
   };
   v.reconciler = new v.Reconciler(v.root, decode, dispatch);
-  v.reconciler.mount(vdom);
+  const adopt = v.firstPaint && v.insertMetadata !== undefined;
+  v.firstPaint = false;
+  if (!adopt || !adoptFirstPaint(v, v.reconciler, vdom)) {
+    v.root.textContent = "";
+    v.reconciler.mount(vdom);
+  }
   v.root.dispatchEvent(new CustomEvent("lustre:mount"));
 }
 
@@ -214,18 +252,29 @@ function ensureExtension(): void {
  * Mount a Lustre server component over the Live socket into `root`.
  *
  * @param spec The view id, its signed props and token.
- * @param root The element the view renders into (its contents are replaced on mount).
+ * @param root The element the view renders into, holding the server-rendered first paint.
  * @param Reconciler Lustre's client reconciler class, from the app's Lustre build.
+ * @param insertMetadata Lustre's `insertMetadataChild` from the same build: the first paint is
+ *   adopted (its nodes kept). Without it the first `mount` replaces the root's contents.
  * @returns The handle the island stops it with.
  */
 export function mountLustreView(
   spec: LustreViewSpec,
   root: Element,
   Reconciler: LustreReconcilerClass,
+  insertMetadata?: LustreInsertMetadata,
 ): LustreViewHandle {
   ensureExtension();
   const vid = `l${++counter}`;
-  const v: ViewState = { ...spec, root, Reconciler, reconciler: null, live: false };
+  const v: ViewState = {
+    ...spec,
+    root,
+    Reconciler,
+    reconciler: null,
+    live: false,
+    firstPaint: true,
+    ...(insertMetadata ? { insertMetadata } : {}),
+  };
   views.set(vid, v);
   openLiveSocket();
   sendLiveFrame(mountFrame(vid, v));

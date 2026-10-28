@@ -5,9 +5,11 @@
 //                          nodes survive hydration and Lustre's start), then runs it.
 //   • custom element    — lustreElement: the Declarative Shadow DOM the server prerendered is
 //                          the shadow root Lustre adopts; attributes drive the component.
-//   • server component  — defineLustreView: the model lives on the server; clicks and typing go
-//                          over the Live socket as Lustre events and come back as patches, and a
-//                          reload of the socket resumes the same runtime.
+//   • server component  — defineLustreView: the server-rendered first paint is adopted when the
+//                          view mounts (the parser's nodes kept, and an input focused and typed
+//                          into before the mount keeps its focus and text, which reach the
+//                          server); clicks and typing go over the Live socket as Lustre events and
+//                          come back as patches, and a reload of the socket resumes the same runtime.
 //   • a stopped island  — the ticker's timer effect keeps firing after its island unmounts, but
 //                          none of its dispatches reaches the stopped app (denext's post-build
 //                          fix for Lustre's SPA `shutdown`).
@@ -82,11 +84,21 @@ async function checkLustreApp(t: Deno.TestContext, dir: string): Promise<void> {
         document.addEventListener("readystatechange", () => {
           if (document.readyState !== "interactive") return;
           const host = document.querySelector("lustre-counter");
+          const view = document.querySelector("[data-dnx-lustre-view]");
+          const viewNote = view && view.querySelector(".note");
           window.__parsed = {
             islandSpan: document.querySelector(".island .count"),
             shadow: host && host.shadowRoot,
             shadowSpan: host && host.shadowRoot && host.shadowRoot.querySelector(".count"),
+            viewSpan: view && view.querySelector(".count"),
+            viewNote,
           };
+          // A visitor who focuses the server view's field and types before the view mounts.
+          if (viewNote) {
+            viewNote.focus();
+            viewNote.value = "early";
+            viewNote.setSelectionRange(2, 2);
+          }
         });
       `,
     });
@@ -130,6 +142,27 @@ async function checkLustreApp(t: Deno.TestContext, dir: string): Promise<void> {
       // The server's `mount` message: Lustre's reconciler now owns the view's root.
       await pollFor(page, "window.__mounts.includes('counter')");
       assertEquals(await page.evaluate(`${view}.querySelector('.count').textContent`), "7");
+      // The first paint was adopted, not replaced: the parser's nodes, focus, caret and text.
+      assert(
+        await page.evaluate(`window.__parsed.viewSpan === ${view}.querySelector('.count')`),
+        "the span Lustre patches is the one the HTML parser built",
+      );
+      assert(
+        await page.evaluate(`window.__parsed.viewNote === ${view}.querySelector('.note')`),
+        "the field is the one the HTML parser built",
+      );
+      assert(
+        await page.evaluate("document.activeElement === window.__parsed.viewNote"),
+        "the field keeps its focus",
+      );
+      assertEquals(
+        await page.evaluate(
+          "[window.__parsed.viewNote.value, window.__parsed.viewNote.selectionStart]",
+        ),
+        ["early", 2],
+      );
+      // What was typed before the mount reached the server's model.
+      await pollFor(page, `${view}.querySelector('.echo').textContent === 'early'`);
       await page.evaluate(`${view}.querySelector('.inc').click()`);
       await pollFor(page, `${view}.querySelector('.count').textContent === '8'`);
       await page.evaluate(`(() => {

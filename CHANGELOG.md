@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **A Lustre server component adopts its first paint.** When a `defineLustreView` mounts, the
+  server-rendered markup is kept instead of being replaced by Lustre's render: the nodes stay the
+  same nodes, Lustre's reconciler attaches the view's event handlers and properties to them, and a
+  field focused or typed into before the mount keeps its focus, caret and text (its `input` and
+  `change` are sent once the view is live, so the server's model learns what was typed). Markup
+  that does not fit the view, and a later whole view (a reconnect, a resync), are rendered anew.
+  The next Gleam build rewrites `.denext/lustre-view.ts` to pass Lustre's `insertMetadataChild`.
+
 - **`denext doctor` and `denext desktop doctor` check the launch policy.** A desktop project whose
   packaged `laufey-launch.json` would lack `bridgeOrigins` (an unwritable
   `desktop.app.bridgeOrigins`) or, with passkeys enabled, an RP list (`rpIds` empty), or whose
