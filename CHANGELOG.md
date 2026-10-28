@@ -116,6 +116,10 @@ and this project adheres to
   command line replaces `deno.json`'s `exclude` instead of adding to it, so the `.deno/` entry a
   scaffold writes stopped applying and `deno test` ran the `_test.ts` files of the packages the
   type check copies there. `denext test` now adds `.deno/` to a `--ignore` that doesn't name it.
+- **Deleting an absent key from the secure store on Windows exits cleanly.** The PasswordVault
+  script ended a `delete` of a key that wasn't stored with exit code 1 (the caught lookup failure
+  left PowerShell's last status false); it now exits 0, so a delete is idempotent at the process
+  level too.
 
 ### Security
 

@@ -1242,6 +1242,27 @@ Deno.test("secureStore: Windows PasswordVault round-trips via the stdin JSON pay
   assertEquals(await call(cap, "get", { key: "token" }), null);
 });
 
+Deno.test({
+  name: "secureStore (real Windows PasswordVault): deleting an absent key exits 0; a round trip",
+  ignore: OS !== "windows",
+}, async () => {
+  const service = `denext.test.${crypto.randomUUID()}`;
+  const vault = (op: "get" | "set" | "delete", b64?: string) => {
+    const c = secureStoreCommand("windows", op, service, "token", b64);
+    return realSecureRun(c.cmd, c.args, c.stdin);
+  };
+  const absent = await vault("delete");
+  assertEquals(absent.code, 0, `deleting an absent key: ${absent.stderr}`);
+  assertEquals((await vault("set", "QjY0")).code, 0);
+  try {
+    assertEquals((await vault("get")).stdout.trim(), "QjY0");
+  } finally {
+    assertEquals((await vault("delete")).code, 0);
+  }
+  assertEquals((await vault("get")).code, 1, "gone");
+  assertEquals((await vault("delete")).code, 0, "a second delete is a no-op too");
+});
+
 Deno.test("secureStore SECURITY: a key with a leading '-' or control chars is refused (CLI getopt)", async () => {
   const cap = secureStoreCapability({
     service: "svc",
