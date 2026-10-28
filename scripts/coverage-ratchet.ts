@@ -174,18 +174,19 @@ export function updateBaseline(
 }
 
 /** The baseline as it is written: one file per line, so a raise is a one-line diff. */
-export function formatBaseline(baseline: Baseline): string {
+export function formatBaseline(baseline: Record<string, readonly number[]>): string {
   const rows = Object.entries(baseline).map(([f, e]) =>
     `  ${JSON.stringify(f)}: [${e.join(", ")}]`
   );
   return `{\n${rows.join(",\n")}\n}\n`;
 }
 
-async function readBaseline(path: string): Promise<Baseline> {
+/** The baseline JSON at `path` (none: empty); the sanitizer ratchet reads its own with it too. */
+export async function readBaseline<T = Baseline>(path: string): Promise<T> {
   try {
-    return JSON.parse(await Deno.readTextFile(path)) as Baseline;
+    return JSON.parse(await Deno.readTextFile(path)) as T;
   } catch (e) {
-    if (e instanceof Deno.errors.NotFound) return {};
+    if (e instanceof Deno.errors.NotFound) return {} as T;
     throw e;
   }
 }

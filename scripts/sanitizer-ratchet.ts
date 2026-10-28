@@ -24,6 +24,7 @@
 
 import { walk } from "@std/fs/walk";
 import { fromFileUrl, join, relative, resolve } from "@std/path";
+import { formatBaseline as formatRows, readBaseline as readRows } from "./coverage-ratchet.ts";
 
 /** Where the baseline lives (relative to the project root). */
 export const BASELINE_FILE = "scripts/sanitizer-baseline.json";
@@ -155,22 +156,10 @@ export function lowerBaseline(scan: Map<string, FileOptOuts>, baseline: Baseline
 }
 
 /** The baseline as it is written: one file per line, so a change is a one-line diff. */
-export function formatBaseline(baseline: Baseline): string {
-  const rows = Object.entries(baseline).map(([f, e]) =>
-    `  ${JSON.stringify(f)}: [${e.join(", ")}]`
-  );
-  return `{\n${rows.join(",\n")}\n}\n`;
-}
+export const formatBaseline: (baseline: Baseline) => string = formatRows;
 
 /** The baseline at `path` (none: empty). */
-export async function readBaseline(path: string): Promise<Baseline> {
-  try {
-    return JSON.parse(await Deno.readTextFile(path)) as Baseline;
-  } catch (e) {
-    if (e instanceof Deno.errors.NotFound) return {};
-    throw e;
-  }
-}
+export const readBaseline = (path: string): Promise<Baseline> => readRows<Baseline>(path);
 
 /** The totals of a scan: opt-outs, and those without a reason. */
 export function totals(scan: Map<string, FileOptOuts>): [number, number] {
