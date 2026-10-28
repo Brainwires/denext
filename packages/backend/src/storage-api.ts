@@ -28,12 +28,12 @@ import {
   csrf,
   type ImageTransform,
   isApiError,
-  nativeBearerToken,
   readCappedBody,
   STALLED,
   TOO_LARGE,
   transformImageBytes,
 } from "@denext/denext/server";
+import { nativeBearerToken } from "@denext/auth";
 import { isStorageError, StorageError, type StorageErrorCode } from "./errors.ts";
 import { normalizeKey } from "./keys.ts";
 import { dispositionFor, essence } from "./mime.ts";

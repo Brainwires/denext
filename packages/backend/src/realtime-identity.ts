@@ -13,14 +13,13 @@
 // its expiry is checked). `installAccessTokenVerifier` replaces the verification (tests).
 
 import {
-  activeAuthConfig,
   apiKeyRole,
   installedSupabaseKeys,
   looksLikeJwt,
   opaqueKeyRole,
   type SupabaseKeys,
-  verifyAccessToken,
 } from "@denext/denext/server";
+import { activeAuthConfig, verifyAccessToken } from "@denext/auth";
 import type { RlsScope } from "./rls.ts";
 import { ANON_SCOPE } from "./rls.ts";
 import { resolveScope } from "./postgres.ts";

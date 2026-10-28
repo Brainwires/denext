@@ -41,7 +41,7 @@
  *
  * ```ts
  * // denext.config.ts
- * import { denextAuth, github } from "denext/server";
+ * import { denextAuth, github } from "@denext/auth";
  * import { backend, backendAuthAdapter } from "@denext/backend";
  *
  * export default {
@@ -59,12 +59,11 @@ import { handleAdminRequest } from "./src/admin.ts";
 import type { DenextPlugin, PluginContext } from "@denext/denext/server";
 import {
   bootMigrate,
-  handleGoTrueRequest,
-  installGoTrue,
   type Migration,
   registerBootCheck,
   registerHealthCheck,
 } from "@denext/denext/server";
+import { handleGoTrueRequest, installGoTrue } from "@denext/auth";
 import { rlsMigrations } from "./src/rls.ts";
 import { installSupabaseAuthHooks } from "./src/identity.ts";
 import { checkBucketName } from "./src/keys.ts";

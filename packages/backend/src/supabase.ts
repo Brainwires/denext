@@ -10,7 +10,6 @@
 import type { CommandSpec } from "@denext/denext/cli/command";
 import {
   generateSupabaseKeys,
-  type GoTrueOptions,
   installedSupabaseKeys,
   installSupabaseKeys,
   resolveSupabaseKeys,
@@ -20,6 +19,7 @@ import {
   type SupabaseKeys,
   type SupabaseKeysConfig,
 } from "@denext/denext/server";
+import type { GoTrueOptions } from "@denext/auth";
 import type { PluginContext } from "@denext/denext/server";
 import { join } from "@std/path";
 

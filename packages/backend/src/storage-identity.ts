@@ -6,9 +6,10 @@
 // a bucket's TypeScript `authorize` gets its session and claims, and the SQL-RLS mode runs its
 // `storage.objects` / `storage.buckets` statements as that role with those claims.
 
-import { activeAuthConfig, auth, type AuthSession, sessionFromClaims } from "@denext/denext/server";
+import { auth, type AuthSession } from "@denext/denext/server";
+import { sessionFromClaims } from "@denext/auth";
 import type { SupabaseJwtClaims } from "@denext/denext/server";
-import { type RequestIdentity, resolveIdentity } from "./identity.ts";
+import { hasDenextAuth, type RequestIdentity, resolveIdentity } from "./identity.ts";
 
 /** The role a storage request runs as — Supabase's names. */
 export type StorageRole = "anon" | "authenticated" | "service_role";
@@ -45,16 +46,6 @@ export const SERVICE_IDENTITY: StorageIdentity = Object.freeze({
 export async function storageIdentity(request: Request): Promise<StorageIdentity> {
   const identity = await resolveIdentity(request);
   return { ...identity, session: identity.session ?? await jwtSession(identity) };
-}
-
-/** Whether `denextAuth()` is configured (it keeps the sessions a token can be revoked with). */
-function hasDenextAuth(): boolean {
-  try {
-    activeAuthConfig();
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /**

@@ -29,12 +29,12 @@ import {
   clientIp,
   csrf,
   localServerOrigin,
-  nativeBearerToken,
   type PluginContext,
   readCappedBody,
   STALLED,
   TOO_LARGE,
 } from "@denext/denext/server";
+import { nativeBearerToken } from "@denext/auth";
 import type { HostMessage, WorkerMessage } from "./functions-protocol.ts";
 import { positiveOption } from "./options.ts";
 import { isIdentityError, resolveIdentity } from "./identity.ts";
