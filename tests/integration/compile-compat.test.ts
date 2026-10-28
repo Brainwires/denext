@@ -342,8 +342,6 @@ async function compiledApp(
 
 Deno.test({
   name: "denext build --compile: a next-compat drop-in app serves pages, API routes and assets",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: () =>
     compiledApp("denext_compile_compat_", NEXT_COMPAT, "framework", async (app) => {
       const home = await app.get("/");
@@ -369,8 +367,6 @@ Deno.test({
 
 Deno.test({
   name: "denext build --compile: a Pages Router app serves pages, API routes and assets",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: () =>
     compiledApp("denext_compile_pages_", PAGES_ROUTER, "project", async (app) => {
       const home = await app.get("/");
@@ -404,8 +400,6 @@ Deno.test({
 
 Deno.test({
   name: "denext build --compile: a compat (npm React) Pages Router app serves its pages",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: () =>
     compiledApp("denext_compile_compat_pages_", COMPAT_PAGES, "framework", async (app) => {
       const home = await app.get("/");

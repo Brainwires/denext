@@ -16,6 +16,7 @@ import { scanRoutes } from "../src/router/manifest.ts";
 import { backend, fs } from "../packages/backend/mod.ts";
 import type { StorageOptions } from "../packages/backend/mod.ts";
 import { installRuntime } from "../packages/backend/src/runtime.ts";
+import { type ResponseBodies, responseBodies } from "./helpers/response-bodies.ts";
 
 export const ORIGIN = "https://app.test";
 export const SECRET = "storage-secret-at-least-32-characters";
@@ -44,8 +45,9 @@ export interface BackendApp {
  */
 export function pipelineCaller(
   handler: (request: Request) => Promise<Response>,
+  bodies?: ResponseBodies,
 ): BackendApp["call"] {
-  return (path, init = {}) => {
+  return async (path, init = {}) => {
     const { cookie, crossSite, ...rest } = init;
     const headers = new Headers(rest.headers);
     headers.set("host", new URL(ORIGIN).host);
@@ -53,7 +55,8 @@ export function pipelineCaller(
     if (rest.method && rest.method !== "GET" && rest.method !== "HEAD" && !headers.has("origin")) {
       headers.set("origin", crossSite ? "https://evil.test" : ORIGIN);
     }
-    return handler(new Request(new URL(path, ORIGIN), { ...rest, headers }));
+    const res = await handler(new Request(new URL(path, ORIGIN), { ...rest, headers }));
+    return bodies ? bodies.track(res) : res;
   };
 }
 
@@ -87,7 +90,8 @@ export async function backendApp(
     matchExternal: getPluginRequestHandler(),
     basePath: config.basePath,
   });
-  const call = pipelineCaller(handler);
+  const bodies = responseBodies();
+  const call = pipelineCaller(handler, bodies);
   return {
     root,
     handler,
@@ -102,6 +106,7 @@ export async function backendApp(
     async close() {
       // The teardowns close what setup opened (the storage metadata database): Windows
       // refuses to remove a directory with an open file in it.
+      await bodies.release();
       await runPluginTeardown();
       resetPlugins();
       installRuntime(undefined);

@@ -32,6 +32,7 @@ import {
   type SupabaseKeysConfig,
 } from "../../src/server/auth/gotrue/keys.ts";
 import { samplePng } from "../fixtures/sample-image.ts";
+import { responseBodies } from "./response-bodies.ts";
 
 export const ORIGIN = "https://app.test";
 /** The secret key (service role) the suite's service client presents. */
@@ -93,11 +94,13 @@ export async function storageHarness(
   const config = { plugins: [denextAuth(authConfig), plugin] } as DenextConfig;
   await applyPlugins({ projectRoot: root, appDir: `${root}/app`, config, mode: "prod", load });
   const manifest = await scanRoutes(`${root}/app`);
-  const handler = createApp({
+  const app = createApp({
     getManifest: () => manifest,
     load,
     matchExternal: getPluginRequestHandler(),
   });
+  const bodies = responseBodies();
+  const handler = async (request: Request) => bodies.track(await app(request));
   const viaApp = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
@@ -120,6 +123,7 @@ export async function storageHarness(
     fetch: viaApp,
     handler,
     async close() {
+      await bodies.release();
       resetPlugins();
       installRuntime(undefined);
       await Deno.remove(root!, { recursive: true }).catch(() => {});

@@ -24,6 +24,7 @@ const WATCHDOG = new URL("./helpers/watchdog.ts", import.meta.url).href;
 /** A test file: one test stalls on a subprocess's output, the others finish. */
 const STALLING = `import { watchTests } from ${JSON.stringify(WATCHDOG)};
 watchTests(1_000);
+// sanitizer: the test stalls on purpose; the watchdog under test is what fails it
 Deno.test({ name: "stalls", sanitizeOps: false, sanitizeResources: false, fn: async () => {
   await new Deno.Command(Deno.execPath(), {
     args: ["eval", "await new Promise((r) => setTimeout(r, 30000))"], stdout: "piped",
@@ -70,8 +71,8 @@ Deno.test("watchTests: a stalled test fails at its deadline, naming the open sub
       assert(!line.includes("watchdog.ts"), `reported at the wrapper: ${line}`);
       assertStringIncludes(line, "stall.test.ts:");
     }
-    assertStringIncludes(r.output, "stall.test.ts:3:6");
-    assert(/stall\.test\.ts:3:\d+: "stalls" still running/.test(r.output), r.output);
+    assertStringIncludes(r.output, "stall.test.ts:4:6");
+    assert(/stall\.test\.ts:4:\d+: "stalls" still running/.test(r.output), r.output);
     assert(Date.now() - t0 < 100_000, `took ${Date.now() - t0} ms`);
   } finally {
     await removeTempDir(dir);
@@ -111,7 +112,8 @@ const PRELOAD = new URL("./helpers/watchdog-preload.ts", import.meta.url).href;
 
 /** A test file that never opts in: one test stalls on a child that never ends. */
 const UNWATCHED =
-  `Deno.test({ name: "stalls", sanitizeOps: false, sanitizeResources: false, fn: async () => {
+  `// sanitizer: the test stalls on purpose; the watchdog under test is what fails it
+Deno.test({ name: "stalls", sanitizeOps: false, sanitizeResources: false, fn: async () => {
   await new Deno.Command(Deno.execPath(), {
     args: ["eval", "await new Promise((r) => setTimeout(r, 120000))"],
   }).output();
@@ -128,6 +130,7 @@ const before = Deno.test;
 watchTests(1_000);
 const same = Deno.test === before;
 Deno.test("wrapped once", () => { if (!same) throw new Error("watchTests wrapped Deno.test again"); });
+// sanitizer: the test stalls on purpose; the watchdog under test is what fails it
 Deno.test({ name: "stalls", sanitizeOps: false, sanitizeResources: false, fn: async () => {
   await new Promise((r) => setTimeout(r, 30000));
 } });

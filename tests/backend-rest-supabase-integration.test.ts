@@ -161,8 +161,6 @@ const SCHEMA = `
 Deno.test({
   name: `auto-REST × supabase-js on a real Postgres${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn(t) {
     const env = await environment();
     const root = await Deno.makeTempDir({ prefix: "dnx-rest-sb-" });
@@ -868,8 +866,6 @@ const gisReason = !GIS_URL
 Deno.test({
   name: `auto-REST × supabase-js: GeoJSON on PostGIS${gisReason ? ` (skipped: ${gisReason})` : ""}`,
   ignore: gisReason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await environment(true, undefined, GIS_URL);
     const root = await Deno.makeTempDir({ prefix: "dnx-rest-gis-" });
