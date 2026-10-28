@@ -37,6 +37,8 @@ Deno.test("generate app: apps/<name> importing the shared packages, listed in th
     assertEquals(root.tasks["dev:admin"], "deno task --cwd apps/admin dev");
     const app = await Deno.readTextFile(join(dir, "apps/admin/deno.json"));
     assertStringIncludes(app, '"denext": "jsr:@denext/denext@^4.0.0"');
+    // @denext/auth is versioned with denext: the app pins it at the workspace's range too.
+    assertStringIncludes(app, '"@denext/auth": "jsr:@denext/auth@^4.0.0"');
     assert(!app.includes(`^${VERSION}`), app);
     assert(!app.includes('"unstable"'), "a member leaves the root-only fields to the root");
     const page = await Deno.readTextFile(join(dir, "apps/admin/app/page.tsx"));

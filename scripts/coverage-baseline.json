@@ -376,7 +376,6 @@
   "packages/tanstack-start/src/static-html.ts": [92, 93, 100],
   "packages/tanstack-start/src/toolchain.ts": [100, 91, 100],
   "packages/tanstack-start/src/use-server.ts": [99, 94, 100],
-  "src/build/next-auth-providers.ts": [100, 0, 0],
   "src/cli/cli-cache.ts": [96, 90, 100],
   "src/cli/command-cache.ts": [91, 85, 100],
   "src/cli/command-table.generated.ts": [100, 0, 100],
