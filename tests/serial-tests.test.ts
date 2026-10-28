@@ -23,6 +23,7 @@ import {
 } from "../scripts/lib/serial-scan.ts";
 import {
   ALLOW_SKIP_VITEST_ENV,
+  configTestExcludes,
   coverageDir,
   emitEntrySource,
   findVitestFiles,
@@ -525,6 +526,65 @@ Deno.test("test-run: a module another config re-emitted is reported again after 
     const report = await run(["coverage", "cov"]);
     assert(!report.includes("Missing transpiled source"), report);
     assert(report.includes("lib.ts"), report);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("test-run: a pass's --ignore carries the config's own excludes, which --ignore replaces", () => {
+  const serial = ["tests/a.test.ts"];
+  const all = testPasses(["--ignore=tests/e2e/"], serial, [], true, [".deno/", "tests/e2e/"]);
+  assertEquals(all.parallel?.at(-1), "--ignore=.deno/,tests/e2e/,tests/a.test.ts");
+  // No --ignore of its own: the config's excludes apply as they are.
+  assertEquals(testPasses(["tests/other/"], serial, [], true, [".deno/"]).parallel, [
+    "test",
+    "-A",
+    "--unstable-kv",
+    "--parallel",
+    "tests/other/",
+  ]);
+});
+
+Deno.test("test-run: configTestExcludes reads deno.json's exclude and test.exclude", async () => {
+  // This checkout's: the toolchain's `.deno/` copy stays out of every pass.
+  assert((await configTestExcludes()).includes(".deno/"));
+  const dir = await Deno.makeTempDir();
+  try {
+    assertEquals(await configTestExcludes(dir), []); // no config
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      '{\n  // a comment\n  "exclude": ["dist/", 1],\n  "test": { "exclude": [".deno/", "dist/"] }\n}',
+    );
+    assertEquals(await configTestExcludes(dir), ["dist/", ".deno/"]);
+    await Deno.writeTextFile(join(dir, "deno.json"), "{ not json");
+    assertEquals(await configTestExcludes(dir), []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("test-run: deno test --ignore replaces the config's test.exclude (why the passes add it back)", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(join(dir, ".deno", "npm-compat"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "deno.json"), '{ "test": { "exclude": [".deno/"] } }');
+    await Deno.writeTextFile(join(dir, "a_test.ts"), 'Deno.test("a", () => {});\n');
+    await Deno.writeTextFile(
+      join(dir, ".deno", "npm-compat", "b_test.ts"),
+      'Deno.test("compat copy", () => {});\n',
+    );
+    const ran = async (args: string[]) => {
+      const out = await new Deno.Command(Deno.execPath(), {
+        args: ["test", "--no-check", ...args],
+        cwd: dir,
+        env: { NO_COLOR: "1" },
+        stdin: "null",
+      }).output();
+      return new TextDecoder().decode(out.stdout).includes("compat copy");
+    };
+    assertEquals(await ran([]), false);
+    assertEquals(await ran(["--ignore=dist/"]), true);
+    assertEquals(await ran(["--ignore=.deno/,dist/"]), false);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

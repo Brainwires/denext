@@ -19,8 +19,12 @@
 //
 // From Deno 2.8 the op and resource sanitizers are off unless a run turns them on
 // (`--sanitize-ops` / `--sanitize-resources`, `DENO_TEST_SANITIZE_OPS=1` /
-// `DENO_TEST_SANITIZE_RESOURCES=1`, or `test.sanitizeOps` in deno.json), and a test's own `false`
-// beats all of those; check a fix with them on.
+// `DENO_TEST_SANITIZE_RESOURCES=1`, or `test.sanitizeOps` / `test.sanitizeResources` in
+// deno.json), and a test's own `false` beats all of those. This repo's deno.json turns both on,
+// so every `deno test` under it (each pass of scripts/test-run.ts, a direct run, CI's) fails a
+// test that leaks a timer, op, child process, file or socket. Only the Vitest files run without
+// them: the toolchain's Vitest layer registers every test with both sanitizers off, as Vitest has
+// none. tests/sanitizer-ratchet.test.ts keeps deno.json's settings on.
 
 import { walk } from "@std/fs/walk";
 import { fromFileUrl, join, relative, resolve } from "@std/path";
