@@ -106,6 +106,12 @@ and this project adheres to
   socket was not affected. The realtime channel now asks for every frame, in order (`ordered:
   true`, a new `createChannel` option): the hub delivers each publish and keeps up to 256 held
   frames in order instead of the last one.
+- **`denext stack` no longer hangs on an unresponsive Docker engine.** The questions it asks
+  Docker (`docker compose ps` for `status`, `health` and the backup actions, `docker compose
+  config` and `docker volume inspect` before `up` writes a `.env`) waited forever on a wedged
+  engine. Each now has a 30 s deadline, after which the `docker` process and its children are
+  killed and the command stops naming Docker as unresponsive. The work you asked for (`up`,
+  `logs --follow`, a backup or restore) is not bounded.
 
 ### Security
 

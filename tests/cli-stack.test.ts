@@ -3,8 +3,9 @@
 // prints — the publishable key always, the secret key and passwords only with --show-secrets.
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
-import { fillEnv, runStack, stackStatus } from "../src/cli/commands/stack.ts";
+import { dockerProbe, fillEnv, runStack, stackStatus } from "../src/cli/commands/stack.ts";
 import { parsePs, type StackIo } from "../src/cli/commands/stack-io.ts";
+import { runBounded } from "./helpers/bounded-command.ts";
 
 const PS = JSON.stringify([
   {
@@ -248,6 +249,82 @@ catch (error) { console.log(error.message); }`;
     assertStringIncludes(text, "docker is not on PATH");
   } finally {
     await Deno.remove(empty, { recursive: true });
+  }
+});
+
+Deno.test("dockerProbe: questions to Docker are probes; the work a person asked for is not", () => {
+  const compose = ["compose", "-f", "docker-compose.yml", "-f", "compose.dev.yml"];
+  for (
+    const args of [
+      [...compose, "ps", "--all", "--format", "json"],
+      [...compose, "config", "--no-interpolate", "--format", "json"],
+      ["compose", "version"],
+      ["info", "--format", "{{.OSType}}"],
+      ["version"],
+      ["volume", "inspect", "app_db-data"],
+    ]
+  ) assert(dockerProbe(args), args.join(" "));
+  for (
+    const args of [
+      [...compose, "up", "-d", "--wait"],
+      [...compose, "logs", "--follow"],
+      [...compose, "down", "-v"],
+      [...compose, "cp", "db:/tmp/x", "/tmp/x"],
+      [...compose, "stop", "web"],
+      [...compose, "exec", "-T", "db", "pg_dump"],
+      ["volume", "rm", "app_db-data"],
+      [],
+    ]
+  ) assert(!dockerProbe(args), args.join(" "));
+});
+
+Deno.test({
+  name:
+    "dockerCli: a hung Docker fails a probe at its deadline, its tree killed; `up` is not bounded",
+  ignore: Deno.build.os === "windows", // the fake `docker` is a shell script
+}, async () => {
+  const bin = await Deno.makeTempDir({ prefix: "dnx-hung-docker-" });
+  try {
+    const pidFile = `${bin}/child.pid`;
+    // `up` finishes after a second; anything else hangs, its pipes held by a child of its own.
+    await Deno.writeTextFile(
+      `${bin}/docker`,
+      `#!/bin/sh\ncase " $* " in *" up "*) sleep 1; exit 0;; esac\n` +
+        `sleep 600 &\necho $! > "${pidFile}"\nwait\n`,
+    );
+    await Deno.chmod(`${bin}/docker`, 0o755);
+    const stack = new URL("../src/cli/commands/stack.ts", import.meta.url).href;
+    const code = `const { dockerCli } = await import(${JSON.stringify(stack)});
+const t = Date.now();
+try { await dockerCli(["compose", "-f", "docker-compose.yml", "ps", "--format", "json"], ".", true, 500); console.log("answered"); }
+catch (error) { console.log(error.message); }
+console.log("probe-ms=" + (Date.now() - t));
+const up = await dockerCli(["compose", "-f", "docker-compose.yml", "up", "-d"], ".", true, 200);
+console.log("up=" + up.code);`;
+    const out = await runBounded(Deno.execPath(), ["eval", "--no-check", code], {
+      env: { PATH: `${bin}:/usr/bin:/bin` },
+      timeoutMs: 120_000,
+    });
+    assert(!out.timedOut, `dockerCli hung on a hung docker:\n${out.output}`);
+    assertStringIncludes(
+      out.stdout,
+      "Docker did not answer `docker compose -f docker-compose.yml ps",
+    );
+    assertStringIncludes(out.stdout, "the Docker engine looks unresponsive");
+    assert(Number(/probe-ms=(\d+)/.exec(out.stdout)?.[1]) < 60_000, out.stdout);
+    assertStringIncludes(out.stdout, "up=0", "a long `up` ran to its end past the probe deadline");
+    // The hung docker's own child (holding its pipes) was killed with it.
+    const child = Number((await Deno.readTextFile(pidFile)).trim());
+    let alive = true;
+    for (let i = 0; i < 100 && alive; i++) {
+      const ps = await new Deno.Command("ps", { args: ["-p", String(child)], stdout: "null" })
+        .output();
+      alive = ps.success;
+      if (alive) await new Promise((r) => setTimeout(r, 50));
+    }
+    assert(!alive, `the hung docker's child ${child} is still running`);
+  } finally {
+    await Deno.remove(bin, { recursive: true });
   }
 });
 
