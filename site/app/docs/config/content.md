@@ -686,6 +686,11 @@ every `--platform` target included.
   strict default CSP with no `workerSrc` or `scriptSrc` opt-in. App Router pages are supported
   (Next limits it to `pages/`), and a worker script a client component renders later, on a page
   that loaded `boot.js`, is handed to Partytown too (on any other page it takes the fallback).
+  SPA mode (`mode: "spa"`) works too wherever denext serves the shell (`denext dev`, `denext
+  start`): each shell response carries the boot tag and a fresh nonce on its scripts, and a
+  `spa.csp` policy lists it, so the worker scripts the app renders in the browser take the same
+  nonce. A static `denext export` of a SPA has no response to mint a nonce for, so its worker
+  scripts run on the main thread.
   Only denext's own worker scripts run: each carries a per-response nonce the page's CSP lists, so
   an injected `text/partytown` script is left inert (see
   [Security](/docs/security#script-strategyworker-partytown-and-html-injection)). Partytown's

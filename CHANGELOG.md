@@ -10,6 +10,11 @@ and this project adheres to
 
 ### Added
 
+- **`<Script strategy="worker">` in SPA mode.** With `nextScriptWorkers` on and Partytown
+  installed, `denext dev` and `denext start` serve a SPA's Partytown and stamp every shell
+  response with its own nonce: the boot tag and the shell's scripts carry it and the `spa.csp`
+  policy lists it, so worker scripts the app renders run in Partytown's worker under the same
+  checks as an App Router page. A static `denext export` keeps the main-thread fallback.
 - **DevTools name a package's custom hooks.** In the default dev loop of an app that imports npm
   packages, the dependency bundle records each package ES module's `use*` hooks and re-exports,
   so `const q = useQuery(…)` from `@tanstack/react-query` breadcrumbs into the package's own

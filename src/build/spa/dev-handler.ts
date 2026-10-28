@@ -14,6 +14,14 @@ import {
 } from "../react-native-fonts.ts";
 import { serveStatic } from "../../server/static.ts";
 import { sseStream } from "../sse.ts";
+import { join } from "@std/path";
+import { scriptWorkersEnabled, servePartytown } from "../partytown.ts";
+import {
+  newScriptNonce,
+  prepareSpaPartytown,
+  spaPartytownLib,
+  stampWorkerNonce,
+} from "./script-workers.ts";
 import { spaDevReloadScript } from "./dev-reload-script.ts";
 import {
   devShell,
@@ -105,7 +113,11 @@ const FONT_TYPES: Readonly<Record<string, string>> = {
  * (the app graph is served per-module, no whole-bundle build) and links the extracted
  * CSS. Bundled loop: build the current generation first, rendering the error as HTML.
  */
-async function serveShell(st: SpaDevState, request: Request): Promise<Response> {
+async function serveShell(
+  st: SpaDevState,
+  request: Request,
+  stamp: (html: string) => string,
+): Promise<Response> {
   const rnRootStyle = reactNativeRootStyle(st.paths.config);
   const rnStyleSheet = reactNativeOptions(st.paths.config) !== null;
   const platform = devPlatformOf(request);
@@ -123,7 +135,7 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
         headPrefix: fontFaces,
         shell: await devShell(st, platform),
       });
-      return htmlResponse(request, html);
+      return htmlResponse(request, stamp(html));
     }
     // The bundled loop builds the session's target: its platform files and its `spa.shell`.
     const { hasStyles } = await ensureBuilt(st, platform);
@@ -138,7 +150,7 @@ async function serveShell(st: SpaDevState, request: Request): Promise<Response> 
       headPrefix: fontFaces,
       shell: await devShell(st, platform),
     });
-    return htmlResponse(request, html);
+    return htmlResponse(request, stamp(html));
   } catch (err) {
     const body = `<pre>denext SPA build error:\n\n${escapeHtml(errorMessage(err))}</pre>`;
     return new Response(body, {
@@ -196,6 +208,7 @@ function spaRequestHandler(st: SpaDevState): (request: Request) => Promise<Respo
   const allowed = st.options.allowedDevOrigins ?? [];
   const prefix = spaClientPrefix(st.spa);
   const reloadScript = spaDevReloadScript(prefix);
+  const workers = devScriptWorkers(st);
   return async (request) => {
     const url = new URL(request.url);
     // Same Host/Origin gate as the app dev server (DNS-rebinding defense): the reload stream,
@@ -221,9 +234,42 @@ function spaRequestHandler(st: SpaDevState): (request: Request) => Promise<Respo
     // The DevTools → MCP bridge, as on the App Router dev server: the page's inspect sink posts
     // its component tree, `denext_component_tree` & co. read it (and pull a fresh one).
     if (url.pathname === DEV_INSPECT_PATH) return await devInspectResponse(st, request, url);
+    const partytown = await workers.serve(request, url);
+    if (partytown) return partytown;
     const unbundled = await serveUnbundled(st, request, url);
     if (unbundled) return unbundled;
-    return await serveFile(st, request, url, prefix);
+    return await serveFile(st, request, url, prefix, await workers.stamp());
+  };
+}
+
+/**
+ * `<Script strategy="worker">` in SPA dev (`nextScriptWorkers`): the app's Partytown, published
+ * on first use, and the shell stamped with a fresh nonce per response (./script-workers.ts).
+ */
+function devScriptWorkers(st: SpaDevState): {
+  serve(request: Request, url: URL): Promise<Response | null>;
+  stamp(): Promise<(html: string) => string>;
+} {
+  const dir = join(st.paths.outDir, "partytown");
+  const lib = spaPartytownLib(st.paths.config);
+  let published: Promise<boolean> | undefined;
+  const on = () =>
+    published ??= scriptWorkersEnabled(st.paths.config)
+      ? prepareSpaPartytown(st.paths.config, st.paths.projectDir, dir).catch((err) => {
+        console.warn(`denext: could not publish Partytown: ${err}`);
+        return false;
+      })
+      : Promise.resolve(false);
+  return {
+    async serve(request, url) {
+      if (!url.pathname.startsWith(lib) || !(await on())) return null;
+      return await servePartytown(dir, url.pathname, request, false, undefined);
+    },
+    async stamp() {
+      return (await on())
+        ? (html) => stampWorkerNonce(html, lib, newScriptNonce())
+        : (html) => html;
+    },
   };
 }
 
@@ -275,6 +321,7 @@ async function serveFile(
   request: Request,
   url: URL,
   prefix: string,
+  stamp: (html: string) => string,
 ): Promise<Response> {
   const client = url.pathname.startsWith(prefix);
   const font = client ? fontFor(await devFonts(st), url.pathname, prefix) : undefined;
@@ -282,6 +329,6 @@ async function serveFile(
   const local = await bundleOrPublic(st, request, url, prefix, client);
   if (local) return local;
   if (client) return serveClientAsset(st, request, url.pathname, prefix);
-  if (wantsShell(request, url.pathname)) return serveShell(st, request);
+  if (wantsShell(request, url.pathname)) return serveShell(st, request, stamp);
   return new Response("not found", { status: 404 });
 }

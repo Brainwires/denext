@@ -15,7 +15,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   use them either), and a worker script inside a `"use cache"` body or a PPR shell runs on the
   main thread, since that output cannot carry the response's nonce. Partytown's trade-offs
   apply: a cross-origin script is fetched by the worker and needs CORS, and what a worker script
-  loads is outside the page's `scriptSrc`. SPA mode always uses the main-thread fallback.
+  loads is outside the page's `scriptSrc`. A SPA gets Partytown only where denext serves its
+  shell (`denext dev`, `denext start`), which mints the nonce; a static `denext export` has no
+  response to mint one for, so its worker scripts take the main-thread fallback.
 - **`next/og` renders satori's subset** (flexbox, inline `style`, `tw`): the same engine and
   limits as Next. Arbitrary CSS would need a layout engine or a headless browser.
 - **Async `startTransition` is scoped by a time window by default.** Browsers have no
