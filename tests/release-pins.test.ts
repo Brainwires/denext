@@ -66,8 +66,10 @@ Deno.test("jsr pins: RUNTIME_MEMBERS are exactly the workspace members published
       if (members.has(m[1]) && workspaceResolved(m[1])) imported.add(members.get(m[1])!);
     }
   }
-  // Generated code text, not imports: migrate / codemod write these specifiers into an app.
-  for (const textOnly of ["effect", "pages-router", "react-router", "tanstack-start"]) {
+  // Generated code text, not imports: migrate / codemod write these specifiers into an app
+  // (`@denext/auth` too: create, migrate and upgrade write it, and doc examples name it; core
+  // never imports it — the package depends on denext, not the other way round).
+  for (const textOnly of ["auth", "effect", "pages-router", "react-router", "tanstack-start"]) {
     imported.delete(textOnly);
   }
   assertEquals([...imported].sort(), [...RUNTIME_MEMBERS]);
