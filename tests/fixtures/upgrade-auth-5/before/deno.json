@@ -1,0 +1,14 @@
+{
+  // a 4.x app made by `denext create`, with next-auth migrated in
+  "tasks": {
+    "dev": "deno run -A jsr:@denext/denext@^4.9.0/cli dev ."
+  },
+  "imports": {
+    "denext": "jsr:@denext/denext@^4.9.0",
+    "denext/server": "jsr:@denext/denext@^4.9.0/server",
+    "denext/auth": "jsr:@denext/denext@^4.9.0/auth",
+    "next-auth": "jsr:@denext/denext@^4.9.0/next-auth",
+    "next-auth/react": "jsr:@denext/denext@^4.9.0/next-auth/react",
+    "next-auth/providers/github": "jsr:@denext/denext@^4.9.0/next-auth/providers/github"
+  }
+}
