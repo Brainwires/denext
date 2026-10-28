@@ -10,9 +10,8 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
-import { migrateProject } from "../src/build/migrate.ts";
+import { appRuntimeReadsColumns, migrateProject } from "../src/build/migrate.ts";
 import { readDatasource, wiredProvider } from "../src/build/prisma-migrate.ts";
-import { denoSqlHasColumns } from "../src/server/prisma-adapter/client.ts";
 
 const REPO_ROOT = fromFileUrl(new URL("..", import.meta.url));
 
@@ -540,10 +539,10 @@ Deno.test("prisma migrate (deno-sql): CockroachDB and MySQL keep their npm adapt
   }
 });
 
-Deno.test("prisma migrate (auto): the adapter follows the runtime's Deno.SQL", async () => {
+Deno.test("prisma migrate (auto): the adapter follows the app runtime's Deno.SQL", async () => {
   const dir = await scaffoldPrismaApp();
   const r = await migrateProject(dir, { denextLocalPath: REPO_ROOT });
-  const expected = (await denoSqlHasColumns())
+  const expected = (await appRuntimeReadsColumns())
     ? "denext/prisma-adapter"
     : "@prisma/adapter-better-sqlite3";
   assertEquals(r.prisma?.adapter, expected);
@@ -553,3 +552,40 @@ Deno.test("prisma migrate (auto): the adapter follows the runtime's Deno.SQL", a
 async function exists(path: string): Promise<boolean> {
   return await Deno.stat(path).then(() => true, () => false);
 }
+
+Deno.test("prisma migrate (auto): on a stock Deno, the toolchain denext hands the app decides", async () => {
+  const env = (value?: string) => (name: string) =>
+    name === "DENEXT_TOOLCHAIN_ACTIVE" ? value : undefined;
+  const stock = () => Promise.resolve(false);
+  // migrate itself on a stock Deno: the app's dev / build / start re-run on the toolchain.
+  assertEquals(await appRuntimeReadsColumns(env("3.0.0-rc.5"), stock), true);
+  assertEquals(await appRuntimeReadsColumns(env("3.0.0-rc.1"), stock), true);
+  // A toolchain from before `Deno.SQL` reported columns, an unverified binary, or none at all
+  // (`DENEXT_DENO=stock`): Prisma's npm adapters.
+  assertEquals(await appRuntimeReadsColumns(env("2.9.7-denext.21"), stock), false);
+  assertEquals(await appRuntimeReadsColumns(env("path"), stock), false);
+  assertEquals(await appRuntimeReadsColumns(env(undefined), stock), false);
+  // This process's own Deno.SQL answers first.
+  assertEquals(await appRuntimeReadsColumns(env(undefined), () => Promise.resolve(true)), true);
+});
+
+Deno.test("prisma migrate (deno-sql): an app's own better-sqlite3 keeps the links shim", async () => {
+  // The Epic Stack keeps a cache database on better-sqlite3 beside Prisma: Prisma goes over
+  // Deno.SQL, and the app's own import still needs the native addon swapped for the compat.
+  const dir = await scaffoldPrismaApp();
+  const pkg = JSON.parse(await read(dir, "package.json"));
+  pkg.dependencies["better-sqlite3"] = "^11.0.0";
+  await Deno.writeTextFile(join(dir, "package.json"), JSON.stringify(pkg));
+  const r = await migrateProject(dir, DENO_SQL);
+  assertEquals(r.prisma?.adapter, "denext/prisma-adapter");
+  const deno = await denoJson(dir);
+  assertEquals(deno.links, ["./patch/better-sqlite3"]);
+  assert(!("better-sqlite3" in (deno.imports ?? {})), "better-sqlite3 resolves through the link");
+  assertStringIncludes(await read(dir, "patch/better-sqlite3/package.json"), `"better-sqlite3"`);
+  assertStringIncludes(
+    await read(dir, "scripts/denext-prisma-setup.ts"),
+    "bundle the better-sqlite3 compat",
+  );
+  assertStringIncludes(await read(dir, "app/db.server.ts"), "new __PrismaDenoSql(");
+  await Deno.remove(dir, { recursive: true });
+});

@@ -27,6 +27,17 @@ and this project adheres to
   `createElement` is owned by the component whose render returned it, as on the client.
   Production `start` installs nothing and still returns `null`.
 
+### Fixed
+
+- **`denext migrate --prisma-adapter auto` follows the runtime the app runs on.** Run on a
+  stock Deno, migrate wired Prisma's npm adapters even though `denext dev`, `build` and `start`
+  re-run the app on denext's Deno toolchain, whose `Deno.SQL` `denext/prisma-adapter` uses; it
+  now takes the toolchain denext hands its children into account (`DENEXT_DENO=stock` keeps
+  the npm adapters). An app that imports `better-sqlite3` itself beside Prisma keeps the
+  `links` shim for it under `denext/prisma-adapter` too: its server bundle loaded the native
+  addon and the server did not start. The Epic Stack migration bed checks the wiring against
+  goldens and reads its seeded users through the adapter.
+
 ## [4.9.0] - 2026-10-27
 
 ### Breaking
