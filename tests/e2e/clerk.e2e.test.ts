@@ -17,7 +17,14 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import type { Page } from "@astral/astral";
-import { launchBrowser, pollFor, runDeno, spawnOnBoundPort, startCliServer } from "./harness.ts";
+import {
+  launchBrowser,
+  pollFor,
+  runDeno,
+  spawnOnBoundPort,
+  startCliServer,
+  withEnv,
+} from "./harness.ts";
 import { clerkTestKeys } from "./clerk-keys.ts";
 
 const EXAMPLE = fromFileUrl(new URL("../../examples/clerk", import.meta.url));
@@ -184,7 +191,12 @@ Deno.test({
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: keys!.publishableKey,
     CLERK_SECRET_KEY: keys!.secretKey,
   };
-  for (const [k, v] of Object.entries(env)) Deno.env.set(k, v); // the CLI children inherit them
+  // The CLI children inherit them; restored however the test ends (a failed install included).
+  await withEnv(env, () => keyedFlows(t));
+});
+
+/** Install, build and serve the example, then sign a test user in and out through it. */
+async function keyedFlows(t: Deno.TestContext): Promise<void> {
   // The example's npm packages (@clerk/nextjs and its peers) into its node_modules.
   const installed = await runDeno(["install"], EXAMPLE, 600_000);
   assert(installed.ok, "deno install failed:\n" + installed.out);
@@ -298,6 +310,5 @@ Deno.test({
     if (userId) await (await bapi("DELETE", `/users/${userId}`)).body?.cancel();
     await browser.close();
     if (!serverClosed) await server.close();
-    for (const k of Object.keys(env)) Deno.env.delete(k);
   }
-});
+}

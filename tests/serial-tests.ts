@@ -53,6 +53,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/devtools-route-meta.test.ts",
   "tests/docs-tutorial-islands.test.ts",
   "tests/docker-cmd-port.test.ts",
+  "tests/e2e-harness-env.test.ts",
   "tests/env.test.ts",
   "tests/examples-offline-sync.test.ts",
   "tests/fresh-parity.test.ts",
