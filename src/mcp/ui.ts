@@ -49,6 +49,12 @@ export interface UiReply {
   readonly text: string;
 }
 
+/**
+ * How long the UI child's stdout is still read for its launch record once the child has exited.
+ * Its pipe can outlive it (a process spawned elsewhere at the same moment inherits it on Windows),
+ * so the exit, not the pipe's end, is what says it will print nothing more.
+ */
+const LAUNCH_AFTER_EXIT_MS = 2_000;
 /** The longest a streamed run is read before the MCP stops it. */
 const DEFAULT_STREAM_MS = 120_000;
 /** The most streamed output kept for the reply. */
@@ -94,7 +100,7 @@ export class UiBridge {
       stdout: "piped",
       stderr: "null",
     }).spawn();
-    const launch = await firstJsonLine(this.#child.stdout);
+    const launch = await firstJsonLine(this.#child.stdout, this.#child.status);
     // Keep draining whatever else it prints, so a full pipe never stalls it.
     this.#child.stdout.pipeTo(new WritableStream()).catch(() => {});
     const url = new URL(launch.url);
@@ -169,21 +175,49 @@ async function replyBody(res: Response, timeoutMs?: number): Promise<string> {
   return await res.text();
 }
 
-/** The first line of `stream` parsed as the `denext ui --json` launch record. */
-async function firstJsonLine(stream: ReadableStream<Uint8Array>): Promise<{ url: string }> {
+/**
+ * The first line of `stream` parsed as the `denext ui --json` launch record.
+ *
+ * @param stream The child's stdout.
+ * @param exited The child's `status`: once it resolves, the read ends within
+ *   {@linkcode LAUNCH_AFTER_EXIT_MS} even while another process still holds the pipe.
+ * @returns The launch record; rejects when the child exits (or its stdout ends) without one.
+ */
+async function firstJsonLine(
+  stream: ReadableStream<Uint8Array>,
+  exited: Promise<unknown>,
+): Promise<{ url: string }> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
+  const gone = new Error("denext ui exited before it printed its URL");
   let buf = "";
-  try {
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const read = (async () => {
     while (!buf.includes("\n")) {
       const { value, done } = await reader.read();
-      if (done) throw new Error("denext ui exited before it printed its URL");
+      if (done) throw gone;
       buf += decoder.decode(value, { stream: true });
       if (buf.length > 65_536) throw new Error("denext ui printed no launch record");
     }
+  })();
+  const exit = exited.then(() =>
+    new Promise<never>((_, reject) => {
+      if (!settled) timer = setTimeout(() => reject(gone), LAUNCH_AFTER_EXIT_MS);
+    })
+  );
+  try {
+    await Promise.race([read, exit]);
+  } catch (error) {
+    // No record is coming: stop reading (a read still pending ends with the cancel).
+    read.catch(() => {});
+    await reader.cancel().catch(() => {});
+    throw error;
   } finally {
-    reader.releaseLock();
+    settled = true;
+    clearTimeout(timer);
   }
+  reader.releaseLock();
   for (const line of buf.split("\n")) {
     try {
       const record = JSON.parse(line);

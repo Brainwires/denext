@@ -32,6 +32,14 @@ and this project adheres to
   `PKI` modules: the import stopped at `ConvertTo-SecureString` and nothing was signed. The import
   and the removal afterwards now call .NET directly and need no PowerShell module, and the CEF
   signature and certificate-trust checks put Windows PowerShell's own modules first.
+- **`denext ui` and `denext mcp` no longer wait on a child's pipes after it has exited.** The
+  UI's runner for its `deno` children (tasks, verbs, `denext job --history`, the panels' other
+  CLI children) and the MCP bridge's wait for `denext ui`'s launch line read until every copy of
+  the child's stdout and stderr closed. On Windows a process started elsewhere in the same process
+  at that moment inherits those pipes, and on every OS a grandchild the child leaves running holds
+  them, so a call could hang for that process's whole life. They now end with the child's exit,
+  after a short grace for what is still in the pipes; streamed lines still arrive as they are
+  written.
 - **A command that read a quick child's output no longer waits up to 5 s to exit.** The reader
   that collects a child's output until it exits (`deno info`, `deno bundle`, the type check and
   the other children denext runs) started its 5 s drain timer when the exit was reported after

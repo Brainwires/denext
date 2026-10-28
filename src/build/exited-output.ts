@@ -14,19 +14,38 @@
 /** How long the pipes are read after the child has exited, by default. */
 const DRAIN_AFTER_EXIT_MS = 5_000;
 
-/** Read `stream` to its end, or until `graceMs` after `exited` resolves. */
-async function readPipe(
+/**
+ * Hand each chunk of `stream` to `onChunk` until the stream ends or, at the latest, `graceMs`
+ * after `exited` resolves; then cancel the reader. The streaming form of what
+ * {@linkcode exitedOutput} does for a whole output: a caller that consumes a child's output as it
+ * arrives (a line-by-line task runner) ends with the child, not with the last process holding a
+ * copy of its pipe.
+ *
+ * @param stream One of a child's piped output streams.
+ * @param exited Resolves when the child has exited (its `status`).
+ * @param onChunk Receives each chunk, in order, synchronously. A throw stops the reading.
+ * @param graceMs How long to keep reading after the exit.
+ * @returns Resolves once the reading is over and the reader cancelled; rejects with what
+ *   `onChunk` threw, if it did (an error reading the stream only ends it).
+ */
+export async function drainUntilExit(
   stream: ReadableStream<Uint8Array>,
   exited: Promise<unknown>,
-  graceMs: number,
-): Promise<Uint8Array> {
+  onChunk: (chunk: Uint8Array) => void,
+  graceMs: number = DRAIN_AFTER_EXIT_MS,
+): Promise<void> {
   const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
+  let failed: { error: unknown } | undefined;
   const all = (async () => {
     for (;;) {
       const { value, done } = await reader.read();
       if (done) return;
-      chunks.push(value);
+      try {
+        onChunk(value);
+      } catch (error) {
+        failed = { error };
+        return;
+      }
     }
   })().catch(() => {});
   let grace: ReturnType<typeof setTimeout> | undefined;
@@ -42,6 +61,17 @@ async function readPipe(
   read = true;
   clearTimeout(grace);
   await reader.cancel().catch(() => {});
+  if (failed) throw failed.error;
+}
+
+/** Read `stream` to its end, or until `graceMs` after `exited` resolves. */
+async function readPipe(
+  stream: ReadableStream<Uint8Array>,
+  exited: Promise<unknown>,
+  graceMs: number,
+): Promise<Uint8Array> {
+  const chunks: Uint8Array[] = [];
+  await drainUntilExit(stream, exited, (chunk) => void chunks.push(chunk), graceMs);
   const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
   let at = 0;
   for (const c of chunks) out.set(c, (at += c.length) - c.length);

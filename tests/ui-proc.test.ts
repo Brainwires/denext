@@ -1,5 +1,7 @@
 // `denext ui`'s subprocess runner: a child that never prints a newline (a `\r` progress bar,
-// one huge blob) is streamed in bounded pieces instead of being held whole until it exits.
+// one huge blob) is streamed in bounded pieces instead of being held whole until it exits, and a
+// child whose pipes outlive it (a process it left running, or on Windows one spawned elsewhere at
+// the same moment, holds them) is read until it exits, not until they close.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
@@ -18,6 +20,78 @@ Deno.test("runDeno: output with no newline arrives in bounded pieces", async () 
     assertEquals(lines.join("").length, 300_000, "every byte arrives");
     assert(lines.length > 1, "split into several pieces");
     assert(lines.every((line) => line.length <= 128 * 1024), "each piece is bounded");
+  } finally {
+    await Deno.remove(cwd, { recursive: true });
+  }
+});
+
+/**
+ * A `deno eval` program that leaves a 60 s grandchild holding its stdout and stderr (written to
+ * `pidFile`, for cleanup), prints `out` and `err`, and exits 3. The grandchild is Deno itself, so
+ * this holds the pipes the same way on every OS.
+ */
+function heldPipesProgram(pidFile: string): string {
+  return `const g = new Deno.Command(Deno.execPath(), {
+  args: ["eval", "setTimeout(() => {}, 60000)"], stdin: "null", stdout: "inherit", stderr: "inherit",
+}).spawn();
+Deno.writeTextFileSync(${JSON.stringify(pidFile)}, String(g.pid));
+g.unref();
+console.log("out");
+console.error("err");
+Deno.exit(3);`;
+}
+
+/** Kill the grandchild whose pid {@linkcode heldPipesProgram} wrote. */
+async function killHolder(pidFile: string): Promise<void> {
+  try {
+    Deno.kill(Number((await Deno.readTextFile(pidFile)).trim()), "SIGKILL");
+  } catch { /* gone, or never started */ }
+}
+
+for (const streaming of [true, false]) {
+  Deno.test(
+    `runDeno: returns once the child exits while a process it left holds its pipes (${
+      streaming ? "streamed" : "collected"
+    })`,
+    async () => {
+      const cwd = await Deno.makeTempDir({ prefix: "denext-proc-held-" });
+      const pidFile = join(cwd, "pid");
+      const lines: string[] = [];
+      try {
+        const t0 = Date.now();
+        const result = await runDeno(["eval", heldPipesProgram(pidFile)], {
+          cwd,
+          onLine: streaming ? (line) => void lines.push(line.trimEnd()) : undefined,
+        });
+        const took = Date.now() - t0;
+        assert(took < 30_000, `took ${took} ms: read until the 60 s holder let go`);
+        assertEquals(result.code, 3);
+        assertEquals(result.stdout.trim(), "out");
+        assertEquals(result.stderr.trim(), "err");
+        if (streaming) assertEquals(lines.toSorted(), ["err", "out"]);
+      } finally {
+        await killHolder(pidFile);
+        await Deno.remove(cwd, { recursive: true });
+      }
+    },
+  );
+}
+
+Deno.test({
+  name: "runDeno: an onLine that throws rejects the run, as it did before",
+  // The rejection is immediate; the other stream's read ends with the child, after the test.
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, async () => {
+  const cwd = await Deno.makeTempDir({ prefix: "denext-proc-throw-" });
+  try {
+    const err = await runDeno(["eval", "console.log('a'); console.log('b')"], {
+      cwd,
+      onLine: () => {
+        throw new Error("sink closed");
+      },
+    }).then(() => null, (e: Error) => e);
+    assertEquals(err?.message, "sink closed");
   } finally {
     await Deno.remove(cwd, { recursive: true });
   }
