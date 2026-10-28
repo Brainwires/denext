@@ -63,6 +63,8 @@ const MAX_STREAM_CHARS = 200_000;
 /** A running `denext ui` child and the session the bridge holds on it. */
 export class UiBridge {
   #child: Deno.ChildProcess | null = null;
+  /** The child's stdout drain, done once the child has exited. */
+  #drained: Promise<void> = Promise.resolve();
   #origin = "";
   #cookie = "";
   #csrf = "";
@@ -81,9 +83,9 @@ export class UiBridge {
 
   /** Start the child and run the handshake, once. */
   start(): Promise<void> {
-    return this.#starting ??= this.#start().catch((error) => {
+    return this.#starting ??= this.#start().catch(async (error) => {
       this.#starting = null;
-      this.stop();
+      await this.stop();
       throw error;
     });
   }
@@ -100,9 +102,11 @@ export class UiBridge {
       stdout: "piped",
       stderr: "null",
     }).spawn();
-    const launch = await firstJsonLine(this.#child.stdout, this.#child.status);
-    // Keep draining whatever else it prints, so a full pipe never stalls it.
-    this.#child.stdout.pipeTo(new WritableStream()).catch(() => {});
+    // Drain whatever it prints after the launch record, so a full pipe never stalls it; until
+    // then (or when it exits first), `stop()` cancels the pipe.
+    const stdout = this.#child.stdout;
+    const launch = await firstJsonLine(stdout, this.#child.status);
+    this.#drained = stdout.pipeTo(new WritableStream()).catch(() => {});
     const url = new URL(launch.url);
     if (url.hostname !== "127.0.0.1") throw new Error(`denext ui bound ${url.host}, not loopback`);
     this.#origin = url.origin;
@@ -145,12 +149,21 @@ export class UiBridge {
     return headers;
   }
 
-  /** Stop the child (idempotent). */
-  stop(): void {
-    try {
-      this.#child?.kill("SIGTERM");
-    } catch { /* already gone */ }
+  /**
+   * Stop the child (idempotent), resolving once it has exited and its output pipe is closed — so
+   * its working directory can be removed next (Windows refuses while a process holds it).
+   */
+  async stop(): Promise<void> {
+    const child = this.#child;
     this.#child = null;
+    if (!child) return;
+    try {
+      child.kill("SIGTERM");
+    } catch { /* already gone */ }
+    await child.status;
+    // Unread (it exited before its launch record, or the handshake failed): close it.
+    if (!child.stdout.locked) await child.stdout.cancel().catch(() => {});
+    await this.#drained;
   }
 }
 
@@ -317,9 +330,10 @@ export function setUiBridgeOptions(options: UiBridgeOptions): void {
 }
 
 /** Stop every UI child this server started (the MCP server is exiting). */
-export function stopUiBridges(): void {
-  for (const bridge of bridges.values()) bridge.stop();
+export async function stopUiBridges(): Promise<void> {
+  const stopping = [...bridges.values()].map((bridge) => bridge.stop());
   bridges.clear();
+  await Promise.all(stopping);
 }
 
 /** The bridge for `dir`, started on first use. */
