@@ -315,11 +315,18 @@ Deno.test("graphql-ws: the handshake needs the app's own Origin (or an allowed o
 });
 
 Deno.test("graphql-ws: connection_init timeout, subscribe before ack, a second init and a duplicate id close the socket", async () => {
-  const srv = await serve({ websocket: { connectionInitTimeoutMs: 50 } });
+  // A short init timeout for the socket that never initializes; the sockets that must reach the
+  // server before it run on another server with the default 3 s (a 50 ms one lost to a loaded
+  // machine's scheduling stall between the socket opening and its first message).
+  const quick = await serve({ websocket: { connectionInitTimeoutMs: 50 } });
   try {
-    const idle = await rawSocket(srv.url, srv.origin);
+    const idle = await rawSocket(quick.url, quick.origin);
     assertEquals((await idle.closed).code, 4408);
-
+  } finally {
+    await quick.close();
+  }
+  const srv = await serve();
+  try {
     const early = await rawSocket(srv.url, srv.origin);
     early.send({ type: "subscribe", id: "1", payload: { query: "{ hello }" } });
     assertEquals((await early.closed).code, 4401);
@@ -550,14 +557,21 @@ Deno.test("graphql limits: the init timeout and a protocol error release the Web
     assertEquals(await upgradeStatus(srv, "203.0.113.1"), 429);
     assertEquals((await idle.closed).code, 4408);
     assertEquals(await eventually(() => upgradeStatus(srv, "203.0.113.1"), 400), 400);
-
-    const junk = await rawSocket(srv.url, srv.origin);
-    assertEquals(await upgradeStatus(srv, "203.0.113.1"), 429);
-    junk.send({ nope: true });
-    assertEquals((await junk.closed).code, 4400);
-    assertEquals(await eventually(() => upgradeStatus(srv, "203.0.113.1"), 400), 400);
   } finally {
     await srv.close();
+  }
+  // The protocol error on a server with the default 3 s init timeout: the junk must reach the
+  // server before that timeout, after an upgrade round trip (50 ms was too little for a loaded
+  // machine's scheduling stall in between).
+  const slow = await serve({ maxConnections: 1 }, "prod", noopLoad);
+  try {
+    const junk = await rawSocket(slow.url, slow.origin);
+    assertEquals(await upgradeStatus(slow, "203.0.113.1"), 429);
+    junk.send({ nope: true });
+    assertEquals((await junk.closed).code, 4400);
+    assertEquals(await eventually(() => upgradeStatus(slow, "203.0.113.1"), 400), 400);
+  } finally {
+    await slow.close();
   }
 });
 
