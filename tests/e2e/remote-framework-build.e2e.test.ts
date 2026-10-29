@@ -68,8 +68,6 @@ async function buildViaRemoteCli(
 
 Deno.test({
   name: "e2e: a migrated app builds when denext is loaded remotely (run-from-JSR path)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   // 1. Serve the repo over http on an ephemeral port.
   const server = new Deno.Command(DENO, {
@@ -103,6 +101,7 @@ Deno.test({
     try {
       await server.status;
     } catch { /* already reaped */ }
+    await server.stdout.cancel().catch(() => {}); // the rest of its output, never read
     await Deno.remove(app, { recursive: true }).catch(() => {});
   }
 });

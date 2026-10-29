@@ -276,8 +276,6 @@ async function crud(provider: "sqlite" | "postgresql", url: (dir: string) => str
 Deno.test({
   name: `e2e: Prisma over denext/prisma-adapter — SQLite${reason ? ` (skipped: ${reason})` : ""}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: () => crud("sqlite", (dir) => `file:${join(dir, "dev.db")}`),
 });
 
@@ -287,8 +285,6 @@ Deno.test({
     pgReason ? ` (skipped: ${pgReason})` : ""
   }`,
   ignore: pgReason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     // A database of its own, so `prisma migrate dev` never resets a shared one.
     const name = `denext_prisma_e2e_${crypto.randomUUID().slice(0, 8)}`;

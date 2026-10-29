@@ -156,3 +156,30 @@ Deno.test("sanitizer ratchet: the CLI checks a tree and lowers its baseline", as
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("sanitizer ratchet: deno.json turns both sanitizers on for every deno test run", async () => {
+  // From Deno 2.8 both are off unless a run turns them on; without these keys no run in this repo
+  // would catch a leaked timer, child process or socket, and an opt-out would hide nothing.
+  const config = JSON.parse(await Deno.readTextFile(join(ROOT, "deno.json")));
+  assertEquals(config.test?.sanitizeOps, true);
+  assertEquals(config.test?.sanitizeResources, true);
+});
+
+Deno.test("sanitizer ratchet: the run's own sanitizers are on (a leaked timer fails its test)", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.writeTextFile(
+      join(dir, "leak_test.ts"),
+      'Deno.test("leaks", () => { setTimeout(() => {}, 60_000); });\n',
+    );
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["test", "--no-check", "--config", join(ROOT, "deno.json"), join(dir, "leak_test.ts")],
+      env: { NO_COLOR: "1" },
+      stdin: "null",
+    }).output();
+    assertEquals(out.success, false);
+    assertStringIncludes(new TextDecoder().decode(out.stdout), "Leaks detected");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

@@ -475,8 +475,6 @@ Deno.test({
   name: "project code never runs in the UI process — discovery is a separate pid",
   // The real (unstubbed) discovery path spawns `denext commands --json`, which imports the
   // project's config for real.
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext_ui_marker_" });
     await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");

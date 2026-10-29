@@ -170,8 +170,10 @@ async function readUntil(
   deadline: number,
 ): Promise<string> {
   while (!until.test(events) && Date.now() < deadline) {
-    const timer = new Promise<null>((r) => setTimeout(() => r(null), 5_000));
+    let id: ReturnType<typeof setTimeout> | undefined;
+    const timer = new Promise<null>((r) => id = setTimeout(() => r(null), 5_000));
     const next = await Promise.race([reader.read(), timer]);
+    clearTimeout(id);
     if (next?.done) break;
     if (next) events += next.value;
   }
@@ -229,8 +231,6 @@ async function workspace(): Promise<string> {
 
 Deno.test({
   name: "denext create --monorepo: check passes, and apps/web builds and serves the packages",
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: async (t) => {
     const root = await workspace();
     const web = join(root, "apps/web");

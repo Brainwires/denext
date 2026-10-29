@@ -184,8 +184,6 @@ async function startDev(): Promise<{ origin: string; close(): Promise<void> }> {
 Deno.test({
   name: "e2e: examples/clerk — @clerk/nextjs on denext against a Clerk development instance",
   ignore: !keys,
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const env = {
     NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: keys!.publishableKey,

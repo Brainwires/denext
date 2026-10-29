@@ -6,6 +6,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { cliConfigArgs, cliInvocation, runDeno } from "../src/ui/proc.ts";
+import { exited, spawnsOf } from "./helpers/spawns.ts";
 
 Deno.test("runDeno: output with no newline arrives in bounded pieces", async () => {
   const lines: string[] = [];
@@ -77,22 +78,21 @@ for (const streaming of [true, false]) {
   );
 }
 
-Deno.test({
-  name: "runDeno: an onLine that throws rejects the run, as it did before",
-  // sanitizer: the rejection is immediate; the other stream's read ends with the child, after
-  // the test.
-  sanitizeOps: false,
-  sanitizeResources: false,
-}, async () => {
+Deno.test("runDeno: an onLine that throws rejects the run, as it did before", async () => {
   // This process's own directory: the child may still be running when the run rejects, and on
   // Windows a temp dir that is a running process's cwd cannot be removed.
-  const err = await runDeno(["eval", "console.log('a'); console.log('b')"], {
-    cwd: Deno.cwd(),
-    onLine: () => {
-      throw new Error("sink closed");
-    },
-  }).then(() => null, (e: Error) => e);
-  assertEquals(err?.message, "sink closed");
+  let err: Error | null = null;
+  const children = await spawnsOf(async () => {
+    err = await runDeno(["eval", "console.log('a'); console.log('b')"], {
+      cwd: Deno.cwd(),
+      onLine: () => {
+        throw new Error("sink closed");
+      },
+    }).then(() => null, (e: Error) => e);
+  });
+  assertEquals((err as Error | null)?.message, "sink closed");
+  // The rejection is immediate; the child (and the other stream's read) end a moment later.
+  await exited(children);
 });
 
 // ── --offline and the grandchild gap ─────────────────────────────────────────

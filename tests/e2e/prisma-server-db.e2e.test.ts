@@ -107,8 +107,6 @@ for (
   Deno.test({
     name: `e2e: a migrated Prisma app runs on ${provider} through ${adapter}`,
     ignore: !url,
-    sanitizeOps: false,
-    sanitizeResources: false,
   }, async (t) => {
     const env = { DATABASE_URL: url!, PRISMA_PROVIDER: provider };
     const dir = await prepareApp(provider, env);

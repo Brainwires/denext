@@ -11,7 +11,14 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl } from "@std/path";
-import { collectConsoleLogs, launchBrowser, pollFor, runDeno, startCliServer } from "./harness.ts";
+import {
+  collectConsoleLogs,
+  launchBrowser,
+  pollFor,
+  runDeno,
+  startCliServer,
+  statusOf,
+} from "./harness.ts";
 
 const EXAMPLE = fromFileUrl(new URL("../../examples/react-router", import.meta.url));
 const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
@@ -21,8 +28,6 @@ const READY_TIMEOUT_MS = 60_000;
 
 Deno.test({
   name: "e2e: examples/react-router serves an RR7 framework-mode app through the App Router",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   await t.step("build generates the route wrappers", async () => {
     const built = await runDeno(["run", "-A", CLI, "build", "."], EXAMPLE, BUILD_TIMEOUT_MS);
@@ -69,7 +74,7 @@ Deno.test({
     });
 
     await t.step("unknown path 404s", async () => {
-      assertEquals((await fetch(server.origin + "/nope")).status, 404);
+      assertEquals(await statusOf(fetch(server.origin + "/nope")), 404);
     });
 
     await t.step("prerender: a listed static route is force-static", async () => {

@@ -24,6 +24,10 @@ import {
   renderDockerignore,
 } from "../src/build/docker-template.ts";
 import { currentDenoIdentity, denoReleaseVersion } from "../src/build/deno-version.ts";
+import { releaseFetchBodies } from "./helpers/unread-bodies.ts";
+
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
 
 const FILES = ["Dockerfile", "docker-compose.yml", ".dockerignore"] as const;
 

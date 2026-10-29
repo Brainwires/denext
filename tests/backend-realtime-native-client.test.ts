@@ -324,8 +324,6 @@ Deno.test("shared channel: buffered diffs, phx_close, system errors, sends while
 Deno.test({
   name:
     "native client: a refused private join; a dropped socket fails pushes, reconnects, re-tracks",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const { hub: h, perms } = hub();
     perms.value = {

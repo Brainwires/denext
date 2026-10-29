@@ -260,8 +260,17 @@ export function withDeadline<T>(
     () => ctrl.abort(new DOMException("live render deadline exceeded", "TimeoutError")),
     ms,
   );
+  let work: Promise<T>;
+  try {
+    work = fn(ctrl.signal);
+  } catch (err) {
+    // A resolver that throws before returning a promise: a rejection like any other failure,
+    // and its deadline timer is not left armed for the whole render timeout.
+    clearTimeout(timer);
+    return Promise.reject(err);
+  }
   return Promise.race([
-    fn(ctrl.signal),
+    work,
     new Promise<never>((_, reject) =>
       ctrl.signal.addEventListener(
         "abort",

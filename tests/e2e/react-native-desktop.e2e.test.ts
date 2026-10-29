@@ -93,8 +93,6 @@ function collectErrors(page: Page): string[] {
 
 Deno.test({
   name: "e2e: react-native-windows / react-native-macos resolve to denext's desktop shims",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   if (!dir) return;

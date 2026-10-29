@@ -181,6 +181,18 @@ Deno.test("smtp: a certificate that doesn't chain to a trusted CA is refused", a
   });
 });
 
+Deno.test("smtp: implicit TLS to an untrusted certificate is refused, its connection closed", async () => {
+  // The refused handshake's connection is closed, not leaked (the resource sanitizer, on in
+  // deno.json, fails this test otherwise); the STARTTLS case above checks the upgrade's.
+  await withServer({ tls: "implicit" }, async (server) => {
+    await assertRejects(
+      () => mailerFor(server, { secure: true, caCerts: undefined }).send(MESSAGE),
+      SmtpError,
+    );
+    assertEquals(server.mail.length, 0);
+  });
+});
+
 Deno.test("smtp: plaintext only with `insecure: true`, and only to loopback", async () => {
   await withServer({ tls: "none" }, async (server) => {
     await mailerFor(server, { insecure: true, host: "127.0.0.1" }).send(MESSAGE);

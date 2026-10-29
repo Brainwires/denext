@@ -90,8 +90,6 @@ async function stepDynamicRouteShell(server: RunningServer): Promise<void> {
 
 Deno.test({
   name: "e2e: unbundled dev loop — single-module HMR preserves state, no reload",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await prepareApp("denext_hmr_");
 
@@ -134,8 +132,6 @@ Deno.test({
 // state is preserved.
 Deno.test({
   name: "e2e: unbundled dev loop is default-on — dynamic route + nested-layout HMR",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await prepareApp("denext_hmr_def_");
 

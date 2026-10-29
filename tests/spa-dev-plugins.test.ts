@@ -26,8 +26,6 @@ async function waitFor(cond: () => boolean, ms: number): Promise<boolean> {
 
 Deno.test({
   name: "SPA dev: plugins are set up, prepare steps run at startup and re-run on their watch globs",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_spa_dev_plugins_" }));
   const ac = new AbortController();

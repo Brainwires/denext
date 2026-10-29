@@ -22,6 +22,7 @@ import { makeDom } from "./helpers/dom.ts";
 import { createUnbundledState } from "../src/build/dev-unbundled/state.ts";
 import { transform } from "../src/build/dev-unbundled/transform.ts";
 import { prepareConfig } from "../src/build/bundle.ts";
+import "./helpers/esbuild-after-each.ts";
 
 // deno-lint-ignore no-explicit-any
 const asAny = (v: unknown): any => v;

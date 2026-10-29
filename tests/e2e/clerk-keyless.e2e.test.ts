@@ -64,8 +64,6 @@ async function sessionToken(key: CryptoKey, claims: Record<string, unknown>): Pr
 
 Deno.test({
   name: "e2e: examples/clerk refuses missing, expired, tampered and foreign session tokens",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const { privateKey, pem } = await keyPair();
   const other = await keyPair();

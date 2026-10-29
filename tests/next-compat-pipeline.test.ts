@@ -28,8 +28,6 @@ const NEXT_COMPAT = fromFileUrl(new URL("../examples/next-compat", import.meta.u
 
 Deno.test({
   name: "next-compat build: bundles a real-npm React page through the compat pipeline",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     try {
       const result = await buildInChild(NEXT_COMPAT);

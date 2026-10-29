@@ -15,6 +15,7 @@ import { captureConsole } from "./dev-events.ts";
 import { startSpaDevServer } from "./spa.ts";
 import { isCompat } from "./dev-server/compat.ts";
 import { createDevApp } from "./dev-server/dev-app.ts";
+import { backgroundSettled } from "./dev-server/dev-endpoints.ts";
 import { removeDevInfo, writeDevInfo } from "./dev-server/dev-info.ts";
 import { createDevHandler } from "./dev-server/handler.ts";
 import { createDevLoader } from "./dev-server/loaders.ts";
@@ -70,7 +71,11 @@ function serveDev(st: DevState, handler: (request: Request) => Promise<Response>
     releaseDefaultCacheStore();
     cleanup();
   });
-  return server;
+  // A stopped server is finished once its background runs (a `deno check` child the stop
+  // signal ended) have exited too.
+  return Object.assign(server, {
+    finished: server.finished.then(() => backgroundSettled(st)),
+  });
 }
 
 /** Start the development server for the project described by `options.paths`. */

@@ -64,8 +64,6 @@ const SIGN_IN = `fetch("/auth/callback/credentials", {
 
 Deno.test({
   name: "e2e: denextAuth under denext dev on http://localhost keeps its session cookie",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_auth_dev_http_" });
   await writeFixture(dir);

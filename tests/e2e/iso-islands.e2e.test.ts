@@ -17,8 +17,6 @@ const text = (id: string) => `document.querySelector('[data-testid=${id}]').text
 
 Deno.test({
   name: "e2e: client:* islands hydrate on their own on an isomorphic route",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

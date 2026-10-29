@@ -63,8 +63,6 @@ async function stepNpmBundle(dev: UnbundledDev, pageCode: string): Promise<void>
 
 Deno.test({
   name: "e2e: unbundled compat — react→runtime + npm optimizeDeps serving",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const outDir = await Deno.makeTempDir({ prefix: "denext_compat_" });
   const dev = createUnbundledDev({

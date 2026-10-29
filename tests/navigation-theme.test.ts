@@ -145,9 +145,11 @@ Deno.test("theme auto: marks <html data-dnx-shell> inside the shell only; plain 
     root.unmount();
   });
   assertEquals(doc.documentElement.getAttribute("data-dnx-shell"), null, "the web stays plain");
+  // The unmounts' passive cleanups run on their macrotask: let it, inside the test.
+  await new Promise((r) => setTimeout(r, 0));
 });
 
-Deno.test("StackView: scrolling marks the screen and fades the large title's bar title in", () => {
+Deno.test("StackView: scrolling marks the screen and fades the large title's bar title in", async () => {
   const { doc, container } = makeDom();
   setDocument(doc as Any);
   const root = createRoot(container as Any);
@@ -181,6 +183,8 @@ Deno.test("StackView: scrolling marks the screen and fades the large title's bar
   scroll(0);
   assertEquals(large.style.getPropertyValue("transform"), "");
   root.unmount();
+  // The unmount's passive cleanups run on their macrotask: let it, inside the test.
+  await new Promise((r) => setTimeout(r, 0));
 });
 
 /** Render a two-tab TabsView and press `name`; returns the Haptics calls. */

@@ -18,7 +18,7 @@ import {
   renderToReadableStream as compatRenderToReadableStream,
 } from "../src/compat/react-dom-server.ts";
 import { Suspense, use } from "../src/runtime/suspense.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest, SegmentLevel } from "../src/router/manifest.ts";
 import { forbidden, unauthorized } from "../src/runtime/error-boundary.ts";

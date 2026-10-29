@@ -319,7 +319,8 @@ with the instance that holds the socket.
 `broadcastChannelTransport()` implements the interface over the Web
 `BroadcastChannel` API, which on **Deno Deploy** spans the isolates of one
 deployment — that is its purpose; on a self-host it reaches only the workers of
-one process, so it does not make two containers talk. Install either, or your own
+one process, so it does not make two containers talk (its `close()` closes the
+channel, which otherwise keeps the process alive). Install either, or your own
 two-method NATS transport, with `setChannelTransport(t)`; the hub re-subscribes.
 Delivery is at most once (an event published while a subscriber is reconnecting
 is not replayed) — except on a channel with `history`, whose subscribers resume

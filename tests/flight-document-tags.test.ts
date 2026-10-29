@@ -11,7 +11,7 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { renderToHtmlFlight } from "../src/jsx/render-to-html-flight.ts";
 import { renderToString } from "../src/jsx/render-to-string.ts";
 import { prerenderToShell } from "../src/jsx/render-to-ppr.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { tagClientExports } from "../src/runtime/client-reference.ts";

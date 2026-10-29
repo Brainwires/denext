@@ -168,8 +168,6 @@ async function toolchain(): Promise<string | null> {
 
 Deno.test({
   name: "denext test --coverage: a module run by a Deno.test file and a Vitest file, one report",
-  sanitizeResources: false,
-  sanitizeOps: false,
   ignore: (await toolchain()) === null,
 }, async () => {
   const deno = (await toolchain())!;

@@ -92,8 +92,6 @@ Deno.test("sync: desktop.app name + identifier from the config are mirrored into
 Deno.test({
   name:
     "prepareDesktopPackage: the config's identity survives the export restoring a backed-up deno.json",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   // `denext desktop package` runs the script under the CLI's CSS re-exec, which injects css→shim
   // redirects into deno.json and keeps a backup of the original while the script runs; the

@@ -433,6 +433,8 @@ Deno.test("NativeViewSlot: an inline callback ref gets the element and never re-
     assertEquals(seen.at(-1), slot, "the latest ref holds the element");
     root.unmount();
     await tick();
+    // The unmounted view stays parked for a Fast Refresh remount, then goes: let it, here.
+    await new Promise((r) => setTimeout(r, PARK_MS + 20));
   });
 });
 

@@ -15,6 +15,7 @@ import { startDevServer } from "../../src/build/dev-server.ts";
 import { startSpaDevServer } from "../../src/build/spa.ts";
 import { resolveProject } from "../../src/build/paths.ts";
 import { boundPort, listenedPort } from "../helpers/port.ts";
+import { stop as stopEsbuild } from "../../src/build/esbuild/mod.ts";
 
 // Signal-safe headless-Chromium launch lives in the framework (used by `denext
 // profile` too); the harness just re-exports it under its historical name.
@@ -28,6 +29,16 @@ import { launchManagedBrowser } from "../../src/profile/browser.ts";
  */
 export function launchBrowser(): Promise<Browser> {
   return launchManagedBrowser();
+}
+
+/**
+ * The status of `res`, its body cancelled: a body never read keeps the response (and on a file
+ * body its handle) open past the test, which the resource sanitizer reports.
+ */
+export async function statusOf(res: Response | Promise<Response>): Promise<number> {
+  const r = await res;
+  await r.body?.cancel();
+  return r.status;
 }
 
 /** A running server for the E2E suite. */
@@ -102,6 +113,7 @@ async function startDevKind(
     close: async () => {
       controller.abort();
       await server.finished;
+      await stopEsbuild(); // the dev bundler's long-lived esbuild service, started in this process
       restore();
     },
   };
@@ -606,16 +618,21 @@ export async function startCliServer(
       await child.status;
     } catch { /* already reaped */ }
     await stderr.done.catch(() => {});
+    // The rest of stdout was never read: let the pipe go (a read still pending after a missed
+    // deadline keeps it locked; it ends now that the tree is gone).
+    await child.stdout.cancel().catch(() => {});
   };
   // Hard-bound the readiness wait with Promise.race: `reader.cancel()` alone does NOT
   // unblock a pending read while the re-exec'd child holds the inherited stdout pipe
   // open, so a timeout timer isn't enough — race the read against a deadline that always
-  // resolves. The losing readOrigin read is abandoned (sanitizeResources:false) and its
-  // pipe closes when the tree is killed.
+  // resolves (and is cleared once the race is over). A losing readOrigin read ends when the
+  // tree is killed and its pipe closes.
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   const origin = await Promise.race([
     readOrigin(child.stdout),
-    new Promise<string>((resolve) => setTimeout(() => resolve(""), readyTimeoutMs)),
+    new Promise<string>((resolve) => deadline = setTimeout(() => resolve(""), readyTimeoutMs)),
   ]);
+  clearTimeout(deadline);
   if (!origin) await close();
   assert(
     origin,
@@ -662,13 +679,17 @@ export async function spawnOnBoundPort(
       }
     } catch { /* cancelled on teardown */ }
   };
-  void read(child.stdout);
-  void read(child.stderr);
+  const reading = Promise.all([read(child.stdout), read(child.stderr)]);
   let gone = false;
   child.status.then(() => gone = true, () => gone = true);
   const close = async () => {
     await killTree(child.pid);
     await child.status.catch(() => {});
+    // The tree is gone, so its pipes close and the reads end: wait for them (bounded), or they
+    // outlive the test.
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([reading, new Promise((r) => grace = setTimeout(r, 5_000))]);
+    clearTimeout(grace);
   };
   const port = await boundPort(() => seen, () => gone, timeoutMs);
   if (port === undefined) {

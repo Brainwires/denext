@@ -29,8 +29,6 @@ function localDb() {
 
 Deno.test({
   name: "examples/offline-sync: the SPA builds, and devices sync through the built backend",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     // The app: a client bundle carrying the UI and the sync client.
     await build(APP);

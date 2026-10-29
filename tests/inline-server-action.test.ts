@@ -222,8 +222,6 @@ export function Widget() {
 
 Deno.test({
   name: "compat client bundle: an inline action in client code fails the build, never ships",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const esbuild = await import("../src/build/esbuild/mod.ts");
   const dir = await tempApp("denext_inline_client_", {

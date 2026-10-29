@@ -62,8 +62,6 @@ async function streamFlushesShellBeforeBoundary(origin: string) {
 
 Deno.test({
   name: "examples/streaming: buffered Suspense resolution + out-of-order streaming",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;

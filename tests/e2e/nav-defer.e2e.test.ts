@@ -88,12 +88,8 @@ const FORCE_POST = `(() => {
 
 Deno.test({
   name: "e2e: a soft navigation streams its deferred values per boundary",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, () => navigateDeferred(false));
 
 Deno.test({
   name: "e2e: a soft navigation sent as a POST streams its deferred values too",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, () => navigateDeferred(true));

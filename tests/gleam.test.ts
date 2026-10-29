@@ -65,7 +65,6 @@ export const out = [hello, n, r instanceof Ok ? r[0] : null, a];
 
 Deno.test({
   name: "Gleam output type-checks under Deno once patched (and not before)",
-  sanitizeResources: false,
 }, async () => {
   const app = await appWithFixture();
   try {
@@ -350,7 +349,6 @@ if (!GLEAM) console.warn(`gleam real-toolchain test skipped: ${NO_GLEAM}`);
 Deno.test({
   name: "gleam() with a real toolchain: compile a project and import it typed",
   ignore: GLEAM === null,
-  sanitizeResources: false,
 }, async () => {
   const app = await appWithFixture();
   try {

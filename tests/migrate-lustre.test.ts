@@ -353,7 +353,6 @@ Deno.test({
     "migrate --from lustre: the migrated app compiles with gleam() and exports its page",
   ),
   ignore: GLEAM.bin === null || SYMLINK_GATE.ignore,
-  sanitizeResources: false,
 }, async () => {
   await withTree(LUSTRE, async (dir) => {
     await migrateProject(dir, { denextLocalPath: REPO });

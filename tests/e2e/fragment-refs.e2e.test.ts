@@ -29,8 +29,6 @@ async function loadedResources(page: { evaluate(expr: string): Promise<unknown> 
 
 Deno.test({
   name: "e2e: Fragment refs hydrate, pass React's DOM cases, and load on demand",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

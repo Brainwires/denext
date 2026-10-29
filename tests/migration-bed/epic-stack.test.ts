@@ -101,6 +101,4 @@ const EPIC_STACK: Bed = {
 
 Deno.test({
   name: "migration bed: epicweb-dev/epic-stack (Remix) migrates, builds, and renders",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, (t) => runBed(t, EPIC_STACK));

@@ -132,9 +132,14 @@ Deno.test("offline-sync: a refused batch stays queued and surfaces; the backend 
         body: typeof body === "string" ? body : JSON.stringify(body),
       }),
     );
-  assertEquals((await post("{not json")).status, 400);
-  assertEquals((await post({ batch: [{ op: "PUT", table: "users", id: "1" }] })).status, 400);
-  assertEquals((await app(new Request("http://backend.test/api/changes?since=-1"))).status, 400);
+  // Each refusal's body is read: an unread one holds the request's deadline timer open.
+  const status = async (res: Response) => (await res.body?.cancel(), res.status);
+  assertEquals(await status(await post("{not json")), 400);
+  assertEquals(await status(await post({ batch: [{ op: "PUT", table: "users", id: "1" }] })), 400);
+  assertEquals(
+    await status(await app(new Request("http://backend.test/api/changes?since=-1"))),
+    400,
+  );
   // PowerSync's upload shape is accepted as is.
   const ok = await post({
     batch: [{ op: "PUT", table: "notes", id: "ps-1", data: { body: "from PowerSync" } }],

@@ -12,7 +12,7 @@ import { actionEndpoint } from "../src/runtime/server-action.ts";
 import { serverAction } from "../src/runtime/action-stub.ts";
 import { API_BATCH_HEADER, API_BATCH_PATH } from "../src/runtime/api-batch-protocol.ts";
 import { batchApp } from "./helpers/batch-app.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 

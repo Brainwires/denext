@@ -70,8 +70,6 @@ async function crossOriginPostIsRefused(ctx: Ctx) {
 
 Deno.test({
   name: "examples/actions: server action progressive enhancement + client island",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;

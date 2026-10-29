@@ -44,6 +44,19 @@ function spyEncode(): { count: () => number; restore: () => void } {
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
+/** Whether `p` settles within `ms` (the deadline's timer is cleared either way). */
+async function within(p: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      p.then(() => true),
+      new Promise<boolean>((r) => timer = setTimeout(() => r(false), ms)),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function readText(stream: ReadableStream<Uint8Array>): Promise<string> {
   return await new Response(stream).text();
 }
@@ -100,10 +113,7 @@ Deno.test("core renderToReadableStream: allReady resolves before anyone reads", 
   const stream = renderToReadableStream(manyBoundaries()) as ReadableStream<Uint8Array> & {
     allReady: Promise<void>;
   };
-  const settled = await Promise.race([
-    stream.allReady.then(() => true),
-    tick(500).then(() => false),
-  ]);
+  const settled = await within(stream.allReady, 500);
   assert(settled, "allReady must not wait for the consumer to read");
   const html = await readText(stream);
   for (let i = 0; i < BOUNDARIES; i++) assert(html.includes(`item-${i}-`), `item ${i}`);
@@ -166,7 +176,7 @@ Deno.test("renderToPipeableStream: pipe() from inside onShellReady (React's docu
       stream.pipe(sink as Any);
     },
   });
-  const ok = await Promise.race([done.then(() => true), tick(1000).then(() => false)]);
+  const ok = await within(done, 1000);
   assert(ok, "onShellReady fires before pipe() and the piped render completes");
   assert(sink.text().includes("item-3-"));
 });

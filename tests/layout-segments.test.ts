@@ -106,7 +106,7 @@ const asDoc = (d: FakeDocument): any => d;
 // deno-lint-ignore no-explicit-any
 const asEl = (e: FakeElement): any => e;
 
-Deno.test("useSelectedLayoutSegment(s) slice from the provider depth on the client", () => {
+Deno.test("useSelectedLayoutSegment(s) slice from the provider depth on the client", async () => {
   const { doc, container } = makeDom();
   setDocument(asDoc(doc));
 
@@ -121,9 +121,11 @@ Deno.test("useSelectedLayoutSegment(s) slice from the provider depth on the clie
   root.render(provideLayoutSegments({ pathname: "/a/b/c", depth: 1 }, h(Probe, null)));
   assertEquals(container.innerHTML, "<i>b,c|b</i>");
   root.unmount();
+  // The unmount's passive cleanups run on their macrotask: let it, inside the test.
+  await new Promise((r) => setTimeout(r, 0));
 });
 
-Deno.test("no provider means app-root-relative segments on the client", () => {
+Deno.test("no provider means app-root-relative segments on the client", async () => {
   const { doc, container } = makeDom();
   setDocument(asDoc(doc));
 
@@ -136,4 +138,6 @@ Deno.test("no provider means app-root-relative segments on the client", () => {
   root.render(h(Probe, null));
   assertEquals(container.innerHTML, "<i></i>");
   root.unmount();
+  // The unmount's passive cleanups run on their macrotask: let it, inside the test.
+  await new Promise((r) => setTimeout(r, 0));
 });

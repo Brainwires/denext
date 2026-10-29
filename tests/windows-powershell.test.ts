@@ -127,9 +127,6 @@ async function runPoisoned(
 Deno.test({
   name: "Windows: the generated scripts run under a module path inherited from PowerShell 7",
   ignore: !WINDOWS,
-  // sanitizer: real powershell.exe children (stdin written, then closed) on Windows only; the
-  // test came from the PSModulePath fix, before the ratchet
-  sanitizeResources: false,
   async fn() {
     const dir = await Deno.makeTempDir({ prefix: "denext-psmodulepath-" });
     try {

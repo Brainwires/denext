@@ -102,6 +102,16 @@ Deno.test({
   await esbuild.stop();
 });
 
+Deno.test("esbuild API: a stop() made while another is stopping the child waits for its exit too", async () => {
+  // A dev server's shutdown starts one stop() without awaiting it; a caller's own stop() right
+  // after found nothing left to stop and returned at once, before the child had exited.
+  // The test ends on the second stop() alone: the sanitizers (on in deno.json) fail it when the
+  // child, or the wait for its exit, is still open then.
+  assertEquals((await esbuild.transform("let b = 2", { loader: "ts" })).code, "let b = 2;\n");
+  void esbuild.stop();
+  await esbuild.stop();
+});
+
 Deno.test("esbuild API: initialize once, browser-only options refused, sync APIs absent", async () => {
   try {
     await assertRejects(

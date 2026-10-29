@@ -277,8 +277,6 @@ async function assertRogueRefused(browser: Browser, origin: string, copy: string
 
 Deno.test({
   name: 'e2e: <Script strategy="worker"> runs in Partytown\'s web worker under the strict CSP',
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await Deno.makeTempDir({ prefix: "denext-script-worker-" });
   const browser = await launchBrowser();

@@ -60,9 +60,13 @@ Deno.test("raceAbort resolves with the value when the promise wins", async () =>
 
 Deno.test("raceAbort resolves early (undefined) when the signal aborts mid-flight", async () => {
   const ac = new AbortController();
-  const slow = new Promise<string>((r) => setTimeout(() => r("late"), 10_000));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const slow = new Promise<string>((r) => {
+    timer = setTimeout(() => r("late"), 10_000);
+  });
   queueMicrotask(() => ac.abort());
   assertEquals(await raceAbort(slow, ac.signal), undefined);
+  clearTimeout(timer); // the stand-in for a slow call; raceAbort itself left nothing running
 });
 
 // ---- env.ts ----------------------------------------------------------------

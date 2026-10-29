@@ -25,6 +25,7 @@ import { spaIslandSources, transformSpaIslands } from "../src/build/spa-islands.
 import { bundleSpaInto } from "../src/build/spa/bundle.ts";
 import { resolveProject } from "../src/build/paths.ts";
 import { createUnbundledDev } from "../src/build/dev-unbundled.ts";
+import "./helpers/esbuild-after-each.ts";
 
 // ── the rewrite ─────────────────────────────────────────────────────────────────────────────
 

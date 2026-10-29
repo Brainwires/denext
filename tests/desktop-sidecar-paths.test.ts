@@ -163,6 +163,8 @@ Deno.test("supervisor: an http check whose fetch throws keeps polling; an exit b
   assert(states.includes("backoff"));
   assertEquals(s.status.state, "starting");
   await s.stop();
+  // The readiness poll's next tick (5 ms) finds the run stopped and ends: let it, in this test.
+  await new Promise((r) => setTimeout(r, 30));
 });
 
 Deno.test("supervisor: a launcher that throws a non-Error, and a stop while it is launching", async () => {
@@ -414,7 +416,9 @@ globalThis.denextSidecar.onShutdown(() => new Promise((r) => s.close(r)));
     const api = host.handle("api");
     assertEquals((await api.whenReady(15_000)).state, "ready");
     assertEquals((await host.handle("prog").whenReady(15_000)).state, "ready");
-    assertEquals((await fetch(api.info.url!)).status, 200);
+    const answered = await fetch(api.info.url!);
+    await answered.body?.cancel();
+    assertEquals(answered.status, 200);
     assertEquals(api.info.values, { k: "v", missing: null });
     const log = join(dir, "logs", "sidecar-api.log");
     await until(async () =>

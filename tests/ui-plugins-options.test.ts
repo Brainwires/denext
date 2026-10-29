@@ -17,6 +17,10 @@ import { setJsrClient } from "../src/ui/features/plugin-search.ts";
 import { sanitizeOptionsSchema } from "../src/ui/features/third-party-options.ts";
 import type { ProcResult, RunDenoOptions } from "../src/ui/proc.ts";
 import type { JsrMetaResult, JsrSearchResult } from "../src/ui/jsr.ts";
+import { releaseFetchBodies } from "./helpers/unread-bodies.ts";
+
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
 
 const OPENAPI = "@denext/openapi";
 const OPTIONS = `/plugins/options?name=${encodeURIComponent(OPENAPI)}`;

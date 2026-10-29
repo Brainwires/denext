@@ -17,7 +17,7 @@ import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../../src/p
 import type { DenextPlugin } from "../../src/plugin/mod.ts";
 import type { DenextConfig } from "../../src/server/config.ts";
 import type { ModuleLoader } from "../../src/server/types.ts";
-import { createApp } from "../../src/server/app.ts";
+import { createApp } from "./released-app.ts";
 import { scanRoutes } from "../../src/router/manifest.ts";
 import { createRequestContext, runWithContext } from "../../src/server/request-context.ts";
 import { denextAuth } from "../../src/server/auth/mod.ts";
@@ -676,6 +676,9 @@ export async function runSupabaseStorageSuite(t: Deno.TestContext, h: StorageHar
       });
       assertEquals(wrongObject.status, 400);
       await wrongObject.body?.cancel();
+      // tus-js-client throttles its progress callback (lodash.throttle, 100 ms): let the trailing
+      // call's timer fire inside the test.
+      await new Promise((r) => setTimeout(r, 150));
 
       const headers = {
         "tus-resumable": "1.0.0",
@@ -687,6 +690,7 @@ export async function runSupabaseStorageSuite(t: Deno.TestContext, h: StorageHar
       };
       const created = await fetch(base, { method: "POST", headers });
       assertEquals(created.status, 201);
+      await created.body?.cancel();
       const url = new URL(created.headers.get("location")!, base).toString();
       assertExists(created.headers.get("upload-expires"));
       const patch = (offset: number, body: string) =>
@@ -733,6 +737,7 @@ export async function runSupabaseStorageSuite(t: Deno.TestContext, h: StorageHar
           ),
         },
       });
+      await doomed.body?.cancel();
       const doomedUrl = new URL(doomed.headers.get("location")!, base).toString();
       const del = await fetch(doomedUrl, {
         method: "DELETE",

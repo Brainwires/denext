@@ -2,7 +2,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { serveMetadataFile } from "../src/server/metadata-files.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { defaultLoader } from "../src/server/mod.ts";
 
 async function appWith(files: Record<string, string>): Promise<string> {

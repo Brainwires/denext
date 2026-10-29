@@ -6,6 +6,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
+import { exited, spawnsOf } from "./helpers/spawns.ts";
 import {
   cacheCliModules,
   type CliCacheOptions,
@@ -107,11 +108,13 @@ Deno.test("cli cache: warmCliModules caches once in a detached child, then stays
   const modules = moduleServer();
   const url = modules.url("bg");
   try {
-    await warmCliModules(url, scratch(dir));
+    const warm = await spawnsOf(() => warmCliModules(url, scratch(dir)));
     // The attempt is recorded at once; the marker when the background cache succeeded.
     const attempt = markers(dir).find((m) => m.endsWith(".cached.attempt"));
     assert(attempt, `markers: ${markers(dir)}`);
     await until(() => markers(dir).some((m) => m.endsWith(".cached")));
+    // The detached child writes the marker, then exits: wait for that too (it is unref'd).
+    await exited(warm);
     // A cached version is never warmed again: the attempt marker is not rewritten.
     const before = Deno.statSync(join(dir, "denext-cli", attempt)).mtime?.getTime();
     await new Promise((r) => setTimeout(r, 20));
@@ -128,7 +131,10 @@ Deno.test("cli cache: a recent failed attempt is not retried; a warm-up that can
   const modules = moduleServer();
   try {
     const url = modules.missing();
-    await warmCliModules(url, scratch(dir));
+    const warm = await spawnsOf(() => warmCliModules(url, scratch(dir)));
+    assertEquals(warm.length, 1, "one detached warm-up");
+    // Its `deno cache` fails on the 404 at once: wait for it to go (it is unref'd, so ref it).
+    await exited(warm);
     const [attempt] = markers(dir);
     assert(attempt?.endsWith(".cached.attempt"), `markers: ${markers(dir)}`);
     const stamp = Deno.readTextFileSync(join(dir, "denext-cli", attempt));

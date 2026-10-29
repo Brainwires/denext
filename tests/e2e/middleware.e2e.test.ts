@@ -14,8 +14,6 @@ const EXAMPLE = await copyExample("hello");
 
 Deno.test({
   name: "e2e: middleware redirects a legacy path (308) and tags a response header",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   const browser = await launchBrowser();

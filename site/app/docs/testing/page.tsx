@@ -45,8 +45,9 @@ const home = await client.get("/");`}
         (<code>@denext/pages-router</code>), or a route a plugin serves, answers in the test the way
         it does in the server. Each <code>createTestApp</code> call gets its own plugin set. Its
         {" "}
-        <code>close()</code> runs the plugins' teardowns, and <code>await using</code>{" "}
-        calls it for you.
+        <code>close()</code>{" "}
+        runs the plugins' teardowns and cancels the response bodies the test never read (as a server
+        does when the client goes away), and <code>await using</code> calls it for you.
       </p>
       <Code lang="ts">
         {`await using app = await createTestApp("./"); // pages/ + plugins: [pagesRouter()]

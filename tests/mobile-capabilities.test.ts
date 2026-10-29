@@ -652,7 +652,9 @@ function fakeIndexedDB() {
           };
         },
       };
-      setTimeout(() => tx.oncomplete?.(), 0);
+      // A microtask: a read never waits for the commit, and a timer left for it would outlive
+      // the test.
+      queueMicrotask(() => tx.oncomplete?.());
       return tx;
     },
   };

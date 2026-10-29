@@ -20,7 +20,7 @@ import {
 } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { backend } from "../packages/backend/mod.ts";
 import { db } from "../packages/backend/server.ts";
@@ -84,8 +84,6 @@ Deno.test({
     reason ? ` (skipped: ${reason})` : ""
   }`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await environment();
     const root = await Deno.makeTempDir({ prefix: "dnx-rest-reload-" });

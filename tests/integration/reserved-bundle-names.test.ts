@@ -74,8 +74,6 @@ export default function Home() {
 
 Deno.test({
   name: "native build: /flight and /flight-boot routes keep their bundles beside the Flight entry",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_reserved_bundles_" });
   try {

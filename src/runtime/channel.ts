@@ -649,9 +649,12 @@ export function inMemoryChannelTransport(): ChannelTransport {
  * name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.
  *
  * @param name The BroadcastChannel name (default `"denext-channels"`).
- * @returns The transport.
+ * @returns The transport; its `close()` closes the BroadcastChannel (which otherwise keeps the
+ *   process's event loop alive for as long as it is open).
  */
-export function broadcastChannelTransport(name = "denext-channels"): ChannelTransport {
+export function broadcastChannelTransport(
+  name = "denext-channels",
+): ChannelTransport & { close(): void } {
   if (typeof BroadcastChannel === "undefined") {
     throw new Error("broadcastChannelTransport: BroadcastChannel is not available in this runtime");
   }
@@ -667,6 +670,7 @@ export function broadcastChannelTransport(name = "denext-channels"): ChannelTran
       local.publish(ev); // this instance
     },
     subscribe: (fn) => local.subscribe(fn),
+    close: () => bc.close(),
   };
 }
 

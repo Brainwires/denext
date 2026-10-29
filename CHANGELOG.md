@@ -58,6 +58,8 @@ and this project adheres to
   `change` are sent once the view is live, so the server's model learns what was typed). Markup
   that does not fit the view, and a later whole view (a reconnect, a resync), are rendered anew.
   The next Gleam build rewrites `.denext/lustre-view.ts` to pass Lustre's `insertMetadataChild`.
+- **`broadcastChannelTransport()` returns a `close()`** that closes its `BroadcastChannel`
+  (an open one keeps the process's event loop alive).
 
 ### Fixed
 
@@ -130,6 +132,43 @@ and this project adheres to
 - **`desktop dev --inspect-renderer` picks the renderer's port right before the window opens.**
   The free port was picked before the build, so another process had the whole build to take it;
   it is now picked after the build, and a picked port that is already held is picked again.
+- **A monorepo app a glob member names builds with its npm packages hoisted to the root.** In a
+  Deno workspace such as `{ "workspace": ["./apps/*"], "nodeModulesDir": "manual" }`, an app's
+  bare `import ms from "ms"` (a dependency in its package.json, installed in the root's
+  `node_modules`) failed the esbuild build with "not in import map": the config the loader builds
+  a glob member on now carries the app's and the root's package.json dependencies and the root's
+  `nodeModulesDir`, and npm packages resolve from the nearest `node_modules` when the app has
+  none of its own, as Deno resolves them.
+- **Leaks the test suite's sanitizers found, now that they are on.** From Deno 2.8 the op and
+  resource sanitizers are off by default; denext's `deno.json` turns both on for its own suite,
+  and these leaks surfaced (each with a test that fails under the sanitizers before the fix):
+  - A download refused as larger than its pin (the Deno toolchain, the Deno Desktop runtime) now
+    cancels the response, so its connection is let go instead of staying open.
+  - `denext desktop dev` and `denext mobile dev` stop listening for Ctrl-C / SIGTERM when the
+    session ends another way (the window closed, the dev server ended or failed to start); a
+    listener left behind kept the process alive and swallowed the next Ctrl-C. `denext ui`
+    likewise stops trapping the signals when its server is shut down another way.
+  - A stopped `denext dev` server's `finished` now waits for a background `deno check` it had
+    started, so no child outlives it (on Windows one held the project directory).
+  - A second esbuild `stop()` made while another was stopping the child resolved at once; it now
+    waits for the exit too.
+  - `smtpMailer` closes the TLS connection when a STARTTLS or implicit-TLS handshake is refused
+    (a certificate that doesn't chain to a trusted CA), instead of leaving it open.
+  - The reconciler cancels the macrotask it scheduled for passive effects (`useEffect`) when they
+    are flushed sooner (`flushSync`, `act`, the next render), and closes its time-slicing
+    `MessageChannel` once a sliced render is done, so neither outlives the work in a
+    non-browser process (a component test).
+  - The fumadocs MDX compile host's dispose resolves once its child has exited.
+  - Live's per-render deadline is cleared when a resolver throws synchronously (it stayed armed
+    for the whole render timeout).
+  - `StackView`'s fallback for a gesture pop that never lands, the tabs' view-transition
+    fallback and the web barcode scanner's next poll are cancelled once they are moot (an
+    unmounted stack, a settled router, a finished scan).
+  - The React Native alias plugin checks for `react-native-svg` / NativeWind on first need, not
+    when it is created.
+- **`createTestApp`'s `close()` (and `await using`) releases the response bodies a test never
+  read**, as a server does when its client goes away: an unread body kept the request's deadline
+  timer running past the test.
 - **esbuild's `stop()` resolves once its child has exited.** `stop()` from denext's esbuild API
   (and `stopNextCompat()` / `withEsbuild()`, which call it) signalled the long-lived esbuild
   process and returned at once, so a Deno test that awaited it still ended with the process and
@@ -139,13 +178,6 @@ and this project adheres to
   output pipe open for a moment; a caller that removed the project directory next could race it
   (Windows refuses to remove a directory a process still holds). Stopping it now resolves once
   the child has exited and its pipe is closed.
-- **A monorepo app a glob member names builds with its npm packages hoisted to the root.** In a
-  Deno workspace such as `{ "workspace": ["./apps/*"], "nodeModulesDir": "manual" }`, an app's
-  bare `import ms from "ms"` (a dependency in its package.json, installed in the root's
-  `node_modules`) failed the esbuild build with "not in import map": the config the loader builds
-  a glob member on now carries the app's and the root's package.json dependencies and the root's
-  `nodeModulesDir`, and npm packages resolve from the nearest `node_modules` when the app has
-  none of its own, as Deno resolves them.
 
 ### Documentation
 

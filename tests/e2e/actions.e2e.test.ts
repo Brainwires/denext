@@ -18,8 +18,6 @@ const EXAMPLE = fromFileUrl(new URL("../../examples/actions", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/actions SSRs the action endpoint and hydrates the client island",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   const browser = await launchBrowser();

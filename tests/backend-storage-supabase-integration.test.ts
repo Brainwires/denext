@@ -58,6 +58,7 @@ async function ensureBucket(): Promise<void> {
   );
   delete head.headers.host;
   const exists = await fetch(head.url, { method: "HEAD", headers: head.headers });
+  await exists.body?.cancel();
   if (exists.ok) return;
   const put = await signRequest(
     { method: "PUT", origin, path: `/${BUCKET}` },
@@ -67,6 +68,7 @@ async function ensureBucket(): Promise<void> {
   delete put.headers.host;
   const created = await fetch(put.url, { method: "PUT", headers: put.headers });
   if (!created.ok) throw new Error(`create bucket: ${created.status} ${await created.text()}`);
+  await created.body?.cancel();
 }
 
 /** Supabase-style policies: a user owns `private/<their id>/…`. */
@@ -85,8 +87,6 @@ const POLICIES = `
 Deno.test({
   name: `supabase-js storage on MinIO + Postgres with SQL-RLS policies${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn(t) {
     const pg = await environment();
     await ensureBucket();

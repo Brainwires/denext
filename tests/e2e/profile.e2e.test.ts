@@ -15,8 +15,6 @@ const EXAMPLE = fromFileUrl(new URL("../../examples/islands", import.meta.url));
 
 Deno.test({
   name: "e2e: profileApp builds unminified, captures CPU self-time + heap, and gates a budget",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const result = await profileApp(EXAMPLE, { route: "/", iterations: 2, topN: 15 });
 

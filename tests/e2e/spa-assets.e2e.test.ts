@@ -52,8 +52,6 @@ async function setup(): Promise<string> {
 
 Deno.test({
   name: "e2e: SPA compat handles ?url + ?worker asset imports",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   const server = await buildAndServe(dir);
@@ -76,6 +74,7 @@ Deno.test({
         server.origin + js.match(/\/_denext\/client\/assets\/worker-[a-z0-9]+\.js/)![0],
       );
       assertStringIncludes(worker.headers.get("content-type") ?? "", "javascript");
+      await worker.body?.cancel();
     });
 
     const page = await browser.newPage(server.origin + "/");

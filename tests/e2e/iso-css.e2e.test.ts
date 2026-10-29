@@ -128,8 +128,6 @@ async function stepSoftNavHome(page: Page): Promise<void> {
 
 Deno.test({
   name: "e2e: isomorphic soft nav sends the compact iso payload and swaps per-route CSS",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServeWithRouteCss();
   const browser = await launchBrowser();

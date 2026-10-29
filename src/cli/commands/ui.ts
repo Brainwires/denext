@@ -160,8 +160,11 @@ export const uiCommand: CommandSpec = {
   run: async (ctx) => {
     const controller = new AbortController();
     const options = await uiTargetOptions(uiServerOptions(ctx, controller.signal));
-    installShutdown(controller);
-    const server = await startUiServer(options);
+    const stopTrapping = installShutdown(controller);
+    const server = await startUiServer(options).catch((err) => {
+      stopTrapping();
+      throw err;
+    });
     activeUiServers.add(server);
     if (ctx.global.json) {
       console.log(
@@ -184,6 +187,7 @@ export const uiCommand: CommandSpec = {
       await server.finished;
     } finally {
       activeUiServers.delete(server);
+      stopTrapping(); // a server stopped another way than a signal leaves none trapped
     }
   },
 };

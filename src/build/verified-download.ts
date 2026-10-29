@@ -361,7 +361,9 @@ function attemptSummary(err: unknown): string {
 
 /**
  * `body`'s chunks, cancelling it and throwing {@linkcode DownloadIdleError} when no chunk arrives
- * for `idleMs` (`Infinity`: no deadline). A read that fails is a {@linkcode DownloadNetworkError}.
+ * for `idleMs` (`Infinity`: no deadline). A read that fails is a {@linkcode DownloadNetworkError}. A
+ * consumer that stops early (a download refused as too large) cancels it too, so the response and
+ * its connection are let go rather than left open.
  *
  * @param body The download.
  * @param idleMs The most time between two chunks.
@@ -372,6 +374,7 @@ async function* idleBounded(
   idleMs: number,
 ): AsyncGenerator<Uint8Array> {
   const reader = body.getReader();
+  let settled = false; // the body ended, or the read failed (and cancelled it)
   try {
     for (;;) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -391,15 +394,20 @@ async function* idleBounded(
           idle,
         ]);
       } catch (err) {
+        settled = true;
         reader.cancel(err).catch(() => {});
         throw err;
       } finally {
         clearTimeout(timer);
       }
-      if (next.done) return;
+      if (next.done) {
+        settled = true;
+        return;
+      }
       yield next.value;
     }
   } finally {
+    if (!settled) await reader.cancel().catch(() => {});
     reader.releaseLock();
   }
 }
