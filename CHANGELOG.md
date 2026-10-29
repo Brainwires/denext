@@ -32,6 +32,20 @@ and this project adheres to
 
 ### Added
 
+- **`start.limits`: resource limits for the production server.**
+  `start: { limits: { memory, cpuSeconds, deadlineSeconds } }` in `denext.config.ts` caps the
+  server's JavaScript heap (`memory`: megabytes or `"512m"` / `"2g"`, at least 32 MB), its CPU time
+  and its wall-clock lifetime (whole seconds), through the `--max-memory` / `--max-cpu-time` /
+  `--max-time` flags of denext's Deno from runtime 3.0.0-rc.2; each ends the process with its own
+  exit code (137, 152, 124) for a supervisor to restart it. `denext start` passes them to the server
+  process it starts (re-running itself once when started on the toolchain without them, or warning
+  when it may not), `build --compile` bakes them into the binary, and `generate docker`, the
+  `docker` / `fly` presets and the `genericHost()` systemd unit write them onto the server's
+  `deno run`; the fly preset warns when the heap limit is not below the machine's memory. Never for
+  `dev`, tests or `denext job`; on stock Deno or an older toolchain they are not passed, and a
+  warning says so. The config validator checks the values the runtime accepts, and the deploy
+  manifest records them as `server.limits`. See
+  [Deployment targets › Resource limits](https://denext.dev/docs/deployment-targets#resource-limits).
 - **The lifecycle-script jail of runtime `3.0.0-denext.1`.** Everything below is gated on the
   runtime version, so stock Deno and older runtimes behave as before; the `3.0.0-denext.2` pin
   turns it on. `jailRuntime(version)` (from `src/build/jail-scripts.ts`) says what a runtime takes.

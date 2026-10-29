@@ -1074,6 +1074,7 @@
     "StandardResult:typeAlias",
     "StandardSchemaV1:interface",
     "StartConfig:interface",
+    "StartLimits:interface",
     "StaticParamsGenerator:typeAlias",
     "SubscriptionConfig:interface",
     "SubscriptionContext:interface",

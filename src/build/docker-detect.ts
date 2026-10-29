@@ -15,6 +15,7 @@ import { isStack, type StackOptions } from "./docker-stack.ts";
 import { detectDockerMode, type DockerOptions } from "./docker-template.ts";
 import { usesPostgres } from "./generate-ops.ts";
 import { configDisablesIdleTrim, pinnedIdleTrim, readEnv } from "./idle-trim.ts";
+import { configuredLimitFlags, pinnedLimitFlags, withLimitFlags } from "./resource-limits.ts";
 
 /**
  * A requested app port (a whole number, 1–65535) and `denoland/deno` image tag (an image-tag-safe
@@ -423,6 +424,26 @@ function dashboardLogsOf(
 }
 
 /**
+ * The server image's resource limits (`start.limits`, on the pinned toolchain), with a warning
+ * when the start task is no `deno run` line they could go on.
+ */
+async function dockerLimits(
+  dir: string,
+  startCommand: readonly string[] | undefined,
+  warnings: string[],
+): Promise<{ limits?: readonly string[] }> {
+  const limits = pinnedLimitFlags(await configuredLimitFlags(dir));
+  if (limits.length === 0) return {};
+  if (!startCommand || !withLimitFlags(startCommand, limits)) {
+    warnings.push(
+      "start.limits are not applied in the Docker image: its start task is no plain `deno run` " +
+        "line for them to go on (make it one, without shell syntax)",
+    );
+  }
+  return { limits };
+}
+
+/**
  * Resolve a Docker request against the project: the image mode, the detected stack, and the
  * explicit switches on top. A static (SPA) image has no server for a database or a store to
  * serve, so detected services are dropped there with a warning — and asking for one explicitly
@@ -453,6 +474,7 @@ export async function resolveDocker(
     ...(mode === "server"
       ? { idleTrim: pinnedIdleTrim(await configDisablesIdleTrim(dir), readEnv) }
       : {}),
+    ...(mode === "server" ? await dockerLimits(dir, stack.startCommand, warnings) : {}),
   };
   return { options, detection, warnings };
 }

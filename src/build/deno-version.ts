@@ -158,6 +158,23 @@ export function supportsIdleTrim(version: string): boolean {
   return compareDenoVersions(version, FIRST_IDLE_TRIM_RUNTIME) >= 0;
 }
 
+/**
+ * The first release of denext's Deno with the process resource limits (Brainwires/deno DENEXT.md
+ * item 92: `--max-memory`, `--max-cpu-time` and `--max-time` on `deno run` and `deno compile`).
+ */
+export const FIRST_RESOURCE_LIMITS_RUNTIME = "3.0.0-rc.2";
+
+/**
+ * Whether denext's Deno of `version` takes the resource-limit flags (from
+ * {@linkcode FIRST_RESOURCE_LIMITS_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A version of denext's Deno (`3.0.0-rc.N`, `3.0.0-denext.N`, `2.9.7-denext.N`).
+ * @returns Whether it accepts `--max-memory` / `--max-cpu-time` / `--max-time`.
+ */
+export function supportsResourceLimits(version: string): boolean {
+  return compareDenoVersions(version, FIRST_RESOURCE_LIMITS_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

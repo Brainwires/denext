@@ -8,7 +8,9 @@ import {
   type DenoIdentity,
   isDenextDenoVersion,
   needsNoLegacyAbortFlag,
+  supportsResourceLimits,
 } from "../build/deno-version.ts";
+import { LIMITS_APPLIED_ENV, limitsNotAppliedWarning } from "../build/resource-limits.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
 import { runToExit } from "../build/exited-output.ts";
 
@@ -808,6 +810,14 @@ export interface ReexecToolchainDeps {
    * ({@linkcode legacyAbortActive}). Absent: the runtime-flags re-exec never happens.
    */
   readonly legacyAbort?: () => Promise<boolean | undefined>;
+  /**
+   * The resource-limit flags the verb's config asks for (`start.limits` for `denext start`, none
+   * for every other verb; src/build/resource-limits.ts). `spawn` gives a toolchain child those its
+   * runtime takes, with `DENEXT_LIMITS_APPLIED`; a process already on the toolchain without them
+   * re-runs once with them when it may (`legacyAbort` present), else it warns, and stock Deno
+   * warns that they are not applied.
+   */
+  readonly limits?: readonly string[];
   /** This process's own Deno binary (production: `Deno.execPath()`). */
   readonly execPath?: string;
   /** This process's pid and its parent's (production: `Deno.pid` / `Deno.ppid`). */
@@ -842,25 +852,64 @@ async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false
 }
 
 /**
+ * The configured limit flags ({@linkcode ReexecToolchainDeps.limits}) this process on the
+ * toolchain runs without: none when there are none or `DENEXT_LIMITS_APPLIED` names exactly them;
+ * on a toolchain older than runtime 3.0.0-rc.2, which can't take them, none and a warning.
+ */
+function missingLimits(deps: ReexecToolchainDeps): readonly string[] {
+  const limits = deps.limits ?? [];
+  if (limits.length === 0 || deps.env(LIMITS_APPLIED_ENV) === limits.join(" ")) return [];
+  if (supportsResourceLimits(deps.denoVersion)) return limits;
+  deps.warn(limitsNotAppliedWarning(
+    limits,
+    `this Deno (${deps.denoVersion}) predates runtime 3.0.0-rc.2 — \`denext toolchain install\``,
+  ));
+  return [];
+}
+
+/** Whether this process's `Deno.serve` runs the legacy abort and a re-run would turn it off. */
+async function legacyAbortNeedsRerun(deps: ReexecToolchainDeps): Promise<boolean> {
+  if (!deps.legacyAbort || toolchainRuntimeFlags(deps.denoVersion).length === 0) return false;
+  return await deps.legacyAbort() === true;
+}
+
+/**
  * The half of {@linkcode maybeReexecToolchain} for a process ALREADY on the toolchain — started on
  * it directly (`toolchain link`'s `deno`, a `deno task` step, any `deno run` of the CLI on a
  * `2.9.7-denext.N` build) rather than re-exec'd onto it, so without the toolchain's runtime flags
- * ({@linkcode toolchainRuntimeFlags}). A serving verb whose `Deno.serve` still runs the legacy abort
- * re-runs once on this same binary with them; the child is told so ({@linkcode RUNTIME_FLAGS_ENV})
- * and never re-runs again, whatever its probe says. Everything else continues in-process: a verb
- * that serves nothing, no permission to spawn (`legacyAbort` absent), the flag already on (the
- * command line or a config's `"unstable"`), or a probe that cannot tell.
+ * ({@linkcode toolchainRuntimeFlags}) or `denext start`'s resource limits. A serving verb whose
+ * `Deno.serve` still runs the legacy abort, or `start` with limits configured and not applied
+ * ({@linkcode missingLimits}), re-runs once on this same binary with them; the child is told so
+ * ({@linkcode RUNTIME_FLAGS_ENV}) and never re-runs again, whatever its probe says. Everything else
+ * continues in-process: a verb that serves nothing, the flag already on (the command line or a
+ * config's `"unstable"`), or a probe that cannot tell; with no permission to spawn
+ * (`legacyAbort` absent) missing limits are only reported.
  */
 async function reexecForRuntimeFlags(deps: ReexecToolchainDeps): Promise<boolean> {
   const { legacyAbort, execPath, pids } = deps;
-  if (!legacyAbort || execPath === undefined || pids === undefined) return false;
-  if (toolchainRuntimeFlags(deps.denoVersion).length === 0) return false;
-  if (deps.env(RUNTIME_FLAGS_ENV) === String(pids.ppid)) return false;
-  if (await legacyAbort() !== true) return false;
+  if (pids !== undefined && deps.env(RUNTIME_FLAGS_ENV) === String(pids.ppid)) return false;
+  const limits = missingLimits(deps);
+  if (!legacyAbort || execPath === undefined || pids === undefined) {
+    if (limits.length > 0) {
+      deps.warn(limitsNotAppliedWarning(
+        limits,
+        "this server was started on denext's Deno directly, without the --allow-run to re-run " +
+          "itself with them — put them after `run` in the start task, or run `denext start`",
+      ));
+    }
+    return false;
+  }
+  if (limits.length === 0 && !(await legacyAbortNeedsRerun(deps))) return false;
   deps.exit(
     await deps.spawn(execPath, deps.denoVersion, { [RUNTIME_FLAGS_ENV]: String(pids.pid) }),
   );
   return true;
+}
+
+/** On stock Deno (or a Deno of unknown version) `start.limits` are not passed: say so. */
+function warnLimitsOffToolchain(deps: ReexecToolchainDeps, why: string): void {
+  const limits = deps.limits ?? [];
+  if (limits.length > 0) deps.warn(limitsNotAppliedWarning(limits, why));
 }
 
 /**
@@ -907,12 +956,22 @@ export async function maybeReexecToolchain(
   if (!applies) return deps.handOff ? await handToolchainToChildren(deps) : false;
   if (deps.standalone()) return await handToolchainToChildren(deps);
   const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
-  if (marker === "path") return false;
+  if (marker === "path") {
+    warnLimitsOffToolchain(deps, "a DENEXT_DENO=<path> Deno's version is unknown");
+    return false;
+  }
   if (onToolchainNow(deps)) return await reexecForRuntimeFlags(deps);
   const choice = await deps.resolve();
   if (choice.warning) deps.warn(choice.warning);
   if (choice.kind === "stock" && choice.refusal) throw new Error(choice.refusal);
-  if (choice.kind === "stock") return false;
+  if (choice.kind === "stock") {
+    warnLimitsOffToolchain(
+      deps,
+      "they need denext's Deno toolchain from runtime 3.0.0-rc.2, and this server runs on stock " +
+        "Deno (unset DENEXT_DENO=stock)",
+    );
+    return false;
+  }
   // The child gets the runtime flags with the spawn; told so, it skips their check.
   const told = deps.pids ? { [RUNTIME_FLAGS_ENV]: String(deps.pids.pid) } : undefined;
   deps.exit(await deps.spawn(choice.deno, choice.version, told));

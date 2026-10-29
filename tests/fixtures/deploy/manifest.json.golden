@@ -127,7 +127,8 @@
       "env": "DENEXT_SHUTDOWN_DRAIN_MS"
     },
     "buildDir": ".denext",
-    "idleTrim": true
+    "idleTrim": true,
+    "limits": []
   },
   "jobs": [
     {

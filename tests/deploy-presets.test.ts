@@ -602,3 +602,60 @@ Deno.test("deploy preset generic-host: the toolchain's unit listens only on its 
     await Deno.remove(paths.projectDir, { recursive: true });
   }
 });
+
+Deno.test("deploy preset generic-host: start.limits go on the toolchain server's ExecStart", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  const flags = ["--max-memory=512m", "--max-cpu-time=3600"];
+  const unit = async (m: DeployManifest, options: Parameters<typeof genericHost>[0] = {}) => {
+    const { ctx, files } = recordingContext(m, paths.projectDir);
+    await genericHost({ name: "shop", domain: "shop.example.com", ...options }).prepare(ctx);
+    return files.get("output/shop.service") ?? "";
+  };
+  try {
+    const on = { ...manifest, server: { ...manifest.server, limits: flags } };
+    const text = await unit(on);
+    // Right after `run`, on the toolchain `build.sh` links.
+    assertStringIncludes(
+      text,
+      "ExecStart=/srv/shop/.deno/bin/deno run --max-memory=512m --max-cpu-time=3600 --allow-net-connect",
+    );
+    // The marker that tells `denext start` it already runs under them, before the env file.
+    const marker = 'Environment="DENEXT_LIMITS_APPLIED=--max-memory=512m --max-cpu-time=3600"\n';
+    assertStringIncludes(text, marker);
+    assert(text.indexOf(marker) < text.indexOf("EnvironmentFile="), text);
+    // None configured, or a manifest from before the field: the unit is unchanged.
+    const none = await unit(manifest);
+    assert(!none.includes("--max-") && !none.includes("DENEXT_LIMITS_APPLIED"), none);
+    const { limits: _, ...older } = on.server;
+    assertEquals(await unit({ ...on, server: older }), none);
+    // A compiled executable has them baked in: nothing on its ExecStart.
+    const compiled = await unit({ ...on, compile: { output: "dist/shop", permissions: [] } });
+    assert(!compiled.includes("--max-") && !compiled.includes("DENEXT_LIMITS_APPLIED"), compiled);
+    // Another deno may be stock: not passed, and the unit says so.
+    const stock = await unit(on, { deno: "/usr/local/bin/deno" });
+    assertStringIncludes(stock, "# start.limits (--max-memory=512m --max-cpu-time=3600) are not");
+    assert(!stock.includes("run --max-") && !stock.includes("DENEXT_LIMITS_APPLIED="), stock);
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
+Deno.test("deploy preset fly: a heap limit not below the machine's memory warns", async () => {
+  const { paths, manifest } = await fixtureManifest();
+  const warns = async (limits: string[], memory?: string) => {
+    const m = { ...manifest, server: { ...manifest.server, limits } };
+    const { ctx, warnings } = recordingContext(m, paths.projectDir);
+    await fly({ app: "shop", ...(memory ? { memory } : {}) }).prepare(ctx);
+    return warnings.filter((w) => w.includes("start.limits.memory"));
+  };
+  try {
+    assertEquals((await warns(["--max-memory=512m"])).length, 1, "512m on the default 512mb");
+    assertEquals((await warns(["--max-memory=1g"], "1gb")).length, 1);
+    assertEquals(await warns(["--max-memory=384m"]), []);
+    assertEquals(await warns(["--max-memory=512m"], "1024"), []);
+    assertEquals(await warns(["--max-cpu-time=60"]), []);
+    assertEquals(await warns([]), []);
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});

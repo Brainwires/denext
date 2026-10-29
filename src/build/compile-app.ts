@@ -52,6 +52,7 @@ import {
 } from "./compile-sign.ts";
 import { childToolchainMarker, toolchainRuntimeFlags } from "../cli/self-exec.ts";
 import { idleTrimCompileFlags, readEnv } from "./idle-trim.ts";
+import { compileLimitFlags } from "./resource-limits.ts";
 import {
   carryNpmrc,
   type CompileLock,
@@ -767,6 +768,12 @@ export async function compileApp(
     "--no-check",
     "--unstable-sloppy-imports",
     ...(options.deno ? [] : [...toolchainCompileFlags(toolchainVersion()), ...trimFlags]),
+    // `start.limits`, baked in (src/build/resource-limits.ts).
+    ...compileLimitFlags(
+      paths.config?.start?.limits,
+      options.deno ? undefined : toolchainVersion(),
+      options.warn,
+    ),
     ...permissions,
     ...minDepAgeArgs(),
     "--config",

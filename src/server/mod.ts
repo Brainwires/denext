@@ -355,6 +355,7 @@ export {
   type SpaShellConfig,
   type SpaTanstackRouterConfig,
   type StartConfig,
+  type StartLimits,
   type TailwindConfig,
 } from "./config.ts";
 export { defineConfig } from "./define-config.ts";

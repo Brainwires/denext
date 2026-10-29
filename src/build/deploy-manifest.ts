@@ -39,6 +39,7 @@ import { compileBuildFlags } from "./compile-app.ts";
 import { detectDockerStack, resolveStack } from "./docker-detect.ts";
 import { stackEnv } from "./docker-stack.ts";
 import { pinnedIdleTrim, readEnv } from "./idle-trim.ts";
+import { resourceLimitFlags } from "./resource-limits.ts";
 import type { ProjectPaths } from "./paths.ts";
 
 /** The `Cache-Control` the production server sends for content-hashed client files. */
@@ -285,6 +286,7 @@ export async function collectDeployManifest(
       drain: { ms: DEFAULT_DRAIN_MS, env: "DENEXT_SHUTDOWN_DRAIN_MS" },
       buildDir: rel(paths.projectDir, paths.outDir),
       idleTrim: pinnedIdleTrim(config.start?.idleTrim === false, readEnv),
+      limits: resourceLimitFlags(config.start?.limits),
     },
     ...await collectJobs(paths, config),
     services: (await conventionModules(join(paths.projectDir, "services"))).map((m) => ({

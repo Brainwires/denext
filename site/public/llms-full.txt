@@ -1012,6 +1012,10 @@ for example `export async function onShutdown() { await sql.end(); }`. The proce
 runs a full GC and `malloc_trim(0)` once its event loop has been idle for a second (glibc Linux;
 at most once per idle period, 10 s apart, then only after 16 MB of growth). Never for `dev`, tests
 or jobs. Opt out with `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0`.
+`start: { limits: { memory: "384m", cpuSeconds, deadlineSeconds } }` caps the same processes
+(runtime 3.0.0-rc.2+; `--max-memory` / `--max-cpu-time` / `--max-time`, exit 137 / 152 / 124 for
+the supervisor to restart; baked into a compiled binary; never `dev` or tests; not applied on stock
+Deno, with a warning): https://denext.dev/docs/deployment-targets#resource-limits
 
 **Long-lived server work (supervised services):** `services/<name>.ts` default-exports
 `defineService({ start(ctx) })` from `denext/server` — `start`'s promise is the service's life (a

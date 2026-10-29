@@ -283,6 +283,63 @@ trim baked in, and a flag baked into a binary can't be removed when it runs, so
 event loop at half the idle delay (`DENO_IDLE_TRIM_DELAY_MS`, 1 s by default), so it is never idle
 long enough to trim. `DENO_IDLE_TRIM_TRACE=1` prints one line per trim to stderr.
 
+## Resource limits
+
+`start: { limits }` in `denext.config.ts` caps the production server process, enforced by denext's
+Deno from runtime `3.0.0-rc.2`. Each limit ends the whole process with its own exit code and one
+line on stderr, for a supervisor (Docker's restart policy, systemd's `Restart=always`, Kubernetes)
+to start it again:
+
+```ts
+export default {
+  start: {
+    limits: {
+      memory: "384m", // the main thread's JavaScript heap (a number is megabytes; at least 32 MB)
+      cpuSeconds: 86_400, // process CPU time, every thread, counted from the start
+      deadlineSeconds: 604_800, // wall clock, idle included: a weekly restart
+    },
+  },
+};
+```
+
+| Limit             | Runtime flag            | Exit code | Message                                    |
+| ----------------- | ----------------------- | --------- | ------------------------------------------ |
+| `memory`          | `--max-memory=<size>`   | 137       | `Memory limit exceeded (--max-memory)`     |
+| `cpuSeconds`      | `--max-cpu-time=<secs>` | 152       | `CPU time limit exceeded (--max-cpu-time)` |
+| `deadlineSeconds` | `--max-time=<secs>`     | 124       | `Time limit exceeded (--max-time)`         |
+
+137 is how a shell reports an OOM-killed process, 152 is `RLIMIT_CPU`'s SIGXCPU and 124 is GNU
+`timeout`'s, so supervisors read them as they read those. denext puts the flags where the
+production server starts:
+
+| Where                                                  | How                                                         |
+| ------------------------------------------------------ | ----------------------------------------------------------- |
+| `denext start`, when it starts the server process      | on that `deno run`, with `DENEXT_LIMITS_APPLIED`            |
+| `denext build --compile`                               | baked into the binary, which enforces them as it runs       |
+| `denext generate docker`, the `docker` / `fly` presets | on the `CMD`'s `deno run`, with `ENV DENEXT_LIMITS_APPLIED` |
+| the `genericHost()` systemd unit                       | on `ExecStart`, with `Environment=DENEXT_LIMITS_APPLIED`    |
+
+`denext dev` (where a limit would end the dev server), tests and `denext job` never get
+them; a compiled binary enforces them on whatever it runs, `./app job` included. A `start` task run
+straight on the toolchain (`denext task start`) re-runs itself once with them when it has
+`--allow-run` for its own Deno; the least-privilege task has not, so it warns instead: put the
+flags after `run` in the task, and set `DENEXT_LIMITS_APPLIED` to them (space-separated) to say so.
+On stock Deno (`DENEXT_DENO=stock`) or an older toolchain they are never passed (Deno would refuse
+the flags), and `denext start` / `build --compile` warn that they are not applied. The Docker image
+needs a start task that is a plain `deno run` line, and the fly preset warns when `memory` is not
+below the machine's memory (the OOM killer would end the server first).
+
+The config is read as the idle trim's is: what the last `denext build` recorded in
+`.denext/deploy-manifest.json` (`server.limits`), and before a first build the literal values in the
+config file. A generated file keeps the limits it was written with; regenerate after a change.
+When the CLI re-runs itself before serving (a compiled `denext` handing the project to its pinned
+version, a source checkout's module config), every hop carries the flags, so a `deadlineSeconds`
+counts from the first one, a few seconds before the server listens.
+
+These are best-effort guardrails, not a security boundary: subprocesses are neither counted nor
+stopped, a `Worker` has its own heap (cap it with `new Worker(url, { deno: { memoryMb } })`), memory
+outside the JavaScript heap is not counted, and sampling can overshoot by a 20 ms tick.
+
 ## A single binary with `denext build --compile`
 
 ```sh
