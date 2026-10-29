@@ -516,8 +516,7 @@ let passiveTimer: ReturnType<typeof setTimeout> | undefined;
 let flushingPassive = false;
 
 function schedulePassiveFlush(): void {
-  if (passiveTimer !== undefined) return;
-  passiveTimer = setTimeout(() => {
+  passiveTimer ??= setTimeout(() => {
     passiveTimer = undefined;
     flushPassiveEffects();
   }, 0);
@@ -532,10 +531,8 @@ export function hasPendingPassiveEffects(): boolean {
 export function flushPassiveEffects(): void {
   if (flushingPassive) return;
   // Flushed now (flushSync, act, the next render): the scheduled task has nothing left to do.
-  if (passiveTimer !== undefined) {
-    clearTimeout(passiveTimer);
-    passiveTimer = undefined;
-  }
+  clearTimeout(passiveTimer);
+  passiveTimer = undefined;
   if (pendingPassive.length === 0) return;
   flushingPassive = true;
   try {

@@ -354,18 +354,13 @@ export function scheduleContinuation(): void {
   continuationScheduled = true;
   if (manualSlicing) return; // pumped via __pumpForTests()
   if (!yieldChannel) {
-    const channel = new MessageChannel();
-    yieldChannel = channel;
+    const channel = yieldChannel = new MessageChannel();
     channel.port1.onmessage = () => {
       continuationScheduled = false;
-      try {
-        resumeConcurrentImpl();
-      } finally {
-        if (!continuationScheduled && yieldChannel === channel) {
-          yieldChannel = undefined;
-          channel.port1.close();
-          channel.port2.close();
-        }
+      resumeConcurrentImpl();
+      // Slicing went idle: let the channel go.
+      if (!continuationScheduled) {
+        channel.port1.close(), channel.port2.close(), yieldChannel = undefined;
       }
     };
   }
