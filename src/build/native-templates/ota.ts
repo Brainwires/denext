@@ -57,7 +57,16 @@ class DenextBridgeViewController: CAPBridgeViewController {
 
     override func capacitorDidLoad() {
         super.capacitorDidLoad()
-        DenextOtaFileGuard.install(on: bridge)
+        let failure = DenextOtaFileGuard.install(on: bridge)
+        let optedOut = bridge?.config.getPluginConfig("DenextBridge").getBoolean("otaFileGuard", true) == false
+        if DenextOtaStore.shared.settleFileGuard(failure: failure, optedOut: optedOut) {
+            // No file guard: the downloaded UI the launch chose is not served. The page has not
+            // loaded yet (viewDidLoad loads it), so pointing the bridge at the bundled UI is enough.
+            otaTrialLaunch = false
+            if let bundled = DenextOtaStore.bundledDirectory {
+                bridge?.setServerBasePath(bundled.path)
+            }
+        }
         let plugin = DenextOtaPlugin()
         bridge?.registerPluginInstance(plugin)
         if otaTrialLaunch {
@@ -82,18 +91,21 @@ final class DenextOtaFileGuard: WebViewAssetHandler {
         super.webView(webView, start: urlSchemeTask)
     }
 
-    /// Main thread, from \`capacitorDidLoad()\` (before the first page). Only Capacitor's own
-    /// handler class is changed; an app that registers its own subclass keeps it (and is told).
-    static func install(on bridge: CAPBridgeProtocol?) {
+    /// Main thread, from \`capacitorDidLoad()\` (before the first page). Returns nil once the guard
+    /// is in place, else why it is not: no bridge or web view, no handler for the app's scheme, or
+    /// a handler of the app's own class (only Capacitor's own class is changed). The caller hands
+    /// that to \`DenextOtaStore.settleFileGuard\`, which then serves no downloaded UI.
+    static func install(on bridge: CAPBridgeProtocol?) -> String? {
         guard let bridge = bridge, let scheme = bridge.config.localURL.scheme,
-              let handler = bridge.webView?.configuration.urlSchemeHandler(forURLScheme: scheme) else { return }
+              let handler = bridge.webView?.configuration.urlSchemeHandler(forURLScheme: scheme) else {
+            return "the web view has no asset handler to guard /_capacitor_file_ requests"
+        }
+        if handler is DenextOtaFileGuard { return nil }
         guard object_getClass(handler) == WebViewAssetHandler.self else {
-            if !(handler is DenextOtaFileGuard) {
-                CAPLog.print("denext OTA: the web view's asset handler is the app's own; /_capacitor_file_ requests are not checked.")
-            }
-            return
+            return "the web view's asset handler is the app's own class, so /_capacitor_file_ requests cannot be guarded"
         }
         object_setClass(handler, DenextOtaFileGuard.self)
+        return nil
     }
 }
 `,
@@ -118,12 +130,12 @@ import UIKit
 /// - \`download({ baseUrl, headers, manifest }) → { version, downloaded, copied, staged }\`: downloads
 ///   and verifies the version and records it as staged, WITHOUT switching to it (\`staged: false\`
 ///   when the version is already running); rejects with code \`invalid\`, \`busy\`, \`rejected\`,
-///   \`download\`, \`integrity\`, \`signature\`, \`insecure\`, \`downgrade\`, \`native_too_old\` or
-///   \`native_mismatch\` (all but \`busy\`, \`rejected\`, \`download\` and a file's \`integrity\` before
-///   any download: see
+///   \`download\`, \`integrity\`, \`signature\`, \`insecure\`, \`downgrade\`, \`native_too_old\`,
+///   \`native_mismatch\`, \`platform_mismatch\`, \`expired\` or \`guard_unavailable\` (all but
+///   \`busy\`, \`rejected\`, \`download\` and a file's \`integrity\` before any download: see
 ///   \`DenextOtaStore.ApplyRequest\`)
 /// - \`activate({ version }) → { version }\`: switches to the staged version (its trial launch);
-///   rejects with code \`invalid\`, \`busy\`, \`not_staged\` or \`rejected\`
+///   rejects with code \`invalid\`, \`busy\`, \`guard_unavailable\`, \`not_staged\` or \`rejected\`
 /// - \`apply({ baseUrl, headers, manifest }) → { version, downloaded, copied, switched }\`: \`download\`
 ///   then \`activate\` in one call, with \`download\`'s rejections (\`switched: false\` when the version
 ///   is already running)
@@ -135,6 +147,9 @@ import UIKit
 ///   changed on the device after the download, see \`DenextOtaStore.admit\`) and was quarantined;
 ///   the webview has switched to the bundled UI (or the confirmed one). Kept until a listener is
 ///   added, so the page loaded after the switch, or after a launch that refused it, hears it.
+///   With \`code: "guard_unavailable"\` instead: the launch did not serve the downloaded UI because
+///   \`DenextOtaFileGuard\` could not be installed (\`DenextOtaStore.settleFileGuard\`); nothing was
+///   quarantined, and \`download\` / \`activate\` / \`apply\` refuse with that code in this process.
 ///
 /// Only \`activate\` and \`apply\` switch versions: a staged version is never started on its own.
 @objc(DenextOtaPlugin)
@@ -183,6 +198,14 @@ public class DenextOtaPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         DenextOtaStore.shared.setTamperHandler { [weak self] version, reason, serving in
             self?.uiTampered(version, reason: reason, serving: serving)
         }
+        if let notice = DenextOtaStore.shared.takeGuardNotice() {
+            // The launch did not serve a downloaded UI for want of the file guard (not quarantined).
+            notifyListeners(
+                "otaRejected",
+                data: ["version": notice.version, "reason": notice.reason, "code": DenextOtaStore.guardUnavailableCode],
+                retainUntilConsumed: true
+            )
+        }
     }
 
     /// Main thread. A downloaded UI failed re-verification and was quarantined: switch away from it
@@ -222,7 +245,7 @@ public class DenextOtaPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             let store = DenextOtaStore.shared
-            guard !self.rejectIfBusy(call) else { return }
+            guard !self.rejectIfBusy(call), !self.rejectIfUnguarded(call) else { return }
             if request.version == store.current {
                 // Already running: nothing to download, and nothing to stage.
                 call.resolve(["version": request.version, "downloaded": 0, "copied": 0, "staged": false])
@@ -250,7 +273,7 @@ public class DenextOtaPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         }
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
-            guard !self.rejectIfBusy(call) else { return }
+            guard !self.rejectIfBusy(call), !self.rejectIfUnguarded(call) else { return }
             guard DenextOtaStore.shared.staged == version else {
                 call.reject("UI \\(version) is not staged; download it first.", "not_staged")
                 return
@@ -270,7 +293,7 @@ public class DenextOtaPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
             let store = DenextOtaStore.shared
-            guard !self.rejectIfBusy(call) else { return }
+            guard !self.rejectIfBusy(call), !self.rejectIfUnguarded(call) else { return }
             if request.version == store.current {
                 call.resolve(["version": request.version, "downloaded": 0, "copied": 0, "switched": false])
                 return
@@ -306,6 +329,14 @@ public class DenextOtaPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
     private func rejectIfBusy(_ call: CAPPluginCall) -> Bool {
         guard applying || DenextOtaStore.shared.pending != nil else { return false }
         call.reject("A UI update is already in progress.", "busy")
+        return true
+    }
+
+    /// Main thread. Rejects \`call\` with \`guard_unavailable\` while this process serves no
+    /// downloaded UI (\`DenextOtaStore.settleFileGuard\`); returns whether it did.
+    private func rejectIfUnguarded(_ call: CAPPluginCall) -> Bool {
+        guard let why = DenextOtaStore.shared.guardUnavailable else { return false }
+        call.reject("Downloaded UIs are not served in this app: \\(why).", DenextOtaStore.guardUnavailableCode)
         return true
     }
 
@@ -668,7 +699,7 @@ final class DenextOtaStore: @unchecked Sendable {
                 ),
                 signature: signature
             )
-            try DenextOtaStore.checkPlatform(manifest["platform"], files: files)
+            try DenextOtaStore.checkPlatform(manifest["platform"], files: files, signed: DenextOtaStore.signsUpdates)
             try DenextOtaStore.checkRelease(
                 sequence: sequence,
                 minNative: minNative,
@@ -1051,10 +1082,12 @@ final class DenextOtaStore: @unchecked Sendable {
     /// The manifest's target, checked after \`checkTrust\`: a manifest naming another target, a
     /// \`platform\` field without the matching stamp in the file list, or a stamp of another target
     /// is refused (code \`platform_mismatch\`). The stamp is what the version (and so the signature)
-    /// covers; the field is not signed, so the stamp decides whether or not the field is there. A
-    /// manifest with neither (an unstamped web export) fits every shell. The same rule as
-    /// \`otaPlatformMismatch\` in denext, so the page's check and this one agree.
-    static func checkPlatform(_ raw: Any?, files: [ManifestFile]) throws {
+    /// covers; the field is not signed, so the stamp decides whether or not the field is there. The
+    /// same rule as \`otaPlatformMismatch\` in denext, so the page's check and this one agree. A
+    /// manifest with neither (an unstamped web export) fits an app without a public key only
+    /// (\`signed\` false: unsigned, pinned-origin updates); an app that embeds one takes only its
+    /// own platform's stamped export, so a web export signed with the same key cannot install itself.
+    static func checkPlatform(_ raw: Any?, files: [ManifestFile], signed: Bool) throws {
         let ownStamp = sha256Hex(Data(platform.utf8))
         let stamp = files.first { $0.path == platformStampPath }
         if let raw = raw, !(raw is NSNull) {
@@ -1062,15 +1095,27 @@ final class DenextOtaStore: @unchecked Sendable {
                 throw OtaError(code: "invalid", message: "The manifest's platform is not a string.")
             }
             guard stamp?.sha256 == sha256Hex(Data(named.utf8)) else {
-                throw OtaError(code: "platform_mismatch", message: "The manifest says \(named), but its files carry no matching \(platformStampPath).")
+                throw OtaError(code: "platform_mismatch", message: "The manifest says \\(named), but its files carry no matching \\(platformStampPath).")
             }
             guard named == platform else {
-                throw OtaError(code: "platform_mismatch", message: "The UI was built for \(named); this app runs on \(platform).")
+                throw OtaError(code: "platform_mismatch", message: "The UI was built for \\(named); this app runs on \\(platform).")
             }
         }
         if let stamp = stamp, stamp.sha256 != ownStamp {
-            throw OtaError(code: "platform_mismatch", message: "The UI's \(platformStampPath) stamp is another target's; this app runs on \(platform).")
+            throw OtaError(code: "platform_mismatch", message: "The UI's \\(platformStampPath) stamp is another target's; this app runs on \\(platform).")
         }
+        if signed && stamp == nil {
+            throw OtaError(
+                code: "platform_mismatch",
+                message: "The UI carries no \\(platformStampPath) stamp; an app with a public key takes only its platform's export (denext export --platform \\(platform))."
+            )
+        }
+    }
+
+    /// Whether this binary embeds a public key (\`DenextOtaPublicKey\`, even one that does not parse).
+    static var signsUpdates: Bool {
+        if case .unset = publicKey { return false }
+        return true
     }
 
     /// The release policy, checked after \`checkTrust\` (so a signed manifest's values are
@@ -1141,6 +1186,8 @@ final class DenextOtaStore: @unchecked Sendable {
     /// guards with the watchdog. The first call in a process is the launch; a later one (a
     /// second bridge view controller) keeps serving the active UI instead of counting again.
     func prepareLaunch() -> (directory: URL?, trial: Bool) {
+        // A later bridge in a process that found no file guard (\`settleFileGuard\`) gets the bundled UI.
+        guard guardUnavailable == nil else { return (nil, false) }
         // Only the launch itself counts a trial attempt (\`chooseLaunch\`).
         let counted = !launchPrepared
         var choice = chooseLaunch()
@@ -1150,6 +1197,7 @@ final class DenextOtaStore: @unchecked Sendable {
         while let version = choice.version {
             do {
                 _ = try installedUi(version)
+                launched = (version, choice.trial && counted)
                 return (versionDirectory(version), choice.trial)
             } catch let error as OtaError where error.code == DenextOtaStore.unavailableCode {
                 // There but not readable right now (a launch before the first unlock, by a silent
@@ -1165,6 +1213,51 @@ final class DenextOtaStore: @unchecked Sendable {
             }
         }
         return (nil, false)
+    }
+
+    /// The code \`download\`, \`activate\` and \`apply\` refuse with, and the \`otaRejected\` event
+    /// carries, while downloaded UIs are not served because \`DenextOtaFileGuard\` is not in place.
+    static let guardUnavailableCode = "guard_unavailable"
+    /// Main thread. Why downloaded UIs are not served in this process (\`settleFileGuard\`), or nil.
+    private(set) var guardUnavailable: String?
+    /// Main thread. The downloaded version \`prepareLaunch\` chose (and whether it counted a trial
+    /// attempt), until \`settleFileGuard\` runs.
+    private var launched: (version: String, countedTrial: Bool)?
+    /// Main thread. The downloaded version a launch did not serve for want of the file guard, and
+    /// why, until the plugin takes it (\`takeGuardNotice\`).
+    private var guardNotice: (version: String, reason: String)?
+
+    /// Main thread, from \`capacitorDidLoad()\` once \`DenextOtaFileGuard.install\` ran, before the
+    /// first page loads. \`failure\`: why the guard is not in place (nil: it is). Without it,
+    /// Capacitor would answer a \`/_capacitor_file_\` request for a downloaded UI's files without the
+    /// manifest check, so no downloaded UI is served in this process (fail closed): \`admit\` refuses
+    /// their files, the plugin refuses \`download\` / \`activate\` / \`apply\` (code
+    /// \`guard_unavailable\`), and a downloaded UI this launch chose is reported to the page
+    /// (\`otaRejected\` with that code). Nothing is quarantined and a trial keeps its attempt: the
+    /// UI is fine, the app is not set up to check it. \`optedOut\`: the Capacitor config sets
+    /// \`plugins.DenextBridge.otaFileGuard: false\` (an app with its own asset handler), which
+    /// serves downloaded UIs anyway, \`/_capacitor_file_\` requests unchecked. Returns true when the
+    /// launch chose a downloaded UI that must not be served: the caller serves the bundled one.
+    func settleFileGuard(failure: String?, optedOut: Bool) -> Bool {
+        let chosen = launched
+        launched = nil
+        guard let failure = failure else { return false }
+        if optedOut {
+            CAPLog.print("denext OTA: \\(failure); plugins.DenextBridge.otaFileGuard is false, so /_capacitor_file_ requests are not checked.")
+            return false
+        }
+        guardUnavailable = failure
+        CAPLog.print("denext OTA: \\(failure); downloaded UIs are not served (see plugins.DenextBridge.otaFileGuard).")
+        guard let chosen = chosen else { return false }
+        if chosen.countedTrial { trialAttempts = max(0, trialAttempts - 1) }
+        guardNotice = (chosen.version, "UI \\(chosen.version) was not served: \\(failure).")
+        return true
+    }
+
+    /// Main thread. The notice \`settleFileGuard\` left for the plugin, once.
+    func takeGuardNotice() -> (version: String, reason: String)? {
+        defer { guardNotice = nil }
+        return guardNotice
     }
 
     /// The version \`prepareLaunch\` serves before re-verification, and whether it is a trial.
@@ -1232,8 +1325,9 @@ final class DenextOtaStore: @unchecked Sendable {
         private let files: [String: ManifestFile]
         private let manifestSha256: String
         private let lock = NSLock()
-        /// The paths whose bytes already matched in this process.
-        private var verified = Set<String>()
+        /// The paths whose bytes already matched in this process, with the file's \`FileStamp\` from
+        /// just before they were hashed: a later request whose file has another stamp hashes it again.
+        private var verified: [String: FileStamp] = [:]
 
         init(version: String, directory: URL, files: [ManifestFile], manifestSha256: String) {
             self.version = version
@@ -1270,12 +1364,15 @@ final class DenextOtaStore: @unchecked Sendable {
                     : .missing
             }
             lock.lock()
-            let known = verified.contains(relative)
+            let known = verified[relative]
             lock.unlock()
-            if known { return .serve }
+            // Taken before the hash, so a file changed while it is hashed has another stamp next time.
+            let stamp = DenextOtaStore.fileStamp(target)
+            if let known = known, known == stamp { return .serve }
             // Hashed on the calling thread: Capacitor's \`Router.route(for:)\` is synchronous and
             // runs on the main thread, so the first request for a large file pays for its hash
-            // once per process (later requests are a set lookup).
+            // once per process (later requests are a stat(2) of the file, hashed again only when
+            // its stamp changed).
             switch DenextOtaStore.storedDigest(of: target, limit: file.size) {
             case .unreadable:
                 return .unavailable
@@ -1285,7 +1382,7 @@ final class DenextOtaStore: @unchecked Sendable {
                 return .tampered("\\(relative) does not match the signed manifest.")
             }
             lock.lock()
-            verified.insert(relative)
+            verified[relative] = stamp
             lock.unlock()
             return .serve
         }
@@ -1370,7 +1467,8 @@ final class DenextOtaStore: @unchecked Sendable {
     /// The directory to serve once a UI was quarantined: the confirmed version when it is still
     /// there and re-verifies, else nil for the bundled UI.
     func fallbackDirectory() -> URL? {
-        guard let current = current, hasVersion(current), (try? installedUi(current)) != nil else { return nil }
+        guard guardUnavailable == nil, let current = current, hasVersion(current),
+              (try? installedUi(current)) != nil else { return nil }
         return versionDirectory(current)
     }
 
@@ -1396,8 +1494,10 @@ final class DenextOtaStore: @unchecked Sendable {
             return file == base || file.hasPrefix(prefix)
         }
         let version = served.lastPathComponent
-        // Under the versions root, only a version directory is ever served.
-        guard served.deletingLastPathComponent().path == rootPath, DenextOtaStore.isSha256(version) else {
+        // Under the versions root, only a version directory is ever served, and none without the
+        // file guard (\`settleFileGuard\`).
+        guard served.deletingLastPathComponent().path == rootPath, DenextOtaStore.isSha256(version),
+              guardUnavailable == nil else {
             return false
         }
         guard file.hasPrefix(prefix) else { return file == base }
@@ -1428,18 +1528,42 @@ final class DenextOtaStore: @unchecked Sendable {
     /// (\`Capacitor.convertFileSrc\`), without asking the router.
     static let capacitorFilePrefix = "/_capacitor_file_"
 
+    /// Whether \`text\` holds a control character (U+0000–U+001F, U+007F), checked on Unicode scalars.
+    static func hasControlCharacter(_ text: String) -> Bool {
+        return text.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F }
+    }
+
+    /// \`path\` as realpath(3) resolves it (an absolute path free of symbolic links, \`.\` and \`..\`),
+    /// or nil when it does not exist or cannot be resolved.
+    static func realPath(_ path: String) -> String? {
+        guard let resolved = realpath(path, nil) else { return nil }
+        defer { free(resolved) }
+        return String(cString: resolved)
+    }
+
     /// Main thread. Whether the asset handler may answer \`requestPath\` (a request's decoded path)
     /// when it is a \`/_capacitor_file_\` request (\`DenextOtaFileGuard\`); any other request is the
     /// router's (\`admit\`). The file is the one Capacitor reads (every \`/_capacitor_file_\`
     /// removed). One outside the versions root passes, as before. One inside it, by any spelling
     /// (\`..\`, a symbolic link, another case on a case-insensitive volume), gets \`admit\`'s check:
     /// only a file of a version directory, matching that version's signed manifest, and a mismatch
-    /// quarantines the version.
+    /// quarantines the version. A path with a control character, or one that is not there, is
+    /// refused wherever it points.
     func admitCapacitorFile(_ requestPath: String) -> Bool {
         guard requestPath.hasPrefix(DenextOtaStore.capacitorFilePrefix) else { return true }
         let file = requestPath.replacingOccurrences(of: DenextOtaStore.capacitorFilePrefix, with: "")
-        let target = URL(fileURLWithPath: file).standardizedFileURL.resolvingSymlinksInPath().path
-        let resolvedRoot = root.standardizedFileURL.resolvingSymlinksInPath().path
+        // No file Capacitor names has a control character, and a NUL is dangerous: Foundation cuts
+        // a path short at one, or makes an empty URL of it, which Capacitor's handler reads with
+        // \`Data(contentsOf:)\` and crashes on (an NSInvalidArgumentException no code can catch).
+        guard !DenextOtaStore.hasControlCharacter(file) else { return false }
+        // The file as the OS opens it: symbolic links and \`..\` resolved physically (realpath(3),
+        // which, unlike \`resolvingSymlinksInPath\`, never drops \`/private\` from one path and keeps
+        // it on another). One that is not there would fail Capacitor's read anyway; refusing it
+        // here means no file can appear between this check and that read.
+        guard let target = DenextOtaStore.realPath(URL(fileURLWithPath: file).path), !target.isEmpty else {
+            return false
+        }
+        let resolvedRoot = DenextOtaStore.realPath(root.path) ?? root.standardizedFileURL.path
         let lowered = target.lowercased()
         let loweredRoot = resolvedRoot.lowercased()
         guard lowered == loweredRoot || lowered.hasPrefix(loweredRoot + "/") else { return true }
@@ -1766,6 +1890,32 @@ final class DenextOtaStore: @unchecked Sendable {
         /// There, but not readable right now: data protection before the first unlock
         /// (\`NSFileReadNoPermissionError\` / \`EPERM\`), a permission or an I/O error.
         case unreadable
+    }
+
+    /// What tells, without reading it, that a file may have changed since it was hashed: its device
+    /// and inode, size, and modification and status-change times. The change time is set by every
+    /// write (and by \`utimes\`, so a rewrite that puts the size and the modification time back
+    /// still changes it), and no process can set it back.
+    struct FileStamp: Equatable {
+        let device: Int64
+        let inode: UInt64
+        let size: Int64
+        let modified: [Int64]
+        let changed: [Int64]
+    }
+
+    /// The \`FileStamp\` of the file at \`url\` (stat(2), following links as the read does), or nil
+    /// when it cannot be had; then the file is hashed on every request.
+    static func fileStamp(_ url: URL) -> FileStamp? {
+        var info = stat()
+        guard stat(url.path, &info) == 0 else { return nil }
+        return FileStamp(
+            device: Int64(info.st_dev),
+            inode: UInt64(info.st_ino),
+            size: Int64(info.st_size),
+            modified: [Int64(info.st_mtimespec.tv_sec), Int64(info.st_mtimespec.tv_nsec)],
+            changed: [Int64(info.st_ctimespec.tv_sec), Int64(info.st_ctimespec.tv_nsec)]
+        )
     }
 
     /// Whether \`url\` is a regular file. Its metadata stays readable while data protection
@@ -2628,7 +2778,7 @@ public class DenextOtaPlugin extends Plugin {
             DenextOtaStore.signaturePayload(version, required, notes, sequence, minNative, nativeFingerprint, expiresAt),
             signature
         );
-        DenextOtaStore.checkPlatform(manifest.opt("platform"), files);
+        DenextOtaStore.checkPlatform(manifest.opt("platform"), files, store.signsUpdates());
         store.checkRelease(sequence, minNative, nativeFingerprint, expiresAt);
         return new DenextOtaStore.ApplyRequest(
             baseUrl,
@@ -2659,6 +2809,9 @@ import android.content.pm.ApplicationInfo;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.net.Uri;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.StructStat;
 import android.util.Base64;
 import androidx.annotation.Nullable;
 import androidx.core.content.pm.PackageInfoCompat;
@@ -3185,10 +3338,13 @@ final class DenextOtaStore {
      * {@code platform} field without the matching stamp in the file list, or a stamp of another
      * target is refused (code platform_mismatch). The stamp is what the version (and so the
      * signature) covers; the field is not signed, so the stamp decides whether or not the field is
-     * there. A manifest with neither (an unstamped web export) fits every shell. The same rule as
-     * {@code otaPlatformMismatch} in denext, so the page's check and this one agree.
+     * there. The same rule as {@code otaPlatformMismatch} in denext, so the page's check and this
+     * one agree. A manifest with neither (an unstamped web export) fits an app without a public key
+     * only ({@code signed} false: unsigned, pinned-origin updates); an app that embeds one takes only
+     * its own platform's stamped export, so a web export signed with the same key cannot install
+     * itself.
      */
-    static void checkPlatform(@Nullable Object raw, List<ManifestFile> files) throws OtaException {
+    static void checkPlatform(@Nullable Object raw, List<ManifestFile> files, boolean signed) throws OtaException {
         String stamp = null;
         for (ManifestFile file : files) {
             if (PLATFORM_STAMP_PATH.equals(file.path)) {
@@ -3216,6 +3372,18 @@ final class DenextOtaStore {
                 "The UI's " + PLATFORM_STAMP_PATH + " stamp is another target's; this app runs on " + PLATFORM + "."
             );
         }
+        if (signed && stamp == null) {
+            throw new OtaException(
+                "platform_mismatch",
+                "The UI carries no " + PLATFORM_STAMP_PATH + " stamp; an app with a public key takes only its platform's export " +
+                    "(denext export --platform " + PLATFORM + ")."
+            );
+        }
+    }
+
+    /** Whether this app embeds a public key ({@link #PUBLIC_KEY_META}, even one that does not parse). */
+    boolean signsUpdates() throws OtaException {
+        return publicKeyMetaData() != null;
     }
 
     /**
@@ -3435,6 +3603,17 @@ final class DenextOtaStore {
      * backslashes, and no control characters (U+0000–U+001F, U+007F, which could forge the lines
      * the version hashes).
      */
+    /** Whether {@code text} holds a control character (U+0000–U+001F, U+007F). */
+    static boolean hasControlCharacter(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c < 0x20 || c == 0x7f) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static boolean isSafeRelativePath(@Nullable String path) {
         if (path == null || path.isEmpty()) {
             return false;
@@ -3675,8 +3854,12 @@ final class DenextOtaStore {
         final File directory;
         private final Map<String, ManifestFile> files = new HashMap<>();
         private final String manifestSha256;
-        /** The paths whose bytes already matched in this process. */
-        private final Set<String> verified = ConcurrentHashMap.newKeySet();
+        /**
+         * The paths whose bytes already matched in this process, with the file's {@link #fileStamp}
+         * from just before they were hashed: a later request whose file has another stamp hashes it
+         * again.
+         */
+        private final Map<String, String> verified = new ConcurrentHashMap<>();
 
         InstalledUi(String version, File directory, List<ManifestFile> files, String manifestSha256) {
             this.version = version;
@@ -3712,12 +3895,16 @@ final class DenextOtaStore {
                 // assets, say) is not, and the handler cannot serve it anyway.
                 return target.exists() && !target.isDirectory() ? Verdict.TAMPERED : Verdict.MISSING;
             }
-            if (verified.contains(relative)) {
+            // Taken before the hash, so a file changed while it is hashed has another stamp next time.
+            String stamp = fileStamp(target);
+            if (stamp != null && stamp.equals(verified.get(relative))) {
                 return Verdict.SERVE;
             }
             Verdict verdict = compare(target, file);
-            if (verdict == Verdict.SERVE) {
-                verified.add(relative);
+            if (verdict == Verdict.SERVE && stamp != null) {
+                verified.put(relative, stamp);
+            } else {
+                verified.remove(relative);
             }
             return verdict;
         }
@@ -3907,10 +4094,14 @@ final class DenextOtaStore {
      * gets {@link #admit}'s check: only a file of a version directory, matching that version's
      * signed manifest, and a mismatch quarantines the version. {@code served}: the directory the
      * bridge serves, if any (a quarantine switches the webview away only from that version). A
-     * path that cannot be resolved fails closed. Any thread.
+     * path that cannot be resolved, or one with a control character (no file Capacitor names has
+     * one, and native code cuts a path short at a NUL), fails closed. Any thread.
      */
     boolean admitCapacitorFile(String requestPath, @Nullable String served) {
         String file = requestPath.replace(Bridge.CAPACITOR_FILE_START, "");
+        if (hasControlCharacter(file)) {
+            return false;
+        }
         String target;
         String resolvedRoot;
         try {
@@ -4246,6 +4437,24 @@ final class DenextOtaStore {
      * in chunks), {@link Verdict#UNAVAILABLE} when it is there but cannot be read right now, else
      * {@link Verdict#TAMPERED}.
      */
+    /**
+     * What tells, without reading it, that a file may have changed since it was hashed: its device
+     * and inode, size, modification time and status-change time (stat(2)). The change time is set by
+     * every write (and by utimes, so a rewrite that puts the size and the modification time back
+     * still changes it), and no process can set it back. Null when it cannot be had; then the file
+     * is hashed on every request.
+     */
+    @Nullable
+    static String fileStamp(File path) {
+        try {
+            StructStat info = Os.stat(path.getPath());
+            return info.st_dev + ":" + info.st_ino + ":" + info.st_size + ":" + path.lastModified() + ":" + info.st_mtime + ":" +
+                info.st_ctime;
+        } catch (ErrnoException ex) {
+            return null;
+        }
+    }
+
     private static Verdict compare(File path, ManifestFile file) {
         if (!path.isFile() || path.length() != file.size) {
             return Verdict.TAMPERED;

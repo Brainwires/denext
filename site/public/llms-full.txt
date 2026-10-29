@@ -770,7 +770,8 @@ Docs: https://denext.dev/docs/desktop#desktop-capabilities
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
 `_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it (a signed
 manifest expires: 30 days, `--expires-in <days>`; past it every shell refuses it, code `expired`,
-so re-sign the live release);
+so re-sign the live release; an app with a key embedded takes only its platform's stamped export,
+`denext export --platform ios` or `ota manifest --platform ios`, code `platform_mismatch`);
 `denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
 `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
 drive it; `createOtaHandler` from `denext/server` serves the export. A downloaded UI is
@@ -3398,12 +3399,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `otaBooted(): Promise<void>` — Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog (after 15 s of foreground time by default), and on the next launch if the app died twice before confirming. Harmless on the bundled UI or a confirmed one.
 - `interface OtaCheckOptions` — Options for checkForUiUpdate and prepareUiUpdate.
 - `type OtaCheckResult = object | object | object | object | object` — The outcome of checkForUiUpdate. It never throws; every failure is a value.
-- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch | platform_mismatch | expired` — The code of a native DenextOta refusal, carried on an error result:
+- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch | platform_mismatch | expired | guard_unavailable` — The code of a native DenextOta refusal, carried on an error result:
 - `otaInstallId(): string` — This install's stable OTA id: a random base64url string made on first use and kept in localStorage (denext:ota-install-id), so a channels server (createOtaHandler({ channels })) puts the device in the same staged-rollout bucket on every check. It identifies nothing but the install; clearing the app's data makes a new one. Where storage is unavailable it lasts for the page's lifetime.
 - `interface OtaManifest` — The _denext/ota.json document: a version stamped over the sorted file list.
 - `interface OtaManifestFile` — One file of an OTA UI.
 - `type OtaPrepareResult = object | object | object | object | object` — The outcome of prepareUiUpdate. It never throws; every failure is a value.
-- `interface OtaRejectedEvent` — What onOtaRejected reports: a downloaded UI that failed re-verification.
+- `interface OtaRejectedEvent` — What onOtaRejected reports: a downloaded UI that failed re-verification, or one the shell did not serve because it could not check it.
 - `otaReset(): Promise<void>` — Return to the UI bundled with the app: delete every downloaded version (a staged one included), forget the rejected one, and reload the webview. A no-op on the web.
 - `otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint | expiresAt>): Promise<Uint8Array>` — The bytes an OTA manifest signature covers, as UTF-8 with \n (0x0A) separators and no trailing newline. A manifest with an expiresAt (and a sequence) uses the v4 format, else one with a nativeFingerprint (and a sequence) v3, one with a sequence but neither v2, one without a sequence v1:
 - `otaStatus(): Promise<OtaStatus | null>` — The native side's view of the UI versions on this device, or null on the web and when the shell has no DenextOta plugin.

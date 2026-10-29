@@ -125,7 +125,12 @@ do {
     check("fail closed: the versions root itself is refused as a base", !store.admit(clean.root.path + "/app.js", servedFrom: clean.root.path))
     check("fail closed: a bundled-UI route outside its directory is refused", !store.admit("/etc/passwd", servedFrom: clean.bundled.path))
     // Capacitor's /_capacitor_file_ paths skip the router: the asset handler asks the store.
-    check("capacitor file: a file outside the versions root passes through", clean.capacitorFile(store, "/tmp/photo.jpg"))
+    let photo = work.appendingPathComponent("photo.jpg")
+    try Data("jpg".utf8).write(to: photo)
+    check("capacitor file: a file outside the versions root passes through", clean.capacitorFile(store, photo.path))
+    // Capacitor's read of a file that is not there fails anyway; refused here, nothing can appear
+    // between the check and that read.
+    check("capacitor file: a missing file is refused", !clean.capacitorFile(store, work.appendingPathComponent("nope.jpg").path))
     check("capacitor file: an untampered file of a downloaded UI is served", clean.capacitorFile(store, clean.dir.path + "/app.js"))
     try Data("x".utf8).write(to: clean.root.appendingPathComponent("stray.txt"))
     check("capacitor file: a file outside a version directory is refused", !clean.capacitorFile(store, clean.root.path + "/stray.txt") && store.tampered == nil)
@@ -140,6 +145,16 @@ do {
         !clean.capacitorFile(store, link.path + "/stray.txt") && clean.capacitorFile(store, link.path + "/" + version + "/app.js")
     )
     check("capacitor file: the bridge's router paths are not checked here", store.admitCapacitorFile("/app.js"))
+    // A NUL empties the path Capacitor's handler reads (`Data(contentsOf:)` of an empty URL raises
+    // NSInvalidArgumentException, which crashes the app) or cuts it short; no file Capacitor names
+    // has a control character. Refused wherever the path points.
+    check("capacitor file: a NUL that empties the path is refused", !store.admitCapacitorFile("/_capacitor_file_/x\u{0}/.."))
+    check("capacitor file: a NUL that cuts the path short is refused", !clean.capacitorFile(store, "/tmp/photo.jpg\u{0}.png"))
+    check("capacitor file: a control character is refused", !clean.capacitorFile(store, "/tmp/photo\u{1}.jpg"))
+    check(
+        "capacitor file: a NUL is refused inside the versions root too",
+        !clean.capacitorFile(store, clean.dir.path + "/app.js\u{0}") && store.tampered == nil
+    )
 
     // ---- one file changed after the download -----------------------------------------------
     try clean.tamper("app.js", "steal(document.cookie)")
@@ -173,6 +188,21 @@ do {
     )
     drain()
     check("capacitor file: the plugin is told while the version is being served", heard == ["\(version) true"])
+
+    // ---- a verified file rewritten while the process runs ------------------------------------
+    // The same size and modification date: only the change time (and the bytes) tell it apart.
+    let rewritten = try device("rewritten", manifest: storedManifest(signature: sign(key)))
+    store = rewritten.launch(key: signed)
+    _ = store.prepareLaunch()
+    check("rewrite: a verified file is served", rewritten.admit(store, "/app.js"))
+    let rewrittenFile = rewritten.dir.appendingPathComponent("app.js").path
+    let modified = try fm.attributesOfItem(atPath: rewrittenFile)[.modificationDate] as! Date
+    try rewritten.tamper("app.js", "console.log('xx')")
+    try fm.setAttributes([.modificationDate: modified], ofItemAtPath: rewrittenFile)
+    check(
+        "rewrite: a verified file rewritten in place is refused and quarantines the UI",
+        !rewritten.admit(store, "/app.js") && store.tampered == version
+    )
 
     // ---- the stored manifest changed ---------------------------------------------------------
     let edited = try device("manifest", manifest: storedManifest(notes: "hello (edited)", signature: sign(key)))
@@ -328,12 +358,83 @@ do {
     check("platform: the field without a matching stamp is refused", refusal(stamped(nil, platform: "ios")) == "platform_mismatch")
     check("platform: a field that disagrees with the stamp is refused", refusal(stamped("android", platform: "ios")) == "platform_mismatch")
     check("platform: a field that is not a string is invalid", refusal(stamped("ios", platform: 1)) == "invalid")
+    // An app that embeds a public key takes only its own platform's stamped export: a web export
+    // signed with the same key is not an iOS UI. Unsigned (pinned-origin) apps take it as before.
+    func platformRefusal(_ stamp: String?, platform: String?, signed: Bool) -> String? {
+        var list = manifestFiles
+        if let stamp {
+            list.append(DenextOtaStore.ManifestFile(path: "_denext/platform.txt", sha256: DenextOtaStore.sha256Hex(Data(stamp.utf8)), size: Int64(stamp.utf8.count)))
+        }
+        do {
+            try DenextOtaStore.checkPlatform(platform, files: list, signed: signed)
+            return nil
+        } catch let error as DenextOtaStore.OtaError {
+            return error.code
+        } catch {
+            return "\(error)"
+        }
+    }
+    check("platform: a signed app refuses an unstamped export (platform_mismatch)", platformRefusal(nil, platform: nil, signed: true) == "platform_mismatch")
+    check("platform: a signed app takes its own platform's export", platformRefusal("ios", platform: "ios", signed: true) == nil)
+    check("platform: a signed app refuses another platform's export", platformRefusal("android", platform: "android", signed: true) == "platform_mismatch")
+    check("platform: an unsigned app takes an unstamped export", platformRefusal(nil, platform: nil, signed: false) == nil)
+    check("platform: an app without a key does not sign updates", !DenextOtaStore.signsUpdates)
 
     let folders = try device("folders", manifest: storedManifest(signature: sign(key)))
     store = folders.launch(key: signed)
     _ = store.prepareLaunch()
     check("a request for a directory of the UI is refused without quarantining", !folders.admit(store, "/assets") && store.tampered == nil)
     check("the UI is still served after it", folders.admit(store, "/assets/logo.svg"))
+
+    // ---- the /_capacitor_file_ guard could not be installed ---------------------------------
+    // Without DenextOtaFileGuard a /_capacitor_file_ request would read a downloaded UI unchecked,
+    // so the process serves none (fail closed), unless the app opted out.
+    let unguarded = try device("unguarded", manifest: storedManifest(signature: sign(key)))
+    store = unguarded.launch(key: signed)
+    check("no file guard: the launch first chooses the downloaded UI", store.prepareLaunch().directory?.path == unguarded.dir.path)
+    check("no file guard: the bridge is told to serve the bundled UI", store.settleFileGuard(failure: "no handler", optedOut: false))
+    check("no file guard: the reason is kept for the plugin's refusals", store.guardUnavailable == "no handler")
+    check("no file guard: no downloaded file is served", !unguarded.admit(store, "/app.js") && !unguarded.admit(store, "/index.html"))
+    check(
+        "no file guard: nothing is quarantined",
+        store.tampered == nil && store.current == version && fm.fileExists(atPath: unguarded.dir.path)
+    )
+    let notice = store.takeGuardNotice()
+    check("no file guard: the plugin hears it once", notice?.version == version && store.takeGuardNotice() == nil)
+    check("no file guard: the bundled UI is still served", store.admit(unguarded.bundled.path + "/index.html", servedFrom: unguarded.bundled.path))
+    check("no file guard: a quarantine falls back to the bundled UI", store.fallbackDirectory() == nil)
+    check("no file guard: a later bridge gets the bundled UI", store.prepareLaunch().directory == nil)
+    unguarded.defaults.set(version, forKey: "denext.ota.pending")
+    unguarded.defaults.set(0, forKey: "denext.ota.trialAttempts")
+    store = unguarded.launch(key: signed)
+    let unguardedTrial = store.prepareLaunch()
+    _ = store.settleFileGuard(failure: "no handler", optedOut: false)
+    check(
+        "no file guard: a trial keeps its attempt",
+        unguardedTrial.trial && store.pending == version && unguarded.defaults.integer(forKey: "denext.ota.trialAttempts") == 0
+    )
+    unguarded.defaults.removeObject(forKey: "denext.ota.pending")
+    store = unguarded.launch(key: signed)
+    _ = store.prepareLaunch()
+    check(
+        "no file guard, opted out: the downloaded UI is served",
+        !store.settleFileGuard(failure: "own handler", optedOut: true) && store.guardUnavailable == nil &&
+            unguarded.admit(store, "/app.js") && store.takeGuardNotice() == nil
+    )
+    store = unguarded.launch(key: signed)
+    _ = store.prepareLaunch()
+    check(
+        "file guard in place: the downloaded UI is served",
+        !store.settleFileGuard(failure: nil, optedOut: false) && unguarded.admit(store, "/app.js")
+    )
+    let bundledOnly = try device("unguarded-bundled", current: false, manifest: storedManifest(signature: sign(key)))
+    store = bundledOnly.launch(key: signed)
+    check("no file guard: a launch of the bundled UI", store.prepareLaunch().directory == nil)
+    check(
+        "no file guard: a launch of the bundled UI keeps it, with no notice",
+        !store.settleFileGuard(failure: "no handler", optedOut: false) && store.takeGuardNotice() == nil &&
+            !bundledOnly.admit(store, "/app.js")
+    )
 } catch {
     print("FAIL harness error: \(error)")
     failures += 1

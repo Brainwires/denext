@@ -3623,7 +3623,21 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>); checked
           by <code>checkForUiUpdate</code>{" "}
           before the native side sees it, and by the native side too (from <code>add-ota</code>{" "}
-          template generation 12), so a call that skips the page's check is refused the same way.
+          template generation 12), so a call that skips the page's check is refused the same way. An
+          app that embeds a public key also refuses a manifest with no platform stamp (an unstamped
+          web export, which would otherwise install on any signed app sharing the key): sign the
+          export that <code>denext mobile build</code> or <code>denext export --platform ios</code>
+          {" "}
+          writes, or stamp one with{" "}
+          <code>denext ota manifest &lt;dir&gt; --platform ios --sign</code>. Unsigned apps (pinned
+          https origins) still take an unstamped export. The page cannot tell whether the binary
+          embeds a key, so only the native side refuses this one.
+        </li>
+        <li>
+          <code>guard_unavailable</code>: the iOS bridge could not install its check on{" "}
+          <code>/_capacitor_file_</code>{" "}
+          requests (see re-verification below), so this app serves no downloaded UI and refuses
+          every update.
         </li>
       </ul>
       <p>
@@ -3674,11 +3688,24 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         a large UI does not slow the launch. The same check covers a <code>/_capacitor_file_</code>
         {" "}
         request (<code>Capacitor.convertFileSrc</code>) for a file inside the downloaded versions,
-        however the path is spelled; files elsewhere are served as before. The shell serves only the
-        bundled UI or a downloaded version's directory, and refuses a request from any other base. A
-        file changed, added or removed on the device after the download (another app on a rooted or
-        jailbroken device, malware with storage access, corruption) is never served: the version is
-        moved to{" "}
+        however the path is spelled; files elsewhere are served as before, but a path with a control
+        character (a NUL would crash Capacitor's iOS handler) or to a file that is not there is
+        refused. On iOS that check is{" "}
+        <code>DenextOtaFileGuard</code>, which the bridge makes of Capacitor's own asset handler.
+        When it cannot (the web view's handler is the app's own class), the app serves no downloaded
+        UI: the launch runs the bundled UI, <code>onOtaRejected</code> fires with{" "}
+        <code>code: &quot;guard_unavailable&quot;</code>{" "}
+        (nothing is quarantined), and updates are refused with that code. An app whose own handler
+        does its own checks opts out with <code>plugins.DenextBridge.otaFileGuard: false</code>{" "}
+        in the Capacitor config; its downloaded UIs are then served with{" "}
+        <code>/_capacitor_file_</code>{" "}
+        reads of their files unchecked, so a file changed on the device can reach the page that way.
+        A file is hashed again whenever its size, modification or change time, or inode differs from
+        when it was last verified, so one rewritten while the app runs is caught too. The shell
+        serves only the bundled UI or a downloaded version's directory, and refuses a request from
+        any other base. A file changed, added or removed on the device after the download (another
+        app on a rooted or jailbroken device, malware with storage access, corruption) is never
+        served: the version is moved to{" "}
         <code>quarantine/</code>, the webview switches to the bundled UI (or the confirmed download,
         re-verified), and <code>onOtaRejected</code> fires there. <code>otaStatus()</code>{" "}
         reports the version as <code>tampered</code> until <code>otaReset()</code>; it is not{" "}
@@ -3699,7 +3726,7 @@ import { onOtaRejected } from "denext/mobile";
 
 export function OtaWatch() {
   // Register early (the root layout): the event waits for its first listener.
-  useEffect(() => onOtaRejected(({ version, reason }) => report("ota-tampered", { version, reason })), []);
+  useEffect(() => onOtaRejected(({ version, reason, code }) => report(\`ota-\${code}\`, { version, reason })), []);
   return null;
 }`}
       </Code>

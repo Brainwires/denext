@@ -94,7 +94,7 @@ Deno.test("OTA serve hardening: generation 12 checks the platform stamp, /_capac
   const request = IOS_STORE.slice(IOS_STORE.indexOf("struct ApplyRequest: Sendable {"));
   const trust = request.indexOf("try DenextOtaStore.checkTrust(");
   const platform = request.indexOf(
-    'try DenextOtaStore.checkPlatform(manifest["platform"], files: files)',
+    'try DenextOtaStore.checkPlatform(manifest["platform"], files: files, signed:',
   );
   assert(trust >= 0 && platform > trust, "iOS: checkPlatform after checkTrust");
   assert(
@@ -122,7 +122,7 @@ Deno.test("OTA serve hardening: generation 12 checks the platform stamp, /_capac
   // Android: the same, in the plugin's parse and the store's route processor.
   assertStringIncludes(
     ANDROID_PLUGIN,
-    'DenextOtaStore.checkPlatform(manifest.opt("platform"), files);',
+    'DenextOtaStore.checkPlatform(manifest.opt("platform"), files, store.signsUpdates());',
   );
   assertStringIncludes(ANDROID_STORE, 'static final String PLATFORM = "android";');
   const process = member(
@@ -135,6 +135,57 @@ Deno.test("OTA serve hardening: generation 12 checks the platform stamp, /_capac
     process,
   );
   assertStringIncludes(process, "store.admitCapacitorFile(path, files ? served : null)");
+});
+
+Deno.test("OTA serve hardening: the review's follow-ups are in both templates", () => {
+  // iOS: a guard that cannot be installed settles the store before the first page, which then
+  // serves the bundled UI; plugins.DenextBridge.otaFileGuard: false opts out.
+  const didLoad = member(IOS_BRIDGE, "    override func capacitorDidLoad() {");
+  assertStringIncludes(didLoad, "let failure = DenextOtaFileGuard.install(on: bridge)");
+  assertStringIncludes(didLoad, 'getBoolean("otaFileGuard", true) == false');
+  assertStringIncludes(
+    didLoad,
+    "if DenextOtaStore.shared.settleFileGuard(failure: failure, optedOut: optedOut) {",
+  );
+  assert(
+    didLoad.indexOf("settleFileGuard") < didLoad.indexOf("bridge?.registerPluginInstance(plugin)"),
+    didLoad,
+  );
+  assertStringIncludes(
+    IOS_BRIDGE,
+    "static func install(on bridge: CAPBridgeProtocol?) -> String? {",
+  );
+  for (const method of ["download", "activate", "apply"]) {
+    assertStringIncludes(
+      member(IOS_PLUGIN, `    @objc func ${method}(_ call: CAPPluginCall) {`),
+      "!self.rejectIfUnguarded(call)",
+    );
+  }
+  assertStringIncludes(IOS_PLUGIN, '"code": DenextOtaStore.guardUnavailableCode');
+  // A control character never reaches Capacitor's handler; signed apps need the platform stamp.
+  assertStringIncludes(
+    IOS_STORE,
+    "guard !DenextOtaStore.hasControlCharacter(file) else { return false }",
+  );
+  assertStringIncludes(
+    IOS_STORE,
+    'checkPlatform(manifest["platform"], files: files, signed: DenextOtaStore.signsUpdates)',
+  );
+  assertStringIncludes(ANDROID_STORE, "if (hasControlCharacter(file)) {");
+  assertStringIncludes(
+    ANDROID_PLUGIN,
+    'DenextOtaStore.checkPlatform(manifest.opt("platform"), files, store.signsUpdates());',
+  );
+  // A cached verdict holds only while the file's stamp does.
+  assertStringIncludes(IOS_STORE, "if let known = known, known == stamp { return .serve }");
+  assertStringIncludes(
+    ANDROID_STORE,
+    "if (stamp != null && stamp.equals(verified.get(relative))) {",
+  );
+  // Swift interpolation survives the template literal (a lone \( would print "(named)").
+  for (const name of ["named", "platform", "platformStampPath", "failure", "why"]) {
+    assert(!new RegExp(`[^\\\\]\\((${name})\\)`).test(IOS_STORE + IOS_PLUGIN), name);
+  }
 });
 
 Deno.test("OTA re-verification: the stored manifest keeps every field the signature covers", () => {
@@ -510,6 +561,16 @@ const SERVE_HARDENING_CHECKS = [
   "platform: the field without a matching stamp is refused",
   "platform: a field that disagrees with the stamp is refused",
   "platform: a field that is not a string is invalid",
+  // The security review's follow-ups: control characters, a rewritten file, signed apps.
+  "capacitor file: a NUL that cuts the path short is refused",
+  "capacitor file: a control character is refused",
+  "capacitor file: a NUL is refused inside the versions root too",
+  "rewrite: a verified file is served",
+  "rewrite: a verified file rewritten in place is refused and quarantines the UI",
+  "platform: a signed app refuses an unstamped export (platform_mismatch)",
+  "platform: a signed app takes its own platform's export",
+  "platform: a signed app refuses another platform's export",
+  "platform: an unsigned app takes an unstamped export",
 ];
 
 /** The generation-12 checks only the Swift harness runs (through `admit` and `ApplyRequest`). */
@@ -521,6 +582,25 @@ const IOS_SERVE_HARDENING_CHECKS = [
   "platform: an iOS stamp without the field is accepted",
   "platform: an Android export is refused (platform_mismatch)",
   "platform: an Android stamp without the field is refused",
+  "platform: an app without a key does not sign updates",
+  // A NUL that empties the path: Capacitor's handler would crash reading the empty URL.
+  "capacitor file: a NUL that empties the path is refused",
+  "capacitor file: a missing file is refused",
+  // DenextOtaFileGuard could not be installed: no downloaded UI is served (fail closed).
+  "no file guard: the launch first chooses the downloaded UI",
+  "no file guard: the bridge is told to serve the bundled UI",
+  "no file guard: the reason is kept for the plugin's refusals",
+  "no file guard: no downloaded file is served",
+  "no file guard: nothing is quarantined",
+  "no file guard: the plugin hears it once",
+  "no file guard: the bundled UI is still served",
+  "no file guard: a quarantine falls back to the bundled UI",
+  "no file guard: a later bridge gets the bundled UI",
+  "no file guard: a trial keeps its attempt",
+  "no file guard, opted out: the downloaded UI is served",
+  "file guard in place: the downloaded UI is served",
+  "no file guard: a launch of the bundled UI",
+  "no file guard: a launch of the bundled UI keeps it, with no notice",
 ];
 
 /** The generation-12 checks only the Java harness runs (through the route processor). */

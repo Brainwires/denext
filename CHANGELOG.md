@@ -41,6 +41,26 @@ and this project adheres to
   version; files elsewhere are served as before. On iOS the bridge turns Capacitor's asset
   handler into `DenextOtaFileGuard` for this, since Capacitor answers those requests without
   the router. Valid updates are served exactly as before.
+  - A `/_capacitor_file_` path with a NUL or another control character is refused wherever it
+    points: on iOS a NUL turned the path Capacitor's handler reads into an empty URL, and the read
+    raised an exception that crashed the app (during a trial launch, a crash loop rolled the
+    update back). A path to a file that is not there is refused too, and the iOS check resolves
+    paths as the OS opens them (`/private/var` and `/var` alike), so a `..` spelling of a missing
+    file inside the versions root no longer passes as outside it.
+  - When the iOS bridge cannot install `DenextOtaFileGuard` (no asset handler, or one of the app's
+    own class), it serves no downloaded UI: the launch falls back to the bundled UI, `onOtaRejected`
+    fires with `code: "guard_unavailable"` (nothing is quarantined), and `download` / `activate` /
+    `apply` are refused with that code. An app with its own asset handler that accepts unchecked
+    `/_capacitor_file_` reads opts out with `plugins.DenextBridge.otaFileGuard: false`.
+  - **Breaking for signed deploys of a web export:** an app that embeds a public key now takes only
+    its own platform's stamped export, so a web export signed with the same key cannot install
+    itself on a phone (`platform_mismatch`). `denext mobile build` and `denext export --platform
+    ios|android` already stamp the export; for an unstamped one, `denext ota manifest <dir>
+    --platform ios|android --sign` stamps it before signing. Unsigned, pinned-origin apps still
+    take an unstamped export.
+  - A file verified once in a process is hashed again when its size, modification time, change
+    time or inode changes, so a file rewritten while the app runs is refused (and quarantines the
+    version) instead of being served from the first verdict.
 
 ### Added
 

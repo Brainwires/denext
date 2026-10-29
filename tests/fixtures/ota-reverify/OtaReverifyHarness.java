@@ -228,6 +228,13 @@ public final class OtaReverifyHarness {
         return null;
     }
 
+    static boolean hasArity(String name, int arity) {
+        for (Method method : DenextOtaStore.class.getDeclaredMethods()) {
+            if (method.getName().equals(name) && method.getParameterCount() == arity) return true;
+        }
+        return false;
+    }
+
     static boolean has(String name) {
         for (Method method : DenextOtaStore.class.getDeclaredMethods()) {
             if (method.getName().equals(name)) return true;
@@ -278,8 +285,11 @@ public final class OtaReverifyHarness {
         return (Bridge.CAPACITOR_FILE_START + file).equals(capacitorFile(store, file));
     }
 
-    /** The platform check's refusal code for a manifest with that stamp and field, or null. */
-    static String platformRefusal(String stamp, Object platform) throws Exception {
+    /**
+     * The platform check's refusal code for a manifest with that stamp and field, or null, in an app
+     * that embeds a public key ({@code signed}) or not.
+     */
+    static String platformRefusal(String stamp, Object platform, boolean signed) throws Exception {
         List<DenextOtaStore.ManifestFile> files = manifestFiles();
         if (stamp != null) {
             byte[] bytes = stamp.getBytes(StandardCharsets.UTF_8);
@@ -287,7 +297,9 @@ public final class OtaReverifyHarness {
         }
         if (!has("checkPlatform")) return "missing";
         try {
-            call(null, "checkPlatform", platform, files);
+            if (call(null, "checkPlatform", platform, files, signed) == null && !hasArity("checkPlatform", 3)) {
+                return "missing";
+            }
             return null;
         } catch (IllegalStateException ex) {
             return ex.getCause() instanceof DenextOtaStore.OtaException ? ((DenextOtaStore.OtaException) ex.getCause()).code : ex.toString();
@@ -398,6 +410,13 @@ public final class OtaReverifyHarness {
             "capacitor file: a symlinked spelling of the versions root is checked",
             !fileServed(store, link.getAbsolutePath() + "/stray.txt") && fileServed(store, link.getAbsolutePath() + "/" + version + "/app.js")
         );
+        // No file Capacitor names has a control character; a NUL cuts a path short in native code.
+        check("capacitor file: a NUL that cuts the path short is refused", !fileServed(store, "/tmp/photo.jpg\0.png"));
+        check("capacitor file: a control character is refused", !fileServed(store, "/tmp/photo\u0001.jpg"));
+        check(
+            "capacitor file: a NUL is refused inside the versions root too",
+            !fileServed(store, dir.getAbsolutePath() + "/app.js\0") && call(store, "tampered") == null
+        );
         String refusedFile = capacitorFile(store, root.getAbsolutePath() + "/stray.txt");
         check("capacitor file: a refused file reads a directory (the request fails)", refusedFile != null && new File(refusedFile.replace(Bridge.CAPACITOR_FILE_START, "")).isDirectory());
         bridge.served = "/elsewhere";
@@ -447,14 +466,42 @@ public final class OtaReverifyHarness {
         );
         check("capacitor file: the plugin is told while the version is being served", events.equals(List.of(version + " true")));
 
+        // ---- a verified file rewritten while the process runs ---------------------------------------
+        // The same size and modification time: only the change time (and the bytes) tell it apart.
+        app = new App(new File(work, "rewritten"), publicKey);
+        launch(app).startDirectory();
+        dir = install(app, version, storedManifest(version, "hello", signature));
+        app.prefs.values.put("current", version);
+        store = launch(app);
+        store.startDirectory();
+        bridge = attach(store);
+        bridge.served = dir.getAbsolutePath();
+        check("rewrite: a verified file is served", served(store, dir, "/app.js"));
+        File rewritten = new File(dir, "app.js");
+        long modified = rewritten.lastModified();
+        // Android's stat reports the change time in whole seconds: rewrite in a later second.
+        Thread.sleep(1_100);
+        Files.write(rewritten.toPath(), "console.log('xx')".getBytes(StandardCharsets.UTF_8));
+        rewritten.setLastModified(modified);
+        check(
+            "rewrite: a verified file rewritten in place is refused and quarantines the UI",
+            refused(store, dir, "/app.js") && version.equals(call(store, "tampered"))
+        );
+
         // ---- the platform stamp, checked natively too ----------------------------------------------
-        check("platform: an Android export is accepted", platformRefusal("android", "android") == null);
-        check("platform: an Android stamp without the field is accepted", platformRefusal("android", null) == null);
-        check("platform: an iOS export is refused (platform_mismatch)", "platform_mismatch".equals(platformRefusal("ios", "ios")));
-        check("platform: an iOS stamp without the field is refused", "platform_mismatch".equals(platformRefusal("ios", null)));
-        check("platform: the field without a matching stamp is refused", "platform_mismatch".equals(platformRefusal(null, "android")));
-        check("platform: a field that disagrees with the stamp is refused", "platform_mismatch".equals(platformRefusal("ios", "android")));
-        check("platform: a field that is not a string is invalid", "invalid".equals(platformRefusal("android", 1)));
+        check("platform: an Android export is accepted", platformRefusal("android", "android", false) == null);
+        check("platform: an Android stamp without the field is accepted", platformRefusal("android", null, false) == null);
+        check("platform: an iOS export is refused (platform_mismatch)", "platform_mismatch".equals(platformRefusal("ios", "ios", false)));
+        check("platform: an iOS stamp without the field is refused", "platform_mismatch".equals(platformRefusal("ios", null, false)));
+        check("platform: the field without a matching stamp is refused", "platform_mismatch".equals(platformRefusal(null, "android", false)));
+        check("platform: a field that disagrees with the stamp is refused", "platform_mismatch".equals(platformRefusal("ios", "android", false)));
+        check("platform: a field that is not a string is invalid", "invalid".equals(platformRefusal("android", 1, false)));
+        // An app that embeds a public key takes only its own platform's stamped export: a web export
+        // signed with the same key is not an Android UI. Unsigned (pinned-origin) apps take it as before.
+        check("platform: a signed app refuses an unstamped export (platform_mismatch)", "platform_mismatch".equals(platformRefusal(null, null, true)));
+        check("platform: a signed app takes its own platform's export", platformRefusal("android", "android", true) == null);
+        check("platform: a signed app refuses another platform's export", "platform_mismatch".equals(platformRefusal("ios", "ios", true)));
+        check("platform: an unsigned app takes an unstamped export", platformRefusal(null, null, false) == null);
 
         // ---- the stored manifest changed: refused at launch, before any page ---------------------
         app = new App(new File(work, "manifest"), publicKey);
