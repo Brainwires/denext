@@ -73,6 +73,21 @@ and this project adheres to
 
 ### Fixed
 
+- **`notFound()` / `forbidden()` / `unauthorized()` in a Server Action the browser calls render
+  the nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx`, as in Next.js.** The call
+  rejected with a plain `Error("notFound")`, so `error.tsx` rendered instead. The browser now
+  re-raises the reply's signal as the error `notFound()` throws (Next's
+  `NEXT_HTTP_ERROR_FALLBACK;<status>` digest; `isNotFound()` and `unstable_rethrow` recognise
+  it), and a Server Action's signal that reaches the client tree (an event handler's rejection, a
+  form action, `useActionState`) re-renders the current route on the server with the signal
+  raised at the page: the page level's nearest file renders in place under the
+  layouts, the URL stays, and nothing reloads. `redirect()` keeps working as before.
+- **`useActionState` rethrows an action's error into the nearest error boundary.** It threw from a
+  state updater, which the setter runs at once, so the error escaped as an unhandled rejection
+  and no boundary rendered.
+- **The Fragment-ref runtime chunk is loaded again after a failed load.** A failure left a no-op
+  for the page's life; the next `<Fragment ref>` now retries it once a backoff has passed (1 s,
+  doubling), up to five loads in a row.
 - **The toolchain pin carries the release's glibc floor when the release records one.**
   `deno task desktop:pin-runtime` now copies the release manifest's `cli.glibc` into the toolchain
   pin as `minGlibc`, which the Linux host check reads before a download (a pin without it keeps the
@@ -191,6 +206,9 @@ and this project adheres to
 
 ### Documentation
 
+- **The Deno Desktop runtime guide's releases table gains its `3.0.0-rc.6` row**, the runtime
+  reference no longer says upstream Deno releases a `3.0.0`, and the `.deno/npm-compat`
+  limitation names the runtimes that still leave it (through the pinned `3.0.0-denext.2`).
 - **The runtime's versions after `3.0.0-rc.6`.** The guides now say there is no upstream Deno 3.0:
   upstream stays on its 2.9.x LTS line and denext's runtime is the forward line, whose releases
   after `3.0.0-rc.6` are `3.0.0-denext.1`, `3.0.0-denext.2`, and so on. The toolchain, desktop

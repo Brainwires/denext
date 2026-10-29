@@ -5,7 +5,10 @@
 //     state (adopted, not remounted), and nothing reloads;
 //   • a later refresh (now through the retained root) keeps the island state too;
 //   • a soft nav to another route removes the island, and its effect cleanup runs (its document
-//     listener is gone — no leak).
+//     listener is gone — no leak);
+//   • a Server Action that throws `notFound()` (called from a click) or `forbidden()` (through
+//     `useActionState`) renders the segment's not-found.tsx / forbidden.tsx in place under the
+//     layout: the URL stays, nothing reloads.
 //
 // Opt-in: `deno task test:e2e` (astral downloads Chromium on first run).
 
@@ -71,6 +74,32 @@ Deno.test({
       const before = await page.evaluate("window.__pings");
       await page.evaluate("document.dispatchEvent(new Event('ping'))");
       assertEquals(await page.evaluate("window.__pings"), before, "the listener was cleaned up");
+    });
+
+    await t.step(
+      "an action's notFound() renders the segment's not-found.tsx in place",
+      async () => {
+        await page.goto(server.origin + "/gone");
+        await page.evaluate("window.__noReload = true");
+        await pollFor(page, `!!${q("vanish")}`);
+        // Click until the island is live, then until the not-found UI replaced the page.
+        await pollFor(page, `(${q("vanish")} && ${q("vanish")}.click(), !!${q("gone-nf")})`);
+        assert(!(await page.evaluate(`!!${q("gone-page")}`)), "the page content is gone");
+        assert(await page.evaluate("!!document.querySelector('nav a')"), "the layout stays");
+        assertEquals(await page.evaluate("location.pathname"), "/gone", "the URL stays");
+        assert(await page.evaluate("window.__noReload === true"), "no reload");
+      },
+    );
+
+    await t.step("useActionState's forbidden() renders the segment's forbidden.tsx", async () => {
+      await page.goto(server.origin + "/gone");
+      await page.evaluate("window.__noReload = true");
+      await pollFor(page, "!!document.querySelector('form[data-live]')");
+      await page.evaluate(`${q("deny")}.click()`);
+      await pollFor(page, `!!${q("gone-forbidden")}`);
+      assert(!(await page.evaluate(`!!${q("gone-page")}`)), "the page content is gone");
+      assertEquals(await page.evaluate("location.pathname"), "/gone");
+      assert(await page.evaluate("window.__noReload === true"), "no reload");
     });
 
     assert(

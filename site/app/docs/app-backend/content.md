@@ -45,7 +45,7 @@ The policy covers every route handler (`route.ts`, `defineApi`), the native `den
 endpoints, pages, Server Actions, the `/_denext/api-batch` endpoint and the Live socket. The
 default `headers` are `authorization`, `content-type` and the markers denext's own client sends
 (`x-denext-wire`, `x-denext-action`, `x-denext-api-batch`, `x-denext-nav`, `x-denext-flight`,
-`x-denext-slot-state`, `x-denext-defer`, `x-denext-iso`). The rules:
+`x-denext-slot-state`, `x-denext-defer`, `x-denext-signal`, `x-denext-iso`). The rules:
 
 - **Exact origins.** An origin matches only when it is byte-identical to a configured one
   (scheme, host and port; the configured value is normalized once to the lower-case form a
