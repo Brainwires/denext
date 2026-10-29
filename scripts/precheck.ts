@@ -18,11 +18,14 @@
 //   6. affected tests  the changed test files and the test files importing a changed module
 //                      (scripts/affected-tests.ts), when there are at most AFFECTED_TESTS_CAP
 //   7. doc-lint        when a published module changed (`deno task doc-lint`)
-//   8. bundle budget   when a module that can reach the client bundle changed (`deno task budget`)
+//   8. bundle budget   when a module that can reach the client bundle changed (`deno task budget`,
+//                      on denext's Deno toolchain as CI's bundle-budget job runs it: a stock Deno
+//                      bundles the same chunks a little larger and would fail a passing change)
 //   9. cargo audit     when a wasm package's Cargo.lock / Cargo.toml / .cargo/audit.toml changed
 //                      (`deno task audit:cargo`; skipped, with a note, without cargo-audit)
-//  10. npm audit       when deno.lock, a deno.json or security/npm-audit-allow.json changed
-//                      (`deno task audit:npm`: high / critical advisories fail)
+//  10. npm audit       when a deno.lock (the root's or an example's), a deno.json, an example's
+//                      package.json or security/npm-audit-allow.json changed (`deno task
+//                      audit:npm`: high / critical advisories fail)
 //
 // The fallow badge has no check mode (its score moves with unrelated churn): the release
 // regenerates it.
@@ -51,6 +54,16 @@ export const AFFECTED_TESTS_CAP = 25;
  */
 export function typeCheckArgs(files: readonly string[]): string[] {
   return ["run", "-A", "scripts/toolchain-deno.ts", "check", "cli.ts", "mod.ts", ...files];
+}
+
+/**
+ * The bundle budget's command: `deno task budget` on denext's Deno toolchain
+ * (scripts/toolchain-deno.ts; every `deno` the task starts is that toolchain too), as CI's
+ * bundle-budget job runs it. The budget is measured against the toolchain's output: a stock Deno
+ * on PATH measures the same chunks a few dozen bytes larger and fails a change CI passes.
+ */
+export function budgetArgs(): string[] {
+  return ["run", "-A", "scripts/toolchain-deno.ts", "task", "budget"];
 }
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
@@ -272,7 +285,7 @@ if (import.meta.main) {
       if (!changed.some(reachesClientBundle) && !changed.includes("deno.lock")) {
         return Promise.resolve("no client-reachable module changed");
       }
-      return deno(["task", "budget"]);
+      return deno(budgetArgs());
     },
   );
 
@@ -293,11 +306,13 @@ if (import.meta.main) {
 
   await step(
     outcomes,
-    "npm audit (deno.lock)",
+    "npm audit (deno.lock + examples/*/deno.lock)",
     "deno task audit:npm; lock a fixed version, or allowlist one still under the age hold in security/npm-audit-allow.json",
     () => {
       if (!changed.some(isNpmAuditInput)) {
-        return Promise.resolve("no deno.lock / deno.json / npm-audit-allow.json changed");
+        return Promise.resolve(
+          "no deno.lock / deno.json / package.json / npm-audit-allow.json changed",
+        );
       }
       return deno(["task", "audit:npm"]);
     },

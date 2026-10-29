@@ -1,5 +1,6 @@
 // `deno audit` over the repository's root `deno.lock` (the npm packages the workspace packages, the
-// build tooling and the tests resolve), failing on a high or critical advisory:
+// build tooling and the tests resolve) and every example's own `examples/<name>/deno.lock` (what
+// users copy), failing on a high or critical advisory in any of them:
 //
 //   deno task audit:npm
 //
@@ -10,11 +11,15 @@
 // `deno audit --ignore` takes CVE ids only, so the allowlist is applied here, by GHSA id.
 // Moderate and low advisories are printed and pass.
 //
+// The allowlist applies to every audited lock. The examples' npm `package-lock.json` files (the
+// Capacitor and React Native shells' own tooling) are not audited here: npm is not part of
+// denext's toolchain; `npm audit` them by hand when one changes.
+//
 // The advisory database is queried fresh on every run, so a new advisory against an unchanged
 // lockfile fails too. ci.yml's `cargo-audit` job runs this as well, and `deno task precheck` runs
-// it when deno.lock, a deno.json or the allowlist changed.
+// it when a deno.lock, a deno.json, an example's package.json or the allowlist changed.
 
-import { fromFileUrl } from "@std/path";
+import { dirname, fromFileUrl, join } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
@@ -53,7 +58,29 @@ export interface Allowed {
 /** Whether `path` (repository-relative) is an input of the npm audit. */
 export function isNpmAuditInput(path: string): boolean {
   return path === "deno.lock" || path === "deno.json" || path === ALLOW_FILE ||
-    /^packages\/[^/]+\/deno\.json$/.test(path);
+    /^packages\/[^/]+\/deno\.json$/.test(path) ||
+    /^examples\/[^/]+\/(deno\.lock|deno\.json|package\.json)$/.test(path);
+}
+
+/**
+ * The lockfiles the audit covers, repository-relative: the root `deno.lock`, then each
+ * `examples/<name>/deno.lock` in name order.
+ *
+ * @param root The repository root.
+ */
+export async function auditedLocks(root: string = ROOT): Promise<string[]> {
+  const examples: string[] = [];
+  for await (const e of Deno.readDir(join(root, "examples"))) {
+    if (!e.isDirectory) continue;
+    try {
+      if ((await Deno.stat(join(root, "examples", e.name, "deno.lock"))).isFile) {
+        examples.push(`examples/${e.name}/deno.lock`);
+      }
+    } catch (err) {
+      if (!(err instanceof Deno.errors.NotFound)) throw err;
+    }
+  }
+  return ["deno.lock", ...examples.sort()];
 }
 
 /**
@@ -137,11 +164,17 @@ export function judge(advisories: Advisory[], allow: Allowed[], today: string): 
   };
 }
 
-/** Run `deno audit` on the root lockfile; returns its combined output. */
-export async function runAudit(root: string = ROOT): Promise<string> {
+/**
+ * Run `deno audit` on one lockfile, from its own directory (an example is its own project);
+ * returns the combined output.
+ *
+ * @param root The repository root.
+ * @param lock The lockfile, repository-relative.
+ */
+export async function runAudit(root: string = ROOT, lock = "deno.lock"): Promise<string> {
   const { stdout, stderr } = await new Deno.Command(Deno.execPath(), {
     args: ["audit", "--lock", "deno.lock"],
-    cwd: root,
+    cwd: join(root, dirname(lock)),
     env: { NO_COLOR: "1" },
     stdout: "piped",
     stderr: "piped",
@@ -150,31 +183,75 @@ export async function runAudit(root: string = ROOT): Promise<string> {
   return `${decode(stdout)}\n${decode(stderr)}`;
 }
 
+/** One lockfile's audit. */
+export interface LockAudit {
+  /** The lockfile, repository-relative. */
+  readonly lock: string;
+  /** `deno audit`'s output. */
+  readonly text: string;
+  /** The parsed advisories, or `null` when `deno audit` did not finish a report. */
+  readonly advisories: Advisory[] | null;
+}
+
+/**
+ * Audit several lockfiles, a few at a time, in order.
+ *
+ * @param locks The lockfiles, repository-relative.
+ * @param run Runs `deno audit` on one of them (the repository-relative path).
+ * @param concurrency How many run at once.
+ */
+export async function auditLocks(
+  locks: readonly string[],
+  run: (lock: string) => Promise<string> = (lock) => runAudit(ROOT, lock),
+  concurrency = 4,
+): Promise<LockAudit[]> {
+  const out: LockAudit[] = new Array(locks.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < locks.length) {
+      const i = next++;
+      const text = await run(locks[i]);
+      out[i] = { lock: locks[i], text, advisories: parseAudit(text) };
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, locks.length) }, worker));
+  return out;
+}
+
 if (import.meta.main) {
-  const text = await runAudit();
-  console.log(text.trim());
-  const advisories = parseAudit(text);
-  if (advisories === null) {
-    console.error("\nnpm audit: `deno audit` did not finish a report (above).");
-    Deno.exit(2);
-  }
+  const audits = await auditLocks(await auditedLocks());
   const allow = parseAllowlist(await Deno.readTextFile(`${ROOT}${ALLOW_FILE}`));
-  const { failing, allowed, expired } = judge(
-    advisories,
-    allow,
-    new Date().toISOString().slice(0, 10),
-  );
-  for (const a of allowed) console.log(`npm audit: allowed ${a.id} (${a.package})`);
-  for (const e of expired) {
+  const today = new Date().toISOString().slice(0, 10);
+  const failing: string[] = [];
+  let unfinished = false;
+  for (const { lock, text, advisories } of audits) {
+    if (advisories === null) {
+      console.error(`npm audit: ${lock}: \`deno audit\` did not finish a report:\n${text.trim()}`);
+      unfinished = true;
+      continue;
+    }
+    if (advisories.length === 0) {
+      console.log(`npm audit: ${lock}: no known vulnerabilities`);
+      continue;
+    }
+    console.log(`\nnpm audit: ${lock}\n${text.trim()}`);
+    const verdict = judge(advisories, allow, today);
+    for (const a of verdict.allowed) {
+      console.log(`npm audit: ${lock}: allowed ${a.id} (${a.package})`);
+    }
+    for (const a of verdict.failing) {
+      failing.push(`${a.id || a.title} (${a.package}, ${a.severity}, ${lock})`);
+    }
+  }
+  for (const e of judge([], allow, today).expired) {
     console.log(`npm audit: ${ALLOW_FILE} entry ${e.id} (${e.package}) expired ${e.until}`);
   }
+  if (unfinished) Deno.exit(2);
   if (failing.length) {
     console.error(
-      `\nnpm audit: ${
-        failing.map((a) => `${a.id || a.title} (${a.package}, ${a.severity})`)
-          .join(", ")
-      }. Update the package (or the direct dependency that brings it in) to a ` +
-        "fixed version Deno's dependency-age hold allows; when the fix is still under the hold, " +
+      `\nnpm audit: ${failing.join(", ")}. Update the package (or the direct dependency that ` +
+        "brings it in) to a fixed version Deno's dependency-age hold allows, in that lockfile; " +
+        "when the fix is still under the hold, " +
         `add an entry with the date it clears to ${ALLOW_FILE}.`,
     );
     Deno.exit(1);

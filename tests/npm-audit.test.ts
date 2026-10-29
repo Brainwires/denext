@@ -1,5 +1,5 @@
-// `deno task audit:npm` (scripts/npm-audit.ts): `deno audit` over the root deno.lock, failing on a
-// high or critical advisory unless security/npm-audit-allow.json holds it until a date. ci.yml's
+// `deno task audit:npm` (scripts/npm-audit.ts): `deno audit` over the root deno.lock and every
+// example's deno.lock, failing on a high or critical advisory unless security/npm-audit-allow.json holds it until a date. ci.yml's
 // `cargo-audit` job and `deno task precheck` run it.
 
 import { assert, assertEquals, assertFalse, assertThrows } from "@std/assert";
@@ -7,6 +7,8 @@ import { parse as parseYaml } from "@std/yaml";
 import {
   ALLOW_FILE,
   type Allowed,
+  auditedLocks,
+  auditLocks,
   isNpmAuditInput,
   judge,
   parseAllowlist,
@@ -88,13 +90,58 @@ Deno.test("npm audit: the allowlist is checked, and the committed one is well fo
   parseAllowlist(await Deno.readTextFile(new URL(ALLOW_FILE, ROOT)));
 });
 
-Deno.test("npm audit: the precheck inputs are the lockfile, the configs and the allowlist", () => {
+Deno.test("npm audit: the precheck inputs are the lockfiles, the configs and the allowlist", () => {
   assert(isNpmAuditInput("deno.lock"));
   assert(isNpmAuditInput("deno.json"));
   assert(isNpmAuditInput("packages/graphql/deno.json"));
   assert(isNpmAuditInput(ALLOW_FILE));
-  assertFalse(isNpmAuditInput("examples/graphql/deno.lock"));
+  assert(isNpmAuditInput("examples/graphql/deno.lock"));
+  assert(isNpmAuditInput("examples/clerk/deno.json"));
+  assert(isNpmAuditInput("examples/clerk/package.json"));
+  assertFalse(isNpmAuditInput("examples/expo-app/package-lock.json"));
+  assertFalse(isNpmAuditInput("examples/scroll-bench/web/deno.lock"));
   assertFalse(isNpmAuditInput("packages/graphql/mod.ts"));
+});
+
+Deno.test("npm audit: it covers the root lock, then every example's own lock", async () => {
+  const locks = await auditedLocks();
+  assertEquals(locks[0], "deno.lock");
+  assert(locks.includes("examples/clerk/deno.lock"));
+  assert(locks.includes("examples/mobile/deno.lock"));
+  const examples = locks.slice(1);
+  assertEquals(examples, [...examples].sort());
+  assert(examples.every((l) => /^examples\/[^/]+\/deno\.lock$/.test(l)));
+  // A directory without a deno.lock is skipped, not an error.
+  const root = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(`${root}/examples/a`, { recursive: true });
+    await Deno.mkdir(`${root}/examples/b`, { recursive: true });
+    await Deno.writeTextFile(`${root}/examples/b/deno.lock`, "{}");
+    assertEquals(await auditedLocks(root), ["deno.lock", "examples/b/deno.lock"]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("npm audit: each lock's report is kept apart, in order; an unfinished one is null", async () => {
+  const seen: string[] = [];
+  const audits = await auditLocks(["deno.lock", "examples/a/deno.lock", "examples/b/deno.lock"], (
+    lock,
+  ) => {
+    seen.push(lock);
+    if (lock === "examples/a/deno.lock") return Promise.resolve(REPORT);
+    if (lock === "examples/b/deno.lock") return Promise.resolve("error: registry unreachable");
+    return Promise.resolve("No known vulnerabilities found\n");
+  }, 2);
+  assertEquals(seen.length, 3);
+  assertEquals(audits.map((a) => a.lock), [
+    "deno.lock",
+    "examples/a/deno.lock",
+    "examples/b/deno.lock",
+  ]);
+  assertEquals(audits[0].advisories, []);
+  assertEquals(audits[1].advisories?.length, 3);
+  assertEquals(audits[2].advisories, null);
 });
 
 Deno.test("npm audit: ci.yml runs it in a job a release needs green", async () => {
