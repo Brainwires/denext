@@ -28,10 +28,17 @@ const DOC_DEADLINE_MS = 300_000;
  * the child exits ({@linkcode exitedOutput}), not until every copy of their write ends closes: on
  * Windows a process another thread spawns at that moment can hold one for as long as it lives.
  * A child still running past {@linkcode DOC_DEADLINE_MS} is killed and named.
+ *
+ * `args` replaces the `deno` arguments (`doc --json <file>`); a test passes a child that can't
+ * finish in time, so the deadline path doesn't race a fast `deno doc`.
  */
-export async function docFor(absFile: string, deadlineMs = DOC_DEADLINE_MS): Promise<Json[]> {
+export async function docFor(
+  absFile: string,
+  deadlineMs = DOC_DEADLINE_MS,
+  args: string[] = ["doc", "--json", absFile],
+): Promise<Json[]> {
   const child = new Deno.Command(Deno.execPath(), {
-    args: ["doc", "--json", absFile],
+    args,
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
