@@ -16,8 +16,9 @@ import { runToExit } from "./exited-output.ts";
 /**
  * The glibc version denext's Linux binaries need when the pin names none.
  *
- * TODO: read it from the toolchain pin once the fork's release manifest records the ceiling its
- * "Check binary" step asserts (`minGlibc`); {@linkcode minGlibcFor} already prefers that field.
+ * A release whose manifest records the ceiling its "Check binary" step asserts (`cli.glibc`) gets
+ * it pinned as `minGlibc` by `deno task desktop:pin-runtime`, and {@linkcode minGlibcFor} prefers
+ * that field.
  */
 export const DEFAULT_MIN_GLIBC = "2.35";
 

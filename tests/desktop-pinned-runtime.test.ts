@@ -6,6 +6,7 @@
 import {
   assert,
   assertEquals,
+  assertFalse,
   assertRejects,
   assertStringIncludes,
   assertThrows,
@@ -56,6 +57,7 @@ const pinRuntimeMain = (args: string[], out: string, toolchainOut = `${out}.tool
 import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
 import { canSymlink, sha256Hex, tarGz, zip } from "./_archive-fixtures.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
+import { minGlibcFor } from "../src/build/linux-libc.ts";
 
 const TARGET = "x86_64-unknown-linux-gnu";
 const LIB = "libdenort.so";
@@ -1623,6 +1625,31 @@ Deno.test("pin generator: a 3.0.0-denext.N release pins, built from the manifest
   const toolchain = toolchainPinFromRelease(r.tag, r.manifest, r.sums)!;
   assertEquals([toolchain.version, toolchain.deno], ["3.0.0-denext.1", "2.9.7"]);
   assert(compareDenoVersions(runtime.version, "3.0.0-rc.6") > 0);
+});
+
+Deno.test("toolchainPinFromRelease: pins the manifest's cli.glibc as minGlibc when the release records it", () => {
+  const plain = ownVersionRelease("3.0.0-rc.2");
+  const r0 = ownVersionRelease("3.0.0-rc.2");
+  // A release from before the ceiling was recorded: no field, so denext checks only for musl.
+  assertFalse("minGlibc" in toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!);
+  plain.manifest.cli.glibc = null;
+  assertFalse("minGlibc" in toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!);
+  plain.manifest.cli.glibc = "2.27";
+  const pin = toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!;
+  assertEquals(pin.minGlibc, "2.27");
+  // Recorded as `minGlibc`, the field the host check reads (2.35 without it).
+  assertEquals(minGlibcFor(pin), "2.27");
+  assertEquals(minGlibcFor(toolchainPinFromRelease(r0.tag, r0.manifest, r0.sums)), "2.35");
+  // Written before the targets, so the pin file reads top-down.
+  assertEquals(Object.keys(pin).indexOf("minGlibc"), Object.keys(pin).indexOf("deno") + 1);
+  for (const bad of ["2", "2.27.1", "GLIBC_2.27", 2.27, ""]) {
+    plain.manifest.cli.glibc = bad;
+    assertThrows(
+      () => toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums),
+      Error,
+      "cli.glibc",
+    );
+  }
 });
 
 Deno.test("toolchainPinFromRelease refuses any inconsistency", () => {

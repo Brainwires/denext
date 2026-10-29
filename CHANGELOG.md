@@ -61,6 +61,10 @@ and this project adheres to
 
 ### Fixed
 
+- **The toolchain pin carries the release's glibc floor when the release records one.**
+  `deno task desktop:pin-runtime` now copies the release manifest's `cli.glibc` into the toolchain
+  pin as `minGlibc`, which the Linux host check reads before a download (a pin without it keeps the
+  2.35 default); a malformed value stops the pin.
 - **Other `@denext` exemptions from the dependency-age hold are flagged.** `denext doctor` and
   `denext upgrade` looked only for the `"jsr:@denext/*"` entry older scaffolds wrote in
   `minimumDependencyAge.exclude`. Any other `@denext` entry there (`"jsr:@denext/denext"`, …)
