@@ -15,6 +15,7 @@ import {
 } from "../src/desktop/sidecar.ts";
 import {
   createSidecarSupervisor,
+  SIDECAR_PORT_REPICKS,
   sidecarBackoffDelay,
   type SidecarClock,
   type SidecarInstance,
@@ -548,6 +549,114 @@ Deno.test("host: ports, secrets and exposed values; the bridge capability answer
   assert(events.some((e) => JSON.stringify(e) === '["sidecars","status","ready"]'));
   await host.stopAll();
   assertEquals(host.handle("api").status.state, "stopped");
+});
+
+/** A loopback port another "process" holds for the test (a listener of this one). */
+function holdPort(): { port: number; listener: Deno.Listener } {
+  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  return { port: (listener.addr as Deno.NetAddr).port, listener };
+}
+
+/** A free loopback port (bound, read, released). */
+function freeLoopback(): number {
+  const l = Deno.listen({ hostname: "127.0.0.1", port: 0 });
+  const port = (l.addr as Deno.NetAddr).port;
+  l.close();
+  return port;
+}
+
+Deno.test('host: an "auto" port another process holds when it is picked is picked again', async () => {
+  const held = holdPort();
+  try {
+    const free = freeLoopback();
+    const picks = [held.port, free];
+    const host = await createSidecarHost({
+      sidecars: [def({ port: "auto", proxy: true })],
+      launcher: () => fakeLauncher().launch,
+      pickPort: () => picks.shift()!,
+    });
+    assertEquals(host.proxied, { name: "api", port: free });
+    assertEquals(host.handle("api").info.port, free);
+  } finally {
+    held.listener.close();
+  }
+});
+
+Deno.test("host: a sidecar whose port was taken before it bound starts again on a fresh one", async () => {
+  const { clock, advance } = fakeClock();
+  const fake = fakeLauncher();
+  const taken = new Set<number>();
+  const picks = [41001, 41002];
+  const host = await createSidecarHost({
+    sidecars: [def({ port: "auto", ready: { signal: true } })],
+    launcher: () => fake.launch,
+    pickPort: () => picks.shift()!,
+    portTaken: (port) => taken.has(port),
+    clock,
+  });
+  const api = host.handle("api");
+  host.startAll();
+  await advance(0);
+  assertEquals(fake.runs[0].ctx.port, 41001);
+  // Another process binds the port first: the sidecar's own bind fails and it exits.
+  taken.add(41001);
+  fake.runs[0].exit({ code: 1 });
+  await advance(0);
+  assertEquals(fake.runs.length, 2, "started again at once, with no backoff");
+  assertEquals(fake.runs[1].ctx.port, 41002);
+  assertEquals(api.status.state, "starting");
+  assertEquals(api.status.port, 41002);
+  assertEquals(api.status.attempts, 0);
+  assertEquals(api.info.url, "http://127.0.0.1:41002");
+  fake.runs[1].ctx.onReadySignal();
+  await advance(0);
+  assertEquals(api.status.state, "ready");
+  // A crash with the port free is an ordinary failure: backoff, same port.
+  fake.runs[1].exit({ code: 1 });
+  await advance(0);
+  assertEquals(api.status.state, "backoff");
+  assertEquals(api.status.port, 41002);
+  await host.stopAll();
+});
+
+Deno.test("host: port re-picks are bounded; past them a start fails as usual", async () => {
+  const { clock, advance } = fakeClock();
+  const fake = fakeLauncher();
+  const launched = new Set<number>();
+  let next = 42000;
+  const host = await createSidecarHost({
+    sidecars: [def({ port: "auto", ready: { signal: true } })],
+    launcher: () => (ctx) => (launched.add(ctx.port!), fake.launch(ctx)),
+    pickPort: () => next++,
+    // Every port a run used is taken by the time it fails.
+    portTaken: (port) => launched.has(port),
+    clock,
+  });
+  const api = host.handle("api");
+  host.startAll();
+  for (let i = 0; i <= SIDECAR_PORT_REPICKS; i++) {
+    await advance(0);
+    fake.runs[i].exit({ code: 1 });
+  }
+  await advance(0);
+  assertEquals(fake.runs.map((r) => r.ctx.port), [42000, 42001, 42002, 42003]);
+  assertEquals(api.status.state, "backoff");
+  assertEquals(api.status.attempts, 1);
+  await host.stopAll();
+});
+
+Deno.test("host: no free port within the picks is an error naming the sidecar", async () => {
+  await assertRejects(
+    () =>
+      createSidecarHost({
+        sidecars: [def({ port: "auto" })],
+        launcher: () => fakeLauncher().launch,
+        pickPort: () => 43000,
+        portTaken: () => true,
+      }),
+    Error,
+    'sidecar "api": no free loopback port',
+  );
 });
 
 Deno.test("host: an invalid list fails before anything starts", async () => {

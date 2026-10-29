@@ -99,6 +99,22 @@ and this project adheres to
   `links` shim for it under `denext/prisma-adapter` too: its server bundle loaded the native
   addon and the server did not start. The Epic Stack migration bed checks the wiring against
   goldens and reads its seeded users through the adapter.
+- **The rest of denext's captured child output is read until the child exits.** The macOS
+  signing and notarization checks, the Windows certificate-store and Authenticode probes, the
+  `wix --version` check, `desktop doctor`'s probes, the toolchain version probe, `denext patch`'s
+  `deno info` / `deno cache`, fastlane's `bundle`, `mobile inspect`, `stack`'s docker and free-space
+  probes now stop reading 5 s after the child exits at the latest. A process that inherited the
+  child's pipes (another child spawned at the same moment on Windows, or one the child left
+  running) can no longer keep them waiting.
+- **A sidecar's `"auto"` port that another process takes first is picked again.** The port is
+  picked by binding port 0 and releasing it, so another process could bind it before the sidecar
+  did; the sidecar then failed on an address in use and kept retrying the same port. A picked port
+  that is already held is picked again, and a start that ends before ready while another process
+  holds the port starts again at once on a fresh port (up to 3 times per run of starts), with the
+  `spa.proxy` target, `sidecarInfo` and the status following it.
+- **`desktop dev --inspect-renderer` picks the renderer's port right before the window opens.**
+  The free port was picked before the build, so another process had the whole build to take it;
+  it is now picked after the build, and a picked port that is already held is picked again.
 
 ### Documentation
 

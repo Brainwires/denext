@@ -2976,6 +2976,14 @@ desktop: {
         holds a native addon); <code>--exec &lt;program&gt;</code> declares a program instead.
       </p>
       <p>
+        An <code>"auto"</code>{" "}
+        port is picked by binding a free loopback port and releasing it, so another process can take
+        it before the sidecar binds it. A start that ends before it is ready while another process
+        holds the port starts again at once on a fresh port (up to 3 times, outside{" "}
+        <code>restart</code>); the <code>spa.proxy</code> target, <code>sidecarInfo()</code>{" "}
+        and the status follow the new port.
+      </p>
+      <p>
         Inside a module sidecar, <code>process.argv.slice(2)</code> is its <code>args</code>,{" "}
         <code>process.env</code> holds its <code>env</code> and the port (<code>PORT</code>, or{" "}
         <code>portEnv</code>) in its own copy (the app&apos;s environment is unchanged), and{" "}

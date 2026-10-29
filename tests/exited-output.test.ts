@@ -5,7 +5,7 @@
 
 import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import { join } from "@std/path";
-import { exitedOutput, runToExit } from "../src/build/exited-output.ts";
+import { exitedOutput, runToExit, runToExitText } from "../src/build/exited-output.ts";
 import { inChild } from "./helpers/isolated.ts";
 
 const POSIX_ONLY = Deno.build.os === "windows";
@@ -77,6 +77,65 @@ Deno.test("runToExit: a stream that was not piped throws when read, as output()'
   assertEquals(out.success, true);
   assertThrows(() => out.stdout, TypeError, "stdout is not piped");
   assertEquals(out.stderr.length, 0);
+});
+
+Deno.test("runToExit: input is written to stdin, which is then closed", async () => {
+  const program = "const t = await new Response(Deno.stdin.readable).text();" +
+    "console.log(JSON.stringify(t)); Deno.exit(t.length === 0 ? 1 : 0);";
+  const text = await runToExit(Deno.execPath(), { args: ["eval", program], input: "héllo\n" });
+  assertEquals(text.code, 0);
+  assertEquals(new TextDecoder().decode(text.stdout).trim(), JSON.stringify("héllo\n"));
+  const bytes = await runToExit(Deno.execPath(), {
+    args: ["eval", program],
+    input: new Uint8Array([97, 98]),
+  });
+  assertEquals(new TextDecoder().decode(bytes.stdout).trim(), '"ab"');
+  // `input` wins over a `stdin` mode.
+  const both = await runToExit(Deno.execPath(), {
+    args: ["eval", program],
+    stdin: "inherit",
+    input: "x",
+  });
+  assertEquals(new TextDecoder().decode(both.stdout).trim(), '"x"');
+});
+
+Deno.test("runToExit: a child that exits without reading its input is not an error", async () => {
+  // Far more than a pipe buffer, so the write is still pending when the child exits.
+  const input = new Uint8Array(4 * 1024 * 1024).fill(120);
+  const out = await runToExit(Deno.execPath(), {
+    args: ["eval", "console.log('done'); Deno.exit(4)"],
+    input,
+  });
+  assertEquals(out.code, 4);
+  assertEquals(new TextDecoder().decode(out.stdout).trim(), "done");
+});
+
+Deno.test("runToExit: an aborted child ends with the status output() reports", async () => {
+  const args = ["eval", "setTimeout(() => {}, 30_000)"];
+  const ours = await runToExit(Deno.execPath(), { args, signal: AbortSignal.timeout(200) });
+  const theirs = await new Deno.Command(Deno.execPath(), {
+    args,
+    stdout: "piped",
+    stderr: "piped",
+    signal: AbortSignal.timeout(200),
+  }).output();
+  assertEquals([ours.success, ours.code, ours.signal], [
+    theirs.success,
+    theirs.code,
+    theirs.signal,
+  ]);
+  assertEquals(ours.success, false);
+});
+
+Deno.test("runToExitText: the status and output as text; an unpiped stream reads as empty", async () => {
+  const program = "console.log('é'); console.error('warn'); Deno.exit(2);";
+  const out = await runToExitText(Deno.execPath(), { args: ["eval", program] });
+  assertEquals(out, { success: false, code: 2, stdout: "é\n", stderr: "warn\n" });
+  const quiet = await runToExitText(Deno.execPath(), {
+    args: ["eval", program],
+    stderr: "null",
+  });
+  assertEquals([quiet.stdout, quiet.stderr], ["é\n", ""]);
 });
 
 Deno.test("runToExit: a missing program rejects with NotFound", async () => {

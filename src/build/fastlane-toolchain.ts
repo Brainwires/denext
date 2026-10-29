@@ -50,6 +50,7 @@ import {
   sha256File,
   sweepLeftovers,
 } from "./verified-download.ts";
+import { runToExit } from "./exited-output.ts";
 import pinJson from "./fastlane-toolchain-pin.json" with { type: "json" };
 
 /** The pinned fastlane (`fastlane-toolchain-pin.json`). */
@@ -326,15 +327,7 @@ export async function compilerProblem(
 
 /** The default {@linkcode BundleRunner}: spawn it, output collected. */
 const spawnBundle: BundleRunner = async (command, args, { cwd, env }) => {
-  const out = await new Deno.Command(command, {
-    args: [...args],
-    cwd,
-    env,
-    clearEnv: true,
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
+  const out = await runToExit(command, { args: [...args], cwd, env, clearEnv: true });
   const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
   return { code: out.code, output: text };
 };

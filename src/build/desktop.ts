@@ -1547,7 +1547,10 @@ function sidecarProxy(
           headers: { "retry-after": "1" },
         });
       }
-      return await proxy.proxyToBackend(...args);
+      // The sidecar's current port: a new one when another process took the first.
+      const [request, url, cfg, ...rest] = args;
+      const target = `http://127.0.0.1:${sidecar.info.port ?? proxied.port}`;
+      return await proxy.proxyToBackend(request, url, { ...cfg, target }, ...rest);
     },
   } as ProxyModule;
   return {

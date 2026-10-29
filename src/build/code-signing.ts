@@ -17,6 +17,8 @@
 //   DENEXT_WINDOWS_CERT_PASSWORD    the .pfx password
 //   DENEXT_SIGN_TIMESTAMP_URL       the RFC-3161 timestamp server (default DigiCert's)
 
+import { runToExitText } from "./exited-output.ts";
+
 /** Reads one environment variable (tests pass a map). */
 export type SigningEnv = (name: string) => string | undefined;
 
@@ -400,18 +402,11 @@ function parseImport(stdout: string): { sha1: string; added: string[] } {
 
 /** The default store runner: the command, `stdin` piped in, its output captured. */
 const defaultStoreRun: StoreCommandRunner = async (cmd, stdin) => {
-  const child = new Deno.Command(cmd[0], {
+  const { code, stdout, stderr } = await runToExitText(cmd[0], {
     args: cmd.slice(1),
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  const writer = child.stdin.getWriter();
-  await writer.write(new TextEncoder().encode(stdin));
-  await writer.close();
-  const out = await child.output();
-  const text = (b: Uint8Array) => new TextDecoder().decode(b);
-  return { code: out.code, stdout: text(out.stdout), stderr: text(out.stderr) };
+    input: stdin,
+  });
+  return { code, stdout, stderr };
 };
 
 /** The default synchronous runner (output discarded). */

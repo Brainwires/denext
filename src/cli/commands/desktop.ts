@@ -68,6 +68,7 @@ import {
   announceCdpPages,
   inspectRendererLaunch,
   type InspectRendererPlan,
+  parseInspectRendererAddr,
 } from "../../build/desktop-inspect-renderer.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
@@ -477,7 +478,7 @@ async function runDesktopDevSession(
   }
   const target = devTargetOrFail(ctx);
   let launch: DesktopWindowLaunch;
-  let inspect: InspectRendererPlan | undefined;
+  let inspect: (() => InspectRendererPlan) | undefined;
   try {
     inspect = await inspectRendererFor(ctx, dir);
     launch = await prepareDesktopWindow(dir, true);
@@ -517,15 +518,18 @@ async function spawnDevWindow(o: {
   launch: DesktopWindowLaunch;
   devUrl: string;
   lan: boolean;
-  inspect: InspectRendererPlan | undefined;
+  inspect: (() => InspectRendererPlan) | undefined;
 }): Promise<DesktopWindow> {
-  const { dir, launch, devUrl, lan, inspect } = o;
+  const { dir, launch, devUrl, lan } = o;
   const devEntry = await writeDesktopDevEntry(dir, launch.buildDir, o.entry);
   const built = await buildDesktopWindow(dir, devEntry, launch, {
     dev: true,
     // The window's runtime reaches a LAN dev server over the network.
     netHosts: lan ? [new URL(devUrl).hostname] : [],
   });
+  // The renderer's port is picked now, after the build: a port released before a build of many
+  // seconds is one another process can take before the window binds it.
+  const inspect = o.inspect?.();
   const window = launchDesktopWindow(built, dir, {
     ...launch.env,
     ...inspect?.env,
@@ -538,25 +542,30 @@ async function spawnDevWindow(o: {
 }
 
 /**
- * `--inspect-renderer[=<addr>]`: the launch env for the project's backend on this OS (a free
- * loopback port for a bare flag; a non-loopback address only with
- * `--inspect-renderer-allow-remote`), with the endpoint printed. `undefined` without the flag.
+ * `--inspect-renderer[=<addr>]`: the address is checked now (a non-loopback one only with
+ * `--inspect-renderer-allow-remote`); the returned function makes the launch env for the
+ * project's backend on this OS (a free loopback port for a bare flag) and prints the endpoint, to
+ * be called right before the window opens. `undefined` without the flag.
  */
 async function inspectRendererFor(
   ctx: CommandContext,
   dir: string,
-): Promise<InspectRendererPlan | undefined> {
+): Promise<(() => InspectRendererPlan) | undefined> {
   const value = ctx.flags["inspect-renderer"];
   if (value === undefined || value === false) return undefined;
-  const { plan, lines } = inspectRendererLaunch({
-    value: value === true ? true : String(value),
+  const input = {
+    value: value === true ? true as const : String(value),
     allowRemote: ctx.flags["inspect-renderer-allow-remote"] === true,
     backend: await projectDesktopBackend(dir),
     os: hostDesktopOs(),
-    inherited: Deno.env.toObject(),
-  });
-  for (const line of lines) console.log(line);
-  return plan;
+  };
+  // A malformed or refused address fails now, before the build.
+  parseInspectRendererAddr(input.value, input.allowRemote);
+  return () => {
+    const { plan, lines } = inspectRendererLaunch({ ...input, inherited: Deno.env.toObject() });
+    for (const line of lines) console.log(line);
+    return plan;
+  };
 }
 
 /** Print the window's CDP page targets once they appear; stops polling when the window stops. */

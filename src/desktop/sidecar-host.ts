@@ -6,7 +6,7 @@
  * window's server is up.
  *
  * Per launch of the app, before anything starts: an `"auto"` port is picked (a free loopback port,
- * kept across restarts), the secrets are resolved (`"$random"` → 32 random bytes), and the
+ * kept across restarts; a fresh one when another process takes it before the sidecar binds it), the secrets are resolved (`"$random"` → 32 random bytes), and the
  * page-visible values (`expose`, `"$secret:<NAME>"` resolved). The user's login-shell environment
  * (`loginShellEnv`, see `sidecar-login-env.ts`) is read once, when the first sidecar that asks for
  * it starts, and laid under the `env` of those sidecars only.
@@ -46,6 +46,7 @@ import {
   workerSidecarLauncher,
 } from "./sidecar-launch.ts";
 import { registerSidecarStopper } from "./sidecar-registry.ts";
+import { freeLoopbackPort, loopbackPortTaken, pickFreeLoopbackPort } from "../utils/loopback.ts";
 import { parentChildBase, type SidecarChildBase } from "./sidecar-child.ts";
 import {
   captureLoginShellEnv,
@@ -74,6 +75,8 @@ export interface SidecarHostOptions {
   readonly launcher?: (definition: SidecarDefinition) => SidecarLauncher | Promise<SidecarLauncher>;
   /** Pick a free loopback port (tests). */
   readonly pickPort?: () => number;
+  /** Whether another process holds a loopback port (tests; default: try to bind it). */
+  readonly portTaken?: (port: number) => boolean;
   /** The clock (tests). */
   readonly clock?: SidecarClock;
   /** `fetch` for `ready.http` (tests). */
@@ -94,7 +97,10 @@ export interface SidecarHost {
   readonly names: readonly string[];
   /** The handle of one sidecar; throws for an unknown name. */
   handle(name: string): SidecarHandle;
-  /** The `proxy: true` sidecar's name and port, if there is one. */
+  /**
+   * The `proxy: true` sidecar's name and first port, if there is one (the current port is its
+   * handle's `info.port`: a new one when another process took the first).
+   */
   readonly proxied?: { readonly name: string; readonly port: number };
   /** Start every sidecar. */
   startAll(): void;
@@ -104,12 +110,18 @@ export interface SidecarHost {
   killAll(): void;
 }
 
-/** A free loopback port (bound, read, released). */
-function freePort(): number {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = listener.addr as Deno.NetAddr;
-  listener.close();
-  return port;
+/** How many picks {@linkcode pickUntaken} tries before it gives up. */
+const PICK_TRIES = 5;
+
+/**
+ * A port from `pick` that no other process holds by now, within {@linkcode PICK_TRIES} picks. A
+ * free port is picked by binding port 0 and releasing it, so another process can take it before
+ * the sidecar binds it: this, and the supervisor's re-pick after a start, cover that.
+ */
+function pickUntaken(pick: () => number, taken: (port: number) => boolean, name: string): number {
+  const port = pickFreeLoopbackPort(pick, taken, PICK_TRIES);
+  if (port !== undefined) return port;
+  throw new Error(`desktop: sidecar "${name}": no free loopback port in ${PICK_TRIES} picks`);
 }
 
 /** The secrets of one launch: `"$random"` values replaced, a function called. */
@@ -304,6 +316,7 @@ async function buildSupervisor(
   port: number | undefined,
   options: SidecarHostOptions,
   loginEnv?: () => Promise<Readonly<Record<string, string>> | undefined>,
+  repickPort?: () => number,
 ): Promise<SidecarSupervisor> {
   const secrets = await resolveSecrets(def);
   const launch = withLoginEnv(
@@ -316,16 +329,18 @@ async function buildSupervisor(
     definition: def,
     launch,
     ...(port !== undefined ? { port } : {}),
+    ...(repickPort ? { repickPort, portTaken: options.portTaken ?? loopbackPortTaken } : {}),
     secrets,
     values: resolveValues(def, secrets),
     onLine: logSink(def, options.dataDir, options.logRotateBytes),
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
-  const where = port !== undefined ? ` on 127.0.0.1:${port}` : "";
   supervisor.onStatus((status) => {
     options.emit?.(SIDECARS_CAPABILITY, "status", status);
-    if (status.state === "ready") console.error(`desktop: sidecar ${def.name} ready${where}`);
+    if (status.state !== "ready") return;
+    const where = status.port !== undefined ? ` on 127.0.0.1:${status.port}` : "";
+    console.error(`desktop: sidecar ${def.name} ready${where}`);
   });
   return supervisor;
 }
@@ -349,13 +364,16 @@ function nameArg(args: unknown): string {
 export async function createSidecarHost(options: SidecarHostOptions): Promise<SidecarHost> {
   const problem = sidecarListError(options.sidecars);
   if (problem) throw new Error(`desktop: sidecars${problem}`);
-  const pick = options.pickPort ?? freePort;
+  const pick = options.pickPort ?? freeLoopbackPort;
+  const taken = options.portTaken ?? loopbackPortTaken;
   const supervisors = new Map<string, SidecarSupervisor>();
   const loginEnv = loginShellSource(options.sidecars, options);
   let proxied: { name: string; port: number } | undefined;
   for (const def of options.sidecars) {
-    const port = def.port === "auto" ? pick() : def.port;
-    supervisors.set(def.name, await buildSupervisor(def, port, options, loginEnv));
+    const auto = def.port === "auto";
+    const port = auto ? pickUntaken(pick, taken, def.name) : def.port;
+    const repick = auto ? () => pickUntaken(pick, taken, def.name) : undefined;
+    supervisors.set(def.name, await buildSupervisor(def, port, options, loginEnv, repick));
     if (def.proxy === true && port !== undefined) proxied = { name: def.name, port };
   }
 
