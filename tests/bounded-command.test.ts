@@ -10,7 +10,8 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { join } from "@std/path";
-import { boundedOutput, runBounded } from "./helpers/bounded-command.ts";
+import { boundedOutput, processTree, runBounded } from "./helpers/bounded-command.ts";
+import { inChild, pendingSpawns } from "./helpers/isolated.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 
 /**
@@ -69,6 +70,9 @@ Deno.test("runBounded: at the deadline the whole tree is killed and the output s
     assert(r.timedOut, "the deadline passed");
     assertEquals(r.success, false);
     assertStringIncludes(r.output, "phase: waiting on the grandchild", "the tree was running");
+    // The tree as it stood at the deadline names the child and the grandchild it waited on.
+    assertStringIncludes(r.tree, `${r.pid} `, r.tree);
+    assertStringIncludes(r.tree, "Deno.listen", r.tree);
     assert(
       Date.now() - t0 < DEADLINE_MS + 15_000,
       `returned ${Date.now() - t0} ms after the start`,
@@ -143,4 +147,54 @@ Deno.test("boundedOutput: a stalled child fails with its pid and what it printed
   );
   assertMatch(err.message, /\(pid \d+\) still running after 15000 ms; its tree was killed/);
   assertStringIncludes(err.message, "phase: stalled");
+  assertStringIncludes(err.message, "Its process tree at the deadline:\n");
+});
+
+Deno.test("processTree: a process that finished reads as gone, and the listing never waits past its bound", async () => {
+  const done = new Deno.Command(Deno.execPath(), { args: ["eval", ""], stdout: "null" }).spawn();
+  await done.status;
+  assertEquals(await processTree(done.pid), `(pid ${done.pid} and its descendants are gone)`);
+  // This process: listed with its command line.
+  assertStringIncludes(await processTree(Deno.pid), `${Deno.pid} `);
+  // A listing given no time is abandoned with the reason, not awaited.
+  assertMatch(await processTree(Deno.pid, 0), /^\(no process list: .+ still running after 0 ms\)$/);
+});
+
+Deno.test("pendingSpawns: a spawn with no exit and an output() with no end are unfinished", () => {
+  const trace = [
+    "t start #1 pid 10: deno info --json a",
+    "t exit #1 pid 10 code 0",
+    "t start #2 output(): deno info --json b",
+    "t start #3 pid 12: esbuild --service",
+    "t start #4 output(): deno doc c",
+    "t end #4",
+  ].join("\n");
+  assertEquals(
+    pendingSpawns(trace),
+    "t start #2 output(): deno info --json b\nt start #3 pid 12: esbuild --service",
+  );
+  assertEquals(pendingSpawns(""), "");
+});
+
+Deno.test("inChild: a child killed at its deadline names the subprocess it waited on", async () => {
+  const err = await assertRejects(
+    () =>
+      inChild({
+        body: `await new Deno.Command(Deno.execPath(), {
+          args: ["eval", "await new Promise(() => setInterval(() => {}, 1000)); // denext-stalled-grandchild"],
+          stdout: "piped",
+        }).output();`,
+        timeoutMs: DEADLINE_MS,
+      }),
+    Error,
+  );
+  assertStringIncludes(err.message, `child still running after ${DEADLINE_MS} ms`);
+  // The trace: the output() that never returned, with its command line.
+  assertMatch(
+    err.message,
+    /unfinished:\n\S+ start #1 output\(\): .+ eval .+denext-stalled-grandchild/,
+  );
+  // The tree: the grandchild, still alive at the deadline.
+  const tree = err.message.slice(err.message.indexOf("Its process tree at the deadline:"));
+  assertStringIncludes(tree, "denext-stalled-grandchild", tree);
 });
