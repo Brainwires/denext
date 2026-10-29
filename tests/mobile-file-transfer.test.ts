@@ -39,6 +39,17 @@ function callsTo(fake: ReturnType<typeof fakePlugin>, method: string): Any[] {
 
 // ---- a fake OPFS whose writable streams append at a cursor, as the real ones do --------------
 
+/** A macrotask: when a real OPFS write settles (it is I/O, never within the caller's microtasks). */
+const macrotask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+/** What every fake OPFS write waits on before it lands: a macrotask, unless a test holds them. */
+let writeLatency: () => Promise<void> = macrotask;
+/** The bytes the fake OPFS has written since `withOpfs` began. */
+let landed = 0;
+
+/** Wait until the fake OPFS has written `bytes` in all (a chunk let through is not yet written). */
+const written = (bytes: number) => until(() => landed >= bytes, `${bytes} bytes written`);
+
 class FakeFile {
   readonly kind = "file" as const;
   bytes = new Uint8Array(0);
@@ -51,14 +62,16 @@ class FakeFile {
     let at = 0;
     return Promise.resolve({
       seek: (n: number) => void (at = n),
-      write: (chunk: string | Uint8Array) => {
+      write: async (chunk: string | Uint8Array) => {
         const bytes = typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
-        const next = new Uint8Array(Math.max(data.length, at + bytes.length));
-        next.set(data);
-        next.set(bytes, at);
-        data = next;
+        const from = at;
         at += bytes.length;
-        return Promise.resolve();
+        await writeLatency();
+        const next = new Uint8Array(Math.max(data.length, from + bytes.length));
+        next.set(data);
+        next.set(bytes, from);
+        data = next;
+        landed += bytes.length;
       },
       close: () => {
         this.bytes = data;
@@ -97,8 +110,21 @@ function withOpfs(fn: () => Promise<void>, extra: Record<string, unknown> = {}):
     try {
       await fn();
     } finally {
+      writeLatency = macrotask;
+      landed = 0;
       resetFileTransfersForTesting();
     }
+  });
+}
+
+/** Transfer `id`'s next `type` event (listen before acting). */
+function nextEvent(id: string, type: FileTransferEvent["type"]): Promise<FileTransferEvent> {
+  return new Promise((resolve) => {
+    const stop = onFileTransfer((e) => {
+      if (e.id !== id || e.type !== type) return;
+      stop();
+      resolve(e);
+    });
   });
 }
 
@@ -127,7 +153,9 @@ function streamingFetch(
     const range = /^bytes=(\d+)-$/.exec(headers.get("range") ?? "");
     const start = range && !opts.ignoreRange ? Number(range[1]) : 0;
     let at = start;
+    let stream: ReadableStreamDefaultController<Uint8Array<ArrayBuffer>> | undefined;
     const body = new ReadableStream<Uint8Array<ArrayBuffer>>({
+      start: (controller) => void (stream = controller),
       async pull(controller) {
         if (at >= size) return controller.close();
         pending++;
@@ -139,7 +167,12 @@ function streamingFetch(
         at = end;
       },
     });
-    init.signal?.addEventListener("abort", () => release?.());
+    // As a real fetch does, an abort errors the body at once (a body already served to its end
+    // stays closed), whether or not a read is waiting; a pending chunk is let go.
+    init.signal?.addEventListener("abort", () => {
+      stream?.error(init.signal?.reason);
+      release?.();
+    });
     const partial = start > 0;
     return Promise.resolve(
       new Response(body, {
@@ -430,6 +463,7 @@ Deno.test("downloadToFile (web): streams into OPFS with progress, pauses and res
       onProgress: (p) => progress.push(p.bytes),
     });
     await server.step(2);
+    await written(2048);
     assertEquals(await pauseFileTransfer("w1"), true);
     await until(() => events.some((e) => e.startsWith("paused")), "the pause");
     const paused = (await fileTransfers()).find((t) => t.id === "w1");
@@ -480,9 +514,10 @@ Deno.test("downloadToFile (web): a weak ETag resumes on Last-Modified, not from 
   await withOpfs(async () => {
     const done = downloadToFile("https://x.test/w.bin", "w.bin", { id: "w9" });
     await server.step(1);
+    await written(1024);
+    const paused = nextEvent("w9", "paused");
     await pauseFileTransfer("w9");
-    await until(() => server.requests.length === 1);
-    await settle();
+    await paused;
     assertEquals(await resumeFileTransfer("w9"), true);
     await server.drain();
     assertEquals(await done, { path: "data/w.bin" });
@@ -499,9 +534,10 @@ Deno.test("downloadToFile (web): a server that ignores the range starts it over"
   await withOpfs(async () => {
     const done = downloadToFile("https://x.test/g.bin", "g.bin", { id: "w2" });
     await server.step(1);
+    await written(1024);
+    const paused = nextEvent("w2", "paused");
     await pauseFileTransfer("w2");
-    await until(() => server.requests.length === 1);
-    await settle();
+    await paused;
     assertEquals(await resumeFileTransfer("w2"), true);
     await server.drain();
     await done;
@@ -524,9 +560,9 @@ Deno.test("downloadToFile (web): cancel, a caller's signal, an HTTP error and a 
     // Cancelled while paused.
     const paused = downloadToFile("https://x.test/b", "b.bin", { id: "c2" });
     await server.step(1);
+    const pausedEvent = nextEvent("c2", "paused");
     await pauseFileTransfer("c2");
-    await settle();
-    await settle();
+    await pausedEvent;
     assertEquals(await cancelFileTransfer("c2"), true);
     assertEquals((await assertRejects(() => paused, FileTransferError)).code, "CANCELLED");
     assertEquals(await cancelFileTransfer("c2"), false);
