@@ -234,12 +234,17 @@ Deno.test("cli cache: a failed `deno cache` reports its exit code and what it pr
 Deno.test("cli cache: a background warm-up that failed leaves its stderr, reported once on the retry", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-cli-cache-" });
   const modules = moduleServer();
+  const children: Deno.ChildProcess[] = [];
   try {
     const url = modules.missing();
     const lines: string[] = [];
     const options = { ...scratch(dir), log: (l: string) => lines.push(l) };
-    await warmCliModules(url, options);
-    await until(() => markers(dir).some((m) => m.endsWith(".cached.log")));
+    // The detached child writes its log and only then exits: wait for the exit, not the log (it
+    // is unref'd, so ref it), or it can still be running when the test ends on a loaded machine.
+    const first = await spawnsOf(() => warmCliModules(url, options));
+    children.push(...first);
+    assertEquals(first.length, 1, "one detached warm-up");
+    await exited(first);
     const log = markers(dir).find((m) => m.endsWith(".cached.log"))!;
     const saved = JSON.parse(Deno.readTextFileSync(join(dir, "denext-cli", log)));
     assertEquals([saved.code, saved.timedOut], [1, false]);
@@ -249,13 +254,17 @@ Deno.test("cli cache: a background warm-up that failed leaves its stderr, report
     const attempt = join(dir, "denext-cli", log.replace(/\.log$/, ".attempt"));
     const old = new Date(Date.now() - 3_600_000);
     Deno.utimeSync(attempt, old, old);
-    await warmCliModules(url, options);
+    const retry = await spawnsOf(() => warmCliModules(url, options));
+    children.push(...retry);
     assertEquals(lines.length, 1);
     assertStringIncludes(lines[0], "in the background failed last time");
     assertStringIncludes(lines[0], "exited with code 1");
-    // The retry fails the same way; wait for it, so nothing runs past the test.
-    await until(() => markers(dir).some((m) => m.endsWith(".cached.log")));
+    // The retry fails the same way; wait for it to exit, so nothing runs past the test.
+    assertEquals(retry.length, 1, "one detached retry");
+    await exited(retry);
+    assert(markers(dir).some((m) => m.endsWith(".cached.log")), `markers: ${markers(dir)}`);
   } finally {
+    await exited(children); // also when an assertion failed first
     await modules.close();
     await Deno.remove(dir, { recursive: true });
   }
