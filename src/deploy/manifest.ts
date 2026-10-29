@@ -82,6 +82,14 @@ export interface DeployServer {
    * `--compile` executable has it baked in already. Absent in a manifest from before denext 4.8.1.
    */
   idleTrim?: boolean;
+  /**
+   * The resource-limit flags the project's `start.limits` asks for (`--max-memory=512m`,
+   * `--max-cpu-time=<n>`, `--max-time=<n>`; empty when nothing is limited), for a server started on
+   * denext's Deno from runtime 3.0.0-rc.2: a generator puts them on the server's `deno run`
+   * (a `--compile` executable has them baked in already). Absent in a manifest from before denext
+   * 4.10.
+   */
+  limits?: string[];
 }
 
 /** A job under `jobs/`. */

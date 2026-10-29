@@ -9,6 +9,12 @@ import {
   isDenextDenoVersion,
   needsNoLegacyAbortFlag,
 } from "../build/deno-version.ts";
+import {
+  hopLimits,
+  limitFlagsFor,
+  limitsNotAppliedWarning,
+  supportsLimitsWhy,
+} from "../build/resource-limits.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
 import { runToExit } from "../build/exited-output.ts";
 import { warnStockDeprecation } from "../build/stock-deprecation.ts";
@@ -926,5 +932,72 @@ export async function maybeReexecToolchain(
   // The child gets the runtime flags with the spawn; told so, it skips their check.
   const told = deps.pids ? { [RUNTIME_FLAGS_ENV]: String(deps.pids.pid) } : undefined;
   deps.exit(await deps.spawn(choice.deno, choice.version, told));
+  return true;
+}
+
+/** What {@linkcode maybeReexecForLimits} touches in the process (injectable for tests). */
+export interface LimitsGateDeps {
+  /**
+   * The flags `start.limits` configures (src/build/resource-limits.ts): handed down by an earlier
+   * hop, else read from the project. None for every verb but `start`.
+   */
+  readonly configured: readonly string[];
+  /**
+   * The runtime this process runs: denext's Deno version, `"path"` for a `DENEXT_DENO=<path>` Deno
+   * of unknown version, `undefined` for stock Deno.
+   */
+  readonly runtime: string | undefined;
+  /** `DENEXT_LIMITS_APPLIED` as this process received it: the flags it was started with. */
+  readonly applied: string | undefined;
+  /** Whether this process may start its own Deno again (`--allow-run` for it). */
+  readonly mayRespawn: boolean;
+  /** This process's pid (its child is told it gets the runtime flags with the re-run). */
+  readonly pid: number;
+  /**
+   * Re-run this invocation on this process's own Deno with `flags` after `run` (and the
+   * toolchain's runtime flags) and `env` added; resolve its exit code.
+   */
+  readonly spawn: (flags: readonly string[], env: Record<string, string>) => Promise<number>;
+  /** End the process (production: `Deno.exit`). */
+  readonly exit: (code: number) => void;
+  /** Say something on stderr. */
+  readonly warn: (message: string) => void;
+}
+
+/**
+ * The last gate before `denext start` serves: the configured resource limits go on the process
+ * that serves, and on no CLI hop before it (those hand them down as data, src/build/resource-
+ * limits.ts {@linkcode hopLimits}). This process serves; when it was not started with exactly the
+ * flags its runtime takes — `DENEXT_LIMITS_APPLIED` is compared with those, so a marker another
+ * process left, or one from before the config changed, never counts — it re-runs itself once with
+ * them and exits with the child's code (the child, started with them and told so, serves). With no
+ * permission to re-run, on stock Deno, a Deno of unknown version or one older than runtime
+ * 3.0.0-rc.2 it serves without them and says so.
+ *
+ * @param deps The process seams.
+ * @returns Whether the process re-ran (only a test observes `true`).
+ */
+export async function maybeReexecForLimits(deps: LimitsGateDeps): Promise<boolean> {
+  const { configured } = deps;
+  if (configured.length === 0) return false;
+  const wanted = limitFlagsFor(deps.runtime, configured);
+  if (wanted.length === 0) {
+    deps.warn(limitsNotAppliedWarning(configured, supportsLimitsWhy(deps.runtime)));
+    return false;
+  }
+  if (deps.applied === wanted.join(" ")) return false;
+  if (!deps.mayRespawn) {
+    deps.warn(limitsNotAppliedWarning(
+      wanted,
+      "this server was started on denext's Deno without them, and without the --allow-run to " +
+        "re-run itself with them — put them after `run` in the start task (with " +
+        "DENEXT_LIMITS_APPLIED naming them), or run `denext start`",
+    ));
+    return false;
+  }
+  const child = hopLimits(true, deps.runtime, configured); // the last hop: it serves
+  deps.exit(
+    await deps.spawn(child.flags, { ...child.env, [RUNTIME_FLAGS_ENV]: String(deps.pid) }),
+  );
   return true;
 }

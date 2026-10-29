@@ -324,6 +324,17 @@ itself (it reads neither the config keys nor the env vars for them).
   systemd unit on denext's Deno from runtime 3.0.0-rc.5; never for `dev`, tests
   or jobs; glibc Linux only. See
   [Deployment targets › Idle memory trim](/docs/deployment-targets#idle-memory-trim).
+  `start.limits` — `{ memory?, cpuSeconds?, deadlineSeconds? }`: process
+  resource limits on denext's Deno from runtime 3.0.0-rc.2. `memory` caps the
+  main thread's JavaScript heap (a number of megabytes, or `"512m"` / `"2g"`; at
+  least 32 MB; exit 137), `cpuSeconds` the process CPU time (exit 152) and
+  `deadlineSeconds` its wall-clock lifetime (exit 124), each a whole number of
+  seconds from 1 up. Applied by `denext start` (to the process that serves,
+  never a CLI re-run before it), baked into the `build --compile` binary (whose
+  `job` and `db` run under them too: the runtime can't lift them) and written
+  into the generated Docker image / systemd unit; never for `dev`, tests or
+  `denext job`; not applied on stock Deno (a warning says so). See
+  [Deployment targets › Resource limits](/docs/deployment-targets#resource-limits).
 
 ```ts
 export default {

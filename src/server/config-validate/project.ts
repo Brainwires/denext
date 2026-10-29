@@ -5,6 +5,7 @@ import type { DenextConfig } from "../config.ts";
 import { VERB_NAME } from "../../cli/command.ts";
 import { isReservedDenoVerb, reservedVerbError } from "../../cli/deno-verbs.ts";
 import { validateRemovedExperimental } from "./keys.ts";
+import { resourceLimitProblems } from "./limits.ts";
 import { type Fail, isPlainObject, validatePermissionLists } from "./shared.ts";
 
 /** `tailwind.input`/`output` are required non-empty path strings. */
@@ -229,16 +230,20 @@ export function validateCompile(compile: unknown, fail: Fail): void {
   validateCompileSign(sign, fail);
 }
 
-/** `start`: an object whose `idleTrim` (when set) is a boolean. */
+/**
+ * `start`: an object whose `idleTrim` (when set) is a boolean and whose `limits` (when set) the
+ * runtime accepts (src/build/resource-limits.ts).
+ */
 export function validateStart(start: unknown, fail: Fail): void {
   if (start === undefined) return;
   if (typeof start !== "object" || start === null || Array.isArray(start)) {
     return fail("start", "must be an object");
   }
-  const idleTrim = (start as { idleTrim?: unknown }).idleTrim;
+  const { idleTrim, limits } = start as { idleTrim?: unknown; limits?: unknown };
   if (idleTrim !== undefined && typeof idleTrim !== "boolean") {
     fail("start.idleTrim", "must be a boolean");
   }
+  for (const [key, message] of resourceLimitProblems(limits)) fail(key, message);
 }
 
 /**
