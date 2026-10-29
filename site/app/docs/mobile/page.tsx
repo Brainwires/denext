@@ -2217,12 +2217,11 @@ audio.addEventListener("ended", () => clearNowPlaying());`}
         <li>
           otherwise (the browser) the page: <code>fetch</code>{" "}
           with the body streamed into the Origin Private File System, with progress, pause and
-          resume, for as long as the page lasts. The bytes go to a part file, a hidden sibling{" "}
-          <code>.&lt;name&gt;.denext-part</code>{" "}
-          (for a picked file or folder, a file under OPFS&apos;s <code>cache</code>{" "}
-          folder), which takes the file&apos;s place only once the download is done: a file already
-          at the path keeps its contents through a pause, a cancel or a failure. A download a reload
-          interrupted starts over, reusing that part file.
+          resume, for as long as the page lasts. The bytes go to a part file in OPFS&apos;s{" "}
+          <code>cache/.denext-part/</code> folder (never beside the file, and hidden from{" "}
+          <code>listDir</code>), which takes the file&apos;s place only once the download is done: a
+          file already at the path keeps its contents through a pause, a cancel or a failure. A
+          download a reload interrupted starts over, reusing that part file.
         </li>
       </ol>
       <p>
