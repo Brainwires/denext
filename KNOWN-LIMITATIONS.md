@@ -568,12 +568,15 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   and react-native-web's second sheet when it renders into a shadow root; those need
   `style-src 'unsafe-inline'`. react-native-web's own sheet and React Native mode's rules need
   nothing (the CSP is hash-based, so there is no nonce to give such an element).
-- **Renderers built on `react-reconciler` see no denext context** (React Native Skia's
-  `<Canvas>`, react-three-fiber, react-konva): a component inside their tree reads a context's default
-  value (as in React, contexts don't cross renderers), and a provider placed inside the tree does
-  not reach it either (in React it would); pass the values as props. A class component inside such
-  a tree is not supported. React Native Skia with Reanimated, and in the Capacitor shell's
-  WebViews, is not yet verified.
+- **A class's `static contextType` inside a `react-reconciler` renderer's tree reads nothing**
+  (React Native Skia's `<Canvas>`, react-three-fiber, react-konva): the renderer takes only React's
+  context object there, and a denext context is a function, so `this.context` stays empty. Read
+  the context with `<Context.Consumer>` or a function component's `useContext` instead (both work
+  inside the tree, as do class components otherwise). A provider inside such a tree reaches it
+  only for a context made with `react`'s `createContext` (what the renderers and migrated code
+  use); one made with `denext`'s own is read there with its default unless it is provided above a
+  bridging root (react-three-fiber's `<Canvas>`, react-konva's `<Stage>`). React Native Skia with
+  Reanimated, and in the Capacitor shell's WebViews, is not yet verified.
 - **Unistyles' Babel plugin is ported in part:** the component swap and `useVariants` run, the
   per-style dependency pass does not (the theme is CSS variables; a style that depends on the
   breakpoint or another runtime value updates when its component renders again). Tamagui's

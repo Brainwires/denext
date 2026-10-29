@@ -821,8 +821,10 @@ suggests them).
 https://denext.dev/docs/native-sdk-recipes. Unistyles 3 needs no setup (its wrapped components and
 `useVariants`; `reactNative: { unistyles: false }` turns it off), Tamagui runs on its runtime
 styles, and Metro's `require.context` with literal arguments is generated at build. Renderers built
-on `react-reconciler` load (React Native Skia's `<Canvas>`, react-three-fiber, react-konva; no
-context crosses into them): Skia imports CanvasKit's wasm with `?url`, and under a CSP needs
+on `react-reconciler` load (React Native Skia's `<Canvas>`, react-three-fiber, react-konva):
+contexts and class components work inside their trees, and the providers above reach a
+react-three-fiber `<Canvas>` / react-konva `<Stage>` (its-fine's bridge), not a Skia Canvas (as in
+React): Skia imports CanvasKit's wasm with `?url`, and under a CSP needs
 `'wasm-unsafe-eval'` in `scriptSrc` (React Native mode also needs `'unsafe-inline'` in `styleSrc`).
 Docs: https://denext.dev/docs/react-native
 
