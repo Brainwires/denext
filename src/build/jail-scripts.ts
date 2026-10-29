@@ -175,6 +175,11 @@ export interface JailInputs {
   readonly userNpmrc?: string | null;
   /** The environment (default: none). */
   readonly env?: (name: string) => string | undefined;
+  /**
+   * The runtime version the project installs with (default: the toolchain pin's), which decides
+   * what a `jailScripts` object means.
+   */
+  readonly version?: string | null;
 }
 
 /** A boolean `.npmrc` / environment value, or undefined. */
@@ -197,10 +202,25 @@ function objectOf(v: unknown): Record<string, unknown> | undefined {
 }
 
 /**
- * The project's jail settings. Any source asking for the jail (`true`, an exceptions object,
- * `paranoid`) wins over one turning it off, as the runtime merges them.
+ * What a deno.json `jailScripts` value says: `true` / `false`, or for an object whether it asks
+ * for the jail. Up to runtime `3.0.0-rc.5` every object does; from `3.0.0-rc.6` (the release that
+ * takes host lists, DENEXT.md item 108) one that lists only `packages` / `knownPackages`
+ * configures the default jail without asking for it, and only one with `net`, or with neither
+ * list, still turns it on.
+ */
+function jailScriptsVote(jail: unknown, version: string | null | undefined): boolean | undefined {
+  if (typeof jail === "boolean") return jail;
+  const obj = objectOf(jail);
+  if (!obj) return undefined;
+  if (!jailHostListsSupported(version)) return true;
+  return "net" in obj || (!("packages" in obj) && !("knownPackages" in obj)) ? true : undefined;
+}
+
+/**
+ * The project's jail settings. Any source asking for the jail (`true`, an exceptions object that
+ * asks for it, `paranoid`) wins over one turning it off, as the runtime merges them.
  *
- * @param inputs deno.json, `.npmrc` and the environment.
+ * @param inputs deno.json, `.npmrc`, the environment and the runtime version.
  * @returns The merged setting.
  */
 export function readJailSetting(inputs: JailInputs): JailSetting {
@@ -243,7 +263,7 @@ function jailVotes(
     : "deno.json supplyChain";
   return [
     [`${at}.paranoid`, supply?.paranoid === true ? true : undefined],
-    [`${at}.jailScripts`, typeof jail === "boolean" ? jail : objectOf(jail) ? true : undefined],
+    [`${at}.jailScripts`, jailScriptsVote(jail, inputs.version)],
     [".npmrc paranoid", paranoidVote(npmrcValue(npmrc, "paranoid"))],
     [".npmrc jail-scripts", boolValue(npmrcValue(npmrc, "jail-scripts"))],
     // The user-level file: the runtime reads it too (after the project's).
@@ -551,6 +571,7 @@ export async function readJailProject(
     npmrc: await readOr(fs, join(root, ".npmrc")),
     userNpmrc: userNpmrc === null ? null : await readOr(fs, userNpmrc),
     env,
+    version: options.version,
   });
   return {
     dir: root,

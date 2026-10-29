@@ -1318,9 +1318,14 @@ export default {
           is required and must name the relying party your passkeys belong to (the instance's
           application domain, which is not the Frontend API host the publishable key encodes, so
           denext does not guess it); <code>passkeys: true</code>{" "}
-          is a config error, and an empty list refuses every request. The list is enforced twice: by
-          the capability, and natively by the window&apos;s backend, which reads it from the
-          packaged <code>laufey-launch.json</code>{" "}
+          is a config error, and an empty list refuses every request.{" "}
+          <code>denext desktop add passkeys --rp-id clerk.example.com</code> writes the list (repeat
+          {" "}
+          <code>--rp-id</code>{" "}
+          for more; each must be a registrable domain, with no scheme, port or path, and a later run
+          adds to the list); without it the capability is added with an empty list. The list is
+          enforced twice: by the capability, and natively by the window&apos;s backend, which reads
+          it from the packaged <code>laufey-launch.json</code>{" "}
           (<code>"passkeyRpIds"</code>) and refuses any other RP ID before the OS sees it. From
           runtime 3.0.0-denext.1 that file also carries{" "}
           <code>"strictPolicy": true</code>, so a launch file without the list fails closed: every
@@ -2016,7 +2021,8 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
               (Touch ID / iCloud Keychain · Windows Hello · none on Linux; pinned runtime)
             </td>
             <td>
-              none (a runtime API; pin the RP IDs with <code>{"{ rpIds }"}</code>)
+              none (a runtime API; pin the RP IDs with <code>{"{ rpIds }"}</code>, or{" "}
+              <code>--rp-id &lt;domain&gt;</code>)
             </td>
             <td>none</td>
           </tr>

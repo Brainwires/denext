@@ -6,6 +6,7 @@
 import { assert, assertEquals, assertFalse, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import {
+  denextExemptions,
   effectiveRule,
   heldUntil,
   holdMessage,
@@ -344,6 +345,24 @@ Deno.test("upgrade: an exclude that held only the denext entry goes with it; --c
   JSON.parse(file.replace(/^\s*\/\/.*$/m, ""));
 });
 
+Deno.test("upgrade: another @denext exemption from the hold is flagged, never removed", async () => {
+  const other = EXISTING.replace('"jsr:@denext/*"', '"jsr:@denext/denext"');
+  const { code, out, file } = await upgradeIn(other);
+  assertEquals(code, 0, out);
+  assertStringIncludes(file, '"jsr:@denext/denext"');
+  assertStringIncludes(out, 'deno.json exempts "jsr:@denext/denext" from minimumDependencyAge');
+  assertStringIncludes(out, "denext never writes such an entry");
+  assertFalse(out.includes("Removed"), out);
+  assertEquals(
+    denextExemptions({ exclude: ["jsr:@denext/*", "jsr:@std/path", 1, "jsr:@denext/ui"] }),
+    [
+      "jsr:@denext/*",
+      "jsr:@denext/ui",
+    ],
+  );
+  assertEquals(denextExemptions("P2D"), []);
+});
+
 Deno.test("stripDenextExclude: every shape, other entries kept, valid JSON after", () => {
   const cases: [string, string][] = [
     ['{"minimumDependencyAge":{"exclude":["jsr:@denext/*"]},"a":1}', '{"a":1}'],
@@ -384,9 +403,19 @@ Deno.test("doctor: a deno.json that still exempts jsr:@denext/* gets a fix point
     await Deno.writeTextFile(join(dir, "deno.json"), EXISTING);
     const check = await depAgeExemptionCheck(dir);
     assertEquals([check?.ok, check?.critical], [false, false]);
-    assertStringIncludes(check!.detail, "`denext upgrade` removes the entry");
+    assertStringIncludes(check!.detail, '`denext upgrade` removes "jsr:@denext/*"');
     await Deno.writeTextFile(join(dir, "deno.json"), stripDenextExclude(EXISTING).text);
     assertEquals(await depAgeExemptionCheck(dir), null);
+    // any other @denext entry is flagged too: denext never writes it, so the fix is by hand
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      EXISTING.replace('"jsr:@denext/*"', '"jsr:@denext/denext", "@denext/ui"'),
+    );
+    const other = await depAgeExemptionCheck(dir);
+    assertEquals(other?.ok, false);
+    assertStringIncludes(other!.detail, 'exempts "jsr:@denext/denext", "@denext/ui"');
+    assertStringIncludes(other!.detail, "yourself (denext never writes it)");
+    assertFalse(other!.detail.includes("`denext upgrade` removes"), other!.detail);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

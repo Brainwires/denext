@@ -26,9 +26,31 @@ and this project adheres to
     object, the runtime's settings home there, instead of creating a deno.json (which takes the
     project out of Node mode). A deno.json, when present, stays the only home, and doctor flags a
     `"deno"` object beside it.
+- **`denext desktop add passkeys --rp-id <domain>`.** The option writes the relying parties to
+  `desktop.capabilities.passkeys.rpIds`, where `add` used to leave an empty list that refuses
+  every passkey ceremony. It can be repeated, each ID must be a registrable domain (no scheme,
+  port, path or IP address; an internationalised name is written in its punycode form), and a
+  later run adds to the list it finds. The launch-policy fix in `doctor` names it.
 
 ### Fixed
 
+- **Other `@denext` exemptions from the dependency-age hold are flagged.** `denext doctor` and
+  `denext upgrade` looked only for the `"jsr:@denext/*"` entry older scaffolds wrote in
+  `minimumDependencyAge.exclude`. Any other `@denext` entry there (`"jsr:@denext/denext"`, …)
+  lets a just-published release in before the hold has passed too; denext never writes one, so
+  both commands now name it and leave it for you to remove (`upgrade --json` lists it as
+  `denextExemptions`).
+- **A packages-only `jailScripts` object no longer counts as turning the jail on (runtime
+  `3.0.0-rc.6` and later).** From `3.0.0-rc.6` an object that lists only `packages` (or
+  `knownPackages`) configures the default jail without asking for it, but denext still read it as
+  on: next to `jail-scripts=false` in `.npmrc` it wrote exceptions, and `doctor` flagged missing
+  ones, for a jail that was off. denext now reads it as the installing runtime does; on older
+  runtimes any object still turns the jail on.
+- **`migrate --check` flags a `next.config` that reads an unset machine-path variable.** Only the
+  machine-path variables this machine set were masked during evaluation, so a config reading
+  `HOME` on Windows (or `USERPROFILE` elsewhere) got `undefined` and its rule was inlined without a
+  note. `HOME`, `USERPROFILE`, `TMPDIR`, `TEMP`, `TMP`, `APPDATA` and `LOCALAPPDATA` now read as
+  placeholders whether or not they are set, so the rule is left out and flagged for a hand port.
 - **The jail exceptions denext writes for runtime `3.0.0-rc.6` and later.** The browser
   packages' `~` caches (puppeteer, Playwright's browsers, Cypress) now get `"executables": true`,
   without which rc.6 removes the downloaded browser after the install, and `@prisma/client` gets

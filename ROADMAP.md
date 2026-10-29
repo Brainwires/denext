@@ -15,14 +15,6 @@
 
 ## Supply chain (lifecycle-script jail)
 
-Low findings from the 4.8 supply-chain audit:
-
-- **Other `@denext` exemptions from the dependency-age hold go unnoticed.** `doctor` and `upgrade`
-  look for the literal `"jsr:@denext/*"` denext once wrote; flag `"jsr:@denext/denext"` and other
-  `@denext` entries too (denext never writes them).
-- **From runtime `3.0.0-rc.6` a packages-only `jailScripts` object no longer asks for the jail.**
-  `readJailSetting` still counts it as on, so next to `jail-scripts=false`
-  denext writes exceptions and `doctor` flags missing ones for a jail that is off.
 - **GitHub-hosted declared downloads** (`bcrypt` 5, `argon2` before 0.28, `@discordjs/opus`,
   `libxmljs`): from denext.1 their declared host needs a grant, and a `knownPackages` entry can't
   cover GitHub's redirect to another host. Review them for `net` host lists in the built-in list.

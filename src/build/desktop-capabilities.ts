@@ -93,6 +93,43 @@ export interface DesktopCapabilityEntry {
 /** The app's folders the `fs` capability may use by default. */
 const APP_FOLDERS = ["$APPDATA", "$CACHE"];
 
+/** The by-hand step for a passkeys capability added without `--rp-id` (its `rpIds` is empty). */
+const PASSKEY_RP_IDS_MANUAL =
+  "passkeys: list your relying parties in desktop.capabilities.passkeys = { rpIds: [...] } (`denext desktop add passkeys --rp-id <domain>`, repeatable, writes them) — it is written empty, and until it names one every request is invalid_rp (on Windows nothing else ties the RP ID to the app).";
+
+/** One DNS label of a hostname: letters, digits and inner hyphens, 1–63 characters. */
+const DNS_LABEL = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/;
+
+/**
+ * A relying-party ID as `--rp-id` takes it: a registrable domain (`example.com`,
+ * `clerk.example.com`), lowercased, an internationalised name in its punycode form. A scheme,
+ * port, path, IP address, single-label name (`localhost`) or empty label is refused, as no
+ * passkey ceremony could name it for a packaged app.
+ *
+ * @param raw The ID as typed.
+ * @returns The normalised ID.
+ * Throws when it is not a registrable domain.
+ */
+export function passkeyRpId(raw: string): string {
+  const id = raw.trim().toLowerCase();
+  let host = id;
+  if (/[^ -~]/.test(id) && !/[/:?#@\s]/.test(id)) {
+    try {
+      host = new URL(`https://${id}`).hostname;
+    } catch { /* refused below */ }
+  }
+  const labels = host.split(".");
+  const ok = host.length <= 253 && labels.length >= 2 && labels.every((l) => DNS_LABEL.test(l)) &&
+    !/^[0-9]+$/.test(labels[labels.length - 1]);
+  if (!ok) {
+    throw new Error(
+      `--rp-id "${raw}" is not a registrable domain: give the relying party's domain, such as ` +
+        "example.com (no scheme, port, path or IP address)",
+    );
+  }
+  return host;
+}
+
 /**
  * The capability table: `denext desktop add <name>`. Names mirror `denext mobile add` where
  * the capability exists on both.
@@ -339,7 +376,8 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     notes: "native passkeys: macOS Touch ID / iCloud Keychain, Windows Hello (pinned runtime)",
     manual: [
       "passkeys: macOS needs the associated-domains entitlement (webcredentials:<rp-id>) with a provisioning profile — set desktop.macos = { provisioningProfile, entitlements } — and the RP's apple-app-site-association must list <TeamID>.<bundle id>; otherwise every request is invalid_rp.",
-      "passkeys: list your relying parties in desktop.capabilities.passkeys = { rpIds: [...] } — it is written empty, and until it names one every request is invalid_rp (on Windows nothing else ties the RP ID to the app). The packaged app's laufey-launch.json carries the list as passkeyRpIds, enforced natively; from runtime 3.0.0-denext.1 (strictPolicy) a launch file without it refuses every request. Linux has no OS passkey API: USB security keys work natively under runtime 3.0.0-rc.1+ (libwebauthn), the browser otherwise.",
+      PASSKEY_RP_IDS_MANUAL,
+      "passkeys: the packaged app's laufey-launch.json carries desktop.capabilities.passkeys.rpIds as passkeyRpIds, enforced natively; from runtime 3.0.0-denext.1 (strictPolicy) a launch file without it refuses every request. Linux has no OS passkey API: USB security keys work natively under runtime 3.0.0-rc.1+ (libwebauthn), the browser otherwise.",
     ],
   },
 };
@@ -889,6 +927,11 @@ export interface AddDesktopCapabilitiesOptions {
   readonly dir: string;
   /** Plan only: compute the edit and write nothing. */
   readonly dryRun?: boolean;
+  /**
+   * `--rp-id`: relying-party IDs written to `desktop.capabilities.passkeys.rpIds` (merged into an
+   * existing list); only with the `passkeys` capability. Each must be a registrable domain.
+   */
+  readonly passkeyRpIds?: readonly string[];
 }
 
 /** What {@linkcode addDesktopCapabilities} did (or would do, with `dryRun`). */
@@ -909,6 +952,8 @@ export interface AddDesktopCapabilitiesReport {
   readonly trust: DesktopTrust;
   /** Steps to do by hand. */
   readonly manual: readonly string[];
+  /** `desktop.capabilities.passkeys.rpIds` as written, when `--rp-id` gave any. */
+  readonly rpIds?: readonly string[];
 }
 
 /** Trust levels, lowest first. */
@@ -927,16 +972,14 @@ async function findConfig(dir: string): Promise<string | undefined> {
   return undefined;
 }
 
-/** The value at `desktop.capabilities.<key>` in a config source, when it is a data literal. */
-async function presentKeys(source: string): Promise<Set<string>> {
+/** The `desktop.capabilities` object in a config source, when it is a data literal. */
+async function presentCapabilities(source: string): Promise<Record<string, unknown>> {
   const model = await readConfigModel(source);
   const desktop = model.keys.desktop;
   const caps = desktop?.kind === "editable"
     ? (desktop.value as { capabilities?: unknown } | null)?.capabilities
     : undefined;
-  return new Set(
-    typeof caps === "object" && caps !== null ? Object.keys(caps as Record<string, unknown>) : [],
-  );
+  return typeof caps === "object" && caps !== null ? caps as Record<string, unknown> : {};
 }
 
 /** The config a project without one gets. */
@@ -956,37 +999,107 @@ function resolveNames(raw: readonly string[]): string[] {
   return names;
 }
 
+/** The capabilities spliced in, those kept, and the passkeys RP IDs as written. */
+interface SpliceResult {
+  source: string;
+  added: string[];
+  kept: string[];
+  rpIds?: string[];
+}
+
+/** Set `path` in `source`, or throw with the by-hand snippet. */
+async function setOrThrow(
+  source: string,
+  path: readonly string[],
+  value: unknown,
+  configPath: string,
+): Promise<string> {
+  const edit = await setConfigValue(source, [...path], value);
+  if (edit.ok) return edit.source;
+  const [, , key, ...rest] = path;
+  const snippet = rest.length
+    ? `${key}: { ${rest.join(".")}: ${JSON.stringify(value)} }`
+    : `${key}: ${JSON.stringify(value)}`;
+  throw new Error(
+    `cannot edit ${configPath}: ${edit.reason}\n  Add by hand: desktop: { capabilities: { ${snippet} } }`,
+  );
+}
+
+/**
+ * `--rp-id`'s IDs merged into an existing passkeys value: the list that results, and the edit
+ * that writes it (null when every ID is already listed). A value that is not an object (`true`,
+ * `false`) is replaced by `{ rpIds }`.
+ */
+function mergedRpIds(
+  existing: unknown,
+  rpIds: readonly string[],
+): { list: string[]; edit: { path: string[]; value: unknown } | null } {
+  const base = ["desktop", "capabilities", "passkeys"];
+  if (existing === null || typeof existing !== "object" || Array.isArray(existing)) {
+    return { list: [...rpIds], edit: { path: base, value: { rpIds: [...rpIds] } } };
+  }
+  const raw = (existing as { rpIds?: unknown }).rpIds;
+  const current = Array.isArray(raw)
+    ? raw.filter((id): id is string => typeof id === "string")
+    : [];
+  const lower = current.map((id) => id.toLowerCase());
+  const list = [...current, ...rpIds.filter((id) => !lower.includes(id))];
+  const changed = list.length > current.length || !Array.isArray(raw);
+  return { list, edit: changed ? { path: [...base, "rpIds"], value: list } : null };
+}
+
+/** Splice one capability into `result` (added, kept, or its passkeys `rpIds` merged). */
+async function spliceOne(
+  result: SpliceResult,
+  name: string,
+  present: Record<string, unknown>,
+  rpIds: readonly string[],
+  configPath: string,
+): Promise<void> {
+  const cap = DESKTOP_CAPABILITIES[name];
+  const ids = name === "passkeys" ? rpIds : [];
+  if (Object.hasOwn(present, cap.key)) {
+    return await mergeExisting(result, name, present[cap.key], ids, configPath);
+  }
+  if (ids.length) result.rpIds = [...ids];
+  const value = ids.length ? { rpIds: [...ids] } : cap.value;
+  const path = ["desktop", "capabilities", cap.key];
+  result.source = await setOrThrow(result.source, path, value, configPath);
+  result.added.push(name);
+}
+
+/** A capability already present: kept, unless `--rp-id` adds relying parties to it. */
+async function mergeExisting(
+  result: SpliceResult,
+  name: string,
+  existing: unknown,
+  rpIds: readonly string[],
+  configPath: string,
+): Promise<void> {
+  const merge = rpIds.length ? mergedRpIds(existing, rpIds) : null;
+  if (merge) result.rpIds = merge.list;
+  const edit = merge?.edit;
+  if (edit) result.source = await setOrThrow(result.source, edit.path, edit.value, configPath);
+  // a `true` / `false` replaced by `{ rpIds }` counts as enabling it
+  (edit?.path.length === 3 ? result.added : result.kept).push(name);
+}
+
 /** Splice each capability not yet present into `source`; throws with the by-hand snippet. */
 async function spliceCapabilities(
   before: string,
   names: readonly string[],
   configPath: string,
-): Promise<{ source: string; added: string[]; kept: string[] }> {
-  const present = await presentKeys(before);
-  let source = before;
-  const added: string[] = [];
-  const kept: string[] = [];
-  for (const name of names) {
-    const cap = DESKTOP_CAPABILITIES[name];
-    if (present.has(cap.key)) {
-      kept.push(name);
-      continue;
-    }
-    const edit = await setConfigValue(source, ["desktop", "capabilities", cap.key], cap.value);
-    if (!edit.ok) {
-      throw new Error(
-        `cannot edit ${configPath}: ${edit.reason}\n  Add by hand: desktop: { capabilities: { ${cap.key}: ${
-          JSON.stringify(cap.value)
-        } } }`,
-      );
-    }
-    source = edit.source;
-    added.push(name);
-  }
+  rpIds: readonly string[],
+): Promise<SpliceResult> {
+  const present = await presentCapabilities(before);
+  const result: SpliceResult = { source: before, added: [], kept: [] };
+  for (const name of names) await spliceOne(result, name, present, rpIds, configPath);
   // Once a real `capabilities` block exists, drop the scaffold's commented placeholder hint so it
   // doesn't linger beside it (`// capabilities: { … },  // denext desktop add <cap>`).
-  if (added.length > 0 || kept.length > 0) source = removeCapabilitiesHint(source);
-  return { source, added, kept };
+  if (result.added.length > 0 || result.kept.length > 0) {
+    result.source = removeCapabilitiesHint(result.source);
+  }
+  return result;
 }
 
 /** Remove the scaffold's commented `// capabilities: … // denext desktop add <cap>` placeholder
@@ -1017,10 +1130,17 @@ export async function addDesktopCapabilities(
   opts: AddDesktopCapabilitiesOptions,
 ): Promise<AddDesktopCapabilitiesReport> {
   const names = resolveNames(opts.capabilities);
+  const rpIds = [...new Set((opts.passkeyRpIds ?? []).map(passkeyRpId))];
+  if (rpIds.length > 0 && !names.includes("passkeys")) {
+    throw new Error(
+      "--rp-id applies to the passkeys capability: `denext desktop add passkeys --rp-id <domain>`",
+    );
+  }
   const existing = await findConfig(opts.dir);
   const configPath = existing ?? join(opts.dir, "denext.config.ts");
   const before = existing ? await Deno.readTextFile(existing) : NEW_CONFIG;
-  const { source, added, kept } = await spliceCapabilities(before, names, configPath);
+  const spliced = await spliceCapabilities(before, names, configPath, rpIds);
+  const { source, added, kept } = spliced;
   const changed = source !== before || !existing;
   const label = basename(configPath);
   const diff = changed
@@ -1043,8 +1163,23 @@ export async function addDesktopCapabilities(
     diff,
     permissions,
     trust,
-    manual: names.flatMap((n) => DESKTOP_CAPABILITIES[n].manual ?? []),
+    manual: names.flatMap((n) => DESKTOP_CAPABILITIES[n].manual ?? [])
+      .filter((m) => !(m === PASSKEY_RP_IDS_MANUAL && spliced.rpIds?.length)),
+    ...spliced.rpIds ? { rpIds: spliced.rpIds } : {},
   };
+}
+
+/** The report's first lines: what was enabled, kept or created, and the passkeys RP IDs. */
+function addReportHead(report: AddDesktopCapabilitiesReport, dryRun: boolean): string[] {
+  const lines: string[] = [];
+  const verb = dryRun ? "would enable" : "enabled";
+  if (report.added.length > 0) {
+    lines.push(`  ${verb}: ${report.added.join(", ")}  (${report.configPath})`);
+  }
+  if (report.kept.length > 0) lines.push(`  already enabled: ${report.kept.join(", ")}`);
+  if (report.created) lines.push(`  ${dryRun ? "would create" : "created"} ${report.configPath}`);
+  if (report.rpIds?.length) lines.push(`  passkeys relying parties: ${report.rpIds.join(", ")}`);
+  return lines;
 }
 
 /**
@@ -1058,13 +1193,7 @@ export function formatDesktopAddReport(
   report: AddDesktopCapabilitiesReport,
   dryRun: boolean,
 ): string {
-  const lines: string[] = [];
-  const verb = dryRun ? "would enable" : "enabled";
-  if (report.added.length > 0) {
-    lines.push(`  ${verb}: ${report.added.join(", ")}  (${report.configPath})`);
-  }
-  if (report.kept.length > 0) lines.push(`  already enabled: ${report.kept.join(", ")}`);
-  if (report.created) lines.push(`  ${dryRun ? "would create" : "created"} ${report.configPath}`);
+  const lines = addReportHead(report, dryRun);
   if (report.diff) lines.push("", report.diff.trimEnd());
   lines.push("", "  Deno permissions these capabilities add (the package scripts derive them):");
   for (const os of DESKTOP_OSES) {

@@ -44,6 +44,14 @@ export const DESKTOP_ADD_FLAGS: readonly FlagSpec[] = [
     help: "add sidecar: a path polled on its port until it answers 2xx (e.g. /health)",
   },
   { name: "proxy", type: "boolean", help: "add sidecar: point spa.proxy at it" },
+  {
+    name: "rp-id",
+    type: "string",
+    valueName: "<domain>",
+    repeatable: true,
+    help: "add passkeys: a relying party's domain for desktop.capabilities.passkeys.rpIds " +
+      "(repeatable)",
+  },
 ];
 
 /** `denext desktop add sidecar --name <n> (--entry <module> [--node-modules <dir>] | --exec <p>)`. */
@@ -99,10 +107,14 @@ export async function desktopAdd(
   const dryRun = ctx.flags["dry-run"] === true;
   let report: AddDesktopCapabilitiesReport;
   try {
+    const rpIds = typeof ctx.flags["rp-id"] === "string"
+      ? (ctx.flags["rp-id"] as string).split(",").filter((id) => id.trim() !== "")
+      : [];
     report = await addDesktopCapabilities({
       capabilities: ctx.positionals.slice(1),
       dir,
       dryRun,
+      ...rpIds.length ? { passkeyRpIds: rpIds } : {},
     });
   } catch (err) {
     console.error(`denext desktop add: ${err instanceof Error ? err.message : String(err)}`);
