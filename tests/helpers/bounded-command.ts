@@ -166,6 +166,7 @@ export async function processTree(pid: number, timeoutMs = TREE_DEADLINE_MS): Pr
       lister.kill("SIGKILL");
     } catch { /* exited meanwhile */ }
     await read.cancel();
+    await within(lister.status, 5_000);
     return `(no process list: ${program} still running after ${timeoutMs} ms)`;
   }
   // Exited: read what is in the pipe, but not past a short grace (see the module comment).

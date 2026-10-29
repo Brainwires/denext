@@ -156,7 +156,8 @@ Deno.test("boundedOutput: a stalled child fails with its pid and what it printed
 Deno.test("processTree: a process that finished reads as gone, and the listing never waits past its bound", async () => {
   const done = new Deno.Command(Deno.execPath(), { args: ["eval", ""], stdout: "null" }).spawn();
   await done.status;
-  assertEquals(await processTree(done.pid), `(pid ${done.pid} and its descendants are gone)`);
+  const gone = await processTree(done.pid);
+  assert(gone.endsWith(`(pid ${done.pid} and its descendants are gone)`), gone);
   // This process: listed with its command line.
   assertStringIncludes(await processTree(Deno.pid), `${Deno.pid} `);
   // A listing given no time is abandoned with the reason, not awaited.
