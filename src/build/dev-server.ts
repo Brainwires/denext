@@ -25,6 +25,7 @@ import { createDevState, type DevServerOptions, type DevState } from "./dev-serv
 import { watch } from "./dev-server/watch.ts";
 import { effectiveDevOrigins } from "./dev-server/lan.ts";
 import { devSessionToken, withDevTokenGate, withDevTokenParam } from "./dev-server/dev-token.ts";
+import { installServerOwnerStack } from "../server/owner-stack.ts";
 
 export type { DevServerOptions } from "./dev-server/state.ts";
 export { DEV_RELOAD_SCRIPT } from "./dev-server/reload-script.ts";
@@ -117,6 +118,8 @@ export function startDevServer(given: DevServerOptions): Deno.HttpServer {
   // schemes). Production `start` never runs this module, so it stays off there. Mirrors
   // the `window.__denextDev = true` set in the client script.
   (globalThis as { __denextDev?: boolean }).__denextDev = true;
+  // `captureOwnerStack()` during a server render (the client's own is installed by its dev path).
+  installServerOwnerStack();
 
   const st = createDevState(options);
   // A new session tags its own modules (a module id is a project-relative path's hash).

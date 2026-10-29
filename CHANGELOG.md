@@ -31,6 +31,22 @@ and this project adheres to
   every passkey ceremony. It can be repeated, each ID must be a registrable domain (no scheme,
   port, path or IP address; an internationalised name is written in its punycode form), and a
   later run adds to the list it finds. The launch-policy fix in `doctor` names it.
+- **`<Script strategy="worker">` in SPA mode.** With `nextScriptWorkers` on and Partytown
+  installed, `denext dev` and `denext start` serve a SPA's Partytown and stamp every shell
+  response with its own nonce: the boot tag and the shell's scripts carry it and the `spa.csp`
+  policy lists it, so worker scripts the app renders run in Partytown's worker under the same
+  checks as an App Router page. A static `denext export` keeps the main-thread fallback.
+- **DevTools name a package's custom hooks.** In the default dev loop of an app that imports npm
+  packages, the dependency bundle records each package ES module's `use*` hooks and re-exports,
+  so `const q = useQuery(…)` from `@tanstack/react-query` breadcrumbs into the package's own
+  cells (`useQuery › …`) like a hook of the app's, through the package's barrels. CommonJS and
+  minified package modules stay labelled by the call.
+- **`captureOwnerStack()` during a server render.** Under `denext dev` a Server Component, or a
+  component an SSR pass renders, gets React's owner stack: the Server Components that own its
+  element, nearest first, as `\n    at Name` lines (with the JSX call site where `jsxDEV`
+  recorded it), across an `await` in an async component too. An element made with `h()` /
+  `createElement` is owned by the component whose render returned it, as on the client.
+  Production `start` installs nothing and still returns `null`.
 
 ### Fixed
 
@@ -75,6 +91,14 @@ and this project adheres to
   `denext fallow init` scaffolds) resolve symlinks in the report's paths and the project root and merge a
   file's records, so a run under a symlinked directory (macOS `/var` → `/private/var`) no longer
   lists files as never loaded.
+- **`denext migrate --prisma-adapter auto` follows the runtime the app runs on.** Run on a
+  stock Deno, migrate wired Prisma's npm adapters even though `denext dev`, `build` and `start`
+  re-run the app on denext's Deno toolchain, whose `Deno.SQL` `denext/prisma-adapter` uses; it
+  now takes the toolchain denext hands its children into account (`DENEXT_DENO=stock` keeps
+  the npm adapters). An app that imports `better-sqlite3` itself beside Prisma keeps the
+  `links` shim for it under `denext/prisma-adapter` too: its server bundle loaded the native
+  addon and the server did not start. The Epic Stack migration bed checks the wiring against
+  goldens and reads its seeded users through the adapter.
 
 ### Documentation
 

@@ -15,6 +15,13 @@ import { createAppLinksHandler } from "../../server/app-links.ts";
 import { EMITTED_DIR } from "../../plugin/mod.ts";
 import { resolveProject } from "../paths.ts";
 import { CLIENT_PREFIX, SHELL_FILE, spaClientPrefix, wantsShell } from "./shared.ts";
+import { servePartytown } from "../partytown.ts";
+import {
+  builtSpaPartytown,
+  newScriptNonce,
+  spaPartytownLib,
+  stampWorkerNonce,
+} from "./script-workers.ts";
 
 export interface SpaProdServerOptions {
   projectDir: string;
@@ -56,13 +63,23 @@ export async function startSpaProdServer(
   // client bundles already carry a Content-Encoding and pass through untouched.
   const encodings = compressEncodings(paths.config?.compress);
   const prefix = spaClientPrefix(paths.config?.spa);
+  // `<Script strategy="worker">` (`nextScriptWorkers`): the Partytown files the build published,
+  // and a shell stamped with a fresh nonce per response (./script-workers.ts).
+  const partytownDir = await builtSpaPartytown(paths.config, clientDir);
+  const lib = spaPartytownLib(paths.config);
+  const shellFor = partytownDir
+    ? () => stampWorkerNonce(shell, lib, newScriptNonce())
+    : () => shell;
+
+  const servedPartytown = (url: URL, request: Request, secure: boolean) =>
+    partytownDir ? servePartytown(partytownDir, url.pathname, request, secure, hstsCfg) : null;
 
   const serveLocal = spaLocalServer({
     clientDir,
     emittedDir,
     publicDir: paths.publicDir,
     prefix,
-    shell,
+    shell: shellFor,
     hstsCfg,
   });
 
@@ -78,7 +95,7 @@ export async function startSpaProdServer(
     // upgrade, an event stream or a body in another encoding passes through untouched.
     const res = proxyCfg && proxy && proxy.matchesProxyPrefix(url.pathname, proxyCfg.prefixes)
       ? await proxy.proxyToBackend(request, url, proxyCfg)
-      : await serveLocal(request, url, secure);
+      : await (servedPartytown(url, request, secure) ?? serveLocal(request, url, secure));
     return encodings.length > 0 ? await compressOrPassThrough(request, res, encodings) : res;
   };
 
@@ -114,7 +131,8 @@ function spaLocalServer(ctx: {
   emittedDir: string;
   publicDir: string;
   prefix: string;
-  shell: string;
+  /** The shell for one response (stamped with its own nonce when Partytown is on). */
+  shell: () => string;
   hstsCfg: Parameters<typeof applyDefaultSecurityHeaders>[2];
 }): (request: Request, url: URL, secure: boolean) => Promise<Response> {
   // Unpacked once: the per-request path reads closure locals, as it did inline.
@@ -136,7 +154,7 @@ function spaLocalServer(ctx: {
       if (pub) return applyDefaultSecurityHeaders(pub, secure, hstsCfg);
     }
     const res = wantsShell(request, url.pathname)
-      ? shellResponse(request, shell)
+      ? shellResponse(request, shell())
       : new Response("not found", { status: 404 });
     return applyDefaultSecurityHeaders(res, secure, hstsCfg);
   };

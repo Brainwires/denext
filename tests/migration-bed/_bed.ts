@@ -73,6 +73,19 @@ interface TimedCommand {
   expect?: string;
 }
 
+/**
+ * A golden check on a file `denext migrate` wrote or rewrote: substrings it must hold, and ones
+ * it must not (what the migration replaced).
+ */
+interface BedFile {
+  /** The file, relative to the app dir. */
+  path: string;
+  /** Substrings the migrated file must contain. */
+  contains?: string[];
+  /** Substrings it must not contain. */
+  absent?: string[];
+}
+
 /** A real-world app to migrate, as data. */
 export interface Bed {
   /** Short name (used in messages). */
@@ -97,7 +110,8 @@ export interface Bed {
   /**
    * Commands to run after migrate and before build, in the app dir — the setup a migrated
    * app's README asks for (a Prisma task migrate generated, an icon build, a DB seed). The
-   * token `$deno` is this test's Deno binary. Same network-skip semantics as `install`; an
+   * token `$deno` is this test's Deno binary, `$denext` the CLI under test (its `run` / `task`
+   * verbs run on denext's Deno toolchain). Same network-skip semantics as `install`; an
    * entry may be a {@linkcode TimedCommand} for its own deadline / success marker.
    */
   afterMigrate?: Array<string[] | TimedCommand>;
@@ -108,6 +122,8 @@ export interface Bed {
    * `denext create` writes, no `-A`) or `"all"` (`-A`). Unchecked when absent.
    */
   start?: "least-privilege" | "all";
+  /** Golden checks on what migrate wrote, asserted right after it ran. */
+  files?: BedFile[];
   /** `flagged` dependencies the bed tolerates (native deps the app does not exercise). */
   allowFlagged?: string[];
   /** Routes to render-assert. */
@@ -231,8 +247,8 @@ async function runCommands(
   for (const entry of commands) {
     const timed: TimedCommand = Array.isArray(entry) ? { cmd: entry } : entry;
     const [cmd, ...args] = timed.cmd;
-    const bin = cmd === "$deno" ? Deno.execPath() : cmd;
-    const r = await run(bin, args, app, timed.timeoutMs ?? INSTALL_TIMEOUT_MS, {
+    const [bin, argv] = commandLine(cmd, args);
+    const r = await run(bin, argv, app, timed.timeoutMs ?? INSTALL_TIMEOUT_MS, {
       DENEXT_MIN_DEP_AGE: "0",
     });
     if (r.ok || (timed.expect !== undefined && r.out.includes(timed.expect))) continue;
@@ -248,6 +264,16 @@ async function runCommands(
   return true;
 }
 
+/**
+ * The binary and arguments a bed command runs. `$denext` is the CLI under test, so its verbs
+ * (`denext run`, `denext task`) run on denext's Deno toolchain, as the migrated app's README
+ * steps do; `$deno` is that toolchain itself.
+ */
+function commandLine(cmd: string, args: string[]): [string, string[]] {
+  const bin = cmd === "$deno" || cmd === "$denext" ? Deno.execPath() : cmd;
+  return [bin, cmd === "$denext" ? ["run", "-A", "--node-modules-dir=none", CLI, ...args] : args];
+}
+
 /** The migrated app's `start` task carries the permissions `want` names. */
 function assertStartPermissions(app: string, want: "least-privilege" | "all"): void {
   const start = String(JSON.parse(Deno.readTextFileSync(join(app, "deno.json"))).tasks?.start);
@@ -255,6 +281,27 @@ function assertStartPermissions(app: string, want: "least-privilege" | "all"): v
     ? "deno run -A --node-modules-dir=none "
     : "deno run --node-modules-dir=none --allow-net --allow-read --allow-env --allow-write=.denext ";
   assert(start.startsWith(prefix), `start task is not ${want}: ${start}`);
+}
+
+/** Each golden file holds what it must and nothing it must not. */
+async function assertMigratedFiles(app: string, files: BedFile[]): Promise<void> {
+  const failures: string[] = [];
+  for (const file of files) {
+    let text: string;
+    try {
+      text = await Deno.readTextFile(join(app, file.path));
+    } catch {
+      failures.push(`${file.path}: missing`);
+      continue;
+    }
+    for (const want of file.contains ?? []) {
+      if (!text.includes(want)) failures.push(`${file.path}: lacks ${JSON.stringify(want)}`);
+    }
+    for (const gone of file.absent ?? []) {
+      if (text.includes(gone)) failures.push(`${file.path}: still has ${JSON.stringify(gone)}`);
+    }
+  }
+  assertEquals(failures, [], "migrated files differ from the bed's goldens");
 }
 
 /** Clone → install → prepare → migrate → afterMigrate → build → serve → render-assert → doctor (informational). */
@@ -289,6 +336,7 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
       assertEquals(flagged, [], "migrate flagged dependencies the bed does not tolerate");
       assertEquals(report.denoJsonExists, false, "the clone must not already carry a deno.json");
       if (bed.start) assertStartPermissions(app, bed.start);
+      if (bed.files) await assertMigratedFiles(app, bed.files);
     });
 
     if (bed.afterMigrate && !(await runCommands(bed, bed.afterMigrate, app))) return;

@@ -277,7 +277,11 @@ export async function detectPrismaWiring(
     ? readDatasource(await mfs.readTextFile(schemaAbs))
     : { provider: null, envVar: null };
   const adapter = adapterFor(datasource.provider, denoSqlTarget);
-  const sqlite = adapter === SQLITE_ADAPTER; // the better-sqlite3 path: links + bundled compat
+  // The `links` shim (denext's node:sqlite compat as `better-sqlite3`, bundled by the setup
+  // script): Prisma's better-sqlite3 adapter needs it, and so does an app that imports
+  // `better-sqlite3` itself (a cache database) — its server bundle takes the package from
+  // node_modules, where only the link swaps the native addon out, whatever adapter Prisma uses.
+  const sqlite = adapter === SQLITE_ADAPTER || "better-sqlite3" in deps;
   const plan: TransformPlan = {
     dir,
     compatSpecifier,
@@ -287,6 +291,7 @@ export async function detectPrismaWiring(
     provider: datasource.provider ?? "sqlite",
     adapter,
     envVar: datasource.envVar ?? "DATABASE_URL",
+    shim: sqlite,
   };
 
   return {
@@ -319,6 +324,8 @@ interface TransformPlan {
   adapter: DriverAdapter | null;
   /** The variable the datasource URL comes from. */
   envVar: string;
+  /** Whether `better-sqlite3` is linked to denext's compat (see {@link detectPrismaWiring}). */
+  shim: boolean;
 }
 
 /** The actual filesystem transform (deferred so it runs after deno.json is written). */
@@ -382,13 +389,12 @@ async function transformPrismaApp(plan: TransformPlan): Promise<PrismaMigrateInf
 }
 
 /**
- * Step 5 of the transform: SQLite on better-sqlite3 gets the `links` patch package (its
+ * Step 5 of the transform: the better-sqlite3 shim gets the `links` patch package (its
  * index.mjs is bundled by the setup script); every app gets the setup script and a gitignore
  * for the generated (+ bundled) artifacts.
  */
 async function writeSetupFiles(plan: TransformPlan): Promise<void> {
-  const { dir, adapter } = plan;
-  const shim = adapter === SQLITE_ADAPTER;
+  const { dir, adapter, shim } = plan;
   if (shim) await writePatchPackage(dir);
   await writeSetupScript(dir, {
     compat: shim ? plan.compatSpecifier : null,
@@ -595,8 +601,8 @@ interface SetupPlan {
 /** The setup script's header comment. */
 function setupIntro({ compat, envVar }: SetupPlan): string {
   if (compat !== null) {
-    return `// One-time Prisma setup for denext: substitute denext's node:sqlite compat for the adapter's
-// native \`better-sqlite3\` (bundled into the \`links\` package), install, then generate the
+    return `// One-time Prisma setup for denext: substitute denext's node:sqlite compat for the native
+// \`better-sqlite3\` (bundled into the \`links\` package), install, then generate the
 // ESM/Deno Prisma client and create the database schema. Run: \`deno task ${SETUP_TASK}\`.`;
   }
   if (envVar === null) {

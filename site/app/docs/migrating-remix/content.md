@@ -504,15 +504,18 @@ The CLI prints up to twelve notes and a count of the rest.
 - **Prisma is auto-migrated to the Rust-free Deno client.** The schema
   generator becomes the ESM `prisma-client` with `queryCompiler` and
   `driverAdapters`, every `@prisma/client` import is repointed, the adapter is
-  injected at each `new PrismaClient()`, and `deno.json` gets the `links` shim,
-  npm pins, and a `prisma:setup` task. Run `denext task prisma:setup` once. The
+  injected at each `new PrismaClient()`, and `deno.json` gets the npm pins and a
+  `prisma:setup` task. Run `denext task prisma:setup` once. The
   seed and test tooling (`prisma/seed.ts`, `tests/`, mocks, `scripts/`, test
   setup files) are rewritten with the runtime source, the seed runs as
   `denext task prisma:seed`, and a `new PrismaClient(<non-object>)` is flagged
-  for a one-line manual adapter add. A SQLite datasource gets the `links` shim
-  over `node:sqlite`; Postgres, MySQL and SQL Server get `@prisma/adapter-pg`,
+  for a one-line manual adapter add. A SQLite or Postgres datasource gets
+  `denext/prisma-adapter` over `Deno.SQL` (no npm driver); under
+  `--prisma-adapter npm` (or `DENEXT_DENO=stock`) SQLite takes the `links` shim
+  over `node:sqlite` and Postgres `@prisma/adapter-pg`. MySQL and SQL Server get
   `@prisma/adapter-mariadb` and `@prisma/adapter-mssql` (see
-  [Databases](/docs/database)); MongoDB is not wired.
+  [Databases](/docs/database)); MongoDB is not wired. An app that imports
+  `better-sqlite3` itself keeps the `links` shim for it either way.
 - **Everything that is not Remix-specific** (the default Content-Security-Policy
   and response headers, uncached `fetch()` by default, class components in npm
   libraries, native addons) is exactly as documented in

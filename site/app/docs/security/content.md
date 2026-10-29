@@ -558,6 +558,11 @@ Partytown on any page of the origin. denext closes both:
   inert. An injection cannot know the nonce (it is
   fixed before it is minted), a guessed or copied one fails, and an injected boot tag with a
   different nonce makes the page refuse Partytown altogether.
+- **A SPA's nonce comes from its shell.** A SPA renders `<Script>` in the browser, so `denext
+  dev` and `denext start` stamp each shell response instead: a fresh nonce on the boot tag and
+  the shell's own scripts, and `'nonce-…'` in the `spa.csp` policy's `script-src`. The worker
+  scripts the app renders take the nonce the boot ran with, and the checks below are the same.
+  A static export has no response to stamp, so it runs worker scripts on the main thread.
 - **Held until checked.** From the first boot tag on, every `text/partytown` script is retyped
   inert the moment it enters the document and restored only once the check passes, so no
   sandbox can pick one up early. Scripts a client render adds later are checked the same way.
