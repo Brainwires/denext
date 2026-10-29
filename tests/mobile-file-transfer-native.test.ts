@@ -4,9 +4,11 @@
 // multipart and binary uploads, errors, cancel, saved records); the iOS plugin and manager
 // type-checked against the iOS SDK and a Capacitor stub; and the Android HTTP half
 // (DenextTransferHttp.java) compiled with javac and run (range resume, a server that ignores the
-// range, 416, uploads). The Android worker and plugin compile in the native-plugins workflow
-// (Gradle). Each case runs where its toolchain is: swiftc / the iOS SDK on macOS, a JDK
-// (never skipped under CI, tests/_jdk.ts).
+// range, 416, uploads); and the Android worker, store and plugin compiled against plain-JDK
+// stand-ins (tests/fixtures/file-transfer/java/) and run with a scripted HTTP half, so a cancel
+// lands at a fixed point in the worker (during the download, after the move, after done). The
+// Android files also compile in the native-plugins workflow (Gradle). Each case runs where its
+// toolchain is: swiftc / the iOS SDK on macOS, a JDK (never skipped under CI, tests/_jdk.ts).
 
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
@@ -265,6 +267,66 @@ Deno.test({
       assert(out.includes("ok the resume asks for the rest (206)"), out);
     } finally {
       await server.close();
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+/** Every `.java` file under `dir`. */
+function javaFiles(dir: string): string[] {
+  const out: string[] = [];
+  for (const entry of Deno.readDirSync(dir)) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory) out.push(...javaFiles(path));
+    else if (entry.name.endsWith(".java")) out.push(path);
+  }
+  return out;
+}
+
+Deno.test({
+  name: "file transfer (Android): a cancel never leaves a finished download behind (javac)",
+  ignore: IGNORE_WITHOUT_JDK,
+  async fn() {
+    requireJdk();
+    const dir = await Deno.makeTempDir({ prefix: "denext_transfer_worker_" });
+    try {
+      const pkg = join(dir, "src", "dev", "denext", "transfer");
+      await Deno.mkdir(pkg, { recursive: true });
+      // The real worker, store and plugin; the harness file brings a scripted DenextTransferHttp.
+      for (
+        const name of [
+          "DenextTransferWorker.java",
+          "DenextTransferStore.java",
+          "DenextTransferPlugin.java",
+        ]
+      ) await Deno.writeTextFile(join(pkg, name), TRANSFER_ANDROID_FILES[name]);
+      await Deno.copyFile(
+        fixture("file-transfer/TransferWorkerHarness.java"),
+        join(pkg, "TransferWorkerHarness.java"),
+      );
+      const classes = join(dir, "classes");
+      await run("javac", [
+        "-nowarn",
+        "--release",
+        "11",
+        "-d",
+        classes,
+        ...javaFiles(fixture("file-transfer/java")),
+        ...javaFiles(pkg),
+      ]);
+      const work = join(dir, "work");
+      await Deno.mkdir(work);
+      const out = await runHarness("java", [
+        "-cp",
+        classes,
+        "dev.denext.transfer.TransferWorkerHarness",
+        work,
+      ]);
+      assertHarness(out);
+      assert(out.includes("ok the cancel landed after the move"), out);
+      assert(out.includes("ok a cancel after the move leaves no file"), out);
+      assert(out.includes("ok a cancel after done answers false"), out);
+    } finally {
       await Deno.remove(dir, { recursive: true });
     }
   },

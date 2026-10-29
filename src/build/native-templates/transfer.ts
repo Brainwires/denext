@@ -1562,7 +1562,8 @@ import org.json.JSONObject;
  * beside its target, so when the system stops the work (its time limit, the network lost) the
  * next run resumes with a range request; a network error is retried with backoff, up to
  * {@link #MAX_ATTEMPTS} runs. A pause or a cancel stops the work and sets the record's state
- * first, so this worker leaves the record alone.
+ * first, so this worker leaves the record alone; a cancel that lands after the download was moved
+ * into place takes the file with it.
  */
 public class DenextTransferWorker extends Worker {
 
@@ -1605,6 +1606,19 @@ public class DenextTransferWorker extends Worker {
             while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
         }
         part.delete();
+    }
+
+    /**
+     * A cancel that landed after the download was moved into {@code target} but before its
+     * record said done (the record is cancelled, or cancelled and forgotten): the cancel found no
+     * partial file to delete, so the finished file goes here. A record already done never gets
+     * here (the cancel answered false), and a paused one keeps the file.
+     */
+    private static void dropIfCancelled(DenextTransferStore store, String id, File target) {
+        synchronized (store) {
+            JSONObject now = store.record(id);
+            if (now == null || "cancelled".equals(now.optString("state"))) target.delete();
+        }
     }
 
     @NonNull
@@ -1660,7 +1674,7 @@ public class DenextTransferWorker extends Worker {
                 );
             }
             DenextTransferHttp.Result done = result;
-            store.update(id, "running", r -> {
+            boolean settled = store.update(id, "running", r -> {
                 r.put("state", "done");
                 r.put("status", done.status);
                 r.put("bytes", done.bytes);
@@ -1670,6 +1684,7 @@ public class DenextTransferWorker extends Worker {
                 if (done.body != null) r.put("body", done.body);
                 return "done";
             });
+            if (!settled && download) dropIfCancelled(store, id, target);
             return Result.success();
         } catch (DenextTransferHttp.Stopped stopped) {
             // A pause or a cancel set the state; a system stop runs the work again.

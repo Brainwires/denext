@@ -248,6 +248,13 @@ and this project adheres to
   engine runs (a Deno Desktop window's) that was cancelled after its engine accepted a pause but
   before the run stopped ended paused, its promise pending. It now cancels and the engine drops
   the bytes it kept.
+- **An Android download cancelled as it finished deletes its file.** A `cancelFileTransfer` that
+  landed after the transfer worker moved the downloaded file into place, but before it recorded
+  the transfer as done, answered `true` and left the transfer cancelled with the complete file
+  still at its path. The worker now deletes the file when it finds the transfer cancelled there.
+  A cancel that comes once the transfer is done still answers `false` and keeps the file, and an
+  upload's file is never touched. File-transfer template generation 5: run
+  `denext mobile add file-transfer` again to upgrade an unedited copy, then ship a new binary.
 
 ### Documentation
 
