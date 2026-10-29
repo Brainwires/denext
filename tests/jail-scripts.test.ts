@@ -70,6 +70,13 @@ function listed(name: string): JailPackageException {
   return entry.exception;
 }
 
+/** A built-in entry's exception as the pinned runtime takes it (what an unversioned run writes). */
+function pinned(name: string): JailPackageException {
+  const entry = JAIL_SCRIPT_EXCEPTIONS.find((e) => e.name === name);
+  assert(entry, name);
+  return entryException(entry);
+}
+
 /** A plain-JSON copy (what JSON.stringify writes) of an exception. */
 function plain(e: JailPackageException): unknown {
   return JSON.parse(JSON.stringify(e));
@@ -778,7 +785,7 @@ Deno.test("migrate: detects the dependencies and writes the exceptions, listed f
     // the real run writes it
     const r = await migrateProject(dir, options);
     assertEquals(r.jailScripts?.action, "written");
-    assertEquals(await jailConfig(dir), { packages: { puppeteer: plain(listed("puppeteer")) } });
+    assertEquals(await jailConfig(dir), { packages: { puppeteer: plain(pinned("puppeteer")) } });
   } finally {
     if (prior !== undefined) Deno.env.set("npm_config_jail_scripts", prior);
     await Deno.remove(dir, { recursive: true });
@@ -852,13 +859,13 @@ Deno.test("add: a failed add takes its jail exceptions out; a good one keeps the
       }),
       1,
     );
-    assertEquals(seen, { packages: { sharp: plain(listed("sharp")) } });
+    assertEquals(seen, { packages: { sharp: plain(pinned("sharp")) } });
     assertEquals(await Deno.readTextFile(join(failed, "deno.json")), config);
     // A good add keeps them.
     const good = await project({ "deno.json": config, ".npmrc": "jail-scripts=true\n" });
     dirs.push(good);
     assertEquals(await addWithJail(ctx(good), () => Promise.resolve(0)), 0);
-    assertEquals(await jailConfig(good), { packages: { sharp: plain(listed("sharp")) } });
+    assertEquals(await jailConfig(good), { packages: { sharp: plain(pinned("sharp")) } });
     // A failed add that changed deno.json itself: left as it is, and said so.
     const changed = await project({ "deno.json": config, ".npmrc": "jail-scripts=true\n" });
     dirs.push(changed);
@@ -868,7 +875,7 @@ Deno.test("add: a failed add takes its jail exceptions out; a good one keeps the
       return 2;
     });
     assertEquals(code, 2);
-    assertEquals(await jailConfig(changed), { packages: { sharp: plain(listed("sharp")) } });
+    assertEquals(await jailConfig(changed), { packages: { sharp: plain(pinned("sharp")) } });
     assertStringIncludes(out.errs.join("\n"), "were left in place");
   } finally {
     out.restore();
@@ -887,7 +894,7 @@ Deno.test("create/init: an existing package.json's dependencies get their except
   const out = capture();
   try {
     await initCommand.run(makeCtx({ positionals: [dir], flags: { yes: true, "no-vscode": true } }));
-    assertEquals(await jailConfig(dir), { packages: { keytar: plain(listed("keytar")) } });
+    assertEquals(await jailConfig(dir), { packages: { keytar: plain(pinned("keytar")) } });
     assertStringIncludes(out.logs.join("\n"), "supplyChain.jailScripts exception for keytar");
   } finally {
     out.restore();

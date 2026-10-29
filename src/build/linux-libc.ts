@@ -28,6 +28,24 @@ export const SUPPORTED_LINUX =
   "RHEL / Rocky / AlmaLinux 10, current Arch and openSUSE Tumbleweed (not RHEL 9 or Amazon " +
   "Linux 2023, and not musl-based ones such as Alpine)";
 
+/**
+ * The Linux hosts that run a binary needing glibc `minGlibc` or later, for messages:
+ * {@linkcode SUPPORTED_LINUX} at the default, the distributions named for glibc 2.27 (the floor
+ * the fork's releases record from `3.0.0-denext.2`), else the version alone.
+ *
+ * @param minGlibc The glibc the binary needs ({@linkcode minGlibcFor}).
+ * @returns One phrase.
+ */
+export function supportedLinux(minGlibc: string): string {
+  if (minGlibc === DEFAULT_MIN_GLIBC) return SUPPORTED_LINUX;
+  const named = minGlibc === "2.27"
+    ? ": Ubuntu 18.04+, Debian 10+, RHEL / Rocky / AlmaLinux 8+, Amazon Linux 2023, Fedora 28+, " +
+      "current Arch and openSUSE"
+    : "";
+  return `glibc-based distributions with glibc ${minGlibc} or later${named} (not musl-based ones ` +
+    "such as Alpine)";
+}
+
 /** What a Linux host's C library is. */
 export type LinuxLibc =
   | { readonly kind: "glibc"; readonly version: string }
@@ -147,7 +165,7 @@ export async function assertLinuxLibc(
   if (problem === null) return;
   throw new Error(
     `denext: can't install ${what}: ${problem}.\n` +
-      `  Supported Linux: ${SUPPORTED_LINUX}.\n` +
+      `  Supported Linux: ${supportedLinux(minGlibc)}.\n` +
       "  Run denext on one of those (a container image such as debian:12 or ubuntu:24.04 works " +
       "on any host).",
   );

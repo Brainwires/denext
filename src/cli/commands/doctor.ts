@@ -48,7 +48,7 @@ import {
   linuxLibcProblem,
   minGlibcFor,
   probeLinuxLibc,
-  SUPPORTED_LINUX,
+  supportedLinux,
 } from "../../build/linux-libc.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { loadNativeDirs } from "../../build/capacitor-native-dirs.ts";
@@ -911,7 +911,7 @@ export async function linuxLibcCheck(
     ok: problem === null,
     detail: problem === null
       ? `${found} (denext's Deno needs glibc ${min} or later)`
-      : `${problem}; supported: ${SUPPORTED_LINUX}`,
+      : `${problem}; supported: ${supportedLinux(min)}`,
     critical: false,
   };
 }

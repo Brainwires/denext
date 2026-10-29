@@ -159,12 +159,15 @@ The pinned platforms are `darwin-aarch64`, `darwin-x86_64`,
 `linux-x86_64`, `linux-aarch64`, `windows-x86_64` and `windows-aarch64` (Windows on Arm, from
 `2.9.7-denext.21`).
 
-On Linux the binaries are built for glibc and need glibc 2.35 or later: Ubuntu 22.04+, Debian
-12+, Fedora 36+, RHEL / Rocky / AlmaLinux 10, current Arch and openSUSE Tumbleweed. RHEL 9,
-Amazon Linux 2023, Debian 11, Ubuntu 20.04 and musl-based distributions (Alpine) can't run them.
-Before downloading the toolchain or the Deno Desktop runtime on Linux, denext reads the host's C
-library (`getconf GNU_LIBC_VERSION`, else `ldd --version`) and stops with that list on musl or an
-older glibc, rather than downloading a binary that then fails with `GLIBC_2.35 not found`.
+On Linux the binaries are built for glibc. The toolchain from `3.0.0-denext.2` needs glibc 2.27
+or later (the release records that floor, and the pin keeps it as `minGlibc`): Ubuntu 18.04+,
+Debian 10+, RHEL / Rocky / AlmaLinux 8+, Amazon Linux 2023, Fedora 28+, current Arch and
+openSUSE. A pin without the floor, and the Deno Desktop runtime, are held to glibc 2.35 (Ubuntu
+22.04+, Debian 12+, Fedora 36+, RHEL / Rocky / AlmaLinux 10). musl-based distributions (Alpine)
+run neither. Before downloading the toolchain or the Deno Desktop runtime on Linux, denext reads
+the host's C library (`getconf GNU_LIBC_VERSION`, else `ldd --version`) and stops with the
+supported list on musl or an older glibc, rather than downloading a binary that then fails with
+`GLIBC_2.xx not found`.
 `denext doctor` reports the same check (`linux libc`). On such a host, run denext in a container
 (`debian:12`, `ubuntu:24.04`).
 
@@ -924,7 +927,7 @@ language server's own default, keeps a `--watch` child's IPC channel across rest
 `file:` link on another Windows drive, checks the files after `deno check --`, and gives the native
 check's TS2307 Deno's `deno add` hint. `3.0.0-rc.4` is built from Deno 2.9.8 (X.509 v1 TLS
 certificates handled as OpenSSL does, safer npm symlinking, zsh completions, `mock.reset()`, the
-distrusted eMudhra CAs removed). `3.0.0-rc.5` (the build denext pins today) makes two Deno 3.0
+distrusted eMudhra CAs removed). `3.0.0-rc.5` makes two Deno 3.0
 behaviors the default: `request.signal` aborts only when a response is not delivered
 (`--unstable-legacy-abort` or `DENO_LEGACY_ABORT=1` restores the old abort), and an approved
 dependency's lifecycle script runs [jailed](#supply-chain-lifecycle-script-jail). It adds
@@ -936,7 +939,7 @@ only). On Windows a spawned child inherits only its own handles, so a concurrent
 keeps another's output pipe open (`.output()` waited for the unrelated process to exit), and a
 workspace member's import map can map a module on another drive. Deno's next minor
 replaces its TypeScript fork with stock TypeScript 6, so that move is a larger rebase than usual.
-`3.0.0-rc.6` (released; denext doesn't pin it, and moves its pin to `3.0.0-denext.1` instead) makes a jailed script's
+`3.0.0-rc.6` makes a jailed script's
 host list hold every program it starts and confines each script's writes to its own package, adds
 `module.register()` hooks, Node's `--trace-sigint`, coverage written when SIGINT or SIGTERM ends a
 run, `deno check`'s `Checked N files` summary and the `compilerOptions.types` error, and runs
@@ -945,7 +948,10 @@ release is `3.0.0-denext.1` (denext's version comparison orders `3.0.0-denext.N`
 above every `3.0.0-rc.N`), which carries everything in rc.6 and adds the hardened jail:
 `jailScripts.knownPackages` for the hosts a package declares itself, `deno info --json`'s
 `lifecycleJail` report, and package.json's `"deno"` object as the settings' home in a project
-with no deno.json. The
+with no deno.json. `3.0.0-denext.2` (the build denext pins today) gives the CLI's downloads
+deadlines and retries on a fresh connection (`DENO_DOWNLOAD_*`), encrypts the Secret Service
+sessions of the Deploy token and the secure-store migration, fixes Windows pipes and spawns, moves
+to V8 15.2, and builds the Linux binaries for glibc 2.27 and later. The
 [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases

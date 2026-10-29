@@ -10,10 +10,9 @@ and this project adheres to
 
 ### Added
 
-- **The lifecycle-script jail of runtime `3.0.0-denext.1`, ready before the pin.** Everything
-  below is gated on the runtime version, so stock Deno and the current `3.0.0-rc.5` pin behave as
-  before, and pinning `3.0.0-denext.1` (the runtime release after `3.0.0-rc.6`) turns it on.
-  `jailRuntime(version)` (from `src/build/jail-scripts.ts`) says what a runtime takes.
+- **The lifecycle-script jail of runtime `3.0.0-denext.1`.** Everything below is gated on the
+  runtime version, so stock Deno and older runtimes behave as before; the `3.0.0-denext.2` pin
+  turns it on. `jailRuntime(version)` (from `src/build/jail-scripts.ts`) says what a runtime takes.
   - `denext migrate` / `create` / `add` / `upgrade` write `supplyChain.jailScripts.knownPackages`
     for the reviewed download hosts a package declares itself (`grpc`, `nodegit`, `wrtc`): from
     denext.1 a declared `binary.host` is honoured only when listed there.
@@ -60,6 +59,17 @@ and this project adheres to
   The next Gleam build rewrites `.denext/lustre-view.ts` to pass Lustre's `insertMetadataChild`.
 - **`broadcastChannelTransport()` returns a `close()`** that closes its `BroadcastChannel`
   (an open one keeps the process's event loop alive).
+
+### Changed
+
+- **denext pins runtime `3.0.0-denext.2`** (was `3.0.0-rc.5`; the toolchain, the Deno Desktop
+  runtime and CI's Linux toolchain zip move together). It carries everything in `3.0.0-rc.6` and
+  `3.0.0-denext.1` (the hardened lifecycle-script jail above, the fail-closed launch file, the
+  per-app Linux secure store) and adds download deadlines with retries on a fresh connection
+  (`DENO_DOWNLOAD_*`), encrypted Secret Service sessions for the Deploy token and the secure-store
+  migration, Windows pipe and spawn fixes, Node compatibility fixes, V8 15.2 and a glibc 2.27 floor
+  for the Linux CLI, which the pin records so the host check (and `denext doctor`'s `linux libc`)
+  accepts glibc 2.27 and names the matching distributions. Security advisory GHSA-6f6m-g5gm-hc4m.
 
 ### Fixed
 
