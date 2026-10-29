@@ -23,6 +23,14 @@ Low findings from the 4.8 supply-chain audit:
 - **From runtime `3.0.0-rc.6` a packages-only `jailScripts` object no longer asks for the jail.**
   `readJailSetting` still counts it as on, so next to `jail-scripts=false`
   denext writes exceptions and `doctor` flags missing ones for a jail that is off.
+- **GitHub-hosted declared downloads** (`bcrypt` 5, `argon2` before 0.28, `@discordjs/opus`,
+  `libxmljs`): from denext.1 their declared host needs a grant, and a `knownPackages` entry can't
+  cover GitHub's redirect to another host. Review them for `net` host lists in the built-in list.
+- **`Requires ffi access` in an install log.** `jailFailures` doesn't explain it yet: before denext.1
+  (and where the OS can't confine) a jailed install check can't load the package's own native
+  addon; say to leave the package unapproved.
+- **A package.json project's npm workspace member** gets its exceptions written to its own
+  package.json `"deno"` object when `denext add` runs in it; the runtime reads the root's only.
 
 ## Deno Desktop
 

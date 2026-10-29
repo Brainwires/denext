@@ -8,6 +8,46 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **The lifecycle-script jail of runtime `3.0.0-denext.1`, ready before the pin.** Everything
+  below is gated on the runtime version, so stock Deno and the current `3.0.0-rc.5` pin behave as
+  before, and pinning `3.0.0-denext.1` (the runtime release after `3.0.0-rc.6`) turns it on.
+  `jailRuntime(version)` (from `src/build/jail-scripts.ts`) says what a runtime takes.
+  - `denext migrate` / `create` / `add` / `upgrade` write `supplyChain.jailScripts.knownPackages`
+    for the reviewed download hosts a package declares itself (`grpc`, `nodegit`, `wrtc`): from
+    denext.1 a declared `binary.host` is honoured only when listed there.
+  - `denext doctor` reports what the jail really does on the machine, from the runtime's own
+    `deno info --json` `lifecycleJail`: confined by the OS (`seatbelt` / `landlock`, with what it
+    can't hold), no OS sandbox (and why; a warning when the project approves scripts there), or
+    off.
+  - In a project with a package.json and no deno.json, the jail exceptions, doctor's fixes and
+    migrate's snippets read and write package.json's `"deno": { "allowScripts", "supplyChain" }`
+    object, the runtime's settings home there, instead of creating a deno.json (which takes the
+    project out of Node mode). A deno.json, when present, stays the only home, and doctor flags a
+    `"deno"` object beside it.
+
+### Fixed
+
+- **The jail exceptions denext writes for runtime `3.0.0-rc.6` and later.** The browser
+  packages' `~` caches (puppeteer, Playwright's browsers, Cypress) now get `"executables": true`,
+  without which rc.6 removes the downloaded browser after the install, and `@prisma/client` gets
+  `node_modules/.prisma`, which rc.6's per-package write roots refuse otherwise. An entry that
+  already exists is completed with those two additions only; its `net` and `env` are kept.
+- **`bcrypt` and `bufferutil` in the "needs nothing" list** said approving them works. They load a
+  prebuilt binary at run time, so leave their install scripts unapproved; approving them works
+  only where the OS confines lifecycle scripts, from runtime `3.0.0-denext.1`.
+
+### Documentation
+
+- **The runtime's versions after `3.0.0-rc.6`.** The guides now say there is no upstream Deno 3.0:
+  upstream stays on its 2.9.x LTS line and denext's runtime is the forward line, whose releases
+  after `3.0.0-rc.6` are `3.0.0-denext.1`, `3.0.0-denext.2`, and so on. The toolchain, desktop
+  runtime and runtime reference pages describe that order, the runtime reference lists the
+  `3.0.0-denext.1` jail settings (`jailScripts.knownPackages`, package.json's `"deno"` object,
+  `deno info --json`'s `lifecycleJail`), and the jail's download-host lists are tied to the
+  `3.0.0-denext.1` pin.
+
 ## [4.10.0] - 2026-10-29
 
 ### Added

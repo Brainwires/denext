@@ -75,6 +75,8 @@ Deno.test("jail hosts: on rc.6 a browser download gets its hosts and a `~` cache
       env: ["PUPPETEER_CACHE_DIR", "PUPPETEER_DOWNLOAD_BASE_URL", "PUPPETEER_SKIP_DOWNLOAD"],
       write: ["~/.cache/puppeteer"],
       net: ["storage.googleapis.com"],
+      // rc.6 sweeps executables out of a `~` path unless the entry keeps them (item 111)
+      executables: true,
     });
     assertEquals(pkgs.sharp.net, [
       "github.com",

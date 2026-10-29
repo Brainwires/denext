@@ -9,7 +9,7 @@ import {
   explainJailFailures,
   jailEffective,
   jailFailures,
-  jailRuntime,
+  jailRuntimeInUse,
   type JailRuntimeSeams,
   readJailSetting,
 } from "../src/build/jail-scripts.ts";
@@ -45,28 +45,28 @@ function other(out: string | null, pinned: string | null = RC5): JailRuntimeSeam
 const STOCK = other("deno 2.9.8 (stable, release, x86_64-unknown-linux-gnu)\nv8 14.0\n");
 const DENEXT_RC6 = other(`deno ${RC6} (stable, release)\ndenext ${RC6} (Brainwires)\n`);
 
-Deno.test("jailRuntime: the Deno installs run on, not the pin", async () => {
+Deno.test("jailRuntimeInUse: the Deno installs run on, not the pin", async () => {
   // This process is the pinned toolchain and installs run on it.
-  const self = await jailRuntime({
+  const self = await jailRuntimeInUse({
     executable: () => "/bin/self",
     current: { path: "/bin/self", identity: { deno: RC5, denext: RC5 } },
     pinned: RC5,
   });
   assertEquals([self.version, self.overridden], [RC5, false]);
   // DENEXT_DENO=stock / a DENO_BIN: stock Deno has no jail at all.
-  const stock = await jailRuntime(STOCK);
+  const stock = await jailRuntimeInUse(STOCK);
   assertEquals([stock.version, stock.overridden], [null, true]);
   assertStringIncludes(stock.label, "stock Deno 2.9.8 at /bin/other-deno");
   // DENEXT_DENO=<path> to another release of denext's Deno: planned for that release.
-  const rc6 = await jailRuntime(DENEXT_RC6);
+  const rc6 = await jailRuntimeInUse(DENEXT_RC6);
   assertEquals([rc6.version, rc6.overridden], [RC6, true]);
   assertStringIncludes(rc6.label, `(the pin is ${RC5})`);
   // A binary whose version can't be read is planned for as the pin.
-  const unknown = await jailRuntime(other(null));
+  const unknown = await jailRuntimeInUse(other(null));
   assertEquals([unknown.version, unknown.overridden], [RC5, true]);
   assertStringIncludes(unknown.label, "could not be read");
   // The real process: whatever it is, it answers.
-  const real = await jailRuntime();
+  const real = await jailRuntimeInUse();
   assert(real.label.length > 0);
 });
 

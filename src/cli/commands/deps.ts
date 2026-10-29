@@ -8,7 +8,7 @@ import { commandCwd, denoGlobalArgs, relayingSignals, spawnDenoAndExit } from ".
 import { denoExecutable } from "../../build/bundle.ts";
 import {
   applyJailExceptions,
-  jailRuntime,
+  jailRuntimeInUse,
   type JailRuntimeSeams,
   npmPackageName,
 } from "../../build/jail-scripts.ts";
@@ -95,7 +95,7 @@ export async function addWithJail(
 ): Promise<number> {
   const cwd = commandCwd(ctx);
   // Planned for the Deno `deno add` runs on (DENEXT_DENO, DENO_BIN), not the pin.
-  const runtime = await jailRuntime(runtimeSeams).catch(() => null);
+  const runtime = await jailRuntimeInUse(runtimeSeams).catch(() => null);
   const jail = await applyJailExceptions(cwd, {
     deps: addedNpmPackages(ctx.rest),
     ...(runtime ? { version: runtime.version } : {}),
