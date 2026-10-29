@@ -72,35 +72,70 @@ async function startDevKind(
   env: Record<string, string>,
   opts: { unbundled?: boolean },
 ): Promise<RunningServer> {
-  const prior: Record<string, string | undefined> = {};
-  for (const [k, v] of Object.entries(env)) {
-    prior[k] = Deno.env.get(k);
-    Deno.env.set(k, v);
-  }
-  const paths = await resolveProject(dir);
+  const restore = setEnv(env);
   const controller = new AbortController();
-  const { promise, resolve } = Promise.withResolvers<{ hostname: string; port: number }>();
-  const server = start({
-    paths,
-    port: 0,
-    hostname: "127.0.0.1",
-    signal: controller.signal,
-    onListen: (info) => resolve(info),
-    // Per-server mode (parallel-safe) instead of the process-global DENEXT_DEV_UNBUNDLED.
-    unbundled: opts.unbundled,
-  });
-  const { hostname, port } = await promise;
+  let server: Deno.HttpServer;
+  let origin: string;
+  try {
+    const paths = await resolveProject(dir);
+    const { promise, resolve } = Promise.withResolvers<{ hostname: string; port: number }>();
+    server = start({
+      paths,
+      port: 0,
+      hostname: "127.0.0.1",
+      signal: controller.signal,
+      onListen: (info) => resolve(info),
+      // Per-server mode (parallel-safe) instead of the process-global DENEXT_DEV_UNBUNDLED.
+      unbundled: opts.unbundled,
+    });
+    const { hostname, port } = await promise;
+    origin = `http://${hostname}:${port}`;
+  } catch (err) {
+    // A server that never came up has no `close()` to restore the env: do it here, so the
+    // variables never leak into the e2e files that run after this one in the same process.
+    controller.abort();
+    restore();
+    throw err;
+  }
   return {
-    origin: `http://${hostname}:${port}`,
+    origin,
     close: async () => {
       controller.abort();
       await server.finished;
-      for (const [k, v] of Object.entries(prior)) {
-        if (v === undefined) Deno.env.delete(k);
-        else Deno.env.set(k, v);
-      }
+      restore();
     },
   };
+}
+
+/**
+ * Set `env` in `Deno.env` and return the function that puts back what was there (deleting the
+ * names that were unset). deno test runs every e2e file in ONE process, so a variable a test sets
+ * and fails to restore is read by the files after it.
+ */
+export function setEnv(env: Record<string, string>): () => void {
+  const prior = Object.fromEntries(Object.keys(env).map((k) => [k, Deno.env.get(k)]));
+  for (const [k, v] of Object.entries(env)) Deno.env.set(k, v);
+  return () => {
+    for (const [k, v] of Object.entries(prior)) {
+      if (v === undefined) Deno.env.delete(k);
+      else Deno.env.set(k, v);
+    }
+  };
+}
+
+/**
+ * Run `fn` with `env` set in `Deno.env` (CLI children inherit it), restoring the previous values
+ * however `fn` ends: a failed install or build assert must not leak the variables into the e2e
+ * files that run after this one in the same process (run 40657805948: the keyless Clerk test's
+ * fake keys reached the keyed Clerk test, which called Clerk with them and got a 401).
+ */
+export async function withEnv<T>(env: Record<string, string>, fn: () => Promise<T>): Promise<T> {
+  const restore = setEnv(env);
+  try {
+    return await fn();
+  } finally {
+    restore();
+  }
 }
 
 /** Start the SPA dev server (`mode: "spa"`) on `dir` on an ephemeral port. */
@@ -365,41 +400,124 @@ export function buildCompatIndexPage(
 const DENO = Deno.execPath();
 const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
 
+/** How many trailing lines of a timed-out child's output {@linkcode runDeno} quotes. */
+const TIMEOUT_TAIL_LINES = 25;
+
+/**
+ * The report for a `deno <args>` killed at its `timeoutMs` deadline: how long it had printed
+ * nothing, and its last lines. Deno prints `Download <url>` when a request STARTS, and its npm
+ * registry client has no read timeout, so a stall right after `Download` lines is a request that
+ * never answered (e2e run 40657805948: `deno install` in examples/clerk stopped after 606
+ * packument requests, before any tarball, and was killed at 600 s; the re-run took 27 s).
+ *
+ * @param args The `deno` arguments.
+ * @param timeoutMs The deadline it was killed at.
+ * @param idleMs How long before the kill it last printed anything.
+ * @param output Everything it printed, stdout and stderr interleaved as they arrived.
+ * @param stderr Its stderr alone, where Deno's `Download` progress goes (default: `output`).
+ */
+export function describeTimeout(
+  args: readonly string[],
+  timeoutMs: number,
+  idleMs: number,
+  output: string,
+  stderr: string = output,
+): string {
+  const nonEmpty = (text: string) => text.split(/\r?\n/).filter((l) => l.trim() !== "");
+  const lines = nonEmpty(output);
+  const tail = lines.slice(-TIMEOUT_TAIL_LINES).map((l) => `  | ${l}`).join("\n");
+  const last = nonEmpty(stderr).at(-1) ?? "";
+  // CI forces colour, so the word arrives wrapped in SGR codes (ESC `[` … `m`).
+  const plain = last.split(String.fromCharCode(27)).map((part) => part.replace(/^\[[0-9;]*m/, ""))
+    .join("");
+  const waiting = /^Download\s+(\S+)/.exec(plain);
+  return `\`deno ${args.join(" ")}\` did not finish within ${timeoutMs}ms and was killed. ` +
+    `It had printed nothing for the last ${Math.round(idleMs / 1000)}s` +
+    (waiting
+      ? `; its last progress line started a download (${
+        waiting[1]
+      }): Deno prints "Download" when a ` +
+        "request starts, so a request that never answered (a registry or network stall) is the " +
+        "likely wait"
+      : "") +
+    (lines.length
+      ? `.\nIts last ${
+        Math.min(lines.length, TIMEOUT_TAIL_LINES)
+      } of ${lines.length} lines:\n${tail}`
+      : ".\nIt printed nothing at all.");
+}
+
+/** Read `reader` to its end, passing each chunk to `onChunk`; resolves on the end or an error. */
+async function drain(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  onChunk: (bytes: Uint8Array) => void,
+): Promise<void> {
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      onChunk(value);
+    }
+  } catch { /* cancelled, or the pipe broke */ }
+}
+
 /**
  * Run `deno <args>` in `cwd`, bounded by `timeoutMs`. Never throws — reports instead.
  *
  * `out` is stdout + stderr together (for failure messages); `stdout` is the child's stdout
  * ALONE, for asserting what a command emits — a warning the CLI prints to stderr (denextAuth's
  * `canonicalOrigin` advice, a download progress line) must not end up inside a generated file.
+ * A child killed at the deadline gets {@linkcode describeTimeout}'s report appended to `out`: how
+ * long it had been silent and the last lines it printed, so a stall says what it was waiting on.
  */
 export async function runDeno(
   args: string[],
   cwd: string,
   timeoutMs: number,
 ): Promise<{ ok: boolean; out: string; stdout: string }> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  let child: Deno.ChildProcess;
   try {
-    const cmd = new Deno.Command(DENO, {
-      args,
-      cwd,
-      stdout: "piped",
-      stderr: "piped",
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const { success, stdout, stderr } = await cmd.output();
-    const text = new TextDecoder().decode(stdout);
-    return {
-      ok: success,
-      out: text + new TextDecoder().decode(stderr),
-      stdout: text,
-    };
+    child = new Deno.Command(DENO, { args, cwd, stdout: "piped", stderr: "piped", signal })
+      .spawn();
   } catch (e) {
-    // AbortSignal.timeout fired (or spawn failed): the child is killed. Report, don't hang.
-    return {
-      ok: false,
-      out: `\`deno ${args.join(" ")}\` did not finish within ${timeoutMs}ms: ${e}`,
-      stdout: "",
-    };
+    return { ok: false, out: `\`deno ${args.join(" ")}\` could not start: ${e}`, stdout: "" };
   }
+  const decoder = { out: new TextDecoder(), err: new TextDecoder(), all: new TextDecoder() };
+  let stdout = "";
+  let stderr = "";
+  let interleaved = "";
+  let lastOutputAt = Date.now();
+  const seen = (bytes: Uint8Array) => {
+    lastOutputAt = Date.now();
+    interleaved += decoder.all.decode(bytes, { stream: true });
+  };
+  const outReader = child.stdout.getReader();
+  const errReader = child.stderr.getReader();
+  const readers = Promise.all([
+    drain(outReader, (b) => {
+      seen(b);
+      stdout += decoder.out.decode(b, { stream: true });
+    }),
+    drain(errReader, (b) => {
+      seen(b);
+      stderr += decoder.err.decode(b, { stream: true });
+    }),
+  ]);
+  const status = await child.status;
+  // A grandchild the kill missed can keep a pipe open: read what is buffered, then stop.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const grace = new Promise<void>((resolve) => timer = setTimeout(resolve, 2_000));
+  await Promise.race([readers, grace]);
+  clearTimeout(timer);
+  await Promise.all([outReader.cancel().catch(() => {}), errReader.cancel().catch(() => {})]);
+  const out = stdout + stderr;
+  if (signal.aborted && !status.success) {
+    const idle = Date.now() - lastOutputAt;
+    const report = describeTimeout(args, timeoutMs, idle, interleaved, stderr);
+    return { ok: false, out: `${out}\n${report}`, stdout };
+  }
+  return { ok: status.success, out, stdout };
 }
 
 /** Recursively SIGKILL a process and its descendants (macOS/Linux; via `pgrep -P`). */
