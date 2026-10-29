@@ -91,7 +91,8 @@ function cacheFailureText(run: Omit<CacheRun, "success">, deadlineMs: number): s
     ? `it was still running after ${deadlineMs / 1000} s and was stopped ` +
       "(DENEXT_CHILD_DEADLINE_MS changes the deadline)"
     : `\`deno cache\` exited with code ${run.code}`;
-  const said = run.stderr.trim().split("\n").slice(-12).map((l) => `    ${l}`).join("\n");
+  const said = run.stderr.trim().split("\n").filter((l) => l.trim() !== "").slice(-12)
+    .map((l) => `    ${l}`).join("\n");
   return `${why}${said ? `; it printed:\n${said}` : " and printed nothing"}`;
 }
 

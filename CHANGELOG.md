@@ -102,6 +102,8 @@ and this project adheres to
   take turns within the process, so the second waits for the first and then finds its install.
 - **A desktop app's sidecar log file has every line once `stopAll()` returns.** The lines a
   sidecar printed as it shut down were still being appended after the host reported it stopped.
+- **The report of a failed background CLI cache says when `deno cache` printed nothing.** It
+  showed "it printed:" over an empty line.
 - **`denext profile` downloads its headless Chrome with deadlines and retries.** The browser astral
   launches (Chrome for Testing, about 150 MB) was read through one `fetch` with no deadline, so a
   connection that stalled mid-body held the launch until the server dropped it, minutes later, and

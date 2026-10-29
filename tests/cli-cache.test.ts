@@ -260,3 +260,40 @@ Deno.test("cli cache: a background warm-up that failed leaves its stderr, report
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("cli cache: an older or unreadable warm-up report; no deadline at all", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-cli-cache-" });
+  const modules = moduleServer();
+  try {
+    const url = modules.missing();
+    const lines: string[] = [];
+    // No deadline (DENEXT_CHILD_DEADLINE_MS=0 reads as Infinity): the warm-up child gets none.
+    const options = { ...scratch(dir), deadlineMs: Infinity, log: (l: string) => lines.push(l) };
+    await exited(await spawnsOf(() => warmCliModules(url, options)));
+    await until(() => markers(dir).some((m) => m.endsWith(".cached.log")));
+    const log = join(dir, "denext-cli", markers(dir).find((m) => m.endsWith(".cached.log"))!);
+    assertEquals(JSON.parse(Deno.readTextFileSync(log)).deadlineMs, 0);
+    const attempt = log.replace(/\.log$/, ".attempt");
+    const retry = async () => {
+      const old = new Date(Date.now() - 3_600_000);
+      Deno.utimeSync(attempt, old, old);
+      await exited(await spawnsOf(() => warmCliModules(url, options)));
+      await until(() => markers(dir).some((m) => m.endsWith(".cached.log")));
+    };
+    // A report from before the deadline was recorded, of a run that printed nothing.
+    Deno.writeTextFileSync(log, JSON.stringify({ code: 3, timedOut: false, stderr: "" }));
+    await retry();
+    assertEquals(lines.length, 1);
+    assertStringIncludes(lines[0], "`deno cache` exited with code 3 and printed nothing");
+    // A report that isn't JSON: dropped without a word, and the warm-up is retried all the same.
+    Deno.writeTextFileSync(log, "not json");
+    await retry();
+    assertEquals(lines.length, 1);
+    assertEquals(JSON.parse(Deno.readTextFileSync(log)).code, 1, "the retry wrote its own");
+    // The foreground run without a deadline: no timer, and the modules are cached.
+    assertEquals(await cacheCliModules(modules.url("nodeadline"), options), true);
+  } finally {
+    await modules.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
