@@ -166,7 +166,8 @@ const FASTFILE =
 #   app:<dir>               the denext app, when it is not the Capacitor project ($DENEXT_APP_DIR)
 #   ios:      match:false (skip match), export_options:<plist>, changelog:<text>, wait:true
 #             (wait for TestFlight processing), metadata:true / screenshots:true /
-#             submit:true / automatic_release:true (release)
+#             submit:true / automatic_release:true (release), unsigned:true (build only: an
+#             unsigned .ipa, no certificate or Apple account needed)
 #   android:  track:<name>, draft:true, rollout:<0..1>, apk:true, metadata:true (release)
 #
 # The denext CLI: $DENEXT_CLI (e.g. "deno run -A jsr:@denext/denext/cli"), else \`denext\` on PATH.
@@ -226,6 +227,7 @@ def denext_build_args(platform, options, dry_run: false)
   args << "--bump" if truthy(options[:bump]) && !dry_run
   args << "--skip-export" if truthy(options[:skip_export])
   args << "--apk" if platform.to_s == "android" && truthy(options[:apk])
+  args << "--unsigned" if platform.to_s == "ios" && truthy(options[:unsigned])
   if platform.to_s == "ios" && options[:export_options]
     args += ["--export-options", File.expand_path(options[:export_options].to_s, denext_root)]
   end
@@ -315,8 +317,10 @@ def denext_match(app_id, options)
 end
 
 def denext_ios_build(options, store: false)
-  setup_ci if env_value("CI")
-  denext_match(denext_plan(:ios, options)["appId"], options)
+  unsigned = truthy(options[:unsigned])
+  UI.user_error!("unsigned:true builds only (the stores take a signed .ipa)") if unsigned && store
+  setup_ci if env_value("CI") && !unsigned
+  denext_match(denext_plan(:ios, options)["appId"], options) unless unsigned
   next_build = lambda do |plan|
     unless asc_api_key || env_value("FASTLANE_USER")
       UI.important("No App Store Connect API key: keeping the sources' build number")
@@ -377,7 +381,7 @@ def play_upload(artifact, options, track)
 end
 
 platform :ios do
-  desc "Signed App Store .ipa with \`denext mobile build ios --release\` (match first when configured)"
+  desc "Signed App Store .ipa with \`denext mobile build ios --release\` (match first when configured; unsigned:true for an unsigned one)"
   lane :build do |options|
     denext_ios_build(options)
   end

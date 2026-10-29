@@ -119,6 +119,15 @@ and this project adheres to
   The next Gleam build rewrites `.denext/lustre-view.ts` to pass Lustre's `insertMetadataChild`.
 - **`broadcastChannelTransport()` returns a `close()`** that closes its `BroadcastChannel`
   (an open one keeps the process's event loop alive).
+- **`denext fastlane ios build unsigned:true`.** The Fastfile `denext mobile add fastlane` writes
+  takes `unsigned:true` on the iOS `build` lane: it builds with `denext mobile build ios --release
+  --unsigned` and skips match and `setup_ci`, so the lane runs with no certificate, profile or
+  Apple account (a CI check, or a build re-signed elsewhere). `beta` and `release` refuse it. An
+  unedited Fastfile picks it up on the next `denext mobile add fastlane`.
+- **The managed fastlane is checked on Apple silicon.** The native-plugins workflow's `ios` job,
+  which a release is gated on, now runs `denext toolchain install --with fastlane` on its macOS 15
+  arm64 runner (the pinned portable Ruby, its gems' C extensions built with the runner's Xcode)
+  and then `denext fastlane ios build unsigned:true` on the example app, failing on any step.
 
 ### Changed
 

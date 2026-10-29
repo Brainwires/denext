@@ -88,10 +88,6 @@
   the controls reaching the page, the Android foreground service), and `pickMedia`'s
   multi-select and video picks, on an iPhone and an Android phone; React Native Skia with
   Reanimated and inside the Capacitor shell's WebViews.
-- **Managed fastlane on macOS arm64:** run `denext toolchain install --with fastlane` and one lane
-  (`denext fastlane ios build`) on an Apple-silicon Mac. The Ruby there is
-  pinned and its hash checked, but the install has not been run; drop the KNOWN-LIMITATIONS
-  clause once it passes.
 
 ## Backend (`@denext/backend`)
 
