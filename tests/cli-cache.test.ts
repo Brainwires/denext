@@ -6,6 +6,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
+import { exited, spawnsOf } from "./helpers/spawns.ts";
 import {
   cacheCliModules,
   type CliCacheOptions,
@@ -110,10 +111,7 @@ Deno.test("cli cache: warmCliModules caches once in a detached child, then stays
     assert(attempt, `markers: ${markers(dir)}`);
     await until(() => markers(dir).some((m) => m.endsWith(".cached")));
     // The detached child writes the marker, then exits: wait for that too (it is unref'd).
-    for (const child of warm) {
-      child.ref();
-      await child.status;
-    }
+    await exited(warm);
     // A cached version is never warmed again: the attempt marker is not rewritten.
     const before = Deno.statSync(join(dir, "denext-cli", attempt)).mtime?.getTime();
     await new Promise((r) => setTimeout(r, 20));
@@ -125,30 +123,6 @@ Deno.test("cli cache: warmCliModules caches once in a detached child, then stays
   }
 });
 
-/**
- * Run `fn`, capturing the children it spawns. The warm-up's child is detached and meant to
- * outlive the CLI that starts it, so no handle comes back; a test that waits for it (rather than
- * ending with it running) needs one.
- */
-async function spawnsOf(fn: () => Promise<void>): Promise<Deno.ChildProcess[]> {
-  const Original = Deno.Command;
-  const spawned: Deno.ChildProcess[] = [];
-  class Capturing extends Original {
-    override spawn(): Deno.ChildProcess {
-      const child = super.spawn();
-      spawned.push(child);
-      return child;
-    }
-  }
-  Object.defineProperty(Deno, "Command", { value: Capturing, configurable: true, writable: true });
-  try {
-    await fn();
-  } finally {
-    Object.defineProperty(Deno, "Command", { value: Original, configurable: true, writable: true });
-  }
-  return spawned;
-}
-
 Deno.test("cli cache: a recent failed attempt is not retried; a warm-up that can't start is silent", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-cli-cache-" });
   const modules = moduleServer();
@@ -157,10 +131,7 @@ Deno.test("cli cache: a recent failed attempt is not retried; a warm-up that can
     const warm = await spawnsOf(() => warmCliModules(url, scratch(dir)));
     assertEquals(warm.length, 1, "one detached warm-up");
     // Its `deno cache` fails on the 404 at once: wait for it to go (it is unref'd, so ref it).
-    for (const child of warm) {
-      child.ref();
-      await child.status;
-    }
+    await exited(warm);
     const [attempt] = markers(dir);
     assert(attempt?.endsWith(".cached.attempt"), `markers: ${markers(dir)}`);
     const stamp = Deno.readTextFileSync(join(dir, "denext-cli", attempt));
