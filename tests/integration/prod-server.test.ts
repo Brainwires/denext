@@ -74,8 +74,6 @@ const STEPS: Array<[string, (origin: string) => Promise<void>]> = [
 
 Deno.test({
   name: "prod server: framework endpoints behave and carry hardening headers",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   await Deno.remove(APP, { recursive: true }).catch(() => {});
   await copy(SOURCE, APP, { overwrite: true });

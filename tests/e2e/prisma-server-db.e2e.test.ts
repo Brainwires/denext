@@ -19,7 +19,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { fromFileUrl, join } from "@std/path";
-import { startCliServer } from "./harness.ts";
+import { startCliServer, withEnv } from "./harness.ts";
 
 const REPO = fromFileUrl(new URL("../../", import.meta.url));
 const CLI = join(REPO, "cli.ts");
@@ -107,8 +107,6 @@ for (
   Deno.test({
     name: `e2e: a migrated Prisma app runs on ${provider} through ${adapter}`,
     ignore: !url,
-    sanitizeOps: false,
-    sanitizeResources: false,
   }, async (t) => {
     const env = { DATABASE_URL: url!, PRISMA_PROVIDER: provider };
     const dir = await prepareApp(provider, env);
@@ -141,24 +139,26 @@ for (
       await t.step("build, serve, read through a page and write through a route", async () => {
         const built = await run(["run", "-A", CLI, "build", "."], dir, env, SETUP_TIMEOUT_MS);
         assert(built.ok, "denext build failed:\n" + built.out);
-        Deno.env.set("DATABASE_URL", url!);
-        const server = await startCliServer(dir, READY_TIMEOUT_MS);
-        try {
-          const html = await (await fetch(server.origin + "/")).text();
-          assertStringIncludes(html, "Prisma on a database server");
-          const posted = await fetch(server.origin + "/api/posts", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ title: "inserted-by-e2e" }),
-          });
-          assertEquals(posted.status, 201, await posted.text());
-          const listed = await (await fetch(server.origin + "/api/posts")).json();
-          assertEquals(listed, [{ title: "inserted-by-e2e", author: "Web" }]);
-          const after = await (await fetch(server.origin + "/")).text();
-          assertStringIncludes(after, "inserted-by-e2e");
-        } finally {
-          await server.close();
-        }
+        // The server child reads it; restored after, so it never reaches the e2e files after this.
+        await withEnv({ DATABASE_URL: url! }, async () => {
+          const server = await startCliServer(dir, READY_TIMEOUT_MS);
+          try {
+            const html = await (await fetch(server.origin + "/")).text();
+            assertStringIncludes(html, "Prisma on a database server");
+            const posted = await fetch(server.origin + "/api/posts", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ title: "inserted-by-e2e" }),
+            });
+            assertEquals(posted.status, 201, await posted.text());
+            const listed = await (await fetch(server.origin + "/api/posts")).json();
+            assertEquals(listed, [{ title: "inserted-by-e2e", author: "Web" }]);
+            const after = await (await fetch(server.origin + "/")).text();
+            assertStringIncludes(after, "inserted-by-e2e");
+          } finally {
+            await server.close();
+          }
+        });
       });
     } finally {
       await Deno.remove(dir, { recursive: true }).catch(() => {});

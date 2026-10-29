@@ -23,7 +23,15 @@ import { getViewManagerConfig, nativeHostComponent } from "../src/react-native/n
 import { dispatchViewManagerCommand, withViewManagerCommands } from "../src/react-native/mod.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
 import { makeDom } from "./helpers/dom.ts";
-import { type Any, fakePlugin, inShell, mount, settle } from "./helpers/mobile-fakes.ts";
+import {
+  type Any,
+  fakePlugin,
+  inShell,
+  mount,
+  nativeIn,
+  passiveSettled,
+  settle,
+} from "./helpers/mobile-fakes.ts";
 
 /** Let passive effects and promise callbacks run. */
 async function tick(): Promise<void> {
@@ -136,7 +144,7 @@ Deno.test("expo-maps: AppleMaps.View drives the native map (camera, markers, eve
       { id: "a", coordinates: { latitude: 51.5, longitude: -0.1 }, title: "A" },
       { id: "b", coordinates: { latitude: 48.8, longitude: 2.3 } },
     ];
-    mount(() =>
+    const { container } = mount(() =>
       h(AppleMaps.View as Any, {
         ref,
         cameraPosition: { coordinates: { latitude: 51.5, longitude: -0.12 }, zoom: 11 },
@@ -146,8 +154,7 @@ Deno.test("expo-maps: AppleMaps.View drives the native map (camera, markers, eve
         onMarkerClick: (m: unknown) => clicks.push(m),
       })
     );
-    await tick();
-    await tick();
+    await nativeIn(container);
     const create = created(views);
     assertEquals(create.type, "map");
     assertEquals(create.props, {
@@ -194,7 +201,7 @@ Deno.test("react-native-maps: MapView's Markers, region events and ref reach the
     const regions: Any[] = [];
     const pressed: unknown[] = [];
     let ready = 0;
-    mount(() =>
+    const { container } = mount(() =>
       h(
         RNMapView as Any,
         {
@@ -213,8 +220,7 @@ Deno.test("react-native-maps: MapView's Markers, region events and ref reach the
         h("span", null, "not a marker"),
       )
     );
-    await tick();
-    await tick();
+    await nativeIn(container);
     const create = created(views);
     assertEquals(create.props.mapType, "satellite");
     assertEquals(create.props.markers, [
@@ -273,9 +279,8 @@ Deno.test("expo-video: VideoView shows the player natively; play / seek / events
       });
       return h(VideoView as Any, { player, contentFit: "cover", nativeControls: false });
     }
-    mount(() => h(Screen, null));
-    await tick();
-    await tick();
+    const { container } = mount(() => h(Screen, null));
+    await nativeIn(container);
     const create = created(views);
     assertEquals(create.type, "video");
     assertEquals(create.placement, "under", "iOS draws the system player under the page");
@@ -321,7 +326,7 @@ Deno.test("react-native-video: the web renders a <video>; the shell the native p
     const ref: { current: VideoRef | null } = { current: null };
     const loads: unknown[] = [];
     let paused = false;
-    const { rerender } = mountMedia(() =>
+    const { rerender, container } = mountMedia(() =>
       h(RNVideo as Any, {
         ref,
         source: "https://x/b.mp4",
@@ -331,8 +336,7 @@ Deno.test("react-native-video: the web renders a <video>; the shell the native p
         onLoad: (d: unknown) => loads.push(d),
       })
     );
-    await tick();
-    await tick();
+    await nativeIn(container);
     const create = created(views);
     assertEquals(create.props, {
       src: "https://x/b.mp4",
@@ -346,7 +350,7 @@ Deno.test("react-native-video: the web renders a <video>; the shell the native p
     assertEquals((loads[0] as Any).duration, 7);
     paused = true;
     rerender();
-    await tick();
+    await passiveSettled();
     ref.current!.seek(3);
     assertEquals(await ref.current!.getCurrentPosition(), 4, "the native player's answer");
     const names = commands(views).map(([n]) => n);
@@ -408,9 +412,8 @@ Deno.test("UIManager: dispatchViewManagerCommand runs on the native slot a ref n
       dispatchViewManagerCommand(42, "zoomTo", [2]);
       assertEquals(warned.length, 1);
       assert(String(warned[0]).includes('dispatchViewManagerCommand("zoomTo") names no native'));
-      mount(() => h(Chart as Any, { ref, values: [1] }));
-      await tick();
-      await tick();
+      const { container } = mount(() => h(Chart as Any, { ref, values: [1] }));
+      await nativeIn(container);
       assertEquals(ref.current?.getAttribute("data-denext-native-view"), "RNTChart");
       const id = created(views).id;
       const { Commands } = getViewManagerConfig("RNTChart")!;

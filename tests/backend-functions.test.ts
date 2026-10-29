@@ -122,8 +122,6 @@ Deno.test("functionsDir: configured, functions/, then supabase/functions/", asyn
 
 Deno.test({
   name: "functions: invoke shapes, JWT verification, CORS preflight, CSRF, sub-paths and env",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const app = await functionsApp(
       {
@@ -237,8 +235,6 @@ Deno.serve((req) => req.method === "OPTIONS"
 
 Deno.test({
   name: "functions: streaming, body cap, timeout, throwing handler, boot failure, crash recovery",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const app = await functionsApp({
       "functions/stream.ts": `
@@ -650,8 +646,6 @@ Deno.test({
 Deno.test({
   name:
     "FunctionHost: a worker busy in synchronous code is replaced after a timeout; a cooperative one is kept",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const dir = await Deno.makeTempDir();
     const spawned: Worker[] = [];
@@ -814,8 +808,6 @@ Deno.test({
 Deno.test({
   name:
     "functions: the admin view lists the functions and records each call's status and time only",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const { functionsAdmin } = await import("../packages/backend/src/functions-admin.ts");
     const app = await functionsApp(

@@ -369,8 +369,8 @@ function capacitorFindings(r: MigrateResult): { wont: MigrateFinding[]; review: 
 }
 
 /**
- * The lifecycle-script jail exceptions to review: each one written into deno.json (it widens the
- * jail for that package) or left for the user to add.
+ * The lifecycle-script jail exceptions to review: each one written into deno.json (or a package.json
+ * project's `"deno"` object; it widens the jail for that package) or left for the user to add.
  */
 function jailFindings(r: MigrateResult): MigrateFinding[] {
   const j = r.jailScripts;
@@ -379,8 +379,8 @@ function jailFindings(r: MigrateResult): MigrateFinding[] {
     item: `lifecycle-script jail: ${req.entry.name}`,
     reason:
       (j.action === "written"
-        ? `exception ${JSON.stringify(req.exception)} written to deno.json`
-        : `add the exception ${JSON.stringify(req.exception)} to deno.json by hand`) +
+        ? `exception ${JSON.stringify(req.exception)} written to ${j.home}`
+        : `add the exception ${JSON.stringify(req.exception)} to ${j.home} by hand`) +
       `: ${req.entry.reason}`,
   }));
 }

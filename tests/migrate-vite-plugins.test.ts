@@ -153,8 +153,6 @@ Deno.test("migrate SPA: no autoCodeSplitting → no spa.tanstackRouter", async (
 Deno.test({
   name:
     "migrate SPA: a file-emitting Vite plugin is wired through viteEmitterPlugin and still emits",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   resetPlugins();
   const dir = await viteApp(

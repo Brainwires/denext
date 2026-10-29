@@ -16,11 +16,10 @@
     "npm:@mdx-js/mdx@3": "3.1.1",
     "npm:@pothos/core@^4.6.0": "4.13.1_graphql@16.14.2",
     "npm:@swc/wasm-web@^1.13.5": "1.16.1",
-    "npm:esbuild@0.24": "0.24.2",
-    "npm:graphql-yoga@^5.10.0": "5.22.0_graphql@16.14.2",
+    "npm:graphql-yoga@^5.24.6": "5.24.6_graphql@16.14.2",
     "npm:graphql@^16.9.0": "16.14.2",
     "npm:lightningcss-wasm@^1.33.0": "1.33.0",
-    "npm:sass@^1.80.0": "1.104.0"
+    "npm:sass@^1.80.0": "1.106.1"
   },
   "jsr": {
     "@luca/esbuild-deno-loader@0.11.1": {
@@ -70,301 +69,66 @@
     }
   },
   "npm": {
-    "@envelop/core@5.6.0": {
-      "integrity": "sha512-cD7HNfAzJVw/0Pxneu51UAKzUGLvkctk9rr9DVJ9b7FDe4nSa9kAGMRxx145H6ooELIUMjTd2buk3PuvjJmp/A==",
+    "@envelop/core@5.6.1": {
+      "integrity": "sha512-KEbJ7yrAA+W7IY9MZzpZJ77w/72ndaV/16+hhPapd+0Ohjqffl0mmF3QWy62/m3nRP4qidD+1eiEjJhS/O38Tg==",
       "dependencies": [
         "@envelop/instrumentation",
         "@envelop/types",
-        "@whatwg-node/promise-helpers",
+        "@whatwg-node/promise-helpers@1.3.2",
         "tslib"
       ]
     },
-    "@envelop/instrumentation@1.0.0": {
-      "integrity": "sha512-cxgkB66RQB95H3X27jlnxCRNTmPuSTgmBAq6/4n2Dtv4hsk4yz8FadA1ggmd0uZzvKqWD6CR+WFgTjhDqg7eyw==",
+    "@envelop/instrumentation@1.0.1": {
+      "integrity": "sha512-FuexE2qd3Yc1Kh1DjTliwGxb9kyyv4ySBNnfJOxnQasVmGdcqX6AkkO5sIMxLWFRftp8PErOcIn2dQW/1RwytQ==",
       "dependencies": [
-        "@whatwg-node/promise-helpers",
+        "@whatwg-node/promise-helpers@1.3.2",
         "tslib"
       ]
     },
-    "@envelop/types@5.2.1": {
-      "integrity": "sha512-CsFmA3u3c2QoLDTfEpGr4t25fjMU31nyvse7IzWTvb0ZycuPjMjb0fjlheh+PbhBYb9YLugnT2uY6Mwcg1o+Zg==",
+    "@envelop/types@5.2.2": {
+      "integrity": "sha512-nl9cmUh8F+2/NNzpcLjzNqtaVn0m8XSzzxrPU2ByHhlz4Hqlc5QBfRsemZkoJMKrMviJXyJYdKZiUP1o70F3Kw==",
       "dependencies": [
-        "@whatwg-node/promise-helpers",
+        "@whatwg-node/promise-helpers@1.3.2",
         "tslib"
       ]
     },
-    "@esbuild/aix-ppc64@0.24.2": {
-      "integrity": "sha512-thpVCb/rhxE/BnMLQ7GReQLLN8q9qbHmI55F4489/ByVg2aQaQ6kbcLb6FHkocZzQhxc4gx0sCk0tJkKBFzDhA==",
-      "os": [
-        "aix"
-      ],
-      "cpu": [
-        "ppc64"
-      ]
+    "@fastify/busboy@3.2.3": {
+      "integrity": "sha512-fmo/IKgkenPzz3qTKG+sIUXdF/Kv83AkvvOXJHPTHJeKJbat8SsL1ihUaFaDotqoEl4UZ1Lf8Eb/3vK6eaWX2A=="
     },
-    "@esbuild/android-arm64@0.24.2": {
-      "integrity": "sha512-cNLgeqCqV8WxfcTIOeL4OAtSmL8JjcN6m09XIgro1Wi7cF4t/THaWEa7eL5CMoMBdjoHOTh/vwTO/o2TRXIyzg==",
-      "os": [
-        "android"
-      ],
-      "cpu": [
-        "arm64"
-      ]
-    },
-    "@esbuild/android-arm@0.24.2": {
-      "integrity": "sha512-tmwl4hJkCfNHwFB3nBa8z1Uy3ypZpxqxfTQOcHX+xRByyYgunVbZ9MzUUfb0RxaHIMnbHagwAxuTL+tnNM+1/Q==",
-      "os": [
-        "android"
-      ],
-      "cpu": [
-        "arm"
-      ]
-    },
-    "@esbuild/android-x64@0.24.2": {
-      "integrity": "sha512-B6Q0YQDqMx9D7rvIcsXfmJfvUYLoP722bgfBlO5cGvNVb5V/+Y7nhBE3mHV9OpxBf4eAS2S68KZztiPaWq4XYw==",
-      "os": [
-        "android"
-      ],
-      "cpu": [
-        "x64"
-      ]
-    },
-    "@esbuild/darwin-arm64@0.24.2": {
-      "integrity": "sha512-kj3AnYWc+CekmZnS5IPu9D+HWtUI49hbnyqk0FLEJDbzCIQt7hg7ucF1SQAilhtYpIujfaHr6O0UHlzzSPdOeA==",
-      "os": [
-        "darwin"
-      ],
-      "cpu": [
-        "arm64"
-      ]
-    },
-    "@esbuild/darwin-x64@0.24.2": {
-      "integrity": "sha512-WeSrmwwHaPkNR5H3yYfowhZcbriGqooyu3zI/3GGpF8AyUdsrrP0X6KumITGA9WOyiJavnGZUwPGvxvwfWPHIA==",
-      "os": [
-        "darwin"
-      ],
-      "cpu": [
-        "x64"
-      ]
-    },
-    "@esbuild/freebsd-arm64@0.24.2": {
-      "integrity": "sha512-UN8HXjtJ0k/Mj6a9+5u6+2eZ2ERD7Edt1Q9IZiB5UZAIdPnVKDoG7mdTVGhHJIeEml60JteamR3qhsr1r8gXvg==",
-      "os": [
-        "freebsd"
-      ],
-      "cpu": [
-        "arm64"
-      ]
-    },
-    "@esbuild/freebsd-x64@0.24.2": {
-      "integrity": "sha512-TvW7wE/89PYW+IevEJXZ5sF6gJRDY/14hyIGFXdIucxCsbRmLUcjseQu1SyTko+2idmCw94TgyaEZi9HUSOe3Q==",
-      "os": [
-        "freebsd"
-      ],
-      "cpu": [
-        "x64"
-      ]
-    },
-    "@esbuild/linux-arm64@0.24.2": {
-      "integrity": "sha512-7HnAD6074BW43YvvUmE/35Id9/NB7BeX5EoNkK9obndmZBUk8xmJJeU7DwmUeN7tkysslb2eSl6CTrYz6oEMQg==",
-      "os": [
-        "linux"
-      ],
-      "cpu": [
-        "arm64"
-      ]
-    },
-    "@esbuild/linux-arm@0.24.2": {
-      "integrity": "sha512-n0WRM/gWIdU29J57hJyUdIsk0WarGd6To0s+Y+LwvlC55wt+GT/OgkwoXCXvIue1i1sSNWblHEig00GBWiJgfA==",
-      "os": [
-        "linux"
-      ],
-      "cpu": [
-        "arm"
-      ]
-    },
-    "@esbuild/linux-ia32@0.24.2": {
-      "integrity": "sha512-sfv0tGPQhcZOgTKO3oBE9xpHuUqguHvSo4jl+wjnKwFpapx+vUDcawbwPNuBIAYdRAvIDBfZVvXprIj3HA+Ugw==",
-      "os": [
-        "linux"
-      ],
-      "cpu": [
-        "ia32"
-      ]
-    },
-    "@esbuild/linux-loong64@0.24.2": {
-      "integrity": "sha512-CN9AZr8kEndGooS35ntToZLTQLHEjtVB5n7dl8ZcTZMonJ7CCfStrYhrzF97eAecqVbVJ7APOEe18RPI4KLhwQ==",
-      "os": [
-        "linux"
-      ],
-      "cpu": [
-        "loong64"
-      ]
-    },
-    "@esbuild/linux-mips64el@0.24.2": {
-      "integrity": "sha512-iMkk7qr/wl3exJATwkISxI7kTcmHKE+BlymIAbHO8xanq/TjHaaVThFF6ipWzPHryoFsesNQJPE/3wFJw4+huw==",
-      "os": [
-        "linux"
-      ],
-      "cpu": [
-        "mips64el"
-      ]
-    },
-    "@esbuild/linux-ppc64@0.24.2": {
-      "integrity": "sha512-shsVrgCZ57Vr2L8mm39kO5PPIb+843FStGt7sGGoqiiWYconSxwTiuswC1VJZLCjNiMLAMh34jg4VSEQb+iEbw==",
-      "os": [
-        "linux"
-      ],
-      "cpu": [
-        "ppc64"
-      ]
-    },
-    "@esbuild/linux-riscv64@0.24.2": {
-      "integrity": "sha512-4eSFWnU9Hhd68fW16GD0TINewo1L6dRrB+oLNNbYyMUAeOD2yCK5KXGK1GH4qD/kT+bTEXjsyTCiJGHPZ3eM9Q==",
-      "os": [
-        "linux"
-      ],
-      "cpu": [
-        "riscv64"
-      ]
-    },
-    "@esbuild/linux-s390x@0.24.2": {
-      "integrity": "sha512-S0Bh0A53b0YHL2XEXC20bHLuGMOhFDO6GN4b3YjRLK//Ep3ql3erpNcPlEFed93hsQAjAQDNsvcK+hV90FubSw==",
-      "os": [
-        "linux"
-      ],
-      "cpu": [
-        "s390x"
-      ]
-    },
-    "@esbuild/linux-x64@0.24.2": {
-      "integrity": "sha512-8Qi4nQcCTbLnK9WoMjdC9NiTG6/E38RNICU6sUNqK0QFxCYgoARqVqxdFmWkdonVsvGqWhmm7MO0jyTqLqwj0Q==",
-      "os": [
-        "linux"
-      ],
-      "cpu": [
-        "x64"
-      ]
-    },
-    "@esbuild/netbsd-arm64@0.24.2": {
-      "integrity": "sha512-wuLK/VztRRpMt9zyHSazyCVdCXlpHkKm34WUyinD2lzK07FAHTq0KQvZZlXikNWkDGoT6x3TD51jKQ7gMVpopw==",
-      "os": [
-        "netbsd"
-      ],
-      "cpu": [
-        "arm64"
-      ]
-    },
-    "@esbuild/netbsd-x64@0.24.2": {
-      "integrity": "sha512-VefFaQUc4FMmJuAxmIHgUmfNiLXY438XrL4GDNV1Y1H/RW3qow68xTwjZKfj/+Plp9NANmzbH5R40Meudu8mmw==",
-      "os": [
-        "netbsd"
-      ],
-      "cpu": [
-        "x64"
-      ]
-    },
-    "@esbuild/openbsd-arm64@0.24.2": {
-      "integrity": "sha512-YQbi46SBct6iKnszhSvdluqDmxCJA+Pu280Av9WICNwQmMxV7nLRHZfjQzwbPs3jeWnuAhE9Jy0NrnJ12Oz+0A==",
-      "os": [
-        "openbsd"
-      ],
-      "cpu": [
-        "arm64"
-      ]
-    },
-    "@esbuild/openbsd-x64@0.24.2": {
-      "integrity": "sha512-+iDS6zpNM6EnJyWv0bMGLWSWeXGN/HTaF/LXHXHwejGsVi+ooqDfMCCTerNFxEkM3wYVcExkeGXNqshc9iMaOA==",
-      "os": [
-        "openbsd"
-      ],
-      "cpu": [
-        "x64"
-      ]
-    },
-    "@esbuild/sunos-x64@0.24.2": {
-      "integrity": "sha512-hTdsW27jcktEvpwNHJU4ZwWFGkz2zRJUz8pvddmXPtXDzVKTTINmlmga3ZzwcuMpUvLw7JkLy9QLKyGpD2Yxig==",
-      "os": [
-        "sunos"
-      ],
-      "cpu": [
-        "x64"
-      ]
-    },
-    "@esbuild/win32-arm64@0.24.2": {
-      "integrity": "sha512-LihEQ2BBKVFLOC9ZItT9iFprsE9tqjDjnbulhHoFxYQtQfai7qfluVODIYxt1PgdoyQkz23+01rzwNwYfutxUQ==",
-      "os": [
-        "win32"
-      ],
-      "cpu": [
-        "arm64"
-      ]
-    },
-    "@esbuild/win32-ia32@0.24.2": {
-      "integrity": "sha512-q+iGUwfs8tncmFC9pcnD5IvRHAzmbwQ3GPS5/ceCyHdjXubwQWI12MKWSNSMYLJMq23/IUCvJMS76PDqXe1fxA==",
-      "os": [
-        "win32"
-      ],
-      "cpu": [
-        "ia32"
-      ]
-    },
-    "@esbuild/win32-x64@0.24.2": {
-      "integrity": "sha512-7VTgWzgMGvup6aSqDPLiW5zHaxYJGTO4OokMjIlrCtf+VpEL+cXKtCvg723iguPYI5oaUNdS+/V7OU2gvXVWEg==",
-      "os": [
-        "win32"
-      ],
-      "cpu": [
-        "x64"
-      ]
-    },
-    "@fastify/busboy@3.2.2": {
-      "integrity": "sha512-yXSS27qPExaXeuLvMRMXOLtpipzfQYNjG3FkunDWKGfMYjKuhFXko9CVzqxm8jcF+lmtS9Fd89QNdh9XDjnbNg=="
-    },
-    "@graphql-tools/executor@2.0.0_graphql@16.14.2": {
-      "integrity": "sha512-BjoqO5UfcV3BUqamGtHNm4ITBk040VOmWql/MrUefPo30x6t4v1+engfjgAjWikMsRPLU4ZC6e2QjICLucnOTA==",
+    "@graphql-tools/executor@2.1.0_graphql@16.14.2": {
+      "integrity": "sha512-RR41E8r1FKrHhZS5YhdcUg04GZ5VP6VGaO2MQKkmEEazXx6qY4kuzZYLs4kq+DBzPdNmsRdVsf7K/uTfi5fhAA==",
       "dependencies": [
-        "@graphql-tools/utils@12.0.0_graphql@16.14.2",
+        "@graphql-tools/utils",
         "@graphql-typed-document-node/core",
         "@repeaterjs/repeater",
-        "@whatwg-node/disposablestack",
-        "@whatwg-node/promise-helpers",
+        "@whatwg-node/disposablestack@0.1.0",
+        "@whatwg-node/promise-helpers@2.0.0",
         "graphql",
         "tslib"
       ]
     },
-    "@graphql-tools/merge@9.2.3_graphql@16.14.2": {
-      "integrity": "sha512-cKRoXqJGy2zSRBLvotQpkACbXlHAb0yuHLN0l0ypKGCuL3NnF0zofYalkBJqiBxxxpK0lr3s9uowKFHCKi1/ZQ==",
+    "@graphql-tools/merge@9.2.8_graphql@16.14.2": {
+      "integrity": "sha512-OsCEmJ9RIMT4LB/1jBbyKHe7pMIlfGhLAQ0FVNaZqteydDUC+rTI9wZ+yaKqxQpPOFFycD+UtMhovg19lPq92Q==",
       "dependencies": [
-        "@graphql-tools/utils@12.0.0_graphql@16.14.2",
+        "@graphql-tools/utils",
         "graphql",
         "tslib"
       ]
     },
-    "@graphql-tools/schema@10.1.0_graphql@16.14.2": {
-      "integrity": "sha512-wao48XQnfY631s3jXoNrhEHvCI8mlKXmIuWrR7F6zAdv92VuSOfHoq9P9KL2EnUMgBUnaStnByOx9Mn6RieWDg==",
+    "@graphql-tools/schema@10.1.5_graphql@16.14.2": {
+      "integrity": "sha512-F0Onw0ZBREakKGqcgsKhdSCjOXgmntzQWL0QA+/WrwKmnJ7nJRyGKUJavwuVZL2TrXblaIUvQxm4t1h3FuA3cA==",
       "dependencies": [
         "@graphql-tools/merge",
-        "@graphql-tools/utils@12.0.0_graphql@16.14.2",
+        "@graphql-tools/utils",
         "graphql",
         "tslib"
       ]
     },
-    "@graphql-tools/utils@11.2.2_graphql@16.14.2": {
-      "integrity": "sha512-Do2A/t6ayqOma8m7PvpYMsCBswL+NB35BQSng4GWSBqafL2/BnfAZy/NSENPwV721Rm2fG0BHETFC0+FJJZmLw==",
+    "@graphql-tools/utils@12.1.0_graphql@16.14.2": {
+      "integrity": "sha512-+mOuIX7u83/BHG0L9JviMzKid1j35cxOWhLoox47TXHAJ6Tnn30RgrmEQPmk1FhmaQbhJEcwYBDVyieUvZopJw==",
       "dependencies": [
         "@graphql-typed-document-node/core",
-        "@whatwg-node/promise-helpers",
-        "cross-inspect",
-        "graphql",
-        "tslib"
-      ]
-    },
-    "@graphql-tools/utils@12.0.0_graphql@16.14.2": {
-      "integrity": "sha512-aMdIo/l+8j4lhamWAf+MWHr+lOW8zArSBKXspqtKHgt5I2JF9LS55KDLUe/L9AiJOV/O6qJJ60hgYydbnJHbxg==",
-      "dependencies": [
-        "@graphql-typed-document-node/core",
-        "@whatwg-node/promise-helpers",
+        "@whatwg-node/promise-helpers@2.0.0",
         "cross-inspect",
         "graphql",
         "tslib"
@@ -376,14 +140,14 @@
         "graphql"
       ]
     },
-    "@graphql-yoga/logger@2.0.1": {
-      "integrity": "sha512-Nv0BoDGLMg9QBKy9cIswQ3/6aKaKjlTh87x3GiBg2Z4RrjyrM48DvOOK0pJh1C1At+b0mUIM67cwZcFTDLN4sA==",
+    "@graphql-yoga/logger@2.0.2": {
+      "integrity": "sha512-k2QGHCcH10O+GGe1sgXn0paaP9GCK91wxkuNQaA4IvXBF/RcdBLaX15UeZLW9kMG8kfz7bL0r4Yu+BXYe0JOaw==",
       "dependencies": [
         "tslib"
       ]
     },
-    "@graphql-yoga/subscription@5.0.5": {
-      "integrity": "sha512-oCMWOqFs6QV96/NZRt/ZhTQvzjkGB4YohBOpKM4jH/lDT4qb7Lex/aGCxpi/JD9njw3zBBtMqxbaC22+tFHVvw==",
+    "@graphql-yoga/subscription@5.1.1": {
+      "integrity": "sha512-I48DpyPTxYzmO5TwvKOXxiLI/tsbyeYNhb4/6/oJEBn6nlb8snHL0G0Fw1LC2ApNW1QKYuCPRDTp9yUwVBqhNQ==",
       "dependencies": [
         "@graphql-yoga/typed-event-target",
         "@repeaterjs/repeater",
@@ -391,8 +155,8 @@
         "tslib"
       ]
     },
-    "@graphql-yoga/typed-event-target@3.0.2": {
-      "integrity": "sha512-ZpJxMqB+Qfe3rp6uszCQoag4nSw42icURnBRfFYSOmTgEeOe4rD0vYlbA8spvCu2TlCesNTlEN9BLWtQqLxabA==",
+    "@graphql-yoga/typed-event-target@3.0.3": {
+      "integrity": "sha512-j/EgVfZSzKA2lVeiZ0un8E2eVIqWa9Woyqta4A40ht1M93ui9CDVHU6pmphoQTpFa92BNbMVexXdOtMQk8LCjA==",
       "dependencies": [
         "@repeaterjs/repeater",
         "tslib"
@@ -617,7 +381,14 @@
     "@whatwg-node/disposablestack@0.0.6": {
       "integrity": "sha512-LOtTn+JgJvX8WfBVJtF08TGrdjuFzGJc4mkP8EdDI8ADbvO7kiexYep1o8dwnt0okb0jYclCDXF13xU7Ge4zSw==",
       "dependencies": [
-        "@whatwg-node/promise-helpers",
+        "@whatwg-node/promise-helpers@1.3.2",
+        "tslib"
+      ]
+    },
+    "@whatwg-node/disposablestack@0.1.0": {
+      "integrity": "sha512-ok0A9+D+mdeb3w1GNCpVr+2gVVLRWKo9Ywm/whNsoWSNfNg3jNxS0/wUF6NSUYbfOtFGu2wZgJnLjasbaQEfvA==",
+      "dependencies": [
+        "@whatwg-node/promise-helpers@2.0.0",
         "tslib"
       ]
     },
@@ -638,8 +409,8 @@
       "integrity": "sha512-BDMdYFcerLQkwA2RTldxOqRCs6ZQD1S7UgP3pUdGUkcbgTrP/V5ko77ZkCww9DHmC4lpoYuwigGfQYj285gMvA==",
       "dependencies": [
         "@fastify/busboy",
-        "@whatwg-node/disposablestack",
-        "@whatwg-node/promise-helpers",
+        "@whatwg-node/disposablestack@0.0.6",
+        "@whatwg-node/promise-helpers@1.3.2",
         "tslib"
       ]
     },
@@ -649,13 +420,19 @@
         "tslib"
       ]
     },
+    "@whatwg-node/promise-helpers@2.0.0": {
+      "integrity": "sha512-/i9CS0Z96o+cPwaYoAyVxAThDiUX1wV3tDmNWPJbn+vtdR+JftuCDg1NGCXBrzIYVDGkJ8uT6ctwmrBOUzOpKQ==",
+      "dependencies": [
+        "tslib"
+      ]
+    },
     "@whatwg-node/server@0.11.0": {
       "integrity": "sha512-VSdkwnJRr8Yv9UgB2aXB3VUPWwd6Oqnn0hycFwhg9pZgWxJXb7JmhsiXe9tmpMwjHFxli12PGcz9aI63YYloGQ==",
       "dependencies": [
         "@envelop/instrumentation",
-        "@whatwg-node/disposablestack",
+        "@whatwg-node/disposablestack@0.0.6",
         "@whatwg-node/fetch",
-        "@whatwg-node/promise-helpers",
+        "@whatwg-node/promise-helpers@1.3.2",
         "tslib"
       ]
     },
@@ -751,38 +528,6 @@
         "vfile-message"
       ]
     },
-    "esbuild@0.24.2": {
-      "integrity": "sha512-+9egpBW8I3CD5XPe0n6BfT5fxLzxrlDzqydF3aviG+9ni1lDC/OvMHcxqEFV0+LANZG5R1bFMWfUrjVsdwxJvA==",
-      "optionalDependencies": [
-        "@esbuild/aix-ppc64",
-        "@esbuild/android-arm",
-        "@esbuild/android-arm64",
-        "@esbuild/android-x64",
-        "@esbuild/darwin-arm64",
-        "@esbuild/darwin-x64",
-        "@esbuild/freebsd-arm64",
-        "@esbuild/freebsd-x64",
-        "@esbuild/linux-arm",
-        "@esbuild/linux-arm64",
-        "@esbuild/linux-ia32",
-        "@esbuild/linux-loong64",
-        "@esbuild/linux-mips64el",
-        "@esbuild/linux-ppc64",
-        "@esbuild/linux-riscv64",
-        "@esbuild/linux-s390x",
-        "@esbuild/linux-x64",
-        "@esbuild/netbsd-arm64",
-        "@esbuild/netbsd-x64",
-        "@esbuild/openbsd-arm64",
-        "@esbuild/openbsd-x64",
-        "@esbuild/sunos-x64",
-        "@esbuild/win32-arm64",
-        "@esbuild/win32-ia32",
-        "@esbuild/win32-x64"
-      ],
-      "scripts": true,
-      "bin": true
-    },
     "estree-util-attach-comments@3.0.0": {
       "integrity": "sha512-cKUwm/HUcTDsYh/9FgnuFqpfquUbwIqwKM26BVCGDPVgvaCl/nDCCjUfiLlx6lsEZ3Z4RFxNbOQ60pkaEwFxGw==",
       "dependencies": [
@@ -832,18 +577,18 @@
     "extend@3.0.2": {
       "integrity": "sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g=="
     },
-    "graphql-yoga@5.22.0_graphql@16.14.2": {
-      "integrity": "sha512-RTMS9WfDJQdYT1VRwDQ34Q9zFvuD3PZXBEDedNdUuoeNsJ6jZBwPo5PhdExzkR+s5iwf8MoiGJOS5Byt/PNAZg==",
+    "graphql-yoga@5.24.6_graphql@16.14.2": {
+      "integrity": "sha512-IpRSnLfxbv1oiNTghzYjb0QPCn4p1y+8uoXJ0MkC5aNJAko2PSba89ByJXHIxoQAILZ3PKZaVcaEtlDJw4YQxw==",
       "dependencies": [
         "@envelop/core",
         "@envelop/instrumentation",
         "@graphql-tools/executor",
         "@graphql-tools/schema",
-        "@graphql-tools/utils@11.2.2_graphql@16.14.2",
+        "@graphql-tools/utils",
         "@graphql-yoga/logger",
         "@graphql-yoga/subscription",
         "@whatwg-node/fetch",
-        "@whatwg-node/promise-helpers",
+        "@whatwg-node/promise-helpers@1.3.2",
         "@whatwg-node/server",
         "graphql",
         "lru-cache",
@@ -1407,8 +1152,8 @@
         "vfile"
       ]
     },
-    "sass@1.104.0": {
-      "integrity": "sha512-btHMApW2bgolvClhRW8AlQJzgI9lUB3pPSofBQQT+E46GWvf9o0TVQ13SYv5riWZVFyPN+JNz3TKW9XhBlc10w==",
+    "sass@1.106.1": {
+      "integrity": "sha512-kD+Gi66vycZcbJt+42NC4z4PXNMcCajVrJPhqoKKXy5cOBMmJQt052CxIBcRjwYXeImHYOpu/ydWWGZQIenl7A==",
       "dependencies": [
         "chokidar",
         "immutable",
@@ -1419,8 +1164,8 @@
       ],
       "bin": true
     },
-    "source-map-js@1.2.1": {
-      "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA=="
+    "source-map-js@1.2.2": {
+      "integrity": "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw=="
     },
     "source-map@0.7.6": {
       "integrity": "sha512-i5uvt8C3ikiWeNZSVZNWcfZPItFQOsYTUAOkcUPGd8DqDy1uOUikjt5dG+uRlwyvR108Fb9DOd4GvXfT0N2/uQ=="
@@ -1532,31 +1277,31 @@
     "dependencies": [
       "jsr:@std/path@1",
       "npm:@pothos/core@^4.6.0",
-      "npm:graphql-yoga@^5.10.0",
+      "npm:graphql-yoga@^5.24.6",
       "npm:graphql@^16.9.0"
     ],
     "links": {
       "jsr:@denext/avif@0.2.0": {},
       "jsr:@denext/backend@0.8.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/content-collections@0.7.1": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
           "jsr:@std/yaml@1"
         ]
       },
-      "jsr:@denext/denext@4.10.0": {
+      "jsr:@denext/denext@4.10.1": {
         "dependencies": [
           "jsr:@astral/astral@~0.5.3",
           "jsr:@b-fuze/deno-dom@0.1.56",
-          "jsr:@denext/docs-corpus@4.10.0",
+          "jsr:@denext/docs-corpus@4.10.1",
           "jsr:@denext/lightningcss@^1.0.0-rc.72",
           "jsr:@denext/swc@76",
           "jsr:@luca/esbuild-deno-loader@0.11",
@@ -1582,25 +1327,25 @@
           "npm:ws@8"
         ]
       },
-      "jsr:@denext/docs-corpus@4.10.0": {},
+      "jsr:@denext/docs-corpus@4.10.1": {},
       "jsr:@denext/effect@0.2.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "npm:effect@^3.22.0"
         ]
       },
-      "jsr:@denext/graphql@0.6.0": {
+      "jsr:@denext/graphql@0.7.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@denext/openapi@0.7",
           "jsr:@std/path@1",
-          "npm:graphql-yoga@^5.10.0",
+          "npm:graphql-yoga@^5.24.6",
           "npm:graphql@^16.9.0"
         ]
       },
       "jsr:@denext/htmx@2.1.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/path@1"
         ]
       },
@@ -1608,20 +1353,20 @@
       "jsr:@denext/og@0.1.2": {},
       "jsr:@denext/openapi@0.7.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/pages-router@0.13.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/photon@0.3.6": {},
       "jsr:@denext/react-router@0.5.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]
@@ -1629,7 +1374,7 @@
       "jsr:@denext/swc@76.0.1": {},
       "jsr:@denext/tanstack-start@0.2.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/path@1"
         ]
       }

@@ -46,6 +46,8 @@ import {
   runPluginPrepareSteps,
 } from "../../plugin/mod.ts";
 import { collectViteManifest, type ViteManifest, writeViteManifest } from "./vite-manifest.ts";
+import { PARTYTOWN_BUILD_DIR } from "../partytown.ts";
+import { prepareSpaPartytown } from "./script-workers.ts";
 
 /**
  * Set up the config's plugins and run their prepare steps (codegen the app imports), before
@@ -130,6 +132,9 @@ export async function buildSpa(paths: ProjectPaths): Promise<{ outDir: string }>
     await preparePlugins(paths, "build");
     console.log(`  SPA mode: bundling ${spa.entry} -> client/${ENTRY_FILE}`);
     const clientModules = await bundleAndShell(paths, entryPath, staging, staging);
+    // `<Script strategy="worker">`: the app's Partytown, which `denext start` serves with a
+    // per-response nonce (./script-workers.ts). An export has none to give it.
+    await prepareSpaPartytown(paths.config, paths.projectDir, join(staging, PARTYTOWN_BUILD_DIR));
     await Deno.remove(finalClientDir, { recursive: true }).catch(() => {});
     await Deno.rename(staging, finalClientDir);
     // Plugin build steps; what they publish with `emitFile` lands in `<outDir>/emitted/`,

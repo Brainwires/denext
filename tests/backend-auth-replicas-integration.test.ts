@@ -149,8 +149,6 @@ async function ssoLogin(
 Deno.test({
   name: `two replicas on one Postgres share the auth send budget and the SAML replay cache${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn(t) {
     // The adapter keeps both stores itself (the strip variant removes them).
     const probe = backendAuthAdapter();

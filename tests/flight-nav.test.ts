@@ -9,7 +9,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import type { FlightNavPayload, IsoNavPayload } from "../src/server/document.ts";
@@ -304,6 +304,8 @@ Deno.test("isomorphic soft-nav applies the iso payload: title, data island, CSS 
     assert(script, "route entry <script> re-injected");
     assertStringIncludes(script.src, "/_denext/to.js");
     assertStringIncludes(script.src, "nav=");
+    // The entry "loads": the inject settles and drops its 4 s fallback timer.
+    script.dispatch("load");
   } finally {
     g.location = save.loc;
     g.history = save.hist;

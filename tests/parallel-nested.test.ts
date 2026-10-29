@@ -87,7 +87,7 @@ Deno.test("intercept inside a slot matches only on soft navigation", async () =>
 // ---- Soft-navigation slot state (Next.js: unmatched slots keep their content) ----------
 
 import { assertEquals } from "@std/assert";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 
 /** The playground's dashboard shape under `dash/`: a `children` page + an `@audience` slot. */
 const SLOT_STATE_FILES: Record<string, string> = {

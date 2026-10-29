@@ -8,6 +8,247 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.10.1] - 2026-10-29
+
+### Added
+
+- **The lifecycle-script jail of runtime `3.0.0-denext.1`.** Everything below is gated on the
+  runtime version, so stock Deno and older runtimes behave as before; the `3.0.0-denext.2` pin
+  turns it on. `jailRuntime(version)` (from `src/build/jail-scripts.ts`) says what a runtime takes.
+  - `denext migrate` / `create` / `add` / `upgrade` write `supplyChain.jailScripts.knownPackages`
+    for the reviewed download hosts a package declares itself (`grpc`, `nodegit`, `wrtc`): from
+    denext.1 a declared `binary.host` is honoured only when listed there.
+  - `denext doctor` reports what the jail really does on the machine, from the runtime's own
+    `deno info --json` `lifecycleJail`: confined by the OS (`seatbelt` / `landlock`, with what it
+    can't hold), no OS sandbox (and why; a warning when the project approves scripts there), or
+    off.
+  - In a project with a package.json and no deno.json, the jail exceptions, doctor's fixes and
+    migrate's snippets read and write package.json's `"deno": { "allowScripts", "supplyChain" }`
+    object, the runtime's settings home there, instead of creating a deno.json (which takes the
+    project out of Node mode). A deno.json, when present, stays the only home, and doctor flags a
+    `"deno"` object beside it.
+- **`denext desktop add passkeys --rp-id <domain>`.** The option writes the relying parties to
+  `desktop.capabilities.passkeys.rpIds`, where `add` used to leave an empty list that refuses
+  every passkey ceremony. It can be repeated, each ID must be a registrable domain (no scheme,
+  port, path or IP address; an internationalised name is written in its punycode form), and a
+  later run adds to the list it finds. The launch-policy fix in `doctor` names it.
+- **`<Script strategy="worker">` in SPA mode.** With `nextScriptWorkers` on and Partytown
+  installed, `denext dev` and `denext start` serve a SPA's Partytown and stamp every shell
+  response with its own nonce: the boot tag and the shell's scripts carry it and the `spa.csp`
+  policy lists it, so worker scripts the app renders run in Partytown's worker under the same
+  checks as an App Router page. A static `denext export` keeps the main-thread fallback.
+- **DevTools name a package's custom hooks.** In the default dev loop of an app that imports npm
+  packages, the dependency bundle records each package ES module's `use*` hooks and re-exports,
+  so `const q = useQuery(…)` from `@tanstack/react-query` breadcrumbs into the package's own
+  cells (`useQuery › …`) like a hook of the app's, through the package's barrels. CommonJS and
+  minified package modules stay labelled by the call.
+- **`captureOwnerStack()` during a server render.** Under `denext dev` a Server Component, or a
+  component an SSR pass renders, gets React's owner stack: the Server Components that own its
+  element, nearest first, as `\n    at Name` lines (with the JSX call site where `jsxDEV`
+  recorded it), across an `await` in an async component too. An element made with `h()` /
+  `createElement` is owned by the component whose render returned it, as on the client.
+  Production `start` installs nothing and still returns `null`.
+- **`@denext/tanstack-start`: a mocked import's runtime message lists the import trace.** In
+  `denext dev`, using a mock that stands in for a denied import (or a denied file) in the browser
+  reports, with Start's `[import-protection] Mocked import used in dev client` message, the app
+  modules from the entry to the importer, as Start's own dev server does.
+- **A Lustre server component adopts its first paint.** When a `defineLustreView` mounts, the
+  server-rendered markup is kept instead of being replaced by Lustre's render: the nodes stay the
+  same nodes, Lustre's reconciler attaches the view's event handlers and properties to them, and a
+  field focused or typed into before the mount keeps its focus, caret and text (its `input` and
+  `change` are sent once the view is live, so the server's model learns what was typed). Markup
+  that does not fit the view, and a later whole view (a reconnect, a resync), are rendered anew.
+  The next Gleam build rewrites `.denext/lustre-view.ts` to pass Lustre's `insertMetadataChild`.
+- **`broadcastChannelTransport()` returns a `close()`** that closes its `BroadcastChannel`
+  (an open one keeps the process's event loop alive).
+
+### Changed
+
+- **denext pins runtime `3.0.0-denext.2`** (was `3.0.0-rc.5`; the toolchain, the Deno Desktop
+  runtime and CI's Linux toolchain zip move together). It carries everything in `3.0.0-rc.6` and
+  `3.0.0-denext.1` (the hardened lifecycle-script jail above, the fail-closed launch file, the
+  per-app Linux secure store) and adds download deadlines with retries on a fresh connection
+  (`DENO_DOWNLOAD_*`), encrypted Secret Service sessions for the Deploy token and the secure-store
+  migration, Windows pipe and spawn fixes, Node compatibility fixes, V8 15.2 and a glibc 2.27 floor
+  for the Linux CLI, which the pin records so the host check (and `denext doctor`'s `linux libc`)
+  accepts glibc 2.27 and names the matching distributions. Security advisory GHSA-6f6m-g5gm-hc4m.
+
+### Fixed
+
+- **A live view parked as the server shuts down reaches the view store.** A closed socket parks its
+  live views and seals each snapshot into the view store in the background; `denext start`'s
+  shutdown ran the services' and plugins' teardowns without waiting for those writes, so one in
+  flight could be cut off (a shared store's client closed under it) and that view could not resume
+  on another instance. Shutdown now waits for them before anything is torn down.
+- **Two installs of one cache in a single process no longer fail the lock order.** While one
+  install held a cache's download lock (the Deno Desktop runtime, the toolchain, esbuild, fastlane),
+  a second one started in the same process asked for the cache's read lock and stopped with "lock
+  order violation — … (rank 3) requested while holding a rank-4 lock". The callers on one cache now
+  take turns within the process, so the second waits for the first and then finds its install.
+- **A desktop app's sidecar log file has every line once `stopAll()` returns.** The lines a
+  sidecar printed as it shut down were still being appended after the host reported it stopped.
+- **The report of a failed background CLI cache says when `deno cache` printed nothing.** It
+  showed "it printed:" over an empty line.
+- **`denext profile` downloads its headless Chrome with deadlines and retries.** The browser astral
+  launches (Chrome for Testing, about 150 MB) was read through one `fetch` with no deadline, so a
+  connection that stalled mid-body held the launch until the server dropped it, minutes later, and
+  then failed it ("error reading a body from connection"). It now comes through the same download
+  path as the toolchain: given up on after `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS` without data, retried
+  on a new connection, extracted safely into astral's own cache (a browser astral fetched before is
+  used as it is, and `ASTRAL_BIN_PATH` still names one).
+- **`denext migrate` on a member of an npm workspace no longer stops on the jail exceptions.**
+  From runtime `3.0.0-denext.1` the jail settings of a project with no deno.json live in the
+  workspace root's package.json `"deno"` object, outside the app migrate was pointed at, which it
+  never writes; the migration failed with "refusing to write …/package.json: it is outside the
+  project". It now completes and prints the `supplyChain` snippet to add, naming that file.
+- **The toolchain pin carries the release's glibc floor when the release records one.**
+  `deno task desktop:pin-runtime` now copies the release manifest's `cli.glibc` into the toolchain
+  pin as `minGlibc`, which the Linux host check reads before a download (a pin without it keeps the
+  2.35 default); a malformed value stops the pin.
+- **Other `@denext` exemptions from the dependency-age hold are flagged.** `denext doctor` and
+  `denext upgrade` looked only for the `"jsr:@denext/*"` entry older scaffolds wrote in
+  `minimumDependencyAge.exclude`. Any other `@denext` entry there (`"jsr:@denext/denext"`, …)
+  lets a just-published release in before the hold has passed too; denext never writes one, so
+  both commands now name it and leave it for you to remove (`upgrade --json` lists it as
+  `denextExemptions`).
+- **A packages-only `jailScripts` object no longer counts as turning the jail on (runtime
+  `3.0.0-rc.6` and later).** From `3.0.0-rc.6` an object that lists only `packages` (or
+  `knownPackages`) configures the default jail without asking for it, but denext still read it as
+  on: next to `jail-scripts=false` in `.npmrc` it wrote exceptions, and `doctor` flagged missing
+  ones, for a jail that was off. denext now reads it as the installing runtime does; on older
+  runtimes any object still turns the jail on.
+- **`migrate --check` flags a `next.config` that reads an unset machine-path variable.** Only the
+  machine-path variables this machine set were masked during evaluation, so a config reading
+  `HOME` on Windows (or `USERPROFILE` elsewhere) got `undefined` and its rule was inlined without a
+  note. `HOME`, `USERPROFILE`, `TMPDIR`, `TEMP`, `TMP`, `APPDATA` and `LOCALAPPDATA` now read as
+  placeholders whether or not they are set, so the rule is left out and flagged for a hand port.
+- **The jail exceptions denext writes for runtime `3.0.0-rc.6` and later.** The browser
+  packages' `~` caches (puppeteer, Playwright's browsers, Cypress) now get `"executables": true`,
+  without which rc.6 removes the downloaded browser after the install, and `@prisma/client` gets
+  `node_modules/.prisma`, which rc.6's per-package write roots refuse otherwise. An entry that
+  already exists is completed with those two additions only; its `net` and `env` are kept.
+- **`bcrypt` and `bufferutil` in the "needs nothing" list** said approving them works. They load a
+  prebuilt binary at run time, so leave their install scripts unapproved; approving them works
+  only where the OS confines lifecycle scripts, from runtime `3.0.0-denext.1`.
+- **Windows helpers work when started from PowerShell 7.** An app or the CLI launched from a
+  `pwsh` terminal handed Windows PowerShell 7's module path, so its own modules failed to load
+  (`CouldNotAutoloadMatchingModule`): the desktop `dialogs` file panels, the `shell` trash, the
+  `secure-store` credential vault, `denext stack`'s free-space check and `denext profile`'s
+  browser cleanup on Windows. Each script now loads Windows PowerShell's own modules first (the
+  free-space check uses .NET and no module at all), without changing the child's environment.
+- **The test tasks leave the checkout as they found it (contributors).** `scripts/test-run.ts` keeps
+  `.deno/`, `.denext/` and `coverage/` out of every pass's test discovery (its `--ignore` replaced
+  `deno.json`'s `exclude`, so a `.deno/npm-compat` left by an earlier run's type-check was run as
+  tests). The example integration tests build private copies, so a build no longer rewrites
+  `examples/*/deno.lock` (the six that lacked `jsr:@std/encoding` now record it). The Docker probe
+  of the Docker-backed tests gives up after 5 s and skips them, where a hung Docker Desktop held the
+  whole suite. `coverage:floor`, `coverage:ratchet` and `coverage:fallow` (and the converter
+  `denext fallow init` scaffolds) resolve symlinks in the report's paths and the project root and merge a
+  file's records, so a run under a symlinked directory (macOS `/var` → `/private/var`) no longer
+  lists files as never loaded.
+- **`denext migrate --prisma-adapter auto` follows the runtime the app runs on.** Run on a
+  stock Deno, migrate wired Prisma's npm adapters even though `denext dev`, `build` and `start`
+  re-run the app on denext's Deno toolchain, whose `Deno.SQL` `denext/prisma-adapter` uses; it
+  now takes the toolchain denext hands its children into account (`DENEXT_DENO=stock` keeps
+  the npm adapters). An app that imports `better-sqlite3` itself beside Prisma keeps the
+  `links` shim for it under `denext/prisma-adapter` too: its server bundle loaded the native
+  addon and the server did not start. The Epic Stack migration bed checks the wiring against
+  goldens and reads its seeded users through the adapter.
+- **The rest of denext's captured child output is read until the child exits.** The macOS
+  signing and notarization checks, the Windows certificate-store and Authenticode probes, the
+  `wix --version` check, `desktop doctor`'s probes, the toolchain version probe, `denext patch`'s
+  `deno info` / `deno cache`, fastlane's `bundle`, `mobile inspect`, `stack`'s docker and free-space
+  probes now stop reading 5 s after the child exits at the latest. A process that inherited the
+  child's pipes (another child spawned at the same moment on Windows, or one the child left
+  running) can no longer keep them waiting.
+- **A sidecar's `"auto"` port that another process takes first is picked again.** The port is
+  picked by binding port 0 and releasing it, so another process could bind it before the sidecar
+  did; the sidecar then failed on an address in use and kept retrying the same port. A picked port
+  that is already held is picked again, and a start that ends before ready while another process
+  holds the port starts again at once on a fresh port (up to 3 times per run of starts), with the
+  `spa.proxy` target, `sidecarInfo` and the status following it.
+- **`desktop dev --inspect-renderer` picks the renderer's port right before the window opens.**
+  The free port was picked before the build, so another process had the whole build to take it;
+  it is now picked after the build, and a picked port that is already held is picked again.
+- **A monorepo app a glob member names builds with its npm packages hoisted to the root.** In a
+  Deno workspace such as `{ "workspace": ["./apps/*"], "nodeModulesDir": "manual" }`, an app's
+  bare `import ms from "ms"` (a dependency in its package.json, installed in the root's
+  `node_modules`) failed the esbuild build with "not in import map": the config the loader builds
+  a glob member on now carries the app's and the root's package.json dependencies and the root's
+  `nodeModulesDir`, and npm packages resolve from the nearest `node_modules` when the app has
+  none of its own, as Deno resolves them.
+- **Leaks the test suite's sanitizers found, now that they are on.** From Deno 2.8 the op and
+  resource sanitizers are off by default; denext's `deno.json` turns both on for its own suite,
+  and these leaks surfaced (each with a test that fails under the sanitizers before the fix):
+  - A download refused as larger than its pin (the Deno toolchain, the Deno Desktop runtime) now
+    cancels the response, so its connection is let go instead of staying open.
+  - `denext desktop dev` and `denext mobile dev` stop listening for Ctrl-C / SIGTERM when the
+    session ends another way (the window closed, the dev server ended or failed to start); a
+    listener left behind kept the process alive and swallowed the next Ctrl-C. `denext ui`
+    likewise stops trapping the signals when its server is shut down another way.
+  - A stopped `denext dev` server's `finished` now waits for a background `deno check` it had
+    started, so no child outlives it (on Windows one held the project directory).
+  - A second esbuild `stop()` made while another was stopping the child resolved at once; it now
+    waits for the exit too.
+  - `smtpMailer` closes the TLS connection when a STARTTLS or implicit-TLS handshake is refused
+    (a certificate that doesn't chain to a trusted CA), instead of leaving it open.
+  - The reconciler cancels the macrotask it scheduled for passive effects (`useEffect`) when they
+    are flushed sooner (`flushSync`, `act`, the next render), and closes its time-slicing
+    `MessageChannel` once a sliced render is done, so neither outlives the work in a
+    non-browser process (a component test).
+  - The fumadocs MDX compile host's dispose resolves once its child has exited.
+  - Live's per-render deadline is cleared when a resolver throws synchronously (it stayed armed
+    for the whole render timeout).
+  - `StackView`'s fallback for a gesture pop that never lands, the tabs' view-transition
+    fallback and the web barcode scanner's next poll are cancelled once they are moot (an
+    unmounted stack, a settled router, a finished scan).
+  - The React Native alias plugin checks for `react-native-svg` / NativeWind on first need, not
+    when it is created.
+- **`createTestApp`'s `close()` (and `await using`) releases the response bodies a test never
+  read**, as a server does when its client goes away: an unread body kept the request's deadline
+  timer running past the test.
+- **esbuild's `stop()` resolves once its child has exited.** `stop()` from denext's esbuild API
+  (and `stopNextCompat()` / `withEsbuild()`, which call it) signalled the long-lived esbuild
+  process and returned at once, so a Deno test that awaited it still ended with the process and
+  its exit wait open, which the op and resource sanitizers report. It now waits for the exit.
+- **Stopping the `denext_ui_*` MCP tools' `denext ui` child waits for it to exit.** The bridge
+  behind those tools signalled the child and returned, leaving the process, its exit wait and its
+  output pipe open for a moment; a caller that removed the project directory next could race it
+  (Windows refuses to remove a directory a process still holds). Stopping it now resolves once
+  the child has exited and its pipe is closed.
+
+### Security
+
+- **`@denext/graphql` 0.7.0 requires `graphql-yoga@^5.24.6`**, the first Yoga 5 releases on a
+  `@graphql-tools/utils` that fixes
+  [GHSA-7mx3-vvmw-hjmv](https://github.com/advisories/GHSA-7mx3-vvmw-hjmv) and
+  [GHSA-c4qx-w738-7hr3](https://github.com/advisories/GHSA-c4qx-w738-7hr3) (prototype pollution in
+  `mergeDeep` and `mergeIncrementalResult`). The plugin's earlier `^5.10.0` range admitted the fixed
+  releases too; an app's lockfile that still holds Yoga 5.24.3 or older should be updated.
+- **Build tooling locked to fixed releases.** The repository's lockfiles now resolve `zod` 4.6.7
+  ([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)), `seroval` 1.7.2
+  ([GHSA-9wx9-5pv9-3349](https://github.com/advisories/GHSA-9wx9-5pv9-3349),
+  [GHSA-f86p-h4j2-7qgj](https://github.com/advisories/GHSA-f86p-h4j2-7qgj)) and `source-map-js`
+  1.2.2 ([GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q)), reached through
+  the opt-in `sass` and `spa.tanstackRouter` build steps, and no longer hold npm `esbuild` 0.24.2
+  ([GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99)), a stale optional peer;
+  denext runs its own pinned esbuild binary. The published version ranges already admitted the
+  fixed releases, so a fresh resolution in an app was not affected.
+- **`deno task audit:npm`** runs `deno audit` over the root `deno.lock` and fails on a high or
+  critical advisory. A fix still under Deno's minimum dependency age is held in
+  `security/npm-audit-allow.json` with the date it clears. CI's `cargo-audit` job and
+  `deno task precheck` (when `deno.lock`, a `deno.json` or the allowlist changes) run it.
+
+### Documentation
+
+- **The runtime's versions after `3.0.0-rc.6`.** The guides now say there is no upstream Deno 3.0:
+  upstream stays on its 2.9.x LTS line and denext's runtime is the forward line, whose releases
+  after `3.0.0-rc.6` are `3.0.0-denext.1`, `3.0.0-denext.2`, and so on. The toolchain, desktop
+  runtime and runtime reference pages describe that order, the runtime reference lists the
+  `3.0.0-denext.1` jail settings (`jailScripts.knownPackages`, package.json's `"deno"` object,
+  `deno info --json`'s `lifecycleJail`), and the jail's download-host lists are tied to the
+  `3.0.0-denext.1` pin.
+
 ## [4.10.0] - 2026-10-29
 
 ### Added
@@ -594,10 +835,22 @@ and this project adheres to
 - **`build --compile` with a frozen lock fails closed.** When the compile rewrote the lock copy
   in another lockfile version (an older lock under a newer Deno) or left it unreadable, the frozen
   check was skipped and the binary built anyway; it is now refused with the fix.
-- **Toolchain and Deno Desktop runtime downloads time out.** A download that sends no response
-  within 30 s, or no data for 60 s mid-body, is given up on (the toolchain pin's fallback mirrors
-  are then tried) instead of hanging the build and holding the cache lock;
-  `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS` / `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS` change the deadlines.
+- **Toolchain and Deno Desktop runtime downloads give up on a stalled connection and retry.** A
+  download (the toolchain, its `denort`, Gleam, fastlane's Ruby, the Deno Desktop runtime) that
+  sends no response within 10 s, or no data for 20 s mid-body (the gap between reads, so a slow
+  but steady download is never cut off), no longer hangs the build and holds the cache lock: the
+  attempt is given up on, its partial file deleted, and the download retried on a new connection
+  (a fresh HTTP client) after a short, jittered, growing wait, as is a broken connection or a
+  `408` / `429` / `5xx` answer. Four attempts in all, none started once 120 s have passed; when
+  every one fails, the error lists each attempt and which deadline fired, and the toolchain pin's
+  fallback mirrors are then tried. The SHA-256 and size checks are unchanged.
+  `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`, `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS`,
+  `DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS` (`0`: none) and `DENEXT_DOWNLOAD_ATTEMPTS` change them.
+- **Caching the CLI's verbs for offline use can no longer hang or fail silently.** The `deno cache`
+  a remote CLI runs (in the background on its first run, in the foreground from
+  `denext toolchain install`) is stopped after 5 min (`DENEXT_CHILD_DEADLINE_MS` changes it), and
+  the end of what it printed is kept: `toolchain install` prints it with the exit code or the
+  deadline, and a background run that failed is reported once on the next run, as it retries.
 - **`DENEXT_CHILD_DEADLINE_MS` sets the build's `deno info` / `deno bundle` deadlines** (120 s and
   300 s; `0` removes them), for a first build with a cold cache on a slow link (a Docker
   `RUN denext task build`), which could be killed twice and fail with `ChildStallError`.
@@ -19096,7 +19349,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.1...development
+[4.10.1]: https://jsr.io/@denext/denext@4.10.1
 [4.10.0]: https://jsr.io/@denext/denext@4.10.0
 [4.9.0]: https://jsr.io/@denext/denext@4.9.0
 [4.8.0]: https://jsr.io/@denext/denext@4.8.0

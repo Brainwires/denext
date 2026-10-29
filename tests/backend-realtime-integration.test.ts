@@ -121,8 +121,6 @@ Deno.test({
   name:
     `realtime on a real Postgres: per-subscriber RLS, updates, deletes, a 500-row burst${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     let hub: Harness | undefined;
@@ -216,8 +214,6 @@ Deno.test({
   name:
     `realtime on a real Postgres: a timestamp key reads back as the notification spells it${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     let hub: Harness | undefined;
@@ -259,8 +255,6 @@ Deno.test({
   name:
     `realtime on a real Postgres: a timestamptz key matches across writer and reader TimeZones${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     let hub: Harness | undefined;
@@ -302,8 +296,6 @@ Deno.test({
 Deno.test({
   name: `realtime on a real Postgres: the listener reconnects after pg_terminate_backend${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     let hub: Harness | undefined;
@@ -380,8 +372,6 @@ Deno.test({
   name:
     `realtime on a real Postgres: revalidate owner "one" — one instance revalidates, with failover${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     let engines: RealtimeEngine[] = [];
@@ -432,8 +422,6 @@ Deno.test({
 Deno.test({
   name: `realtime on a real Postgres: revalidate "every" — each instance revalidates${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     let engines: RealtimeEngine[] = [];
@@ -459,8 +447,6 @@ async function plan(sql: SqlClient, text: string, params: unknown[]): Promise<st
 Deno.test({
   name: `realtime on a real Postgres: re-reads and seeds use the key and filter indexes${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     try {
@@ -564,8 +550,6 @@ Deno.test({
   name:
     `realtime on a real Postgres: seeds and re-reads spell every key type as the trigger does${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     try {
@@ -630,8 +614,6 @@ Deno.test({
   name:
     `realtime on a real Postgres: subscriptions are capped per identity; deliveries go on${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     let hub: Harness | undefined;
@@ -673,8 +655,6 @@ Deno.test({
   name:
     `realtime on a real Postgres: flushes are single-flight — a burst during a slow re-read waits${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     let hub: Harness | undefined;
@@ -732,8 +712,6 @@ Deno.test({
     logicalReason ? ` (skipped: ${logicalReason})` : ""
   }`,
   ignore: logicalReason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     let hub: Harness | undefined;
@@ -770,8 +748,6 @@ Deno.test({
     logicalReason ? ` (skipped: ${logicalReason})` : ""
   }`,
   ignore: logicalReason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     const error = console.error;
@@ -835,8 +811,6 @@ Deno.test({
 Deno.test({
   name: `realtime on a real Postgres: trigger DDL waits for the backend's migration lock${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     let hub: Harness | undefined;
@@ -903,8 +877,6 @@ Deno.test({
   name:
     `realtime on a real Postgres: one identity's filters share one re-read; a reconnect is replayed under RLS${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     let hub: Harness | undefined;

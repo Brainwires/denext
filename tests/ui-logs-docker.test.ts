@@ -27,7 +27,6 @@ Deno.test({
     enabled ? "" : " (set DENEXT_TEST_DOCKER=1)"
   }`,
   ignore: !enabled,
-  sanitizeResources: false,
   async fn() {
     const project = `dnxlogs${crypto.randomUUID().slice(0, 8)}`;
     const id = await docker(

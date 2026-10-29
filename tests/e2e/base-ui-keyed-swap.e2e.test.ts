@@ -59,8 +59,6 @@ const COUNT = (sel: string) => `document.querySelectorAll('${sel}').length`;
 
 Deno.test({
   name: "e2e: keyed dialog content swap leaves no stale buttons",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   const server = await buildAndServe(dir);

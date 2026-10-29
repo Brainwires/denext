@@ -13,6 +13,7 @@ import {
   lockTimeoutMs,
 } from "../src/build/file-lock.ts";
 import {
+  acquireCacheLock,
   BUILD_DIR_LOCK,
   buildDirLockPath,
   CACHE_DOWNLOAD_LOCK,
@@ -148,7 +149,12 @@ function spawnHolder(script: string, spec: unknown): Holder {
         child.kill("SIGKILL");
       } catch { /* already exited */ }
     },
-    status: done.then(() => child.status),
+    // A killed holder never had its stdin closed: once it is gone, let the pipe go too.
+    status: done.then(async () => {
+      const status = await child.status;
+      await writer.close().catch(() => writer.abort().catch(() => {}));
+      return status;
+    }),
   };
 }
 
@@ -161,11 +167,8 @@ async function eventually(predicate: () => boolean, what: string, ms = 20_000): 
   }
 }
 
-const SUBPROCESS = { sanitizeOps: false, sanitizeResources: false };
-
 Deno.test(
   "a second writer prints the Blocking line once, waits, and proceeds when the first releases",
-  SUBPROCESS,
   async () => {
     const dir = await Deno.makeTempDir();
     try {
@@ -198,7 +201,6 @@ Deno.test(
 
 Deno.test(
   "shared readers hold the build dir side by side; a writer waits for both",
-  SUBPROCESS,
   async () => {
     const dir = await Deno.makeTempDir();
     try {
@@ -223,7 +225,7 @@ Deno.test(
   },
 );
 
-Deno.test("a killed holder's lock is released by the OS — no stale lock", SUBPROCESS, async () => {
+Deno.test("a killed holder's lock is released by the OS — no stale lock", async () => {
   const dir = await Deno.makeTempDir();
   try {
     const script = await holderScript(dir);
@@ -246,7 +248,6 @@ Deno.test("a killed holder's lock is released by the OS — no stale lock", SUBP
 
 Deno.test(
   "cache locks: a download leaves readers alone; a mutation excludes them",
-  SUBPROCESS,
   async () => {
     const dir = await Deno.makeTempDir();
     const holders: Holder[] = [];
@@ -293,7 +294,6 @@ Deno.test(
 
 Deno.test(
   "denext test --coverage=<dir> takes the output-dir lock through the CLI dispatch",
-  SUBPROCESS,
   async () => {
     const dir = await Deno.makeTempDir();
     try {
@@ -363,6 +363,39 @@ Deno.test("re-entrant in one process; never upgraded; never out of rank order", 
       "lock order violation",
     );
     high.release();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("cache locks: another task of this process waits its turn on the cache root", async () => {
+  // Two installs in one process (two `ensure*` calls in flight): while one holds the download
+  // lock (rank 4), the other's shared read (rank 3) waits for it instead of tripping the rank
+  // check, which orders one task's nested locks, not two tasks' independent ones.
+  const dir = await Deno.makeTempDir();
+  try {
+    const order: string[] = [];
+    const writer = await acquireCacheLock(dir, "download", "test cache");
+    const reader = acquireCacheLock(dir, "shared", "test cache").then((lock) => {
+      order.push("reader");
+      return lock;
+    });
+    const replacer = acquireCacheLock(dir, "mutate", "test cache").then((lock) => {
+      order.push("replacer");
+      return lock;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    assertEquals(order, [], "both wait while the download lock is held");
+    order.push("writer released");
+    writer.release();
+    (await reader).release();
+    (await replacer).release();
+    assertEquals(order, ["writer released", "reader", "replacer"]);
+    // A failed acquisition gives the turn back: the next one is not stuck behind it.
+    await withFsFile("tryLock", () => Promise.reject(new Error("boom")), async () => {
+      await assertRejects(() => acquireCacheLock(dir, "shared", "test cache"), Error, "boom");
+    });
+    using _again = await acquireCacheLock(dir, "mutate", "test cache");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -468,7 +501,6 @@ Deno.test("a shared lock on an unwritable directory proceeds unlocked; an exclus
 
 Deno.test(
   "DENEXT_LOCK_TIMEOUT: a contended lock fails after the limit, naming the lock file",
-  SUBPROCESS,
   async () => {
     const dir = await Deno.makeTempDir();
     try {
@@ -622,7 +654,6 @@ Deno.test("mobile build locks its output dir as a package output", () => {
 
 Deno.test(
   "the desktop runtime downloader waits while another process mutates the cache",
-  SUBPROCESS,
   async () => {
     const { ensureDesktopRuntime } = await import("../src/build/desktop-runtime.ts");
     const dir = await Deno.makeTempDir();

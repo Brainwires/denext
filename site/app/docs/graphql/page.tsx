@@ -24,9 +24,9 @@ export default function GraphQL() {
         {`// deno.json
 {
   "imports": {
-    "@denext/graphql": "jsr:@denext/graphql@^0.6.0",
+    "@denext/graphql": "jsr:@denext/graphql@^0.7.0",
     "graphql": "npm:graphql@^16.9.0",
-    "graphql-yoga": "npm:graphql-yoga@^5.10.0",
+    "graphql-yoga": "npm:graphql-yoga@^5.24.6",
     "@pothos/core": "npm:@pothos/core@^4"
   }
 }`}

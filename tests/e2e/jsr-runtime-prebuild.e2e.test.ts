@@ -16,6 +16,7 @@
 
 import { assert } from "@std/assert";
 import { prebuildDenextRuntime, runtimeEntryPoints } from "../../src/build/next-compat.ts";
+import { stop as stopEsbuild } from "../../src/build/esbuild/mod.ts";
 
 const PACKAGE = "https://jsr.io/@denext/denext/";
 
@@ -69,8 +70,6 @@ async function publishedFiles(version: string): Promise<Set<string>> {
 
 Deno.test({
   name: "e2e: the compat runtime prebuilds from the PUBLISHED (JSR-rewritten) denext sources",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   let version: string;
   let files: Set<string>;
@@ -112,6 +111,7 @@ Deno.test({
     );
     assert(!emitted.some((f) => f.endsWith(".wasm")), "the wasm codecs stay external, not bundled");
   } finally {
+    await stopEsbuild(); // the prebuild's long-lived esbuild service
     if (prevPolicy === undefined) Deno.env.delete("DENEXT_MIN_DEP_AGE");
     else Deno.env.set("DENEXT_MIN_DEP_AGE", prevPolicy);
     await Deno.remove(out, { recursive: true }).catch(() => {});

@@ -7,7 +7,7 @@ import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import type { DenextPlugin } from "../src/plugin/mod.ts";
 import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plugin/mod.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { denextAuth } from "../src/server/auth/mod.ts";
 import { credentials } from "../src/server/auth/providers.ts";
@@ -17,6 +17,7 @@ import { generateSupabaseKeys, installSupabaseKeys } from "../src/server/auth/go
 import type { GoTrueOptions, GoTrueSmsMessage } from "../src/server/auth/gotrue/options.ts";
 import { installGoTrue } from "../src/server/auth/gotrue/handler.ts";
 import { backend, type BackendOptions } from "../packages/backend/mod.ts";
+import { responseBodies } from "./helpers/response-bodies.ts";
 
 export const ORIGIN = "https://app.test";
 const load = ((path: string) => import(path)) as unknown as ModuleLoader;
@@ -134,13 +135,13 @@ export async function supabaseAuthApp(options: {
     load,
     matchExternal: getPluginRequestHandler(),
   });
+  const bodies = responseBodies();
   const appFetch: typeof fetch = async (input, init) => {
     // A Request with no init passes through as is, so a test's `setRemoteAddr` peer survives.
     const request = input instanceof Request && init === undefined
       ? input
       : new Request(input instanceof Request ? input : String(input), init);
-    const response = await handler(request);
-    return response;
+    return bodies.track(await handler(request));
   };
   const base = { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false };
   const { createClient } = options.withClient === false
@@ -168,6 +169,7 @@ export async function supabaseAuthApp(options: {
       }),
     admin: () => createClient(ORIGIN, keys.secretKey, { global: { fetch: appFetch }, auth: base }),
     async close() {
+      await bodies.release();
       resetPlugins();
       installSupabaseKeys(undefined);
       installGoTrue(undefined);

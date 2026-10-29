@@ -192,8 +192,6 @@ Deno.test("checkEnvPoison: client-only is inert in both bundles", async () => {
 // URLs — the compat chain maps those to plain paths so the island bundles.
 Deno.test({
   name: "nodeModulesFileUrlPlugin: a file:// island inside node_modules bundles",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const { nodeModulesFileUrlPlugin } = await import("../src/build/next-compat.ts");
   const esbuild = await import("../src/build/esbuild/mod.ts");
@@ -232,8 +230,6 @@ Deno.test({
 // a docs tool, threw "ReferenceError: __filename is not defined" on shadcn/ui's first render).
 Deno.test({
   name: "nodeGlobalsShimPath: an injected shim binds __filename/__dirname in an ESM bundle",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const { nodeGlobalsShimPath } = await import("../src/build/next-compat.ts");
   const esbuild = await import("../src/build/esbuild/mod.ts");
@@ -288,8 +284,6 @@ Deno.test("normalizeNextSpecifier drops Node's explicit .js extension, leaves de
 // app reads `process.env.NEXT_PUBLIC_*` — shadcn/ui's first chunk threw "process is not defined".
 Deno.test({
   name: "browserProcessShimPath: an injected process shim serves env reads in a browser bundle",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const { browserProcessShimPath } = await import("../src/build/next-compat.ts");
   const esbuild = await import("../src/build/esbuild/mod.ts");
@@ -330,8 +324,6 @@ export const pub = process.env.NEXT_PUBLIC_APP_URL; export const isBrowser = pro
 Deno.test({
   name:
     'cacheDirectivePlugin: a module with "use cache" is transformed in the bundle; others fall through',
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const { cacheDirectivePlugin } = await import("../src/build/next-compat.ts");
   const esbuild = await import("../src/build/esbuild/mod.ts");
@@ -371,8 +363,6 @@ Deno.test({
 // bundling it fails on the framework's `@std/*` deps and would double the runtime.
 Deno.test({
   name: "SSR bundle: an absolute import into the framework stays external",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const { bundleNextCompatModules } = await import("../src/build/next-compat.ts");
   const { frameworkFileUrl } = await import("../src/build/bundle.ts");
@@ -446,8 +436,6 @@ Deno.test("isFrameworkModuleUrl: framework sources only, never an in-checkout ap
 Deno.test({
   name:
     "compat assets: image + css?url imports emit content-hashed files with ONE URL for server and client",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const { bundleNextCompatModules } = await import("../src/build/next-compat.ts");
   const { join } = await import("@std/path");
@@ -507,8 +495,6 @@ Deno.test({
 
 Deno.test({
   name: "compat assets: a css?url named through a path alias (~/) is compiled like a relative one",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const { bundleNextCompatModules } = await import("../src/build/next-compat.ts");
   const { join } = await import("@std/path");

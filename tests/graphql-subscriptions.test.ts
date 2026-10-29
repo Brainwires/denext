@@ -25,6 +25,14 @@ import {
 } from "../src/server/request-context.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";
 import { createSchema, fromChannel, graphql } from "../packages/graphql/mod.ts";
+import { releaseFetchBodies } from "./helpers/unread-bodies.ts";
+
+// graphql-yoga's parse / validate caches (lru-cache) memoize their clock for 1 ms behind a timer:
+// let it fire inside each test rather than after it.
+Deno.test.afterEach(() => new Promise((r) => setTimeout(r, 10)));
+
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
 
 type Msg = { text: string };
 

@@ -11,6 +11,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { startBuild } from "../packages/tanstack-start/src/compile.ts";
+import { mockEdgeId, selfDenialSource } from "../packages/tanstack-start/src/mock.ts";
 import {
   compileImportProtection,
   effectiveBehavior,
@@ -31,15 +32,19 @@ watchTests();
  * runtime mock, a self-denial module's), recognizable in a bundle.
  */
 const PREFIX = "tanstack-start-import-protection:";
+/** What the fake's `mockRuntimeModuleIdFromViolation` was handed, in order. */
+const runtimeViolations: Array<{ specifier: string; trace: Array<{ file: string }> }> = [];
 const fakeMocks: StartMocks = {
   MOCK_MODULE_ID: `${PREFIX}mock`,
   MOCK_EDGE_PREFIX: `${PREFIX}mock-edge:`,
   MOCK_RUNTIME_PREFIX: `${PREFIX}mock-runtime:`,
   MOCK_BUILD_PREFIX: `${PREFIX}mock:build:`,
-  mockRuntimeModuleIdFromViolation: (info, mode) =>
-    info.env === "client" && mode !== "off"
+  mockRuntimeModuleIdFromViolation: (info, mode) => {
+    runtimeViolations.push(info as (typeof runtimeViolations)[number]);
+    return info.env === "client" && mode !== "off"
       ? `${PREFIX}mock-runtime:${encodeURIComponent(JSON.stringify({ ...info, mode }))}`
-      : `${PREFIX}mock`,
+      : `${PREFIX}mock`;
+  },
   makeMockEdgeModuleId: (exports, runtimeId) =>
     `${PREFIX}mock-edge:${encodeURIComponent(JSON.stringify({ exports, runtimeId }))}`,
   loadSilentMockModule: () => ({ code: `export default { silent: "SILENT_MOCK" };` }),
@@ -104,8 +109,8 @@ async function app(): Promise<string> {
 const protect = (dir: string, options: ImportProtectionOptions, command: ProtectionCommand) =>
   compileImportProtection(options, dir, join(dir, "src"), command);
 
-/** Build the browser bundle of `src/bad.ts` under `protection`. */
-function build(dir: string, protection: ImportProtection): Promise<unknown> {
+/** Build the browser bundle of `src/<entry>` (default `bad.ts`) under `protection`. */
+function build(dir: string, protection: ImportProtection, entry = "bad.ts"): Promise<unknown> {
   const start = startBuild({
     env: "client",
     toolchain,
@@ -123,7 +128,7 @@ function build(dir: string, protection: ImportProtection): Promise<unknown> {
     clientDir: join(dir, ".denext", "client"),
     entries: [{
       id: "client",
-      source: `import { run } from ${JSON.stringify(join(dir, "src", "bad.ts"))};\nrun();\n`,
+      source: `import { run } from ${JSON.stringify(join(dir, "src", entry))};\nrun();\n`,
     }],
     extraPlugins: [start.plugin],
   });
@@ -169,6 +174,60 @@ Deno.test("tanstack-start import protection: behavior resolves per command, as S
   const off = compileImportProtection({ enabled: false, behavior: "mock" }, "/p", "/p/src", "dev");
   assertEquals(off.behavior, "error");
   assertEquals(compileImportProtection({}, "/p", "/p/src").mockAccess, "error");
+});
+
+Deno.test("tanstack-start import protection: unreadable code keeps the default mock; no trace is []", () => {
+  const dev = compileImportProtection(undefined, "/p", "/p/src", "dev");
+  // Start's parsers throw on code they cannot read: the mock's names are then none.
+  const unreadable: StartMocks = {
+    ...fakeMocks,
+    getMockExportNamesBySource: () => {
+      throw new SyntaxError("unreadable");
+    },
+    getNamedExports: () => {
+      throw new SyntaxError("unreadable");
+    },
+  };
+  runtimeViolations.length = 0;
+  const edge = mockEdgeId(unreadable, dev, {
+    env: "client",
+    importer: "/p/src/bad.ts",
+    importerCode: "import {",
+    specifier: "./db.server.ts",
+  });
+  const payload = JSON.parse(decodeURIComponent(edge.slice(fakeMocks.MOCK_EDGE_PREFIX.length)));
+  assertEquals(payload.exports, [], "no names: the default export stands in");
+  assert(payload.runtimeId.startsWith(fakeMocks.MOCK_RUNTIME_PREFIX), "over the runtime mock");
+  const self = selfDenialSource(unreadable, dev, {
+    env: "client",
+    file: "/p/src/db.server.ts",
+    source: "export const",
+  });
+  assertStringIncludes(self, "export default mock;");
+  assert(!self.includes("export const"), "no named exports");
+  // Readable code that never names the specifier (a side-effect or dynamic import): no names.
+  const unnamed = mockEdgeId(fakeMocks, dev, {
+    env: "client",
+    importer: "/p/src/bad.ts",
+    importerCode: `import { a } from "./other.ts";\n`,
+    specifier: "./db.server.ts",
+  });
+  assertEquals(
+    JSON.parse(decodeURIComponent(unnamed.slice(fakeMocks.MOCK_EDGE_PREFIX.length))).exports,
+    [],
+  );
+  // Without a trace (a build that keeps no import trail) Start is handed an empty one.
+  assertEquals(
+    runtimeViolations.map((v) => [v.specifier, v.trace]),
+    [["./db.server.ts", []], ["src/db.server.ts", []], ["./db.server.ts", []]],
+  );
+  // In a build, unreadable code is still a self-contained mock with no names.
+  const build = compileImportProtection({ behavior: "mock" }, "/p", "/p/src", "build");
+  assertEquals(
+    selfDenialSource(unreadable, build, { env: "client", file: "/p/src/x.ts", source: "{" }),
+    `const mock = { selfContained: "SELF_CONTAINED_MOCK" };\n`,
+  );
+  runtimeViolations.length = 0;
 });
 
 Deno.test({
@@ -249,6 +308,36 @@ Deno.test({
   }
 });
 
+Deno.test({
+  name: "tanstack-start import protection: a dev mock's runtime message lists the import trace",
+}, async () => {
+  const dir = await app();
+  try {
+    // entry → routes/page.ts → bad.ts, which imports the denied file and the denied specifier.
+    await Deno.mkdir(join(dir, "src", "routes"));
+    await Deno.writeTextFile(
+      join(dir, "src", "routes", "page.ts"),
+      `export { run } from "../bad.ts";\n`,
+    );
+    runtimeViolations.length = 0;
+    await warned(() => build(dir, protect(dir, {}, "dev"), join("routes", "page.ts")));
+    // What Start's `mockRuntimeModuleIdFromViolation` got (its message lists the trace).
+    const metas = runtimeViolations.splice(0);
+    assertEquals(metas.length, 2, JSON.stringify(metas));
+    const page = join(dir, "src", "routes", "page.ts");
+    const bad = join(dir, "src", "bad.ts");
+    const db = join(dir, "src", "db.server.ts");
+    const bySpecifier = new Map(metas.map((m) => [m.specifier, m.trace.map((s) => s.file)]));
+    // A denied specifier: the app modules from the entry to its importer, as in Start.
+    assertEquals(bySpecifier.get("@tanstack/react-start/server"), [page, bad]);
+    // A denied file: on to the file itself.
+    assertEquals(bySpecifier.get("src/db.server.ts"), [page, bad, db]);
+  } finally {
+    await stopNextCompat().catch(() => {});
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
+  }
+});
+
 for (
   const behavior of ["mock", { build: "mock" }] as ImportProtectionOptions["behavior"][]
 ) {
@@ -309,6 +398,11 @@ Deno.test({
     "[import-protection] Mocked import used in dev client",
   );
   assertStringIncludes(r.reported as string, 'Denied import: "./db.server.ts"');
+  // With the import trace the plugin hands it, root-relative, entry first.
+  assertStringIncludes(
+    r.tracedReported as string,
+    "Trace:\n  1. src/routes/page.ts\n  2. src/a.ts",
+  );
   // On the server, and with mockAccess "off", it is Start's silent mock.
   assertEquals(r.serverRuntime, "tanstack-start-import-protection:mock");
   assertEquals(r.offRuntime, "tanstack-start-import-protection:mock");

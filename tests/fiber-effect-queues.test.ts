@@ -64,3 +64,45 @@ Deno.test("effect queues are allocated on first use and released after they run"
   assertEquals(queues(fibers.plain), [undefined, undefined, undefined]);
   assertEquals(queues(fibers.effects), [undefined, undefined, undefined]);
 });
+
+Deno.test("a passive flush run early cancels the macrotask scheduled for it", () => {
+  // A commit with passive effects schedules their flush on a macrotask; a flush run sooner
+  // (flushSync / act / the next render) leaves that task nothing to do, so it is cancelled rather
+  // than left pending (a test that ends then would hold a timer the op sanitizer reports).
+  const { doc, container } = makeDom();
+  setDocument(doc as Any);
+  const real = { set: globalThis.setTimeout, clear: globalThis.clearTimeout };
+  const pending = new Set<unknown>();
+  globalThis.setTimeout = ((fn: () => void, ms?: number) => {
+    const id = real.set(() => {
+      pending.delete(id);
+      fn();
+    }, ms);
+    pending.add(id);
+    return id;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((id: Parameters<typeof clearTimeout>[0]) => {
+    pending.delete(id);
+    real.clear(id);
+  }) as typeof clearTimeout;
+  try {
+    const ran: string[] = [];
+    const WithEffect = (): VNode => {
+      useEffect(() => {
+        ran.push("passive");
+      }, []);
+      return h("span", null, "x");
+    };
+    const root = createRoot(container as Any);
+    root.render(h(WithEffect, null));
+    flushSync(); // commits, schedules the passive flush, then runs it at once
+    assertEquals(ran, ["passive"]);
+    assertEquals(pending.size, 0, "the scheduled passive flush was left pending");
+    root.unmount();
+    flushSync();
+    assertEquals(pending.size, 0);
+  } finally {
+    globalThis.setTimeout = real.set;
+    globalThis.clearTimeout = real.clear;
+  }
+});

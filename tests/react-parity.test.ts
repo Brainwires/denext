@@ -90,8 +90,24 @@ Deno.test("parity: denext surface matches React/ReactDOM/Next", async (t) => {
 
 Deno.test("parity: a deno doc past its deadline is killed and named, not awaited forever", async () => {
   const file = `${ROOT}/src/compat/react-version.ts`;
-  const err = await assertRejects(() => docFor(file, 1), Error);
-  assert(/^deno doc \(pid \d+\) still running after 1 ms: /.test(err.message), err.message);
+  // A child that can't finish in time: it beats a heartbeat file until killed. A real `deno doc`
+  // with a 1 ms deadline raced it, and lost whenever the thread was held between the spawn and the
+  // timer for longer than the `deno doc` ran (a CI macos-tests failure).
+  const beat = await Deno.makeTempFile({ prefix: "denext-parity-beat-" });
+  try {
+    const stub = `let n = 0; setInterval(() => Deno.writeTextFileSync(${
+      JSON.stringify(beat)
+    }, String(++n)), 25);`;
+    const err = await assertRejects(() => docFor(file, 1_500, ["eval", stub]), Error);
+    assert(/^deno doc \(pid \d+\) still running after 1500 ms: /.test(err.message), err.message);
+    // Killed, not left running: the heartbeat stops.
+    await new Promise((r) => setTimeout(r, 500));
+    const before = await Deno.readTextFile(beat);
+    await new Promise((r) => setTimeout(r, 500));
+    assertEquals(await Deno.readTextFile(beat), before, "the timed-out child is still running");
+  } finally {
+    await Deno.remove(beat).catch(() => {});
+  }
   // With room to finish it reads the module's symbols.
   const syms = await docFor(file);
   assert(syms.some((s: { name?: string }) => s.name === "REACT_COMPAT_VERSION"));

@@ -3,7 +3,7 @@
 // config validator. Hostile origins: suffix/prefix tricks, `null`, case games, a trailing dot.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import {
   applyCors,
   corsOriginAllowed,

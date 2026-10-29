@@ -3,10 +3,15 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
-import { fromFileUrl } from "@std/path";
 import { buildInChild } from "../helpers/bounded-build.ts";
+import { copyExample } from "../helpers/example-copy.ts";
+import { releaseFetchBodies } from "../helpers/unread-bodies.ts";
 
-const APP = fromFileUrl(new URL("../../examples/typed-api", import.meta.url));
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
+
+// A private copy: building the checkout's example would rewrite its tracked deno.lock.
+const APP = await copyExample("typed-api");
 
 type Ctx = { origin: string; html: string };
 
@@ -176,8 +181,6 @@ async function stepOpenApi(ctx: Ctx): Promise<void> {
 
 Deno.test({
   name: "examples/typed-api: typed routes, batch, live refs, openapi",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   await buildInChild(APP);
   const ac = new AbortController();

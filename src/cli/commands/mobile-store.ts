@@ -33,6 +33,7 @@ import {
   openInspector,
 } from "../../build/mobile-inspect.ts";
 import { capacitorConfigFile, readCapacitorConfig } from "../../build/capacitor-config.ts";
+import { runToExit } from "../../build/exited-output.ts";
 
 /** Print `message` to stderr and exit 1. */
 function fail(message: string): never {
@@ -141,8 +142,7 @@ export async function mobileDoctor(ctx: CommandContext): Promise<void> {
 
 /** Runs a command with its stdout captured. */
 const captureRun: InspectRunner = async (cmd, args) => {
-  const out = await new Deno.Command(cmd, { args: [...args], stdout: "piped", stderr: "null" })
-    .output();
+  const out = await runToExit(cmd, { args: [...args], stderr: "null" });
   return { code: out.code, stdout: new TextDecoder().decode(out.stdout) };
 };
 

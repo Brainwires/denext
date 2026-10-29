@@ -30,8 +30,6 @@ async function findClassChunk(clientDir: string): Promise<string | null> {
 
 Deno.test({
   name: "e2e: a class component hidden in a dependency hydrates via the lazily loaded runtime",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   await Deno.mkdir(DEP_DIR, { recursive: true });
   await copy(join(VENDOR, "acme-ui", "mod.tsx"), join(DEP_DIR, "mod.tsx"), { overwrite: true });

@@ -8,7 +8,7 @@ import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/a
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { inMemoryCacheStore, PageCache, setCacheStore } from "../src/server/cache.ts";
 import { cookies } from "../src/server/request-context.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { AppConfig } from "../src/server/app-config.ts";
 import { cdnCacheControl } from "../src/server/page-cache-flow.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";

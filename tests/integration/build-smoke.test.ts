@@ -246,6 +246,10 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * `deno task budget` on a stock `deno` measures that). A chunk no page can load is no longer emitted. Each gate is asserted in
  * {@link assertGatedRuntimeAbsent} and {@link assertFlightStartupLean} (define path), and the
  * bundle-features fixture proves both still ship when used.
+ * Raised 64,500 → 64,600 B on 2026-10-28 (measured 64,577 B): the reconciler cancels the passive-
+ * effect flush macrotask a sooner flush made moot, and closes its time-slicing MessageChannel once
+ * slicing goes idle, so neither outlives the work (the leak fixes the op / resource sanitizers
+ * found; trimmed to 77 B over the old budget).
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -262,7 +266,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
 }
 
 /** The shared-chunk budget for examples/hello, in raw bytes (its history is in the comment above). */
-const SHARED_BUDGET = 64_500;
+const SHARED_BUDGET = 64_600;
 
 /** The over-budget message: how far over, how to reproduce it, and the two ways out. */
 function budgetMessage(total: number): string {

@@ -260,8 +260,17 @@ export function withDeadline<T>(
     () => ctrl.abort(new DOMException("live render deadline exceeded", "TimeoutError")),
     ms,
   );
+  let work: Promise<T>;
+  try {
+    work = fn(ctrl.signal);
+  } catch (err) {
+    // A resolver that throws before returning a promise: a rejection like any other failure,
+    // and its deadline timer is not left armed for the whole render timeout.
+    clearTimeout(timer);
+    return Promise.reject(err);
+  }
   return Promise.race([
-    fn(ctrl.signal),
+    work,
     new Promise<never>((_, reject) =>
       ctrl.signal.addEventListener(
         "abort",
@@ -334,6 +343,15 @@ export function sanitizeLimits(overrides?: LiveLimits): Required<LiveLimits> {
     }
   }
   return out;
+}
+
+/**
+ * Resolves once the live-view store writes in flight have landed: a socket that closes parks
+ * its views and seals each one's snapshot into the view store in the background, which can
+ * still be running when the hub is torn down. The server awaits it before its teardowns.
+ */
+export function liveViewStoreSettled(): Promise<void> {
+  return viewHub.settled();
 }
 
 /** Tear down the hub (tests / shutdown): clear the cache hook and drop connections. */

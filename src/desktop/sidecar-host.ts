@@ -6,7 +6,7 @@
  * window's server is up.
  *
  * Per launch of the app, before anything starts: an `"auto"` port is picked (a free loopback port,
- * kept across restarts), the secrets are resolved (`"$random"` → 32 random bytes), and the
+ * kept across restarts; a fresh one when another process takes it before the sidecar binds it), the secrets are resolved (`"$random"` → 32 random bytes), and the
  * page-visible values (`expose`, `"$secret:<NAME>"` resolved). The user's login-shell environment
  * (`loginShellEnv`, see `sidecar-login-env.ts`) is read once, when the first sidecar that asks for
  * it starts, and laid under the `env` of those sidecars only.
@@ -46,6 +46,7 @@ import {
   workerSidecarLauncher,
 } from "./sidecar-launch.ts";
 import { registerSidecarStopper } from "./sidecar-registry.ts";
+import { freeLoopbackPort, loopbackPortTaken, pickFreeLoopbackPort } from "../utils/loopback.ts";
 import { parentChildBase, type SidecarChildBase } from "./sidecar-child.ts";
 import {
   captureLoginShellEnv,
@@ -74,6 +75,8 @@ export interface SidecarHostOptions {
   readonly launcher?: (definition: SidecarDefinition) => SidecarLauncher | Promise<SidecarLauncher>;
   /** Pick a free loopback port (tests). */
   readonly pickPort?: () => number;
+  /** Whether another process holds a loopback port (tests; default: try to bind it). */
+  readonly portTaken?: (port: number) => boolean;
   /** The clock (tests). */
   readonly clock?: SidecarClock;
   /** `fetch` for `ready.http` (tests). */
@@ -94,22 +97,33 @@ export interface SidecarHost {
   readonly names: readonly string[];
   /** The handle of one sidecar; throws for an unknown name. */
   handle(name: string): SidecarHandle;
-  /** The `proxy: true` sidecar's name and port, if there is one. */
+  /**
+   * The `proxy: true` sidecar's name and first port, if there is one (the current port is its
+   * handle's `info.port`: a new one when another process took the first).
+   */
   readonly proxied?: { readonly name: string; readonly port: number };
   /** Start every sidecar. */
   startAll(): void;
-  /** Stop every sidecar (gracefully, in parallel). */
+  /**
+   * Stop every sidecar (gracefully, in parallel); resolves once their log files have every line.
+   */
   stopAll(): Promise<void>;
   /** End every sidecar now (synchronously). */
   killAll(): void;
 }
 
-/** A free loopback port (bound, read, released). */
-function freePort(): number {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = listener.addr as Deno.NetAddr;
-  listener.close();
-  return port;
+/** How many picks {@linkcode pickUntaken} tries before it gives up. */
+const PICK_TRIES = 5;
+
+/**
+ * A port from `pick` that no other process holds by now, within {@linkcode PICK_TRIES} picks. A
+ * free port is picked by binding port 0 and releasing it, so another process can take it before
+ * the sidecar binds it: this, and the supervisor's re-pick after a start, cover that.
+ */
+function pickUntaken(pick: () => number, taken: (port: number) => boolean, name: string): number {
+  const port = pickFreeLoopbackPort(pick, taken, PICK_TRIES);
+  if (port !== undefined) return port;
+  throw new Error(`desktop: sidecar "${name}": no free loopback port in ${PICK_TRIES} picks`);
 }
 
 /** The secrets of one launch: `"$random"` values replaced, a function called. */
@@ -201,23 +215,27 @@ function bundledLauncher(
 /** The largest log file before it is rotated to `.1`. */
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
+/** A sidecar's output sink, and the wait for its log file to have every line given so far. */
+interface LogSink {
+  readonly onLine: (stream: "stdout" | "stderr", line: string) => void;
+  /** Settles once every line given so far is in the file (at once without a file). */
+  readonly written: () => Promise<void>;
+}
+
 /** A sidecar's output sink per its `logs` setting. */
 function logSink(
   def: SidecarDefinition,
   dataDir: string | undefined,
   rotateBytes = LOG_ROTATE_BYTES,
-): (stream: "stdout" | "stderr", line: string) => void {
+): LogSink {
   const mode = def.logs ?? SIDECAR_DEFAULTS.logs;
   const toConsole = mode === "inherit" || mode === "both";
   const toFile = (mode === "file" || mode === "both") && dataDir !== undefined;
   const path = toFile ? join(dataDir!, "logs", `sidecar-${def.name}.log`) : "";
   let pending: string[] = [];
-  let flushing = false;
-  const flush = async () => {
-    if (flushing || pending.length === 0) return;
-    flushing = true;
-    const text = pending.join("");
-    pending = [];
+  // One writer at a time, appending what arrived while it wrote before it ends.
+  let writing: Promise<void> | null = null;
+  const writeOnce = async (text: string) => {
     try {
       await Deno.mkdir(join(dataDir!, "logs"), { recursive: true });
       const size = await Deno.stat(path).then((s) => s.size, () => 0);
@@ -227,17 +245,28 @@ function logSink(
       await Deno.writeTextFile(path, text, { append: true });
     } catch (err) {
       console.error(`sidecar ${def.name}: cannot write ${path}: ${(err as Error).message}`);
-    } finally {
-      flushing = false;
-      if (pending.length > 0) void flush();
     }
   };
-  return (stream, line) => {
-    if (toConsole) console.error(`[sidecar:${def.name}]${stream === "stderr" ? "!" : ""} ${line}`);
-    if (toFile) {
-      pending.push(`${new Date().toISOString()} ${stream} ${line}\n`);
-      void flush();
-    }
+  const flush = () => {
+    writing ??= (async () => {
+      while (pending.length > 0) {
+        const text = pending.join("");
+        pending = [];
+        await writeOnce(text);
+      }
+    })().finally(() => writing = null);
+  };
+  return {
+    onLine: (stream, line) => {
+      if (toConsole) {
+        console.error(`[sidecar:${def.name}]${stream === "stderr" ? "!" : ""} ${line}`);
+      }
+      if (toFile) {
+        pending.push(`${new Date().toISOString()} ${stream} ${line}\n`);
+        flush();
+      }
+    },
+    written: () => writing ?? Promise.resolve(),
   };
 }
 
@@ -303,7 +332,9 @@ async function buildSupervisor(
   def: SidecarDefinition,
   port: number | undefined,
   options: SidecarHostOptions,
+  sink: LogSink,
   loginEnv?: () => Promise<Readonly<Record<string, string>> | undefined>,
+  repickPort?: () => number,
 ): Promise<SidecarSupervisor> {
   const secrets = await resolveSecrets(def);
   const launch = withLoginEnv(
@@ -316,16 +347,18 @@ async function buildSupervisor(
     definition: def,
     launch,
     ...(port !== undefined ? { port } : {}),
+    ...(repickPort ? { repickPort, portTaken: options.portTaken ?? loopbackPortTaken } : {}),
     secrets,
     values: resolveValues(def, secrets),
-    onLine: logSink(def, options.dataDir, options.logRotateBytes),
+    onLine: sink.onLine,
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
-  const where = port !== undefined ? ` on 127.0.0.1:${port}` : "";
   supervisor.onStatus((status) => {
     options.emit?.(SIDECARS_CAPABILITY, "status", status);
-    if (status.state === "ready") console.error(`desktop: sidecar ${def.name} ready${where}`);
+    if (status.state !== "ready") return;
+    const where = status.port !== undefined ? ` on 127.0.0.1:${status.port}` : "";
+    console.error(`desktop: sidecar ${def.name} ready${where}`);
   });
   return supervisor;
 }
@@ -349,13 +382,19 @@ function nameArg(args: unknown): string {
 export async function createSidecarHost(options: SidecarHostOptions): Promise<SidecarHost> {
   const problem = sidecarListError(options.sidecars);
   if (problem) throw new Error(`desktop: sidecars${problem}`);
-  const pick = options.pickPort ?? freePort;
+  const pick = options.pickPort ?? freeLoopbackPort;
+  const taken = options.portTaken ?? loopbackPortTaken;
   const supervisors = new Map<string, SidecarSupervisor>();
+  const sinks: LogSink[] = [];
   const loginEnv = loginShellSource(options.sidecars, options);
   let proxied: { name: string; port: number } | undefined;
   for (const def of options.sidecars) {
-    const port = def.port === "auto" ? pick() : def.port;
-    supervisors.set(def.name, await buildSupervisor(def, port, options, loginEnv));
+    const auto = def.port === "auto";
+    const port = auto ? pickUntaken(pick, taken, def.name) : def.port;
+    const repick = auto ? () => pickUntaken(pick, taken, def.name) : undefined;
+    const sink = logSink(def, options.dataDir, options.logRotateBytes);
+    sinks.push(sink);
+    supervisors.set(def.name, await buildSupervisor(def, port, options, sink, loginEnv, repick));
     if (def.proxy === true && port !== undefined) proxied = { name: def.name, port };
   }
 
@@ -371,6 +410,8 @@ export async function createSidecarHost(options: SidecarHostOptions): Promise<Si
   };
   const stopAll = async () => {
     await Promise.all([...supervisors.values()].map((s) => s.stop()));
+    // What the sidecars printed up to their exit is in their log files before this returns.
+    await Promise.all(sinks.map((s) => s.written()));
   };
 
   const capability: DesktopCapability = {

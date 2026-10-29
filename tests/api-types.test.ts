@@ -260,8 +260,6 @@ async function stepRejectsEveryMistake(dir: string): Promise<void> {
 Deno.test({
   name: "the generated ApiSchema type-checks a correct consumer and rejects mistakes",
   // Spawns `deno check` a few times — allow the extra time budget.
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const { dir, outDir } = await makeApp({
     "app/api/hello/route.ts": HELLO_ROUTE,

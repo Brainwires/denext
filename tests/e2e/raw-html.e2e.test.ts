@@ -75,8 +75,6 @@ const ROUTES = ["/", "/client", "/nested", "/lazy", "/iso", "/mismatch"];
 
 Deno.test({
   name: "e2e: hydration adopts dangerouslySetInnerHTML markup (same nodes) on every path",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

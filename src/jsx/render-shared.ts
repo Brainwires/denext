@@ -5,7 +5,7 @@
 // logic that is renderer-neutral lives here, so a fix lands once and cannot drift between
 // renderers.
 
-import { invokeWithRenderPhase } from "./render-phase.ts";
+import { carryServerOwner, invokeFunctionComponent } from "./server-owner.ts";
 import "../runtime/class-flag.ts";
 import { PROVIDER } from "../runtime/context.ts";
 import { isThenable, SUSPENSE } from "../runtime/suspense.ts";
@@ -240,6 +240,7 @@ function inheritKey(child: VNodeChild, key: unknown): VNodeChild {
   const seen = keyedCopies.get(child);
   if (seen?.key === k) return seen;
   const copy: VNode = { ...child, key: k, props: { ...child.props, key: k } };
+  carryServerOwner(child.props, copy.props);
   keyedCopies.set(child, copy);
   return copy;
 }
@@ -258,10 +259,7 @@ function invokeServerComponentUnkeyed(
     }
     throw classComponentsDisabledError();
   }
-  const component = resolveComponentType(type);
-  return invokeWithRenderPhase(() => invokeComponent(component, props)) as
-    | VNodeChild
-    | Promise<VNodeChild>;
+  return invokeFunctionComponent(type, props) as VNodeChild | Promise<VNodeChild>;
 }
 
 // ---- Host elements ------------------------------------------------------------------------

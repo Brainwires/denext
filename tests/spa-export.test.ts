@@ -88,11 +88,8 @@ async function exists(path: string): Promise<boolean> {
   return await Deno.stat(path).then(() => true, () => false);
 }
 
-const bundling = { sanitizeOps: false, sanitizeResources: false };
-
 Deno.test({
   name: "exportSpa: a re-export after a code change leaves exactly the new build in out/",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture();
   const out = join(dir, "out");
@@ -131,7 +128,6 @@ Deno.test({
 
 Deno.test({
   name: "exportSpa: a failed export leaves the previous out/ intact",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture();
   const out = join(dir, "out");
@@ -149,7 +145,6 @@ Deno.test({
 
 Deno.test({
   name: "exportSpa: spa.precompress: false ships no .gz siblings",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture(", precompress: false");
   try {
@@ -164,7 +159,6 @@ Deno.test({
 
 Deno.test({
   name: "exportSpa: spa.ota writes _denext/ota.json last, over every file but .gz siblings",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture(", ota: true");
   try {
@@ -201,7 +195,6 @@ Deno.test({
 
 Deno.test({
   name: "exportSpa: no _denext/ota.json unless spa.ota is on",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture();
   try {
@@ -318,7 +311,6 @@ Deno.test({
 Deno.test({
   name: 'staticExport: outDir ".GIT" is refused and .git survives (case-insensitive FS)',
   ignore: !CASE_INSENSITIVE,
-  ...bundling,
 }, async () => {
   const dir = await spaFixture();
   try {
@@ -394,7 +386,6 @@ async function pagesFixture(): Promise<string> {
 
 Deno.test({
   name: "staticExport (Pages Router): an unsafe outDir is refused before anything is removed",
-  ...bundling,
 }, async () => {
   const dir = await pagesFixture();
   try {
@@ -419,7 +410,6 @@ Deno.test({
 
 Deno.test({
   name: "staticExport (Pages Router): out/ is replaced through the staging swap",
-  ...bundling,
 }, async () => {
   const dir = await pagesFixture();
   const out = join(dir, "out");
@@ -440,7 +430,6 @@ Deno.test({
 
 Deno.test({
   name: "staticExport: an unsafe outDir is refused before anything is written or removed",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture();
   const sibling = `${dir}-sibling`;

@@ -58,8 +58,11 @@ export interface MobileDevDeps {
   readonly run: CommandRunner;
   /** Start `denext dev`, or attach to one already answering at the target URL. */
   readonly startServer: () => Promise<MobileDevServer>;
-  /** Resolves when the developer stops the session (Ctrl-C / SIGTERM). */
-  readonly waitForStop: () => Promise<void>;
+  /**
+   * Resolves when the developer stops the session (Ctrl-C / SIGTERM); stops listening once `until`
+   * aborts (the session ended another way).
+   */
+  readonly waitForStop: (until: AbortSignal) => Promise<void>;
   /** Progress output. */
   readonly log: (line: string) => void;
 }
@@ -723,24 +726,30 @@ export async function runMobileDev(options: MobileDevOptions, deps: MobileDevDep
   const file = await capacitorConfigFile(root);
   if (!file) throw new Error(`no Capacitor project (capacitor.config.*) in ${root}`);
   // Listen for Ctrl-C from the start, so one pressed during `cap copy` still ends in a restore
-  // (rather than the default exit, which would leave the edited config for the next run).
-  const stopped = deps.waitForStop();
-  const server = await deps.startServer();
+  // (rather than the default exit, which would leave the edited config for the next run); stop
+  // listening when the session ends, however it ends.
+  const listening = new AbortController();
+  const stopped = deps.waitForStop(listening.signal);
   try {
-    const plistChanged = await applyDevSession(root, file, server.url, deps.log);
-    await capCopy(deps, root);
-    await enableSessionWebDebugging(root);
-    await pinSessionPlatforms(root);
-    deps.log(nextSteps(server, { project: await xcodeProject(root), plistChanged }));
-    const android = await androidCleartextWarning(root, server.url);
-    if (android) deps.log(android);
-    await Promise.race([stopped, server.finished]);
-  } finally {
+    const server = await deps.startServer();
     try {
-      await restoreMobileDev(root);
-      await copyAfterRestore(deps, root);
+      const plistChanged = await applyDevSession(root, file, server.url, deps.log);
+      await capCopy(deps, root);
+      await enableSessionWebDebugging(root);
+      await pinSessionPlatforms(root);
+      deps.log(nextSteps(server, { project: await xcodeProject(root), plistChanged }));
+      const android = await androidCleartextWarning(root, server.url);
+      if (android) deps.log(android);
+      await Promise.race([stopped, server.finished]);
     } finally {
-      await server.stop();
+      try {
+        await restoreMobileDev(root);
+        await copyAfterRestore(deps, root);
+      } finally {
+        await server.stop();
+      }
     }
+  } finally {
+    listening.abort();
   }
 }

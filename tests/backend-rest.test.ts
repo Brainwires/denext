@@ -16,7 +16,7 @@ import {
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import type { SqlQuery, SqlRow } from "../src/server/postgres.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { setRemoteAddr } from "../src/server/remote-addr.ts";

@@ -106,8 +106,6 @@ const shellScript = (launchUrl: string) =>
 
 Deno.test({
   name: "e2e: expo-router/ui tabs switch on a touch tap; the shell's launch link routes",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   if (!dir) return;

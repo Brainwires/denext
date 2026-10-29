@@ -60,8 +60,6 @@ const POPUP_PRESENT = `!!document.querySelector('[data-testid="popup"]')`;
 
 Deno.test({
   name: "e2e: Base UI menu opens on click and stays open",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   const server = await buildAndServe(dir);

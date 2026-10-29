@@ -82,6 +82,29 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Read the Gleam pin
+        # The unit suites that compile real Gleam (tests/gleam.test.ts, tests/migrate-lustre.test.ts)
+        # run with denext's pinned Gleam, which `toolchain install --with gleam` below downloads into
+        # <DENO_DIR>/denext-deno/gleam/<version>/<target> and SHA-256-verifies
+        # (src/build/gleam-toolchain.ts). The cache below only saves that download (~10 MB); the CLI
+        # still verifies what it finds there before running it. The same step as e2e.yml's.
+        id: gleam-pin
+        shell: bash
+        run: |
+          pin=src/build/gleam-toolchain-pin.json
+          case "$RUNNER_ARCH" in X64) arch=x86_64 ;; ARM64) arch=aarch64 ;; *) arch="$RUNNER_ARCH" ;; esac
+          target="linux-$arch"
+          version=$(jq -r .version "$pin")
+          sha=$(jq -r --arg t "$target" '.targets[$t].sha256' "$pin")
+          echo "path=$HOME/.cache/deno/denext-deno/gleam/$version/$target" >> "$GITHUB_OUTPUT"
+          echo "key=gleam-$target-$version-$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the pinned Gleam compiler
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ steps.gleam-pin.outputs.path }}
+          key: ${{ steps.gleam-pin.outputs.key }}
+
       - name: Format check
         run: deno fmt --check
 
@@ -102,6 +125,10 @@ jobs:
         # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
         run: deno run -A scripts/ci/toolchain-on-path.ts
 
+      - name: Install the pinned Gleam compiler
+        # From the cache above when the pin is unchanged (verified, not downloaded again).
+        run: deno run -A cli.ts toolchain install --with gleam
+
       - name: Type check
         # The toolchain's checker: native TypeScript 7, as `denext check` and the dev overlay run it.
         run: deno check cli.ts mod.ts
@@ -111,7 +138,11 @@ jobs:
         # Excludes tests/e2e/ (real headless Chromium; `deno task test:e2e`) and
         # tests/integration/ (heavy build/bundle tests; the `integration` job).
         # --unstable-kv enables the Deno KV cache-store tests.
+        # DENEXT_TEST_GLEAM: the pinned Gleam installed above, so the suites that compile real
+        # Gleam run (and fail, rather than skip, if that install is broken).
         run: deno task test:unit
+        env:
+          DENEXT_TEST_GLEAM: ${{ steps.gleam-pin.outputs.path }}/gleam
 
       - name: Test-count badge is current
         # Deterministic, source-derived count (like `deno fmt --check`): fails if
@@ -203,6 +234,11 @@ jobs:
 
       - name: cargo audit (packages/*/Cargo.lock)
         run: CARGO_AUDIT="$HOME/.cargo-audit-bin/cargo-audit" deno task audit:cargo
+
+      # The same gate for npm: `deno audit` over the root deno.lock; a high or critical advisory
+      # fails unless security/npm-audit-allow.json holds it (a fix still under the age hold).
+      - name: deno audit (deno.lock)
+        run: deno task audit:npm
 
   # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).
@@ -497,9 +533,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-rc.5
-      DENEXT_DENO_ZIP: deno-cli-3.0.0-rc.5-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: 6004a4ad0696cd12db8cec5921e22196b385ae507b79ababa993110fbb0ea01e
+      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.2
+      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.2-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: 7134d7fe2f399919428e5abde4b6d37e99662531b74d3515ff5910a139d71bc5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 

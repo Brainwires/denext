@@ -4301,7 +4301,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.10.0",
+          "signature": "VERSION: 4.10.1",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -5921,7 +5921,7 @@
           "name": "broadcastChannelTransport",
           "slug": "broadcastChannelTransport",
           "kind": "function",
-          "signature": "broadcastChannelTransport(name?: string): ChannelTransport",
+          "signature": "broadcastChannelTransport(name?: string): ChannelTransport & object",
           "doc": "A transport over the Web BroadcastChannel API: every instance that shares the channel name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.",
           "docFull": "A transport over the Web `BroadcastChannel` API: every instance that shares the channel\nname (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.",
           "params": [
@@ -5930,7 +5930,7 @@
               "doc": "The BroadcastChannel name (default \"denext-channels\")."
             }
           ],
-          "returns": "The transport.",
+          "returns": "The transport; its close() closes the BroadcastChannel (which otherwise keeps the process's event loop alive for as long as it is open).",
           "examples": [],
           "denextOnly": true
         },
@@ -19525,7 +19525,7 @@
           "kind": "function",
           "signature": "createTestApp(projectDir: string, options?: TestAppOptions): Promise<TestApp>",
           "doc": "Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.",
-          "docFull": "Build an in-process request handler for a real project directory — **no build\nstep, no socket**. It renders Server Components, runs Server Actions and\n`middleware.ts`, and reads cookies/sessions, exactly as production does, but it\nships no client bundle — so it drives the **JavaScript-disabled** path your app\nmust support. The handler keeps one `PageCache`, so `revalidate`-based ISR is\nexercised across successive requests. Pair it with {@linkcode createTestClient}.\n\nThe `plugins` in the project's `denext.config.ts` run as they do under `denext dev`: their\nprepare steps once, their route synthesizers over the scanned routes, and their request\nhandlers for what the App Router does not match — so a Pages Router app\n(`@denext/pages-router`) or a plugin-served route answers here too. Their build steps run as\nwell, and the files they emit are served. `jobs/` is registered (`runJob` works) and\n`services/` is started, as `denext start` does ({@linkcode TestAppOptions} turns each off).\nCall `close()` (or `await using`) to stop the services and run the plugins' teardowns. Each\ncall gets its own plugin set.\n\n```ts\nimport { createTestApp, createTestClient } from \"@denext/denext/testing\";\nimport { runJob } from \"@denext/denext/server\";\nawait using app = await createTestApp(\"./\");\nconst client = createTestClient(app);\nawait runJob(\"cleanup\");\n```",
+          "docFull": "Build an in-process request handler for a real project directory — **no build\nstep, no socket**. It renders Server Components, runs Server Actions and\n`middleware.ts`, and reads cookies/sessions, exactly as production does, but it\nships no client bundle — so it drives the **JavaScript-disabled** path your app\nmust support. The handler keeps one `PageCache`, so `revalidate`-based ISR is\nexercised across successive requests. Pair it with {@linkcode createTestClient}.\n\nThe `plugins` in the project's `denext.config.ts` run as they do under `denext dev`: their\nprepare steps once, their route synthesizers over the scanned routes, and their request\nhandlers for what the App Router does not match — so a Pages Router app\n(`@denext/pages-router`) or a plugin-served route answers here too. Their build steps run as\nwell, and the files they emit are served. `jobs/` is registered (`runJob` works) and\n`services/` is started, as `denext start` does ({@linkcode TestAppOptions} turns each off).\nCall `close()` (or `await using`) to stop the services and run the plugins' teardowns; it\nalso cancels the response bodies the test never read, as a server does when the client goes\naway (an unread body keeps the request's deadline timer running). Each call gets its own\nplugin set.\n\n```ts\nimport { createTestApp, createTestClient } from \"@denext/denext/testing\";\nimport { runJob } from \"@denext/denext/server\";\nawait using app = await createTestApp(\"./\");\nconst client = createTestClient(app);\nawait runJob(\"cleanup\");\n```",
           "params": [
             {
               "name": "projectDir",
@@ -33102,6 +33102,18 @@
           "denextOnly": true
         },
         {
+          "name": "LustreInsertMetadata",
+          "slug": "LustreInsertMetadata",
+          "kind": "typeAlias",
+          "signature": "type LustreInsertMetadata = (kind: number, parent: LustreMetadata | null, node: Node, index: number, key: string | null) => LustreMetadata",
+          "doc": "insertMetadataChild(kind, parent, node, index, key) from Lustre's lustre/vdom/reconciler.ffi.mjs: attach metadata to node as child index of parent.",
+          "docFull": "`insertMetadataChild(kind, parent, node, index, key)` from Lustre's\n`lustre/vdom/reconciler.ffi.mjs`: attach metadata to `node` as child `index` of `parent`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "lustreIsland",
           "slug": "lustreIsland",
           "kind": "function",
@@ -33164,6 +33176,18 @@
           "signature": "interface LustreKit",
           "doc": "What denext/gleam's Lustre helpers call: the app's Lustre build, wrapped.",
           "docFull": "What denext/gleam's Lustre helpers call: the app's Lustre build, wrapped.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreMetadata",
+          "slug": "LustreMetadata",
+          "kind": "interface",
+          "signature": "interface LustreMetadata",
+          "doc": "Lustre's reconciler metadata for one node (MetadataNode), as far as adoption touches it.",
+          "docFull": "Lustre's reconciler metadata for one node (`MetadataNode`), as far as adoption touches it.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -33310,13 +33334,17 @@
           "name": "lustreViewIsland",
           "slug": "lustreViewIsland",
           "kind": "function",
-          "signature": "lustreViewIsland(Reconciler: LustreReconcilerClass): (props: LustreViewIslandProps) => VNode",
+          "signature": "lustreViewIsland(Reconciler: LustreReconcilerClass, insertMetadata?: LustreInsertMetadata): (props: LustreViewIslandProps) => VNode",
           "doc": "The browser island for defineLustreView, bound to Lustre's reconciler. The Gleam build calls this in the generated .denext/lustre-view.ts; apps don't.",
           "docFull": "The browser island for `defineLustreView`, bound to Lustre's reconciler. The Gleam build calls\nthis in the generated `.denext/lustre-view.ts`; apps don't.",
           "params": [
             {
               "name": "Reconciler",
               "doc": "Reconciler from the app's @gleam/lustre/lustre/vdom/reconciler.ffi.mjs."
+            },
+            {
+              "name": "insertMetadata",
+              "doc": "insertMetadataChild from the same module: the server-rendered first paint is adopted when the view mounts (its nodes, focus and typed text kept). Without it the first mount replaces the root's contents."
             }
           ],
           "returns": "The island component.",

@@ -2,7 +2,7 @@
 // (invariant 5 — the dev server is stopped only when this verb started it). Every edge is
 // injected: no dev server starts and no window spawns.
 
-import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   type DesktopDevDeps,
   type DesktopDevServer,
@@ -10,7 +10,7 @@ import {
   type DesktopWindow,
   runDesktopDev,
 } from "../src/build/desktop-dev.ts";
-import { devChildEnv, REEXEC_GUARD_ENV } from "../src/cli/dev-attach.ts";
+import { devChildEnv, REEXEC_GUARD_ENV, waitForShutdownSignal } from "../src/cli/dev-attach.ts";
 
 // ---- the target: loopback-only unless --lan (invariant 3) ------------------------------------
 
@@ -121,10 +121,50 @@ Deno.test("desktop dev leaves an attached dev server running on exit (invariant 
 
 Deno.test("desktop dev stops a started dev server when the window closes itself", async () => {
   const f = fakes(false, Promise.resolve()); // the window exits on its own
-  const deps = { ...f.deps, waitForStop: () => new Promise<void>(() => {}) }; // no Ctrl-C
+  let until: AbortSignal | undefined;
+  const deps = {
+    ...f.deps,
+    waitForStop: (signal: AbortSignal) => { // no Ctrl-C
+      until = signal;
+      return new Promise<void>(() => {});
+    },
+  };
   await runDesktopDev(deps);
   assertEquals(f.windowStopped(), 1);
   assertEquals(f.serverStopped(), 1);
+  assertEquals(until?.aborted, true, "the session stops listening for Ctrl-C when it ends");
+});
+
+Deno.test("desktop dev stops listening for Ctrl-C when the dev server fails to start", async () => {
+  const f = fakes(false);
+  let until: AbortSignal | undefined;
+  await assertRejects(
+    () =>
+      runDesktopDev({
+        ...f.deps,
+        startServer: () => Promise.reject(new Error("no dev server")),
+        waitForStop: (signal) => {
+          until = signal;
+          return new Promise<void>(() => {});
+        },
+      }),
+    Error,
+    "no dev server",
+  );
+  assertEquals(until?.aborted, true);
+});
+
+Deno.test("waitForShutdownSignal removes its signal listeners once `until` aborts", async () => {
+  // Under the op / resource sanitizers a listener left registered fails this test: it keeps the
+  // event loop alive and would swallow the next Ctrl-C after the session ended.
+  const ac = new AbortController();
+  let settled = false;
+  waitForShutdownSignal(ac.signal).then(() => settled = true);
+  ac.abort();
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(settled, false, "an ended session's wait never settles");
+  // Already aborted: nothing is registered at all.
+  waitForShutdownSignal(ac.signal).then(() => settled = true);
 });
 
 // ---- the dev server child: never the parent's re-exec guards --------------------------------

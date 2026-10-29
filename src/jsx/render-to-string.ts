@@ -6,7 +6,8 @@
 // read-only SSR dispatcher (state is initial-only; effects don't run).
 
 import { renderScope } from "../runtime/render-scope.ts";
-import { invokeWithRenderPhase, ssrStateSlot } from "./render-phase.ts";
+import { ssrStateSlot } from "./render-phase.ts";
+import { invokeFunctionComponent, serverOwnerStack } from "./server-owner.ts";
 import { FRAGMENT, PORTAL, type VNode, type VNodeChild, type VNodeChildren } from "./types.ts";
 import {
   type Context,
@@ -29,7 +30,7 @@ import "../runtime/class-flag.ts";
 import { classComponentsDisabledError, isClassComponent } from "../compat/class-detect.ts";
 import { renderClassToVNode } from "../compat/class-instance.ts";
 import { markClassRendered } from "../runtime/render-scope.ts";
-import { invokeComponent, isComponentType, resolveComponentType } from "../runtime/react-brands.ts";
+import { isComponentType } from "../runtime/react-brands.ts";
 import {
   aliasedAttrName,
   booleanAttrName,
@@ -305,6 +306,9 @@ export function createSSRDispatcher(
       // renders — which the server never does anyway.
       return new Array(size).fill(MEMO_CACHE_SENTINEL);
     },
+    // The owner stack the dev server's install keeps (src/server/owner-stack.ts); `null`
+    // without it (production).
+    captureOwnerStack: serverOwnerStack,
   };
 }
 
@@ -965,10 +969,7 @@ function invokeSync(type: unknown, props: Props, ctx: RenderCtx): VNodeChild | P
     }
     throw classComponentsDisabledError();
   }
-  const component = resolveComponentType(type);
-  return invokeWithRenderPhase(() => invokeComponent(component, props)) as
-    | VNodeChild
-    | Promise<VNodeChild>;
+  return invokeFunctionComponent(type, props) as VNodeChild | Promise<VNodeChild>;
 }
 
 /** The document's own tags: a root layout renders them; the page render emits their content. */

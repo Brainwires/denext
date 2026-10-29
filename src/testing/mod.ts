@@ -124,8 +124,10 @@ export interface TestAppOptions {
  * (`@denext/pages-router`) or a plugin-served route answers here too. Their build steps run as
  * well, and the files they emit are served. `jobs/` is registered (`runJob` works) and
  * `services/` is started, as `denext start` does ({@linkcode TestAppOptions} turns each off).
- * Call `close()` (or `await using`) to stop the services and run the plugins' teardowns. Each
- * call gets its own plugin set.
+ * Call `close()` (or `await using`) to stop the services and run the plugins' teardowns; it
+ * also cancels the response bodies the test never read, as a server does when the client goes
+ * away (an unread body keeps the request's deadline timer running). Each call gets its own
+ * plugin set.
  *
  * ```ts
  * import { createTestApp, createTestClient } from "@denext/denext/testing";
@@ -150,9 +152,26 @@ export async function createTestApp(
     jobs: options.jobs ?? true,
     services: options.services ?? true,
   });
+  // The bodies handed out, held weakly (a finished response stays collectable): `close()`
+  // cancels the ones a test never read, as a server does when its client goes away. An unread
+  // body keeps the request's deadline armed (and a file body's handle open) until it ends, past
+  // the test.
+  let handed: WeakRef<ReadableStream<Uint8Array>>[] = [];
+  const releaseBodies = async () => {
+    const bodies = handed.map((ref) => ref.deref());
+    handed = [];
+    await Promise.all(bodies.map((b) => b && !b.locked ? b.cancel().catch(() => {}) : undefined));
+  };
   let closed: Promise<void> | undefined;
-  const closeOnce = () => (closed ??= close());
-  return Object.assign((request: Request) => handler(request), {
+  const closeOnce = () => (closed ??= releaseBodies().then(close));
+  return Object.assign(async (request: Request) => {
+    const response = await handler(request);
+    if (response.body) {
+      if (handed.length >= 256) handed = handed.filter((ref) => ref.deref() !== undefined);
+      handed.push(new WeakRef(response.body));
+    }
+    return response;
+  }, {
     close: closeOnce,
     [Symbol.asyncDispose]: closeOnce,
   });

@@ -24,7 +24,7 @@
 // user's store (PowerShell reads the password from stdin), so it is on no command line. A configured `compile.sign` without
 // credentials (or the tool) warns and leaves the binary unsigned; an explicit `--sign` fails.
 
-import { runToExit } from "./exited-output.ts";
+import { runToExitText } from "./exited-output.ts";
 import { dirname, isAbsolute, join } from "@std/path";
 import type { CompileSignConfig } from "../server/config.ts";
 import {
@@ -113,14 +113,8 @@ function redact(text: string, secrets: readonly string[]): string {
 
 /** The default runner: the command with its output captured. */
 const defaultRun: SignCommandRunner = async (cmd) => {
-  const out = await runToExit(cmd[0], {
-    args: cmd.slice(1),
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const text = (b: Uint8Array) => new TextDecoder().decode(b);
-  return { code: out.code, stdout: text(out.stdout), stderr: text(out.stderr) };
+  const { code, stdout, stderr } = await runToExitText(cmd[0], { args: cmd.slice(1) });
+  return { code, stdout, stderr };
 };
 
 /** Run `cmd`; a non-zero exit throws with the command and its output, secrets redacted. */

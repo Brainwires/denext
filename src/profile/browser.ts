@@ -20,6 +20,8 @@
 
 import { type Browser, launch } from "@astral/astral";
 import { runToExit } from "../build/exited-output.ts";
+import { withOwnModules } from "../build/windows-powershell.ts";
+import { ensureBrowserBinary } from "./browser-binary.ts";
 
 interface TrackedBrowser {
   browser: Browser;
@@ -32,22 +34,35 @@ const TEARDOWN_SIGNALS: Deno.Signal[] = Deno.build.os === "windows"
   : ["SIGINT", "SIGTERM"];
 let signalHandler: (() => void) | null = null;
 
+/**
+ * The command that prints the pid LISTENing on `port`: `lsof`, or on Windows PowerShell's
+ * `Get-NetTCPConnection`, loaded from Windows PowerShell's own modules whatever module path it
+ * inherited.
+ *
+ * @param port The TCP port (digits only).
+ * @param windows Whether the host is Windows.
+ * @returns `[command, args]`.
+ */
+export function listeningPidCommand(port: string, windows: boolean): [string, string[]] {
+  return windows
+    ? [
+      "powershell",
+      [
+        "-NoProfile",
+        "-Command",
+        withOwnModules(`(Get-NetTCPConnection -LocalPort ${port} -State Listen).OwningProcess`),
+      ],
+    ]
+    : ["lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]];
+}
+
 /** Chromium's pid from its debug-port endpoint (the process LISTENing on that port). */
 async function chromiumPid(browser: Browser): Promise<number | null> {
   try {
     const port = new URL(browser.wsEndpoint()).port;
     if (!port) return null;
     // Until the lookup exits: Chromium, started beside it, may hold an inherited copy of its pipes.
-    const [cmd, args] = Deno.build.os === "windows"
-      ? [
-        "powershell",
-        [
-          "-NoProfile",
-          "-Command",
-          `(Get-NetTCPConnection -LocalPort ${port} -State Listen).OwningProcess`,
-        ],
-      ]
-      : ["lsof", ["-nP", `-iTCP:${port}`, "-sTCP:LISTEN", "-t"]];
+    const [cmd, args] = listeningPidCommand(port, Deno.build.os === "windows");
     const out = await runToExit(cmd, { args, stderr: "null" });
     const pid = parseInt(new TextDecoder().decode(out.stdout).trim().split(/\s+/)[0], 10);
     return Number.isFinite(pid) ? pid : null;
@@ -115,7 +130,13 @@ function ciBrowserArgs(): string[] {
  * of astral's `launch` directly; still `close()` it in a `finally` for the normal path.
  */
 export async function launchManagedBrowser(extraArgs: string[] = []): Promise<Browser> {
-  const browser = await launch({ headless: true, args: [...ciBrowserArgs(), ...extraArgs] });
+  // The browser comes through denext's download deadlines and retries, not astral's own fetch.
+  const path = await ensureBrowserBinary() ?? undefined;
+  const browser = await launch({
+    headless: true,
+    args: [...ciBrowserArgs(), ...extraArgs],
+    path,
+  });
   const tracked: TrackedBrowser = { browser, pid: await chromiumPid(browser) };
   liveBrowsers.add(tracked);
   ensureSignalHandler();

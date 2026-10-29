@@ -22,7 +22,7 @@ import {
 } from "../src/server/cache.ts";
 import { cookies, createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { DEFAULT_SEGMENT_CONFIG } from "../src/server/segment-config.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { PageProps } from "../src/server/types.ts";
@@ -531,8 +531,6 @@ const isoManifest = (): RouteManifest => ({
 
 Deno.test({
   name: "app ISR: a hung background regen frees its key and keeps serving stale (H2)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const store = inMemoryCacheStore();
   setCacheStore(store);
@@ -578,6 +576,8 @@ Deno.test({
   await r2.text();
   for (let i = 0; i < 50 && regenStarts < 2; i++) await new Promise((r) => setTimeout(r, 5));
   assertEquals(regenStarts, 2, "the freed key allowed a second regen (no permanent freeze)");
+  // Let regen #2's deadline fire too, so its timer ends with this test.
+  await new Promise((r) => setTimeout(r, 150));
 });
 
 // Own path again: the regen backoff is keyed per cache key and lives for the process, so a

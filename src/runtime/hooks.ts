@@ -93,8 +93,9 @@ export interface Dispatcher {
   useCallback?<T>(fn: T, deps?: DependencyList): T;
   /**
    * The rendering component's owner stack, formatted as React's `captureOwnerStack()`.
-   * Optional: only the client fiber dispatcher implements it, and only in development; without
-   * it the public `captureOwnerStack()` returns `null`.
+   * Optional: the client fiber dispatcher implements it in development, and the server
+   * dispatcher answers it once the dev server installs the server owner stack; without either
+   * the public `captureOwnerStack()` returns `null`.
    */
   captureOwnerStack?(): string | null;
 }

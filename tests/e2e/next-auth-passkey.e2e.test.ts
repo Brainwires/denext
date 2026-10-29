@@ -20,8 +20,6 @@ const text = (id: string) => `document.getElementById(${JSON.stringify(id)})?.te
 
 Deno.test({
   name: "e2e: next-auth's Passkey provider registers and signs in on denext's passkeys",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nextauth_passkey_e2e_" });
   await writeNextAuthPasskeyFixture(dir);

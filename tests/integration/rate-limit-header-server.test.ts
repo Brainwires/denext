@@ -113,8 +113,6 @@ async function capturingWarnings(fn: () => Promise<void>): Promise<string[]> {
 
 Deno.test({
   name: "prod server: rateLimitHeader and rateLimitLocalAddresses key every per-address limit",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   await Deno.remove(APP, { recursive: true }).catch(() => {});
   for (const [file, text] of Object.entries(FILES)) {

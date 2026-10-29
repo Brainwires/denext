@@ -12,7 +12,6 @@ import { type DesktopCapCtx, DesktopCapError } from "../src/desktop/extension.ts
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
 
 const OS = Deno.build.os as "darwin" | "windows" | "linux";
-const TEST = { sanitizeOps: false, sanitizeResources: false } as const;
 
 /** The file the server serves (1000 bytes), and another version of it. */
 const BODY = new Uint8Array(1000).map((_, i) => i % 251);
@@ -211,7 +210,6 @@ async function cutDownload(
 }
 
 Deno.test({
-  ...TEST,
   name: "resume: a cut connection keeps .part + sidecar; a resume sends Range/If-Range (206)",
 }, async () => {
   await withServer({ body: BODY, etag: '"v1"', honorRange: true, cutOnce: 400 }, async (t) => {
@@ -235,7 +233,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "resume: a server that ignores Range (200) starts it over: truncated, not appended",
 }, async () => {
   await withServer({ body: BODY, etag: '"v1"', honorRange: false, cutOnce: 400 }, async (t) => {
@@ -250,7 +247,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "resume: a changed validator (If-Range no longer matches) restarts with the new file",
 }, async () => {
   const mode: ServerMode = { body: BODY, etag: '"v1"', honorRange: true, cutOnce: 400 };
@@ -267,7 +263,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "resume: a 416 for a partial that is already the whole file finishes it; else it restarts",
 }, async () => {
   await withServer({ body: BODY, etag: '"v1"', honorRange: true }, async (t) => {
@@ -294,7 +289,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "resume: a 206 whose Content-Range does not continue the kept bytes restarts from zero",
 }, async () => {
   await withServer({ body: BODY, etag: '"v1"', honorRange: true }, async (t) => {
@@ -326,7 +320,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "resume: a weak-ETag-only server is never sent If-Range: the resume starts over",
 }, async () => {
   await withServer({ body: BODY, etag: 'W/"w1"', honorRange: true, cutOnce: 400 }, async (t) => {
@@ -342,7 +335,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "resume: Last-Modified is the validator when the ETag is weak",
 }, async () => {
   const lastModified = "Wed, 21 Oct 2026 07:28:00 GMT";
@@ -359,7 +351,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "resume: after a restart (a new capability instance) the sidecar continues the download",
 }, async () => {
   await withServer({ body: BODY, etag: '"v1"', honorRange: true, cutOnce: 400 }, async (t) => {
@@ -373,7 +364,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "resume SECURITY: the destination must be in a granted dir; another URL's partial restarts",
 }, async () => {
   await withServer({ body: BODY, etag: '"v1"', honorRange: true, cutOnce: 400 }, async (t) => {
@@ -400,7 +390,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "resume SECURITY: a symlinked .part is dropped, never written through",
   ignore: OS === "windows",
 }, async () => {
@@ -422,7 +411,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name:
     "resume SECURITY: the host checks run again on a resume; a LAN resume sends only our headers",
 }, async () => {
@@ -448,7 +436,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "resume: downloadMaxBytes counts the whole file across segments, then drops the partial",
 }, async () => {
   const mode: ServerMode = {
@@ -475,7 +462,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "pauseDownload keeps the partial; cancelDownload drops a paused one; one download per file",
 }, async () => {
   const mode: ServerMode = { body: BODY, etag: '"v1"', honorRange: true, holdOnce: 300 };
@@ -531,7 +517,6 @@ async function namesIn(dir: string): Promise<string[]> {
 }
 
 Deno.test({
-  ...TEST,
   name: "resume: a picked single file keeps its partial in the cache dir, never beside the file",
 }, async () => {
   await withServer({ body: BODY, etag: '"v1"', honorRange: true, cutOnce: 400 }, async (t) => {
@@ -569,7 +554,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "resume SECURITY: appending refuses a partial that was truncated or swapped for a link",
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-dl-guard-" });

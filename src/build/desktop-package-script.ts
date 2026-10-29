@@ -38,6 +38,7 @@ import {
   withSigntoolCertificate,
 } from "./code-signing.ts";
 import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
+import { runToExit } from "./exited-output.ts";
 
 /** A package script's parsed command line. */
 export interface DesktopPackageArgs {
@@ -246,12 +247,7 @@ const WIX_MAJOR = 5;
 /** `wix --version` (e.g. `5.0.2+aa65968c`), or `null` when `wix` does not run. */
 async function wixVersion(): Promise<string | null> {
   try {
-    const out = await new Deno.Command("wix", {
-      args: ["--version"],
-      stdout: "piped",
-      stderr: "null",
-    })
-      .output();
+    const out = await runToExit("wix", { args: ["--version"], stderr: "null" });
     return out.code === 0 ? new TextDecoder().decode(out.stdout).trim() : null;
   } catch {
     return null;

@@ -104,8 +104,6 @@ const b64 = (s: string) => btoa(s);
 Deno.test({
   name: `storage under SQL-RLS: writes land against the object as it is then${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn(t) {
     const pg = await environment();
     installPostgres(undefined);

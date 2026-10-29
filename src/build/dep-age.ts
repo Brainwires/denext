@@ -26,6 +26,24 @@ const DEFAULT_MIN_DEP_AGE_MINUTES = 2880;
 /** The exclude entry `denext create` / `migrate` wrote before 4.5.2. */
 export const DENEXT_EXCLUDE = "jsr:@denext/*";
 
+/** A `minimumDependencyAge.exclude` entry naming a `@denext` package (`jsr:@denext/…`). */
+const DENEXT_ENTRY = /^(?:jsr:)?@denext\//;
+
+/**
+ * The `@denext` entries of a `minimumDependencyAge` value's `exclude` list: the
+ * {@linkcode DENEXT_EXCLUDE} entry denext once wrote, and any other (`"jsr:@denext/denext"`, …),
+ * which denext never writes. Each lets a just-published `@denext` release in before the hold
+ * has passed.
+ *
+ * @param minimumDependencyAge The config's `minimumDependencyAge` value.
+ * @returns The entries, in the list's order.
+ */
+export function denextExemptions(minimumDependencyAge: unknown): string[] {
+  const age = minimumDependencyAge as { exclude?: unknown } | null | undefined;
+  const exclude = age && typeof age === "object" && Array.isArray(age.exclude) ? age.exclude : [];
+  return exclude.filter((e): e is string => typeof e === "string" && DENEXT_ENTRY.test(e.trim()));
+}
+
 /** A project's effective dependency-age rule. */
 export interface DepAgeRule {
   /** The newest publish time Deno resolves; `null` when the hold is off. */

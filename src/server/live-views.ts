@@ -138,6 +138,11 @@ export interface ViewHub<C extends ViewConn> extends ViewHubFrames<C> {
   resumedElsewhere(iid: string): void;
   /** Stop every instance (teardown). */
   dispose(): void;
+  /**
+   * Resolves once every queued view-store write has landed (or failed and been logged): a
+   * parked view's snapshot is still being sealed and written after its socket closed.
+   */
+  settled(): Promise<void>;
   /** Parked instances (tests, diagnostics). */
   parked(): number;
   /** Every running instance, redacted (the DevTools' Live views tab). */
@@ -258,6 +263,8 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
   const parkedViews = new Map<string, Instance<C>>();
   const all = new Set<Instance<C>>();
   const unstorable = new Set<string>();
+  /** The store chains still running (`settled()` waits for them). */
+  const pendingStore = new Set<Promise<void>>();
 
   /** Queue a store operation for `inst` (in order; a failure is logged, never thrown). */
   const storeOp = (inst: Instance<C>, op: (store: LiveViewStore) => Promise<void>): void => {
@@ -277,6 +284,10 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
           }
         })
     );
+    const chain = inst.storeChain;
+    pendingStore.add(chain);
+    // The chain never rejects (its `catch` logs), so this tail never does either.
+    chain.then(() => pendingStore.delete(chain));
   };
 
   /** Tell the other instances `iid` resumed here (the one that parked it stops its copy). */
@@ -791,6 +802,10 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
       for (const inst of [...all]) stop(inst);
       for (const inst of [...parkedViews.values()]) stop(inst);
       parkedViews.clear();
+    },
+
+    async settled() {
+      while (pendingStore.size > 0) await Promise.all(pendingStore);
     },
 
     parked: () => parkedViews.size,

@@ -6,6 +6,7 @@
 import {
   assert,
   assertEquals,
+  assertFalse,
   assertRejects,
   assertStringIncludes,
   assertThrows,
@@ -56,6 +57,7 @@ const pinRuntimeMain = (args: string[], out: string, toolchainOut = `${out}.tool
 import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
 import { canSymlink, sha256Hex, tarGz, zip } from "./_archive-fixtures.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
+import { minGlibcFor } from "../src/build/linux-libc.ts";
 
 const TARGET = "x86_64-unknown-linux-gnu";
 const LIB = "libdenort.so";
@@ -253,7 +255,8 @@ Deno.test("ensureDesktopRuntime gives up on a stalled download: no headers, or n
       )
     );
     const idle = await assertRejects(() => ensure(f), DesktopRuntimeDownloadError);
-    assertStringIncludes(idle.message, "interrupted");
+    // Every attempt (each on a new connection) stalled the same way: the report lists them.
+    assertStringIncludes(idle.message, "attempt 4: no data for 0.2 s");
     assertStringIncludes(idle.message, "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS");
     assertDownloadHint(idle.message);
     assertEquals(await tree(join(f.cacheRoot, f.pin.version)), []);
@@ -294,8 +297,10 @@ Deno.test("ensureDesktopRuntime refuses an oversized and a truncated download", 
         }),
       )
     );
+    // A broken connection is retried on a new one; every attempt broke, so each is reported.
     const cut = (await assertRejects(() => ensure(f), DesktopRuntimeDownloadError)).message;
-    assertStringIncludes(cut, "interrupted");
+    assertStringIncludes(cut, "(4 attempts, each on a new connection):");
+    assertStringIncludes(cut, "\n    attempt 4: ");
     assertDownloadHint(cut);
     f.setBody(() => new Response("nope", { status: 404 }));
     const http = (await assertRejects(() => ensure(f), DesktopRuntimeDownloadError)).message;
@@ -322,6 +327,35 @@ Deno.test("ensureDesktopRuntime: two concurrent installs end with one verified t
         ...(await tree(a.dir)).map((p) => `${TARGET}-webview/${p}`),
       ].sort(),
     );
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test("ensureDesktopRuntime: an install started while another downloads waits for it", async () => {
+  const f = await fixture(await fixtureArchive());
+  try {
+    // The first install holds the cache's download lock while its fetch is held open.
+    let downloading!: () => void;
+    const started = new Promise<void>((r) => downloading = r);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => release = r);
+    const held: typeof fetch = async (input, init) => {
+      downloading();
+      await gate;
+      return await fetch(input, init);
+    };
+    const first = ensure(f, { fetch: held });
+    await started;
+    // A second one in this process reads the cache (a shared lock, rank 3) meanwhile: it waits
+    // for the first, then finds its tree, instead of failing the lock order.
+    const second = ensure(f);
+    await new Promise((r) => setTimeout(r, 50));
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    assertEquals([a.cached, b.cached], [false, true]);
+    assertEquals(a.dir, b.dir);
+    assertEquals(f.hits(), 1);
   } finally {
     await f.close();
   }
@@ -1620,6 +1654,31 @@ Deno.test("pin generator: a 3.0.0-denext.N release pins, built from the manifest
   const toolchain = toolchainPinFromRelease(r.tag, r.manifest, r.sums)!;
   assertEquals([toolchain.version, toolchain.deno], ["3.0.0-denext.1", "2.9.7"]);
   assert(compareDenoVersions(runtime.version, "3.0.0-rc.6") > 0);
+});
+
+Deno.test("toolchainPinFromRelease: pins the manifest's cli.glibc as minGlibc when the release records it", () => {
+  const plain = ownVersionRelease("3.0.0-rc.2");
+  const r0 = ownVersionRelease("3.0.0-rc.2");
+  // A release from before the ceiling was recorded: no field, so denext checks only for musl.
+  assertFalse("minGlibc" in toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!);
+  plain.manifest.cli.glibc = null;
+  assertFalse("minGlibc" in toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!);
+  plain.manifest.cli.glibc = "2.27";
+  const pin = toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!;
+  assertEquals(pin.minGlibc, "2.27");
+  // Recorded as `minGlibc`, the field the host check reads (2.35 without it).
+  assertEquals(minGlibcFor(pin), "2.27");
+  assertEquals(minGlibcFor(toolchainPinFromRelease(r0.tag, r0.manifest, r0.sums)), "2.35");
+  // Written before the targets, so the pin file reads top-down.
+  assertEquals(Object.keys(pin).indexOf("minGlibc"), Object.keys(pin).indexOf("deno") + 1);
+  for (const bad of ["2", "2.27.1", "GLIBC_2.27", 2.27, ""]) {
+    plain.manifest.cli.glibc = bad;
+    assertThrows(
+      () => toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums),
+      Error,
+      "cli.glibc",
+    );
+  }
 });
 
 Deno.test("toolchainPinFromRelease refuses any inconsistency", () => {

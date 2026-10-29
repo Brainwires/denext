@@ -53,8 +53,6 @@ async function nextEvents(
 
 Deno.test({
   name: "e2e: examples/graphql serves a Pothos schema with a channel-backed subscription",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   await t.step("build", async () => {
     const built = await runDeno(["run", "-A", CLI, "build", "."], EXAMPLE, BUILD_TIMEOUT_MS);

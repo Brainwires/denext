@@ -40,7 +40,7 @@ import {
   stalePackageScripts,
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
-import { DENEXT_EXCLUDE } from "../../build/dep-age.ts";
+import { DENEXT_EXCLUDE, denextExemptions } from "../../build/dep-age.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
 import { DENO_TOOLCHAIN, denoToolchainStatus } from "../../build/deno-toolchain.ts";
 import {
@@ -48,7 +48,7 @@ import {
   linuxLibcProblem,
   minGlibcFor,
   probeLinuxLibc,
-  SUPPORTED_LINUX,
+  supportedLinux,
 } from "../../build/linux-libc.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { loadNativeDirs } from "../../build/capacitor-native-dirs.ts";
@@ -65,18 +65,26 @@ import { workspaceRootHint } from "../../build/workspace-imports.ts";
 import {
   explainJailFailures,
   grantsSomething,
+  homeName,
   JAIL_DEFAULT_RELEASE,
   JAIL_DOCS_URL,
+  type JailConfinement,
+  jailConfinement,
   jailEffective,
   jailFailures,
+  type JailHome,
   jailHostListsSupported,
+  jailPatch,
   type JailProject,
   type JailRequirement,
   jailRuntime,
+  jailRuntimeInUse,
   type JailRuntimeSeams,
   type JailSetting,
   jailSnippet,
+  type LifecycleJail,
   readJailProject,
+  readLifecycleJail,
   requiredJailExceptions,
   upstreamByNameAdvice,
 } from "../../build/jail-scripts.ts";
@@ -337,21 +345,36 @@ export async function platformFilesCheck(
 }
 
 /**
- * The dependency-age exemption check: a `deno.json` that lists `"jsr:@denext/*"` in
- * `minimumDependencyAge.exclude` (what `create` / `migrate` wrote before 4.5.2) lets a
- * just-published `@denext/*` release in before Deno's hold has passed. Null without one.
+ * The dependency-age exemption check: a `deno.json` whose `minimumDependencyAge.exclude` lists a
+ * `@denext` entry lets a just-published `@denext` release in before Deno's hold has passed.
+ * `"jsr:@denext/*"` is what `create` / `migrate` wrote before 4.5.2 (`denext upgrade` removes
+ * it); any other (`"jsr:@denext/denext"`, …) denext never writes, so it is the user's to remove.
+ * Null without one.
  */
 export async function depAgeExemptionCheck(dir: string): Promise<Check | null> {
-  const age = (await readDenoJson(dir))?.minimumDependencyAge as { exclude?: unknown } | undefined;
-  const exclude = age && typeof age === "object" && Array.isArray(age.exclude) ? age.exclude : [];
-  if (!exclude.includes(DENEXT_EXCLUDE)) return null;
+  const entries = denextExemptions((await readDenoJson(dir))?.minimumDependencyAge);
+  if (!entries.length) return null;
+  const others = entries.filter((e) => e !== DENEXT_EXCLUDE);
+  const fixes = [
+    ...entries.includes(DENEXT_EXCLUDE)
+      ? [`\`denext upgrade\` removes "${DENEXT_EXCLUDE}" and pins versions old enough`]
+      : [],
+    ...others.length
+      ? [
+        `remove ${others.map((e) => `"${e}"`).join(", ")} from minimumDependencyAge.exclude ` +
+        "yourself (denext never writes it)",
+      ]
+      : [],
+  ];
   return {
     name: "dependency age",
     ok: false,
-    detail: `deno.json exempts "${DENEXT_EXCLUDE}" from Deno's minimum dependency age, so a ` +
-      "just-published @denext/* release resolves before the hold has passed; fix: " +
-      "`denext upgrade` removes the entry and pins versions old enough (keep it only if you " +
-      "publish denext yourself)",
+    detail:
+      `deno.json exempts ${
+        entries.map((e) => `"${e}"`).join(", ")
+      } from Deno's minimum dependency age, so a just-published @denext release resolves before ` +
+      `the hold has passed; fix: ${fixes.join("; ")} (keep an entry only if you publish denext ` +
+      "yourself)",
     critical: false,
   };
 }
@@ -377,6 +400,11 @@ export interface JailScriptsCheckOptions {
   readonly os?: typeof Deno.build.os;
   /** How the runtime in use is found when no `version` is given (tests). */
   readonly runtime?: JailRuntimeSeams;
+  /**
+   * The machine's `lifecycleJail` report (`deno info --json`, runtime 3.0.0-denext.1 and later);
+   * default: read from the project's `deno` when the runtime reports it.
+   */
+  readonly lifecycleJail?: LifecycleJail | null;
 }
 
 /** What the jail can't do on Windows, said with every Windows jail detail. */
@@ -384,7 +412,7 @@ const WINDOWS_JAIL_NOTE = "on Windows the OS can't confine the scripts' other pr
   "(`curl`, a compiler, a downloaded binary): only the scrubbed environment, the scratch HOME " +
   "and every `deno` they start are jailed";
 
-/** Whether deno.json approves any dependency's lifecycle scripts (`allowScripts`). */
+/** Whether the settings (deno.json, or package.json's `"deno"`) approve any lifecycle script. */
 function approvesScripts(denoJson: Record<string, unknown> | null): boolean {
   const v = denoJson?.allowScripts;
   if (v === true) return true;
@@ -410,76 +438,98 @@ export async function jailScriptsCheck(
   dir: string,
   options: JailScriptsCheckOptions = {},
 ): Promise<Check | null> {
+  const name = "lifecycle-script jail";
   const os = options.os ?? Deno.build.os;
-  // The runtime the installs run on, not the pin, unless the caller names one.
-  const runtime = options.version !== undefined ? null : await jailRuntime(options.runtime);
-  const version = runtime ? runtime.version : options.version;
-  const project = await readJailProject(dir, options.env ? { env: options.env } : {});
-  const explained = installLogAdvice(project, options, version, os);
-  const required = (await requiredJailExceptions(project, undefined, version))
-    .filter(grantsSomething);
-  const blocked = jailBlockers(project, os);
-  if (required.length === 0 && explained.length === 0 && blocked.length === 0) return null;
-  const notes = [...runtime?.overridden ? [`installs run on ${runtime.label}`] : [], ...blocked];
-  return jailCheckResult({ project, version, os, required, explained, blocked, notes });
+  const facts = await jailCheckFacts(dir, options, os);
+  const { project, version, explained, required, blocked, on, confinement } = facts;
+  const nothing = required.length === 0 && explained.length === 0 && blocked.length === 0;
+  if (nothing && !confinement) return null;
+  const missing = required.filter((r) => jailPatch(r, project.setting, version) !== null);
+  const note = confinementNote(confinement, on, os);
+  const lead = jailDetailLead(facts);
+  if (on && missing.length) {
+    const why = missingJailDetail(missing, project.setting, version, project.home);
+    return { name, ok: false, detail: lead + why + note, critical: false };
+  }
+  const narrow = on ? narrowableJailExceptions(required, project.setting) : [];
+  if (explained.length || blocked.length || narrow.length) {
+    const body = narrow.map((n) => `${n}; `).join("") + JAIL_DOCS_URL;
+    return { name, ok: false, detail: lead + body, critical: false };
+  }
+  // where the OS can't confine, a project that approves scripts runs them nearly unconfined
+  const exposed = confinement?.state === "no-os-sandbox" && approvesScripts(project.settings);
+  const detail = nothing
+    ? confinement!.detail // the jail's real state on this machine (runtime 3.0.0-denext.1 and later)
+    : passingJailDetail(required, project.setting, on) + note;
+  return { name, ok: !exposed, detail: lead + detail, critical: false };
 }
 
-/** The install log's jail failures explained, and the `upstreamByName` advice when it applies. */
-function installLogAdvice(
-  project: JailProject,
-  options: JailScriptsCheckOptions,
-  version: string | null | undefined,
-  os: typeof Deno.build.os,
-): string[] {
-  const log = options.installLog ?? "";
-  return [
-    ...explainJailFailures(jailFailures(log, os), version, project.setting.packages),
-    ...upstreamByNameAdvice({
-      output: log,
-      denoJson: project.denoJson,
-      env: options.env ?? safeEnv,
-      version,
-    }),
-  ];
-}
-
-/** What {@linkcode jailCheckResult} decides from. */
+/** What {@linkcode jailScriptsCheck} decides from. */
 interface JailCheckFacts {
   readonly project: JailProject;
+  /** The runtime version the installs run on (`null`: a Deno with no jail). */
   readonly version: string | null | undefined;
-  readonly os: typeof Deno.build.os;
-  /** The built-in exceptions the dependencies need. */
-  readonly required: readonly JailRequirement[];
-  /** The install log's advice. */
+  /** Said first: the runtime the installs run on, when it is not the pin. */
+  readonly notes: readonly string[];
+  /** The install log's jail failures and proxy advice, explained. */
   readonly explained: readonly string[];
+  /** The listed dependencies that need an exception. */
+  readonly required: readonly JailRequirement[];
   /** What stops the settings from doing what they look like they do. */
   readonly blocked: readonly string[];
-  /** Said first: the runtime when it is not the pin, then the blockers. */
-  readonly notes: readonly string[];
+  /** Whether the jail is on for the project. */
+  readonly on: boolean;
+  /** The jail's real state on this machine, when the runtime reports it. */
+  readonly confinement: { readonly state: JailConfinement; readonly detail: string } | null;
 }
 
-/** The text a jail check's detail opens with: its notes, then the install log's advice. */
+/** The text a jail check's detail opens with: the runtime, the blockers, the install log's advice. */
 function jailDetailLead(f: JailCheckFacts): string {
-  const notes = f.notes.map((b) => `${b}; `).join("");
+  const notes = [...f.notes, ...f.blocked].map((b) => `${b}; `).join("");
   return f.explained.length
     ? `${notes}the install log shows: ${f.explained.map((l) => l.trim()).join(" · ")}; `
     : notes;
 }
 
-/** The jail check from its facts: missing exceptions, then advice to act on, else passing. */
-function jailCheckResult(f: JailCheckFacts): Check {
-  const { project, version, required } = f;
-  const missing = required.filter((r) => !Object.hasOwn(project.setting.packages, r.entry.name));
+/** Read the project, the install log and the machine's confinement for the jail check. */
+async function jailCheckFacts(
+  dir: string,
+  options: JailScriptsCheckOptions,
+  os: typeof Deno.build.os,
+): Promise<JailCheckFacts> {
+  // The runtime the installs run on, not the pin, unless the caller names one.
+  const runtime = options.version !== undefined ? null : await jailRuntimeInUse(options.runtime);
+  const version = runtime ? runtime.version : options.version;
+  const log = options.installLog ?? "";
+  const project = await readJailProject(dir, {
+    ...(options.env ? { env: options.env } : {}),
+    ...(version !== undefined ? { version } : {}),
+  });
+  const { home } = project;
+  const explained = [
+    ...explainJailFailures(jailFailures(log, os), version, project.setting.packages, home),
+    ...upstreamByNameAdvice({
+      output: log,
+      denoJson: project.settings,
+      home,
+      env: options.env ?? safeEnv,
+      version,
+    }),
+  ];
+  const required = (await requiredJailExceptions(project, undefined, version))
+    .filter(grantsSomething);
   const on = jailEffective(project.setting, version);
-  const windows = on && f.os === "windows" ? ` (${WINDOWS_JAIL_NOTE})` : "";
-  const lead = jailDetailLead(f);
-  const narrow = on ? narrowableJailExceptions(required, project.setting) : [];
-  const [ok, body] = on && missing.length
-    ? [false, missingJailDetail(missing, project.setting, version) + windows]
-    : f.explained.length || f.blocked.length || narrow.length
-    ? [false, narrow.map((n) => `${n}; `).join("") + JAIL_DOCS_URL]
-    : [true, passingJailDetail(required, project.setting, on) + windows];
-  return { name: "lifecycle-script jail", ok, detail: lead + body, critical: false };
+  const confinement = await confinementOf(dir, project, on, version, options);
+  return {
+    project,
+    version,
+    notes: runtime?.overridden ? [`installs run on ${runtime.label}`] : [],
+    explained,
+    required,
+    blocked: jailBlockers(project, os),
+    on,
+    confinement,
+  };
 }
 
 /**
@@ -517,12 +567,57 @@ function narrowableJailExceptions(
 }
 
 /**
+ * What the jail can't confine, said after the check's detail: the runtime's own report where it
+ * has one (nothing for a jail that is off), else the static Windows note.
+ */
+function confinementNote(
+  confinement: JailCheckFacts["confinement"],
+  on: boolean,
+  os: typeof Deno.build.os,
+): string {
+  if (confinement) return confinement.state === "off" ? "" : ` (${confinement.detail})`;
+  return on && os === "windows" ? ` (${WINDOWS_JAIL_NOTE})` : "";
+}
+
+/**
+ * The jail's real state for the project on this machine: off (the project opted out), or what
+ * the runtime's own `lifecycleJail` report says. Null on runtimes before 3.0.0-denext.1 and stock
+ * Deno, which don't report it, and when the report can't be had.
+ */
+async function confinementOf(
+  dir: string,
+  project: JailProject,
+  on: boolean,
+  version: string | null | undefined,
+  options: JailScriptsCheckOptions,
+): Promise<{ readonly state: JailConfinement; readonly detail: string } | null> {
+  if (!jailRuntime(version).confinementInfo) return null;
+  if (!on) {
+    return {
+      state: "off",
+      detail: `off (${project.setting.source}): dependencies' install scripts run unconfined`,
+    };
+  }
+  const report = options.lifecycleJail !== undefined
+    ? options.lifecycleJail
+    : await readLifecycleJail(denoExecutable(), dir);
+  return report ? jailConfinement(report) : null;
+}
+
+/**
  * What stops the project's jail settings from doing what they look like they do: a workspace
  * member's own `supplyChain` (the runtime reads the root's alone), and `paranoid` on Windows,
  * where it refuses every approved install script because the OS can't confine it.
  */
 function jailBlockers(project: JailProject, os: typeof Deno.build.os): string[] {
   const out: string[] = [];
+  if (project.ignoredPackageJsonSettings) {
+    out.push(
+      `${project.ignoredPackageJsonSettings}'s "deno" object sets "allowScripts" or ` +
+        `"supplyChain", which Deno ignores beside a deno.json (the deno.json is the only home ` +
+        `then); fix: move them to ${project.configPath}`,
+    );
+  }
   if (project.ignoredMemberConfig) {
     out.push(
       `${project.ignoredMemberConfig} sets "supplyChain", which Deno ignores in a workspace ` +
@@ -531,7 +626,7 @@ function jailBlockers(project: JailProject, os: typeof Deno.build.os): string[] 
         }`,
     );
   }
-  if (os === "windows" && project.setting.paranoid && approvesScripts(project.denoJson)) {
+  if (os === "windows" && project.setting.paranoid && approvesScripts(project.settings)) {
     out.push(
       `${project.setting.paranoid} turns on paranoid, which refuses to run an approved ` +
         "dependency's install script on Windows (the OS can't confine it), so the approved " +
@@ -546,7 +641,8 @@ function jailBlockers(project: JailProject, os: typeof Deno.build.os): string[] 
 function missingJailDetail(
   missing: readonly JailRequirement[],
   setting: JailSetting,
-  version?: string | null,
+  version: string | null | undefined,
+  home: JailHome,
 ): string {
   const why = setting.state === "on"
     ? `${setting.source} turns it on`
@@ -554,7 +650,8 @@ function missingJailDetail(
   const verb = missing.length === 1 ? "needs" : "need";
   return `${missing.map((r) => r.entry.name).join(", ")} ${verb} an exception: dependencies' ` +
     `install scripts run jailed (${why}) and theirs download or write outside node_modules; ` +
-    `fix: add ${JSON.stringify(JSON.parse(jailSnippet(missing)))} to deno.json (never turn the ` +
+    `fix: add ${JSON.stringify(JSON.parse(jailSnippet(missing, home)))} to ${homeName(home)} ` +
+    "(never turn the " +
     `jail off for it): ${JAIL_DOCS_URL}` + cacheNote(missing, version);
 }
 
@@ -814,7 +911,7 @@ export async function linuxLibcCheck(
     ok: problem === null,
     detail: problem === null
       ? `${found} (denext's Deno needs glibc ${min} or later)`
-      : `${problem}; supported: ${SUPPORTED_LINUX}`,
+      : `${problem}; supported: ${supportedLinux(min)}`,
     critical: false,
   };
 }

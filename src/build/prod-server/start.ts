@@ -3,7 +3,7 @@
 // a SPA to its own server; a compiled app (src/standalone/mod.ts) imports it directly, so the
 // binary's module graph holds the server and none of the SPA server's build tooling.
 
-import { uninstallLiveHub } from "../../server/live.ts";
+import { liveViewStoreSettled, uninstallLiveHub } from "../../server/live.ts";
 import { envGet } from "../../runtime/env-safe.ts";
 import { join } from "@std/path";
 import { applyPlugins, runPluginTeardown } from "../../plugin/mod.ts";
@@ -177,6 +177,9 @@ export async function startAppProdServer(
   // plugin holds open while it stops), then the app's own `onShutdown` (a pool a plugin was
   // given stays open until the plugin is done with it).
   const shutdown = async () => {
+    // A view parked as its socket closed may still be writing its snapshot to the view store
+    // (a plugin's shared store among them): let it land before anything is torn down.
+    await liveViewStoreSettled();
     await stopServices();
     await runPluginTeardown();
     releaseDefaultCacheStore();

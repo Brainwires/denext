@@ -7,28 +7,7 @@ import { assert, assertEquals, assertMatch } from "@std/assert";
 import { join } from "@std/path";
 import { runStack } from "../../src/cli/commands/stack.ts";
 import { parseEnv } from "../../src/server/env.ts";
-
-async function dockerReady(): Promise<boolean> {
-  try {
-    const out = await new Deno.Command("docker", {
-      args: ["compose", "version"],
-      stdout: "null",
-      stderr: "null",
-    }).output();
-    if (!out.success) return false;
-    // The stack's images are Linux images: a Windows-containers engine (GitHub's windows-latest
-    // runner) has no manifest for them.
-    const info = await new Deno.Command("docker", {
-      args: ["info", "--format", "{{.OSType}}"],
-      stdout: "piped",
-      stderr: "null",
-    })
-      .output();
-    return info.success && new TextDecoder().decode(info.stdout).trim() === "linux";
-  } catch {
-    return false;
-  }
-}
+import { dockerReady } from "../helpers/docker-probe.ts";
 
 /** The stack's MinIO image (`src/build/docker-stack.ts`), which ships `mc`. */
 const MINIO_IMAGE =
@@ -166,8 +145,6 @@ function ctx(dir: string, positionals: string[], flags: Record<string, string | 
 Deno.test({
   name: "stack ops on a real Postgres: passwd, health, full backup (Postgres + MinIO) and restore",
   ignore: !(await dockerReady()),
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext-stackops-it-" });
     try {

@@ -15,6 +15,7 @@ import { captureConsole } from "./dev-events.ts";
 import { startSpaDevServer } from "./spa.ts";
 import { isCompat } from "./dev-server/compat.ts";
 import { createDevApp } from "./dev-server/dev-app.ts";
+import { backgroundSettled } from "./dev-server/dev-endpoints.ts";
 import { removeDevInfo, writeDevInfo } from "./dev-server/dev-info.ts";
 import { createDevHandler } from "./dev-server/handler.ts";
 import { createDevLoader } from "./dev-server/loaders.ts";
@@ -25,6 +26,7 @@ import { createDevState, type DevServerOptions, type DevState } from "./dev-serv
 import { watch } from "./dev-server/watch.ts";
 import { effectiveDevOrigins } from "./dev-server/lan.ts";
 import { devSessionToken, withDevTokenGate, withDevTokenParam } from "./dev-server/dev-token.ts";
+import { installServerOwnerStack } from "../server/owner-stack.ts";
 
 export type { DevServerOptions } from "./dev-server/state.ts";
 export { DEV_RELOAD_SCRIPT } from "./dev-server/reload-script.ts";
@@ -69,7 +71,11 @@ function serveDev(st: DevState, handler: (request: Request) => Promise<Response>
     releaseDefaultCacheStore();
     cleanup();
   });
-  return server;
+  // A stopped server is finished once its background runs (a `deno check` child the stop
+  // signal ended) have exited too.
+  return Object.assign(server, {
+    finished: server.finished.then(() => backgroundSettled(st)),
+  });
 }
 
 /** Start the development server for the project described by `options.paths`. */
@@ -117,6 +123,8 @@ export function startDevServer(given: DevServerOptions): Deno.HttpServer {
   // schemes). Production `start` never runs this module, so it stays off there. Mirrors
   // the `window.__denextDev = true` set in the client script.
   (globalThis as { __denextDev?: boolean }).__denextDev = true;
+  // `captureOwnerStack()` during a server render (the client's own is installed by its dev path).
+  installServerOwnerStack();
 
   const st = createDevState(options);
   // A new session tags its own modules (a module id is a project-relative path's hash).

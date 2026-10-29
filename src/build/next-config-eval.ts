@@ -207,6 +207,23 @@ const MACHINE_ENV_KEYS: readonly string[] = [
   "TMPDIR",
 ];
 
+/**
+ * The well-known machine-specific variables the evaluated config reads as their placeholder
+ * whether or not this machine sets them: a config that reads an unset one (`HOME` on Windows,
+ * `USERPROFILE` elsewhere) still depends on the machine it is evaluated on, so the read is
+ * flagged instead of coming back `undefined` and passing unnoticed. `DENO_DIR` and
+ * `XDG_CACHE_HOME` are optional by design and are masked only when set.
+ */
+const ALWAYS_MASKED_ENV_KEYS: readonly string[] = [
+  "HOME",
+  "USERPROFILE",
+  "TMPDIR",
+  "TEMP",
+  "TMP",
+  "APPDATA",
+  "LOCALAPPDATA",
+];
+
 /** What the evaluated config reads for the machine-path variable `key`. */
 function machineEnvPlaceholder(key: string): string {
   return `__denext_machine_env_${key}__`;
@@ -227,8 +244,11 @@ export function machineEnvIn(value: unknown): string[] {
 const MASK_MACHINE_ENV = `
 // (in the evaluator child only: this module never changes its own process's environment)
 const childEnv = Deno.env;
+const alwaysMasked = ${JSON.stringify(ALWAYS_MASKED_ENV_KEYS)};
 for (const key of ${JSON.stringify(MACHINE_ENV_KEYS)}) {
-  if (childEnv.get(key) !== undefined) childEnv.set(key, "__denext_machine_env_" + key + "__");
+  if (childEnv.get(key) !== undefined || alwaysMasked.includes(key)) {
+    childEnv.set(key, "__denext_machine_env_" + key + "__");
+  }
 }
 `;
 

@@ -1,6 +1,6 @@
 {
   "name": "@denext/docs-corpus",
-  "version": "4.10.0",
+  "version": "4.10.1",
   "exports": "./mod.ts",
   "denext": { "catalog": { "kind": "library" } },
   "publish": {

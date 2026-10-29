@@ -350,7 +350,7 @@ const { url, options } = postgresConnection(Deno.env.get("DATABASE_URL")!, undef
 const adapter = new PrismaDenoSql(new Deno.SQL(url, { ...options, max: 20 }));
 ```
 
-**It requires denext's Deno runtime 3.0.0-rc.1 or later** (denext pins 3.0.0-rc.5). The adapter reads
+**It requires denext's Deno runtime 3.0.0-rc.1 or later** (denext pins 3.0.0-denext.2). The adapter reads
 each result column's type from `Deno.SQL`'s `result.columns`, which earlier
 runtimes do not report; on one of them it throws a clear error. `denext dev`,
 `build`, `start` and `test` run on the toolchain runtime; `denoSqlHasColumns()`
@@ -380,7 +380,9 @@ What it reads, and how:
   transactions, batch `$transaction([...])` and every isolation level Postgres
   has (SQLite: `Serializable`). A failed `COMMIT` returns the connection too.
 
-`denext migrate` wires it automatically when the runtime it runs on supports it
+`denext migrate` wires it automatically when the runtime the app runs on supports it (the
+toolchain `denext dev`, `build` and `start` re-run on, even when migrate itself runs on a stock
+Deno; not under `DENEXT_DENO=stock`)
 (`--prisma-adapter deno-sql` to choose it, `npm` for Prisma's own adapters
 below); the next sections describe the npm adapters, which remain for older
 runtimes, CockroachDB and MySQL.
@@ -389,7 +391,11 @@ Its tests: a type round-trip matrix against Postgres 17 and SQLite
 (`tests/prisma-adapter-postgres-integration.test.ts`,
 `tests/prisma-adapter-sqlite.test.ts`) and an end-to-end test that runs
 `prisma migrate dev` and CRUD with relations on both
-(`tests/e2e/prisma-deno-sql.e2e.test.ts`). They need runtime 3.0.0-rc.1 or later
+(`tests/e2e/prisma-deno-sql.e2e.test.ts`), and a migration bed that migrates a real Remix
+app with Prisma on SQLite (the Epic Stack, `tests/migration-bed/epic-stack.test.ts`) with
+`--prisma-adapter auto`, checks the wiring against goldens, seeds it and renders pages that read
+the seeded users through the adapter. An app that also imports `better-sqlite3` itself (the Epic
+Stack's cache database) keeps the `links` shim for it beside the adapter. They need runtime 3.0.0-rc.1 or later
 (an older runtime skips them); a fake `Deno.SQL` checks the adapter on any runtime
 (`tests/prisma-adapter.test.ts`).
 

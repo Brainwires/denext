@@ -45,7 +45,7 @@ ignoreDependencies = [
   "@db/postgres", # examples/postgres-load/deno.json: jsr:@db/postgres@^0.19
   "effect", # examples/effect*/deno.json + packages/effect/deno.json: npm:effect@^3.22.0
   "graphql", # packages/graphql/deno.json + examples/graphql/deno.json: npm:graphql@^16.9.0
-  "graphql-yoga", # packages/graphql/deno.json + examples/graphql/deno.json: npm:graphql-yoga@^5.10.0
+  "graphql-yoga", # packages/graphql/deno.json + examples/graphql/deno.json: npm:graphql-yoga@^5.24.6
   "@pothos/core", # examples/graphql/deno.json: npm:@pothos/core@^4.6.0 (the recommended schema builder)
   "zod", # examples/openapi/deno.json: npm:zod@^4 (defineApi schemas → OpenAPI via Standard JSON Schema)
   "@node-rs/crc32", # examples/desktop-kitchen-sink/deno.json: npm:@node-rs/crc32, the Node-API addon its extension loads

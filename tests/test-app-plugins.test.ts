@@ -176,8 +176,12 @@ export default function Home() { return h("p", null, "plain"); }
       assertEquals(typeof app, "function");
       const res = await app(new Request("http://localhost/"));
       assertStringIncludes(await res.text(), "plain");
-      assertEquals((await app(new Request("http://localhost/plugin/ping"))).status, 404);
+      const unread = await app(new Request("http://localhost/plugin/ping"));
+      assertEquals(unread.status, 404);
       await app.close();
+      // close() cancelled the body the test never read, as a server does when its client goes:
+      // its request deadline does not outlive the app (the op sanitizer, on in deno.json).
+      assert(unread.bodyUsed, "the unread body was released");
       let exists = true;
       await Deno.stat(join(dir, ".denext")).catch(() => (exists = false));
       assert(!exists, "no plugins → no prepare step → no .denext written");

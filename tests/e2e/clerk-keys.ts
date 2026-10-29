@@ -5,6 +5,26 @@
 import { join } from "@std/path";
 import { parseEnv } from "../../src/server/env.ts";
 
+/**
+ * The made-up development instance tests/e2e/clerk-keyless.e2e.test.ts signs its own tokens for
+ * (never contacted: its `CLERK_JWT_KEY` verifies locally).
+ */
+export const KEYLESS_FAPI = "denext-keyless-e2e.clerk.accounts.dev";
+/** The keyless test's placeholder secret key (Clerk refuses it: 401). */
+export const KEYLESS_SECRET_KEY = "sk_test_denext_keyless_e2e";
+/** The keyless test's publishable key: `pk_test_` + base64 of `<KEYLESS_FAPI>$`. */
+export const KEYLESS_PUBLISHABLE_KEY = "pk_test_" + btoa(`${KEYLESS_FAPI}$`);
+
+/** Whether `publishableKey` names the keyless test's made-up instance. */
+function isKeylessInstance(publishableKey: string): boolean {
+  if (publishableKey === KEYLESS_PUBLISHABLE_KEY) return true;
+  try {
+    return atob(publishableKey.slice("pk_test_".length)).replace(/\$$/, "") === KEYLESS_FAPI;
+  } catch {
+    return false;
+  }
+}
+
 /** A Clerk development instance's keys. */
 export interface ClerkTestKeys {
   readonly publishableKey: string;
@@ -29,7 +49,8 @@ async function envFiles(dir: string): Promise<Record<string, string>> {
 
 /**
  * The keys, or null. Only a DEVELOPMENT instance (`pk_test_` / `sk_test_`) is accepted: the tests
- * create and delete users and rely on test mode.
+ * create and delete users and rely on test mode. The keyless test's placeholders are never
+ * accepted, whatever leaks them into the environment: they are not a real instance.
  *
  * @param exampleDir `examples/clerk`.
  */
@@ -40,5 +61,6 @@ export async function clerkTestKeys(exampleDir: string): Promise<ClerkTestKeys |
   const secretKey = fromEnv("CLERK_TEST_SECRET_KEY") ?? fromEnv("CLERK_SECRET_KEY") ??
     files.CLERK_SECRET_KEY?.trim();
   if (!publishableKey?.startsWith("pk_test_") || !secretKey?.startsWith("sk_test_")) return null;
+  if (secretKey === KEYLESS_SECRET_KEY || isKeylessInstance(publishableKey)) return null;
   return { publishableKey, secretKey };
 }

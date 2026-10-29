@@ -13,7 +13,7 @@ import { after } from "../src/server/request-context.ts";
 import { optimizeImage } from "../src/server/image-optimizer.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import type { PageProps } from "../src/server/types.ts";
@@ -157,8 +157,6 @@ Deno.test({
   name: "maxConcurrency + requestTimeout:0 — a wedged render's slot is freed by the backstop (M5)",
   // This test deliberately leaves one request hanging forever (requestTimeout:0),
   // so disable the op/resource sanitizers for it.
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const base = {
       kind: "page" as const,

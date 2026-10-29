@@ -103,8 +103,6 @@ function stepHydrationLogs(logs: string[]): void {
 
 Deno.test({
   name: "e2e: examples/islands — six directives each hydrate on their own schedule",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   const browser = await launchBrowser();

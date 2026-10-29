@@ -4,7 +4,7 @@
 import { applyPlugins, getPluginRequestHandler, resetPlugins } from "../src/plugin/mod.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { createRequestContext, runWithContext } from "../src/server/request-context.ts";
 import { denextAuth } from "../src/server/auth/mod.ts";
@@ -14,6 +14,7 @@ import type { AuthConfig } from "../src/server/auth/types.ts";
 import { backend, type BackendOptions } from "../packages/backend/mod.ts";
 import { runPluginTeardown } from "../src/plugin/mod.ts";
 import { ORIGIN, pipelineCaller } from "./_backend-app.ts";
+import { responseBodies } from "./helpers/response-bodies.ts";
 
 export { ORIGIN };
 
@@ -76,12 +77,14 @@ export async function functionsApp(
     load,
     matchExternal: getPluginRequestHandler(),
   });
-  const call = pipelineCaller(handler);
+  const bodies = responseBodies();
+  const call = pipelineCaller(handler, bodies);
   return {
     root,
     handler,
     call,
     async close() {
+      await bodies.release();
       await runPluginTeardown();
       resetPlugins();
       await Deno.remove(root, { recursive: true });

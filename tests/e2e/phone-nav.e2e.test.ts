@@ -53,8 +53,6 @@ const contentX = (id: number) =>
 
 Deno.test({
   name: "e2e: SwipeableRow in a VirtualList and HistoryStack's swipe back, with real touches",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

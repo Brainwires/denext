@@ -41,6 +41,11 @@ export interface BoundedResult {
   readonly stdoutBytes: Uint8Array<ArrayBuffer>;
   /** stderr's raw bytes. */
   readonly stderrBytes: Uint8Array<ArrayBuffer>;
+  /**
+   * When it timed out: the child's process tree as it stood at the deadline, before the kill
+   * ({@linkcode processTree}); `""` otherwise.
+   */
+  readonly tree: string;
 }
 
 /** Options for {@linkcode runBounded}. */
@@ -81,6 +86,108 @@ async function killProcessTree(pid: number): Promise<void> {
   try {
     Deno.kill(pid, "SIGKILL");
   } catch { /* already gone */ }
+}
+
+/** How long {@linkcode processTree} may take before it gives up. */
+const TREE_DEADLINE_MS = 30_000;
+
+/** One process in a {@linkcode processTree} listing: its ids and the rest of its line. */
+interface ProcessRow {
+  readonly pid: number;
+  readonly ppid: number;
+  readonly line: string;
+}
+
+/**
+ * The OS's process list, one {@linkcode ProcessRow} per process, as `[program, args]`. On Windows
+ * where `Win32_Process` is refused (a non-admin remote session), the processes started since
+ * `pid` stand in for its descendants, under a `# ` note saying so.
+ */
+function processListCommand(pid: number): [string, string[]] {
+  if (Deno.build.os === "windows") {
+    // Seconds of CPU (user + kernel) and the thread / handle counts tell a process spinning from
+    // one blocked on a pipe, a lock or the network.
+    const ps = "try { Get-CimInstance Win32_Process -ErrorAction Stop | ForEach-Object { " +
+      '"$($_.ProcessId)`t$($_.ParentProcessId)`tstarted $($_.CreationDate)' +
+      " cpu $([math]::Round(($_.UserModeTime + $_.KernelModeTime) / 1e7, 1))s" +
+      ' threads $($_.ThreadCount) handles $($_.HandleCount)`t$($_.CommandLine)" } } catch { ' +
+      `$root = Get-Process -Id ${pid} -ErrorAction SilentlyContinue; ` +
+      `"# Win32_Process refused; processes started since pid ${pid} instead, parents unknown"; ` +
+      "if ($root) { Get-Process | Where-Object { $_.StartTime -ge $root.StartTime } | " +
+      `ForEach-Object { "$($_.Id)\`t$(if ($_.Id -eq ${pid}) { 0 } else { ${pid} })\`t` +
+      "started $($_.StartTime) cpu $([math]::Round($_.CPU, 1))s threads $($_.Threads.Count)" +
+      ' handles $($_.HandleCount)`t$($_.Path)" } } }';
+    return ["powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps]];
+  }
+  return ["ps", ["-A", "-o", "pid=,ppid=,etime=,time=,stat=,command="]];
+}
+
+/** Parse {@linkcode processListCommand}'s output: its rows, and its `# ` notes. */
+function processRows(text: string): { rows: ProcessRow[]; notes: string[] } {
+  const rows: ProcessRow[] = [];
+  const notes: string[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    if (raw.startsWith("# ")) notes.push(raw.slice(2));
+    const m = Deno.build.os === "windows"
+      ? /^(\d+)\t(\d+)\t(.*)$/.exec(raw)
+      : /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(raw);
+    if (m) rows.push({ pid: Number(m[1]), ppid: Number(m[2]), line: m[3].replace("\t", "  ") });
+  }
+  return { rows, notes };
+}
+
+/**
+ * `pid` and every descendant, one line each (pid, parent, age or start time, CPU time, state,
+ * command line), indented by depth: what a stalled child and its grandchildren (an esbuild
+ * service, a `deno info`) were doing at the deadline. Never waits past `timeoutMs`: a listing that
+ * doesn't come back in time is killed, and the reason is returned instead.
+ *
+ * @param pid The root of the tree.
+ * @param timeoutMs How long the listing may take.
+ * @returns The listing, or why there is none.
+ */
+export async function processTree(pid: number, timeoutMs = TREE_DEADLINE_MS): Promise<string> {
+  const [program, args] = processListCommand(pid);
+  let lister: Deno.ChildProcess;
+  try {
+    lister = new Deno.Command(program, { args, stdin: "null", stdout: "piped", stderr: "null" })
+      .spawn();
+  } catch (err) {
+    return `(no process list: ${err instanceof Error ? err.message : err})`;
+  }
+  const out: Sink = { text: "", chunks: [] };
+  const read = drain(lister.stdout, out);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((r) => timer = setTimeout(() => r("late"), timeoutMs));
+  const ended = await Promise.race([lister.status, late]);
+  clearTimeout(timer);
+  if (ended === "late") {
+    try {
+      lister.kill("SIGKILL");
+    } catch { /* exited meanwhile */ }
+    await read.cancel();
+    await within(lister.status, 5_000);
+    return `(no process list: ${program} still running after ${timeoutMs} ms)`;
+  }
+  // Exited: read what is in the pipe, but not past a short grace (see the module comment).
+  await within(read.done, 5_000);
+  await read.cancel();
+  const { rows, notes } = processRows(out.text);
+  const lines: string[] = [...notes];
+  const walk = (at: number, depth: number) => {
+    if (depth > 32) return; // a pid reused as its own ancestor
+    for (const row of rows) {
+      if (row.ppid !== at || row.pid === at) continue;
+      lines.push(`${"  ".repeat(depth)}${row.pid} (parent ${row.ppid})  ${row.line}`);
+      walk(row.pid, depth + 1);
+    }
+  };
+  const root = rows.find((r) => r.pid === pid);
+  if (root) lines.push(`${pid}  ${root.line}`);
+  walk(pid, root ? 1 : 0);
+  return lines.length > notes.length
+    ? lines.join("\n")
+    : [...notes, `(pid ${pid} and its descendants are gone)`].join("\n");
 }
 
 /** What {@linkcode drain} has read so far. */
@@ -146,6 +253,7 @@ export async function runBounded(
   const out: Sink = { text: "", chunks: [] };
   const err: Sink = { text: "", chunks: [] };
   const reads = [drain(child.stdout, out), drain(child.stderr, err)];
+  let tree = "";
   const result = (
     status: Deno.CommandStatus | null,
     timedOut: boolean,
@@ -162,6 +270,7 @@ export async function runBounded(
     stderr: err.text,
     stdoutBytes: joined(out),
     stderrBytes: joined(err),
+    tree,
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<"timeout">((resolve) => {
@@ -183,6 +292,8 @@ export async function runBounded(
     if (!drained) await Promise.all(reads.map((r) => r.cancel()));
     return result(done, false, !drained);
   }
+  // What the tree was doing, before it is killed: the process that never finished, by name.
+  tree = await processTree(child.pid);
   await killProcessTree(child.pid);
   // A grandchild the kill could not reach may still hold the pipes: stop reading, don't wait.
   await Promise.all(reads.map((r) => r.cancel()));
@@ -230,7 +341,8 @@ export async function boundedOutput(
   if (r.timedOut) {
     throw new Error(
       `${[program, ...args].join(" ")} (pid ${r.pid}) still running after ${timeoutMs} ms; ` +
-        `its tree was killed. It printed:\n${r.stdout}\n${r.stderr}`,
+        `its tree was killed. It printed:\n${r.stdout}\n${r.stderr}\n` +
+        `Its process tree at the deadline:\n${r.tree}`,
     );
   }
   return {

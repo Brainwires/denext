@@ -1,0 +1,4 @@
+{
+  "tests/backend-supabase-realtime-integration.test.ts": [4, 0],
+  "tests/watchdog.test.ts": [6, 0]
+}

@@ -15,7 +15,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   use them either), and a worker script inside a `"use cache"` body or a PPR shell runs on the
   main thread, since that output cannot carry the response's nonce. Partytown's trade-offs
   apply: a cross-origin script is fetched by the worker and needs CORS, and what a worker script
-  loads is outside the page's `scriptSrc`. SPA mode always uses the main-thread fallback.
+  loads is outside the page's `scriptSrc`. A SPA gets Partytown only where denext serves its
+  shell (`denext dev`, `denext start`), which mints the nonce; a static `denext export` has no
+  response to mint one for, so its worker scripts take the main-thread fallback.
 - **`next/og` renders satori's subset** (flexbox, inline `style`, `tw`): the same engine and
   limits as Next. Arbitrary CSS would need a layout engine or a headless browser.
 - **Async `startTransition` is scoped by a time window by default.** Browsers have no
@@ -25,11 +27,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   An async generator resumed by `throw()` / `return()` at a plain `yield` runs its `catch` /
   `finally` in the caller's context, not its own, and a module whose top-level evaluation throws
   leaves its context current.
-- **`captureOwnerStack()` returns `null` during a server render**, and an element made with
-  `h()` / `createElement` gets its owner when a render returns it (the component whose render
-  result first holds it), not when it is made: one built outside any render (a module-level
-  constant) is owned by the first component that returns it, where React gives it none, and its
-  frame carries no JSX call site.
+- **In `captureOwnerStack()`, an element made with `h()` / `createElement` gets its owner when
+  a render returns it** (the component whose render result first holds it), not when it is
+  made: one built outside any render (a module-level constant) is owned by the first component
+  that returns it, where React gives it none, and its frame carries no JSX call site. During a server render (under `denext dev`) a frame names the
+  component only, since server modules compile JSX to `jsx`, not `jsxDEV`.
 - **A native App Router or SPA build leaves out three runtimes the app's own sources never name**
   (on denext's Deno toolchain, whose `deno bundle` takes `--define`): the clearing of `next/image`
   blur placeholders in server-only trees (kept when a source names `blurDataURL` or a
@@ -178,10 +180,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 - **A Lustre server component (`defineLustreView`) resumes only on the instance that ran it:**
   Lustre's model is an arbitrary Gleam value, so it is never written to the shared view store. A
   reconnect to the same instance within `live.limits.viewResumeSeconds` reattaches the running
-  runtime; a reconnect to another instance, or a later one, runs `init` again. The page's first
-  paint is replaced by Lustre's own render when the view mounts (not adopted), and Lustre's
-  contexts (`provide` / `subscribe`) and client-sent attribute or property changes are not
-  carried over Live.
+  runtime; a reconnect to another instance, or a later one, runs `init` again.
+- **A Lustre server component re-renders after its first mount:** the first paint is adopted, but
+  the whole view a reconnect or a resync sends is rendered anew, so a field focused then loses its
+  focus. A first paint whose markup does not fit the view is re-rendered too.
+- **Lustre's contexts are not carried over Live:** a server component's `provide` / `subscribe`
+  between the view and the page around it never reach the browser. A view has no host attributes
+  or properties to send either: its input is its signed props, so other props render another view.
 - **A stopped Lustre app's timers keep firing:** Lustre gives no way to cancel an app's timers or
   subscriptions from outside. A stopped server component, and (with denext's post-build fix to
   Lustre's client runtime) a stopped `lustreIsland`, ignore what they dispatch, but the timer
@@ -324,9 +329,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
   `allowedDevOrigins`; no wildcards), the CVE-2025-48068 defence.
-- **DevTools can't expand a package's custom hook** (one imported by a bare / `npm:` / `jsr:` /
-  URL specifier): its cells are labelled with the call, and cells two such hooks in a row could
-  share stay unnamed. The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
+- **DevTools can't expand every package's custom hook:** a package module that is CommonJS or
+  minified (its hooks lost their names), a hook imported by a versioned `npm:`, `jsr:` or URL
+  specifier, and any package hook in React Native mode or on the bundled dev path keep their
+  cells labelled with the call, and cells two such hooks in a row could share stay unnamed. The
+  bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
   need the App Router dev server. React DevTools' hooks view and Profiler read React internals,
   so they don't work; use denext's panel.
 - **`createTestApp` sets plugins up in `dev` mode**: their build steps run and what they emit is
@@ -375,7 +382,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   adapter). SQL Server's `@prisma/adapter-mssql` (over npm `mssql`) is wired and unit-tested but
   not yet run against a live SQL Server. SQLite and Postgres
   run over `Deno.SQL` (`denext/prisma-adapter`, no npm driver) only on denext's Deno runtime
-  3.0.0-rc.1 or later; on an earlier runtime migrate wires Prisma's npm adapters
+  3.0.0-rc.1 or later; for an app that runs on an earlier runtime (or under
+  `DENEXT_DENO=stock`) migrate wires Prisma's npm adapters
   (`@prisma/adapter-better-sqlite3` with its `links` shim, `@prisma/adapter-pg`), and CockroachDB
   and MySQL always take theirs.
 - **`denext/prisma-adapter` reads no `interval`, range, composite or geometric Postgres column**
@@ -420,9 +428,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### TanStack Start
 
-- **`@denext/tanstack-start`:** a mocked import's runtime message (`denext dev`) lists no
-  import trace. With `generateRouteTree: false` `denext export` prerenders only the `pages`
-  listed and their links, refusing no route by kind, and the deploy manifest lists its server
+- **`@denext/tanstack-start`:** with `generateRouteTree: false` `denext export` prerenders only
+  the `pages` listed and their links, refusing no route by kind, and the deploy manifest lists its server
   functions alone. The server render and the client bundle are compiled onto denext's React, so
   an app's own `react` import must resolve to denext (`compatibilityMode`).
 

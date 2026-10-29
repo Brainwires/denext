@@ -115,7 +115,6 @@ Deno.test("the scaffolded desktop entry imports the JSON, and the scaffold write
 
 Deno.test({
   name: "the generated entry's module graph excludes denext.config.ts and the plugins it imports",
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir();
   try {

@@ -115,8 +115,6 @@ function stepConsoleLogs(logs: string[]): void {
 
 Deno.test({
   name: "e2e: examples/resumability — no hydration on load, per-island resume, no mismatch",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   const browser = await launchBrowser();
@@ -164,8 +162,6 @@ Deno.test({
 // long-running clock interval doesn't perturb the assertions.
 Deno.test({
   name: "e2e: examples/resumability — a soft nav into a second resumable route wakes its island",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const server = await buildAndServe(EXAMPLE);
   const browser = await launchBrowser();

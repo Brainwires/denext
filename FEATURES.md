@@ -154,7 +154,8 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   window.
 - Class components (`Component`/`PureComponent`) on every path, through an on-demand
   runtime chunk (Part 2 §3.2).
-- React 19.2's `captureOwnerStack()` (the JSX-owner chain with call sites, in development) and
+- React 19.2's `captureOwnerStack()` (the JSX-owner chain with call sites, in development, in
+  client renders and server renders alike) and
   `cacheSignal()` (aborts when the server render ends).
 
 ## Data, caching & ISR
@@ -517,8 +518,9 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   overlay; a **searchable, collapsible component tree** (+ optional host nodes);
   per-node **props, hooks/state, and context** with **named hooks**
   (`count · useState`, custom hooks expanded as breadcrumbs — declared in the same
-  module or across a static relative import — **`useDebugValue`** labels, conditional
-  and package hooks aligned around, and kind labels only where no name is certain),
+  module, across a static import or from an npm package's ES modules — **`useDebugValue`**
+  labels, conditional and uninstrumented hooks aligned around, and kind labels only where no
+  name is certain),
   **live `useState` editing**, **ref-set / reducer-dispatch**, **live prop
   overrides**, and **deep lazy value inspection** (copy / `console.log` /
   store-as-`$d`); **capability badges** (memo/forwardRef/Suspense/…); **"why did

@@ -156,8 +156,6 @@ async function stepWsBridged({ origin }: Ctx): Promise<void> {
 
 Deno.test({
   name: "SPA proxy forwards matched prefixes (HTTP + WS) and rewrites Set-Cookie",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const backend = await startBackend();
   const dir = await makeProxySpa(backend.port);

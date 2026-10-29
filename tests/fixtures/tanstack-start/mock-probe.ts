@@ -56,6 +56,29 @@ try {
   console.error = error;
 }
 
+// A dev edge with its import trace: the runtime mock's report lists it, as Start's dev server's.
+const traced = mockModuleSource(
+  mocks,
+  /import mock from "([^"]+)"/.exec(mockModuleSource(
+    mocks,
+    mockEdgeId(mocks, dev, {
+      env: "client",
+      importer: "/p/src/a.ts",
+      importerCode,
+      specifier: "@tanstack/react-start/server",
+      trace: [{ file: "/p/src/routes/page.ts", specifier: "../a.ts" }, { file: "/p/src/a.ts" }],
+    }),
+  ))?.[1] ?? "",
+);
+const tracedReports: string[] = [];
+console.error = (e: unknown) => void tracedReports.push(String(e instanceof Error ? e.message : e));
+try {
+  const mod = await import(`data:text/javascript,${encodeURIComponent(traced)}`);
+  mod.default.getRequest();
+} finally {
+  console.error = error;
+}
+
 // A build's "mock": Start's build mocks (an edge over a per-violation build id, which loads the
 // silent mock; a denied file as a self-contained mock).
 const build = compileImportProtection({ behavior: "mock" }, root, "/p/src", "build");
@@ -83,6 +106,7 @@ console.log(JSON.stringify({
   selfDenial,
   called,
   reported: reports.join("\n"),
+  tracedReported: tracedReports.join("\n"),
   serverRuntime: mocks.mockRuntimeModuleIdFromViolation(
     { env: "server", importer: "/p/src/a.ts", specifier: "x", trace: [] },
     "error",

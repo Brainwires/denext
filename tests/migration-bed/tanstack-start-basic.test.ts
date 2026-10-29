@@ -54,6 +54,4 @@ const START_BASIC: Bed = {
 
 Deno.test({
   name: "migration bed: TanStack/router start-basic (TanStack Start) migrates, builds, and renders",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, (t) => runBed(t, START_BASIC));

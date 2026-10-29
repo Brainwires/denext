@@ -29,8 +29,6 @@ const READY_TIMEOUT_MS = 60_000;
 
 Deno.test({
   name: "e2e: examples/drizzle runs Drizzle ORM over the better-sqlite3 compat",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   // 1. Install deps (drizzle-orm from npm + the local better-sqlite3 shim).
   const install = await runDeno(["install"], EXAMPLE, INSTALL_TIMEOUT_MS);

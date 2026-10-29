@@ -208,10 +208,41 @@ export const CACHE_DOWNLOAD_LOCK = ".package-cache";
 /** The mutate lock file in a cache root (Cargo's `.package-cache-mutate`). */
 export const CACHE_MUTATE_LOCK = ".package-cache-mutate";
 
+/** Each cache root's in-process queue: the turn the last caller waits on, by absolute path. */
+const cacheTurns = new Map<string, Promise<void>>();
+
+/**
+ * Wait for this process's turn on cache root `root`, first come first served.
+ *
+ * @param root The cache root.
+ * @returns Gives the turn to the next caller (idempotent).
+ */
+async function cacheTurn(root: string): Promise<() => void> {
+  const key = resolve(root);
+  const previous = cacheTurns.get(key) ?? Promise.resolve();
+  let done!: () => void;
+  const mine = new Promise<void>((r) => done = r);
+  cacheTurns.set(key, mine);
+  await previous;
+  let given = false;
+  return () => {
+    if (given) return;
+    given = true;
+    done();
+    if (cacheTurns.get(key) === mine) cacheTurns.delete(key);
+  };
+}
+
 /**
  * Lock a shared cache directory the way Cargo locks `$CARGO_HOME`: `shared` takes the mutate
  * file shared, `download` the download file exclusive, `mutate` both exclusive — mutate first,
  * then download (Cargo's order, rank 3 then 4).
+ *
+ * Within one process the callers on a root take turns (one Cargo process drives its cache from
+ * one thread): an install in flight holds the download lock (rank 4), and a second task's read
+ * (rank 3) waits for it rather than tripping the rank check, which orders one task's nested
+ * locks; the OS locks can't keep two tasks of one process apart. So a caller must not take a
+ * second lock on the same root while it holds one (it would wait for itself).
  *
  * @param root The cache root (the lock files live in it).
  * @param mode The access wanted.
@@ -219,6 +250,26 @@ export const CACHE_MUTATE_LOCK = ".package-cache-mutate";
  * @returns The held lock(s).
  */
 export async function acquireCacheLock(
+  root: string,
+  mode: CacheLockMode,
+  description: string,
+): Promise<Disposable & { release(): void }> {
+  const next = await cacheTurn(root);
+  try {
+    const group = await cacheLocks(root, mode, description);
+    const release = () => {
+      group.release();
+      next();
+    };
+    return { release, [Symbol.dispose]: release };
+  } catch (err) {
+    next();
+    throw err;
+  }
+}
+
+/** The OS locks of {@linkcode acquireCacheLock}, once it is this caller's turn. */
+async function cacheLocks(
   root: string,
   mode: CacheLockMode,
   description: string,

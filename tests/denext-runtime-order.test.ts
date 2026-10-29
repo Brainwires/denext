@@ -19,8 +19,10 @@ import {
 } from "../src/build/net-permissions.ts";
 import {
   JAIL_DEFAULT_RELEASE,
+  JAIL_HARDENED_RELEASE,
   jailHostListsSupported,
   jailOnByDefault,
+  jailRuntime,
   UPSTREAM_BY_NAME_RELEASE,
   upstreamByNameAdvice,
 } from "../src/build/jail-scripts.ts";
@@ -66,6 +68,20 @@ Deno.test("3.0.0-denext.N is past every 3.0.0-rc.N gate", () => {
   assertFalse(needsNoLegacyAbortFlag("3.0.0-rc.6"));
   assert(jailHostListsSupported("3.0.0-rc.6"));
   assertFalse(jailHostListsSupported("3.0.0-rc.5"));
+});
+
+Deno.test("the hardened jail's gate is 3.0.0-denext.1: rc.6 below, denext.1 and denext.2 at or above", () => {
+  assertEquals(JAIL_HARDENED_RELEASE, "3.0.0-denext.1");
+  for (const v of ["3.0.0-rc.5", "3.0.0-rc.6", "3.0.0-rc.7"]) {
+    assert(compareDenoVersions(v, JAIL_HARDENED_RELEASE) < 0, v);
+    const rt = jailRuntime(v);
+    assertFalse(rt.knownPackages || rt.confinementInfo || rt.packageJsonHome, v);
+  }
+  for (const v of DENEXT_LINE) {
+    assert(compareDenoVersions(v, JAIL_HARDENED_RELEASE) >= 0, v);
+    const rt = jailRuntime(v);
+    assert(rt.knownPackages && rt.confinementInfo && rt.packageJsonHome, v);
+  }
 });
 
 Deno.test("3.0.0-denext.N has upstreamByName: a proxy in the env gets the advice", () => {

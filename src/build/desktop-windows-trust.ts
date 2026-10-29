@@ -14,6 +14,9 @@
 // PowerShell 7, `powershell.exe` inherits 7's module path, and then cannot load
 // `Microsoft.PowerShell.Security` (`Get-AuthenticodeSignature`) or `Microsoft.PowerShell.Utility`.
 
+import { withOwnModules } from "./windows-powershell.ts";
+import { runToExit } from "./exited-output.ts";
+
 /** Runs a PowerShell script with extra environment; `null` when PowerShell did not run. */
 export type PowerShellRunner = (
   script: string,
@@ -32,14 +35,12 @@ const defaultPowerShell: PowerShellRunner = async (script, env) => {
   let binary = "";
   for (const b of utf16) binary += String.fromCharCode(b);
   try {
-    const out = await new Deno.Command("powershell.exe", {
+    const out = await runToExit("powershell.exe", {
       args: ["-NoProfile", "-NonInteractive", "-EncodedCommand", btoa(binary)],
       env,
-      stdin: "null",
-      stdout: "piped",
       stderr: "null",
       signal: AbortSignal.timeout(20_000),
-    }).output();
+    });
     return { code: out.code, stdout: new TextDecoder().decode(out.stdout) };
   } catch {
     return null;
@@ -74,22 +75,20 @@ export interface WindowsTrustDeps {
   readonly warn?: (message: string) => void;
 }
 
-/** Windows PowerShell's own module directory first, whatever module path it inherited. */
-const OWN_MODULE_PATH = '$env:PSModulePath = "$PSHOME\\Modules"';
+// Windows PowerShell's own module directory first, whatever module path it inherited.
+const SIGNATURE_SCRIPT = withOwnModules(
+  `$s = Get-AuthenticodeSignature -LiteralPath $env:DENEXT_TRUST_FILE
+@{ status = $s.Status.ToString(); message = [string]$s.StatusMessage } | ConvertTo-Json -Compress`,
+);
 
-const SIGNATURE_SCRIPT = `${OWN_MODULE_PATH}
-$s = Get-AuthenticodeSignature -LiteralPath $env:DENEXT_TRUST_FILE
-@{ status = $s.Status.ToString(); message = [string]$s.StatusMessage } | ConvertTo-Json -Compress`;
-
-const CERTIFICATE_SCRIPT = `${OWN_MODULE_PATH}
-$ErrorActionPreference = 'Stop'
+const CERTIFICATE_SCRIPT = withOwnModules(`$ErrorActionPreference = 'Stop'
 $X = 'System.Security.Cryptography.X509Certificates'
 $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
 $c = New-Object "$X.X509Certificate2" -ArgumentList $env:DENEXT_TRUST_CERT, ([string]$env:DENEXT_TRUST_PASSWORD), $flags
 $ch = New-Object "$X.X509Chain"
 $ch.ChainPolicy.RevocationMode = 'NoCheck'
 $ok = $ch.Build($c)
-@{ trusted = $ok; subject = $c.Subject; selfSigned = ($c.Subject -eq $c.Issuer); problems = @($ch.ChainStatus | ForEach-Object { $_.Status.ToString() }) } | ConvertTo-Json -Compress`;
+@{ trusted = $ok; subject = $c.Subject; selfSigned = ($c.Subject -eq $c.Issuer); problems = @($ch.ChainStatus | ForEach-Object { $_.Status.ToString() }) } | ConvertTo-Json -Compress`);
 
 /** The JSON object a probe printed, or `null`. */
 async function probe(

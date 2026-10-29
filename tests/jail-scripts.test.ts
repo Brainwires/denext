@@ -37,6 +37,7 @@ const REPO_ROOT = fromFileUrl(new URL("..", import.meta.url));
 /** A runtime that jails by default, and one that jails only on request. */
 const RC5 = "3.0.0-rc.5";
 const RC3 = "3.0.0-rc.3";
+const RC6 = "3.0.0-rc.6";
 /** No environment: a test never inherits the runner's `npm_config_*`. */
 const NO_ENV = () => undefined;
 
@@ -69,9 +70,22 @@ function listed(name: string): JailPackageException {
   return entry.exception;
 }
 
+/** A built-in entry's exception as the pinned runtime takes it (what an unversioned run writes). */
+function pinned(name: string): JailPackageException {
+  const entry = JAIL_SCRIPT_EXCEPTIONS.find((e) => e.name === name);
+  assert(entry, name);
+  return entryException(entry);
+}
+
 /** A plain-JSON copy (what JSON.stringify writes) of an exception. */
 function plain(e: JailPackageException): unknown {
   return JSON.parse(JSON.stringify(e));
+}
+
+/** Whether a list entry grants anything: the network, env, project directories or known hosts. */
+function entryGrants(e: (typeof JAIL_SCRIPT_EXCEPTIONS)[number]): boolean {
+  const lists = [e.exception.env, e.writeTargets, e.declaredHosts];
+  return e.exception.net === true || lists.some((l) => (l?.length ?? 0) > 0);
 }
 
 /** One list entry is in deno.json's exception shape and says why. */
@@ -82,8 +96,7 @@ function assertEntryShape(e: (typeof JAIL_SCRIPT_EXCEPTIONS)[number]): void {
     assert(["env", "write", "net"].includes(key), `${e.name}: ${key}`);
   }
   const env = [...e.exception.env ?? []];
-  const grants = e.exception.net === true || env.length > 0 || (e.writeTargets?.length ?? 0) > 0;
-  assert(grants, `${e.name} grants something`);
+  assert(entryGrants(e), `${e.name} grants something`);
   for (const v of env) assert(/^[A-Za-z_][A-Za-z0-9_]*$/.test(v), v);
   assertEquals(env, [...env].sort(), e.name);
   assertFalse((e.via ?? []).includes(e.name), e.name);
@@ -161,6 +174,7 @@ Deno.test("jail: settings merge as the runtime merges them, the stricter one win
   const obj = readJailSetting({
     denoJson: { supplyChain: { jailScripts: { packages: { sharp: { net: true } } } } },
     npmrc: "jail-scripts=false",
+    version: RC5,
   });
   assertEquals([obj.state, obj.packages], ["on", { sharp: { net: true } }]);
   assertEquals(readJailSetting({ denoJson: { supplyChain: { paranoid: true } } }).state, "on");
@@ -176,6 +190,57 @@ Deno.test("jail: settings merge as the runtime merges them, the stricter one win
   assertFalse(jailEffective({ state: "off", packages: {} }, RC5));
   assert(jailEffective({ state: "default", packages: {} }, RC5));
   assertFalse(jailEffective({ state: "default", packages: {} }, RC3));
+});
+
+Deno.test("jail: from runtime 3.0.0-rc.6 a packages-only jailScripts object doesn't ask for the jail", async () => {
+  const packagesOnly = { supplyChain: { jailScripts: { packages: { sharp: { net: true } } } } };
+  const off = readJailSetting({
+    denoJson: packagesOnly,
+    npmrc: "jail-scripts=false",
+    version: RC6,
+  });
+  assertEquals([off.state, off.source, off.packages], [
+    "off",
+    ".npmrc jail-scripts",
+    { sharp: { net: true } },
+  ]);
+  assertEquals(readJailSetting({ denoJson: packagesOnly, version: RC6 }).state, "default");
+  const known = { supplyChain: { jailScripts: { knownPackages: { a: ["a.example"] } } } };
+  assertEquals(readJailSetting({ denoJson: known, version: RC6 }).state, "default");
+  // `net`, or an object with neither list, still asks for it
+  for (const jailScripts of [{ net: false, packages: {} }, { upstreamByName: true }, {}]) {
+    const on = readJailSetting({
+      denoJson: { supplyChain: { jailScripts } },
+      npmrc: "jail-scripts=false",
+      version: RC6,
+    });
+    assertEquals([on.state, on.source], ["on", "deno.json supplyChain.jailScripts"]);
+  }
+  // stock Deno (no jail) keeps the old reading; jailEffective is false there anyway
+  assertEquals(readJailSetting({ denoJson: packagesOnly, version: null }).state, "on");
+  // next to `jail-scripts=false`, nothing is written and doctor flags nothing missing
+  const config = JSON.stringify({ supplyChain: { jailScripts: { packages: {} } } });
+  const dir = await project({
+    "deno.json": config,
+    ".npmrc": "jail-scripts=false\n",
+    "package.json": { dependencies: { re2: "1" } },
+  });
+  try {
+    const r = await applyJailExceptions(dir, { version: RC6, env: NO_ENV });
+    assertEquals([r.action, r.effective], ["off", false]);
+    assertEquals(await Deno.readTextFile(join(dir, "deno.json")), config);
+    const { jailScriptsCheck } = await import("../src/cli/commands/doctor.ts");
+    const check = await jailScriptsCheck(dir, { version: RC6, env: NO_ENV, os: "linux" });
+    assertEquals([check?.ok, check?.detail], [
+      true,
+      "off (.npmrc jail-scripts); re2 runs unconfined",
+    ]);
+    // on rc.5 the same object still turns the jail on
+    const rc5 = await jailScriptsCheck(dir, { version: RC5, env: NO_ENV, os: "linux" });
+    assertEquals(rc5?.ok, false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("jail: npm package names from specifiers", () => {
@@ -720,10 +785,44 @@ Deno.test("migrate: detects the dependencies and writes the exceptions, listed f
     // the real run writes it
     const r = await migrateProject(dir, options);
     assertEquals(r.jailScripts?.action, "written");
-    assertEquals(await jailConfig(dir), { packages: { puppeteer: plain(listed("puppeteer")) } });
+    assertEquals(await jailConfig(dir), { packages: { puppeteer: plain(pinned("puppeteer")) } });
   } finally {
     if (prior !== undefined) Deno.env.set("npm_config_jail_scripts", prior);
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("migrate: an npm workspace member's root settings are left for the user, not refused", async () => {
+  const { migrateProject } = await import("../src/build/migrate.ts");
+  // The member migrated alone (a monorepo's example app): the runtime reads the jail settings
+  // from the npm workspace root, a file outside the directory migrate was pointed at.
+  const rootPackage = JSON.stringify({ private: true, workspaces: ["apps/*"] });
+  const root = await project({
+    "package.json": rootPackage,
+    ".npmrc": "jail-scripts=true\n",
+    "apps/web/package.json": {
+      name: "jail-member",
+      dependencies: { next: "15.3.0", react: "19.1.0", "react-dom": "19.1.0", puppeteer: "24.1.0" },
+    },
+    "apps/web/app/layout.tsx": "export default function L({ children }) { return children; }\n",
+    "apps/web/app/page.tsx": "export default function P() { return null; }\n",
+  });
+  const prior = Deno.env.get("npm_config_jail_scripts");
+  Deno.env.delete("npm_config_jail_scripts");
+  try {
+    const r = await migrateProject(join(root, "apps/web"), {
+      denextLocalPath: REPO_ROOT,
+      from: "next",
+    });
+    assertEquals(r.jailScripts?.action, "manual");
+    const said = r.jailScripts!.lines.join("\n");
+    assertStringIncludes(said, "puppeteer needs a lifecycle-script jail exception");
+    assertStringIncludes(said, join(root, "package.json"), "names the file to edit");
+    assertStringIncludes(r.jailScripts!.snippet!, '"puppeteer"');
+    assertEquals(await Deno.readTextFile(join(root, "package.json")), rootPackage, "untouched");
+  } finally {
+    if (prior !== undefined) Deno.env.set("npm_config_jail_scripts", prior);
+    await Deno.remove(root, { recursive: true });
   }
 });
 
@@ -794,13 +893,13 @@ Deno.test("add: a failed add takes its jail exceptions out; a good one keeps the
       }),
       1,
     );
-    assertEquals(seen, { packages: { sharp: plain(listed("sharp")) } });
+    assertEquals(seen, { packages: { sharp: plain(pinned("sharp")) } });
     assertEquals(await Deno.readTextFile(join(failed, "deno.json")), config);
     // A good add keeps them.
     const good = await project({ "deno.json": config, ".npmrc": "jail-scripts=true\n" });
     dirs.push(good);
     assertEquals(await addWithJail(ctx(good), () => Promise.resolve(0)), 0);
-    assertEquals(await jailConfig(good), { packages: { sharp: plain(listed("sharp")) } });
+    assertEquals(await jailConfig(good), { packages: { sharp: plain(pinned("sharp")) } });
     // A failed add that changed deno.json itself: left as it is, and said so.
     const changed = await project({ "deno.json": config, ".npmrc": "jail-scripts=true\n" });
     dirs.push(changed);
@@ -810,7 +909,7 @@ Deno.test("add: a failed add takes its jail exceptions out; a good one keeps the
       return 2;
     });
     assertEquals(code, 2);
-    assertEquals(await jailConfig(changed), { packages: { sharp: plain(listed("sharp")) } });
+    assertEquals(await jailConfig(changed), { packages: { sharp: plain(pinned("sharp")) } });
     assertStringIncludes(out.errs.join("\n"), "were left in place");
   } finally {
     out.restore();
@@ -829,7 +928,7 @@ Deno.test("create/init: an existing package.json's dependencies get their except
   const out = capture();
   try {
     await initCommand.run(makeCtx({ positionals: [dir], flags: { yes: true, "no-vscode": true } }));
-    assertEquals(await jailConfig(dir), { packages: { keytar: plain(listed("keytar")) } });
+    assertEquals(await jailConfig(dir), { packages: { keytar: plain(pinned("keytar")) } });
     assertStringIncludes(out.logs.join("\n"), "supplyChain.jailScripts exception for keytar");
   } finally {
     out.restore();

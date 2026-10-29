@@ -12,7 +12,7 @@ import { reactRouter, type ReactRouterOptions } from "../packages/react-router/m
 import { clearLoadContext } from "../src/compat/remix/load-context.ts";
 import { applyPlugins, resetPlugins } from "../src/plugin/mod.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { defaultLoader } from "../src/server/mod.ts";
 import { PageCache } from "../src/server/cache.ts";
 

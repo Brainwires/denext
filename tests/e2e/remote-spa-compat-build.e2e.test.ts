@@ -117,8 +117,6 @@ async function exportViaRemoteCli(
 
 Deno.test({
   name: "e2e: a migrated pnpm compat SPA exports through a REMOTE (JSR-shaped) denext",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const server = new Deno.Command(DENO, {
     args: ["run", "--allow-read", "--allow-net", "jsr:@std/http/file-server", "--port", "0", REPO],
@@ -144,6 +142,7 @@ Deno.test({
     try {
       await server.status;
     } catch { /* already reaped */ }
+    await server.stdout.cancel().catch(() => {}); // the rest of its output, never read
     await Deno.remove(root, { recursive: true }).catch(() => {});
   }
 });
@@ -155,12 +154,14 @@ async function readServerOrigin(stream: ReadableStream<Uint8Array>): Promise<str
   let buf = "";
   const deadline = Date.now() + READY_TIMEOUT_MS;
   while (Date.now() < deadline) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const { value, done } = await Promise.race([
       reader.read(),
       new Promise<{ value: undefined; done: true }>((r) =>
-        setTimeout(() => r({ value: undefined, done: true }), READY_TIMEOUT_MS)
+        timer = setTimeout(() => r({ value: undefined, done: true }), READY_TIMEOUT_MS)
       ),
     ]);
+    clearTimeout(timer);
     if (done) break;
     buf += decoder.decode(value);
     const m = buf.match(/http:\/\/[^\s]+/);

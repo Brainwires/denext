@@ -174,13 +174,27 @@ function runningDevToken(project: string): string | undefined {
   }
 }
 
-/** Resolves on the first Ctrl-C / SIGTERM (and stops listening). */
-export function waitForShutdownSignal(): Promise<void> {
+/**
+ * Resolves on the first Ctrl-C / SIGTERM (and stops listening). A session that ends another way
+ * (its window closed, its server gone) aborts `until`: the listeners go then, and the promise never
+ * settles. A listener left behind keeps the process's event loop alive and swallows the next
+ * Ctrl-C.
+ *
+ * @param until Stops listening when it aborts.
+ * @returns Settles on the signal.
+ */
+export function waitForShutdownSignal(until?: AbortSignal): Promise<void> {
   return new Promise((done) => {
-    const handler = () => {
+    if (until?.aborted) return;
+    const remove = () => {
       for (const signal of SHUTDOWN_SIGNALS) Deno.removeSignalListener(signal, handler);
+      until?.removeEventListener("abort", remove);
+    };
+    const handler = () => {
+      remove();
       done();
     };
     for (const signal of SHUTDOWN_SIGNALS) Deno.addSignalListener(signal, handler);
+    until?.addEventListener("abort", remove, { once: true });
   });
 }

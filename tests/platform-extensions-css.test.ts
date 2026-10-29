@@ -15,6 +15,7 @@ import { removeTempDir } from "./helpers/temp.ts";
 import { runBounded } from "./helpers/bounded-command.ts";
 import { buildInChild, exportInChild } from "./helpers/bounded-build.ts";
 import { watchTests } from "./helpers/watchdog.ts";
+import "./helpers/esbuild-after-each.ts";
 
 // Builds in this process: a stalled one fails its test instead of holding the CI job.
 watchTests();

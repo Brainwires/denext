@@ -8,6 +8,10 @@
 // commit that is a Remix app; `denext migrate --from remix` is the path under test. Later
 // commits are React Router 7 apps (a different bed, the `@denext/react-router` plugin).
 //
+// The Prisma wiring is checked against goldens right after migrate (`files`): with
+// `--prisma-adapter auto` the SQLite datasource takes `denext/prisma-adapter` over `Deno.SQL`, and
+// the /users routes below read the seeded users through it.
+//
 // Setup mirrors the app's README, minus Playwright: copy `.env.example`, `deno task
 // prisma:setup` (migrate generated it: prisma generate + migrate deploy), the icon sprite
 // build (gitignored output the routes import), and the seed (creates the `kody` admin the
@@ -23,8 +27,31 @@ const EPIC_STACK: Bed = {
   sha: "b667696a997b7d5e371039206d97f931ac063513",
   install: [["npm", "install", "--ignore-scripts", "--no-audit", "--no-fund"]],
   prepare: (dir) => Deno.copyFile(join(dir, ".env.example"), join(dir, ".env")),
-  migrate: ["--from", "remix"],
+  // `auto` (the default, named so the bed pins it): denext's Deno runs the app, so Prisma's SQLite
+  // datasource goes over `Deno.SQL` (`denext/prisma-adapter`) with no npm driver.
+  migrate: ["--from", "remix", "--prisma-adapter", "auto"],
   kind: "remix",
+  files: [
+    {
+      path: "app/utils/db.server.ts",
+      contains: [
+        `import { PrismaDenoSql as __PrismaDenoSql } from "denext/prisma-adapter";`,
+        "const __denextPrismaAdapter = () => new __PrismaDenoSql(__denextDbUrl);",
+        "new PrismaClient({ adapter: __denextPrismaAdapter(),",
+      ],
+      absent: ["@prisma/adapter-better-sqlite3", "@prisma/client"],
+    },
+    {
+      path: "prisma/schema.prisma",
+      contains: ['provider        = "prisma-client"', 'runtime         = "deno"'],
+    },
+    {
+      path: "deno.json",
+      // The app's own cache database is on better-sqlite3: the `links` shim stays for it.
+      contains: ['"denext/prisma-adapter"', '"prisma:setup"', "patch/better-sqlite3"],
+      absent: ["@prisma/adapter-better-sqlite3"],
+    },
+  ],
   // A Remix migration's start keeps -A (not yet verified under the least-privilege set).
   start: "all",
   afterMigrate: [
@@ -34,7 +61,8 @@ const EPIC_STACK: Bed = {
     // Deno), so it gets a short deadline and its own "done" line as the success marker.
     {
       cmd: [
-        "$deno",
+        // On denext's Deno, as the app runs: its Prisma client reads SQLite over `Deno.SQL`.
+        "$denext",
         "run",
         "-A",
         "--node-modules-dir=manual",
@@ -73,6 +101,4 @@ const EPIC_STACK: Bed = {
 
 Deno.test({
   name: "migration bed: epicweb-dev/epic-stack (Remix) migrates, builds, and renders",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, (t) => runBed(t, EPIC_STACK));

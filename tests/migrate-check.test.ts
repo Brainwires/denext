@@ -706,6 +706,42 @@ Deno.test("shellPathArg: a path as the user's shell reads it back", () => {
   assertEquals(shellPathArg("/tmp/a\\b$c", "linux"), "'/tmp/a\\b$c'");
 });
 
+Deno.test("migrate --check: a next.config that reads an unset machine path (HOME on Windows) is flagged", async () => {
+  // A well-known machine-specific variable this machine does NOT set (USERPROFILE off Windows,
+  // HOME on it): before, only variables that were set were masked, so the read passed unnoticed.
+  const unset = ["USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "TMPDIR"]
+    .find((k) => Deno.env.get(k) === undefined);
+  assert(unset, "this machine sets every machine-path variable");
+  const dir = await tempDir();
+  try {
+    await writeTree(dir, {
+      "package.json": { name: "unset", dependencies: { next: "15.3.0", react: "19.1.0" } },
+      "next.config.mjs": `export default {
+  async redirects() {
+    return [
+      { source: "/cache", destination: (process.env.${unset} ?? "/fallback") + "/x", permanent: false },
+      { source: "/old", destination: "/new", permanent: true },
+    ];
+  },
+};
+`,
+      "app/layout.tsx": `export default function L({ children }) { return children; }\n`,
+      "app/page.tsx": `export default function P() { return null; }\n`,
+    });
+    const report = await checkMigration(dir);
+    assertStringIncludes(JSON.stringify(report), `a rule or value reads ${unset}`);
+    await migrateProject(dir, {});
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    // the plain rule is still inlined; the one reading the unset variable is left out
+    assertStringIncludes(config, '"source":"/old"');
+    assert(!config.includes('"source":"/cache"'), config);
+    assert(!config.includes("/fallback"), config);
+    assertStringIncludes(config, `// redirects: a rule or value reads ${unset}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 /**
  * A home-directory and a temp-directory variable this machine sets (Windows sets no `HOME` and,
  * outside a POSIX shell, no `TMPDIR`): a config reads them only when they are there.

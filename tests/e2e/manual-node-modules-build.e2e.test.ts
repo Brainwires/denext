@@ -52,8 +52,6 @@ async function exportApp(app: string): Promise<{ ok: boolean; out: string }> {
 
 Deno.test({
   name: "e2e: manual-node_modules app builds — CSS re-exec path (esbuild + app dep resolve)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const app = await Deno.makeTempDir({ prefix: "denext_nmd_css_" });
   try {
@@ -94,8 +92,6 @@ Deno.test({
 
 Deno.test({
   name: "e2e: manual-node_modules app builds — module re-exec path (no CSS)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const app = await Deno.makeTempDir({ prefix: "denext_nmd_mod_" });
   try {

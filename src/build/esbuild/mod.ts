@@ -82,7 +82,9 @@ interface Service {
 }
 
 let longLivedService: Promise<Service> | undefined;
-let stopService: (() => void) | undefined;
+let stopService: (() => Promise<void>) | undefined;
+/** The exit of a child being stopped: a concurrent {@linkcode stop} waits for it too. */
+let stopping: Promise<void> | undefined;
 let initializeWasCalled = false;
 let warned = false;
 
@@ -154,13 +156,23 @@ async function startService(): Promise<Service> {
   const stdout = child.stdout!;
   stdin.on("error", afterClose);
   child.on("error", afterClose);
+  // Settles once the child has exited and its pipes are closed.
+  const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
   const stop = () => {
     stdin.destroy();
     stdout.destroy();
+    // Wait for the exit with the child referenced: an unref'd child's exit would not keep the
+    // event loop alive for the wait, and a test that ended first would see the process open.
+    if (child.exitCode === null && child.signalCode === null) child.ref();
     child.kill();
     initializeWasCalled = false;
     longLivedService = undefined;
     stopService = undefined;
+    stopping = closed;
+    void closed.then(() => {
+      if (stopping === closed) stopping = undefined;
+    });
+    return closed;
   };
   stopService = stop;
   stdout.on("data", (chunk: Uint8Array) => {
@@ -271,13 +283,16 @@ export const analyzeMetafile: typeof types.analyzeMetafile = (metafile, options)
   ensureServiceIsRunning().then((s) => s.analyzeMetafile(metafile, options));
 
 /**
- * Stop the esbuild child (the next call starts a new one). Optional in a CLI — an idle child does
- * not keep the process alive — but a Deno test that used esbuild calls it before it ends.
+ * Stop the esbuild child (the next call starts a new one), resolving once it has exited. Optional
+ * in a CLI — an idle child does not keep the process alive — but a Deno test that used esbuild
+ * awaits it before it ends.
  */
 export const stop: typeof types.stop = async () => {
   const pending = longLivedService;
   if (pending) await pending.catch(() => {});
-  stopService?.();
+  await stopService?.();
+  // Another caller's stop() may have begun it (a dev server's shutdown): wait for that exit too.
+  await stopping;
 };
 
 const noSync = (name: string) => () => {

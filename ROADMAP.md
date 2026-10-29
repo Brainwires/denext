@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.10.0**; 4.x patch and minor releases are cut from
+> The current release is denext **4.10.1**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 
 ## Deno toolchain
@@ -15,14 +15,14 @@
 
 ## Supply chain (lifecycle-script jail)
 
-Low findings from the 4.8 supply-chain audit:
-
-- **Other `@denext` exemptions from the dependency-age hold go unnoticed.** `doctor` and `upgrade`
-  look for the literal `"jsr:@denext/*"` denext once wrote; flag `"jsr:@denext/denext"` and other
-  `@denext` entries too (denext never writes them).
-- **From runtime `3.0.0-rc.6` a packages-only `jailScripts` object no longer asks for the jail.**
-  `readJailSetting` still counts it as on, so next to `jail-scripts=false`
-  denext writes exceptions and `doctor` flags missing ones for a jail that is off.
+- **GitHub-hosted declared downloads** (`bcrypt` 5, `argon2` before 0.28, `@discordjs/opus`,
+  `libxmljs`): from denext.1 their declared host needs a grant, and a `knownPackages` entry can't
+  cover GitHub's redirect to another host. Review them for `net` host lists in the built-in list.
+- **`Requires ffi access` in an install log.** `jailFailures` doesn't explain it yet: before denext.1
+  (and where the OS can't confine) a jailed install check can't load the package's own native
+  addon; say to leave the package unapproved.
+- **A package.json project's npm workspace member** gets its exceptions written to its own
+  package.json `"deno"` object when `denext add` runs in it; the runtime reads the root's only.
 
 ## Deno Desktop
 
@@ -52,16 +52,6 @@ Low findings from the 4.8 supply-chain audit:
   - A sidecar whose `run.exec` is one of the project's files bakes an unscoped `--allow-run` (its
     copy's path in the cache folder is only known at launch). Scope it once the runtime can take
     a launch-time path.
-- **Monorepo leftover (Low): a glob-member app's npm packages through the esbuild loader.** The
-  stand-in config a glob member builds on (`.deno.denext-loader-<pid>.json`) loses the app's
-  package.json dependencies: `@luca/esbuild-deno-loader` reads them only beside a config named
-  `deno.json`, so a bare `import ms from "ms"` fails with "not in import map", and it looks for
-  npm packages only in `<absWorkingDir>/node_modules`, never the workspace root's hoisted one.
-  Carrying the root's `nodeModulesDir` is not enough. Map the app's (and the root's) package.json
-  dependencies into the stand-in's imports and let esbuild's own resolution walk up to the root
-  `node_modules`; the failing case is a root `deno.json` `{ "workspace": ["./apps/*"],
-  "nodeModulesDir": "manual" }`, `ms` in the root's `node_modules`, `apps/web/package.json`
-  depending on it.
 
 ## Mobile and React Native
 
