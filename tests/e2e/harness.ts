@@ -561,13 +561,17 @@ export async function spawnOnBoundPort(
       }
     } catch { /* cancelled on teardown */ }
   };
-  void read(child.stdout);
-  void read(child.stderr);
+  const reading = Promise.all([read(child.stdout), read(child.stderr)]);
   let gone = false;
   child.status.then(() => gone = true, () => gone = true);
   const close = async () => {
     await killTree(child.pid);
     await child.status.catch(() => {});
+    // The tree is gone, so its pipes close and the reads end: wait for them (bounded), or they
+    // outlive the test.
+    let grace: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([reading, new Promise((r) => grace = setTimeout(r, 5_000))]);
+    clearTimeout(grace);
   };
   const port = await boundPort(() => seen, () => gone, timeoutMs);
   if (port === undefined) {
