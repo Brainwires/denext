@@ -30,6 +30,7 @@ import {
   OTA_MANIFEST_PATH,
   OTA_PLATFORM_HEADER,
   OTA_PLATFORM_PATH,
+  otaAppMismatch,
   type OtaManifest,
   otaPlatformMismatch,
 } from "./ota-manifest.ts";
@@ -69,12 +70,18 @@ import {
  *   or `denext ota manifest --platform ios` over the export), so a web export signed with the same
  *   key cannot install itself on a phone. The page cannot tell whether the binary embeds a key, so
  *   that refusal comes from the native side.
+ * - `app_mismatch`: the manifest's signed `appId` names another app than this one (the iOS bundle
+ *   id / Android application id). An app that embeds a public key also refuses a manifest
+ *   without one (re-sign it: `denext ota manifest --app-id <id> --sign`), so a feed for another
+ *   app that shares the signing key cannot install its UI here. The page refuses another app's
+ *   manifest before the native side sees it (with {@linkcode OtaCheckOptions.appId}, or the id the
+ *   shell's status reports); the missing-id refusal comes from the native side.
  * - `guard_unavailable`: the iOS shell could not install the check on Capacitor's
  *   `/_capacitor_file_` requests (an app whose web view uses its own asset handler class), so it
  *   serves no downloaded UI in this process and refuses every update: see {@linkcode onOtaRejected}.
  *
  * The trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,
- * `native_mismatch`, `expired`, and
+ * `native_mismatch`, `app_mismatch`, `expired`, and
  * `invalid` for a malformed or oversized manifest) run before any file is downloaded, and a
  * refusal leaves the running UI and any staged one as they were.
  */
@@ -91,6 +98,7 @@ export type OtaErrorCode =
   | "native_too_old"
   | "native_mismatch"
   | "platform_mismatch"
+  | "app_mismatch"
   | "expired"
   | "guard_unavailable";
 
@@ -109,6 +117,7 @@ const OTA_ERROR_CODES: readonly string[] = [
   "native_too_old",
   "native_mismatch",
   "platform_mismatch",
+  "app_mismatch",
   "expired",
   "guard_unavailable",
 ] satisfies readonly OtaErrorCode[];
@@ -138,6 +147,11 @@ export interface OtaStatus {
    * older than that check.
    */
   readonly tampered: string | null;
+  /**
+   * This app's id (the iOS bundle id / Android application id), which a manifest's `appId` must
+   * name; absent from a shell older than that check.
+   */
+  readonly appId?: string | null;
 }
 
 /**
@@ -227,6 +241,12 @@ export interface OtaCheckOptions {
    * `runtimePlatform()` in the iOS / Android shell.
    */
   platform?: "ios" | "android";
+  /**
+   * This app's id (the iOS bundle id / Android application id): a manifest naming another app is
+   * refused before the native side sees it (code `app_mismatch`). Default: the id the shell's
+   * status reports. The native side checks it either way.
+   */
+  appId?: string;
   /**
    * Called when the server's UI needs a newer app binary: a check or prepare that ends in an
    * `error` result with code `native_too_old` (the manifest's `minNative` is above this build) or
@@ -544,6 +564,8 @@ async function newerManifest(
   } catch (err) {
     return { kind: "error", reason: `status failed: ${messageOf(err)}` };
   }
+  const otherApp = appRefusal(manifest, options, status);
+  if (otherApp) return otherApp;
   // A version on its trial launch is the one running (or about to be): offering it again is
   // not an update, whatever `current` still says.
   const running = status.pending ?? status.current ?? status.bundled ?? null;
@@ -568,6 +590,21 @@ async function manifestRefusal(
   if (!isOtaManifestExpired(manifest)) return null;
   const at = new Date(manifest.expiresAt! * 1000).toISOString();
   return { kind: "error", reason: `the manifest expired at ${at}`, code: "expired" };
+}
+
+/**
+ * Another app's release (a feed misrouted, or another app sharing the signing key), refused as
+ * `app_mismatch` against `options.appId`, else the id the shell's status reports; null when it
+ * fits or neither knows the app.
+ */
+function appRefusal(
+  manifest: OtaManifest,
+  options: OtaCheckOptions,
+  status: Partial<OtaStatus>,
+): { readonly kind: "error"; readonly reason: string; readonly code: OtaErrorCode } | null {
+  const appId = options.appId ?? (typeof status.appId === "string" ? status.appId : undefined);
+  const reason = otaAppMismatch(manifest, appId);
+  return reason === null ? null : { kind: "error", reason, code: "app_mismatch" };
 }
 
 /**

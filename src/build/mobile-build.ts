@@ -41,6 +41,8 @@ import {
   type ResolvedFlavor,
 } from "./mobile-flavor.ts";
 import { loadNativeDirs, nativeJoin, nativeText } from "./capacitor-native-dirs.ts";
+import { OTA_APP_ID_ENV } from "./ota-app-id.ts";
+import { isOtaAppId } from "../mobile/ota-manifest.ts";
 
 /** A command a build step runs; `env` carries secrets and is never printed. */
 export interface BuildCommand extends PlannedCommand {
@@ -398,17 +400,23 @@ function androidTask(
   };
 }
 
-/** The web export and `cap sync` commands (export skipped with --skip-export). */
+/**
+ * The web export and `cap sync` commands (export skipped with --skip-export). The export gets the
+ * build's app id (the flavor's, which the Capacitor config only takes after the export) as
+ * `DENEXT_OTA_APP_ID`, so a signed `spa.ota` manifest names the app it is built into.
+ */
 function webCommands(
   opts: MobileBuildOptions,
   flavor: MobileFlavorConfig | undefined,
+  appId: string,
 ): BuildCommand[] {
+  const env = { ...flavor?.env, ...(isOtaAppId(appId) ? { [OTA_APP_ID_ENV]: appId } : {}) };
   const exportCmd: BuildCommand = {
     cmd: opts.deno,
     // The platform's own export: `Button.ios.tsx` / `.android` / `.mobile` win in its webDir.
     args: [...opts.cli, "export", opts.appDir, "--platform", opts.platform],
     cwd: opts.appDir,
-    ...(flavor?.env ? { env: flavor.env } : {}),
+    ...(Object.keys(env).length > 0 ? { env } : {}),
   };
   const sync: BuildCommand = { cmd: "npx", args: ["cap", "sync", opts.platform], cwd: opts.root };
   return opts.skipExport ? [sync] : [exportCmd, sync];
@@ -521,17 +529,18 @@ export async function planMobileBuild(opts: MobileBuildOptions): Promise<MobileB
   const versions = await projectVersions(root, platform);
   const native = platform === "ios" ? await iosNative(opts) : androidNative(opts);
   const unsigned = native.signing.mode === "unsigned";
+  const appId = flavorAppId(identity.appId ?? "", opts.flavor?.config);
   return {
     platform,
     root,
     appDir: opts.appDir,
     ...(opts.flavor ? { flavor: opts.flavor } : {}),
     configuration: opts.release ? "Release" : "Debug",
-    appId: flavorAppId(identity.appId ?? "", opts.flavor?.config),
+    appId,
     version: opts.versionName ?? versions.version,
     buildNumber: opts.buildNumber ?? versions.build,
     signing: native.signing,
-    commands: [...webCommands(opts, opts.flavor?.config), ...native.commands],
+    commands: [...webCommands(opts, opts.flavor?.config, appId), ...native.commands],
     produced: native.produced,
     artifact: artifactPath(opts, identity.appName, native.signing),
     ...(native.archive && unsigned ? { archive: native.archive } : {}),

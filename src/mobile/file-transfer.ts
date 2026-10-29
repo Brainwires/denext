@@ -52,7 +52,11 @@ export interface FileTransferInfo extends FileTransferProgress {
   readonly path: string;
   /** Where it is. */
   readonly state: FileTransferState;
-  /** Whether a paused or failed download can continue where it stopped. */
+  /**
+   * Whether the download can continue where it stopped: a paused one through
+   * {@linkcode resumeFileTransfer}; a failed one only through the native plugin's (on the web and
+   * on Deno Desktop a failed transfer does not resume).
+   */
   readonly resumable: boolean;
   /** The HTTP status, once the server answered. */
   readonly status?: number;
@@ -125,7 +129,11 @@ export class FileTransferError extends Error {
   readonly status?: number;
   /** An HTTP failure's response body, when there was one. */
   readonly body?: string;
-  /** Whether {@linkcode resumeFileTransfer} can continue it where it stopped. */
+  /**
+   * Whether the download's bytes so far can be continued from. Only the native plugin's
+   * {@linkcode resumeFileTransfer} retries a failed transfer; on the web and on Deno Desktop it
+   * resolves `false` for one.
+   */
   readonly resumable: boolean;
 
   /**
@@ -1253,11 +1261,18 @@ export async function pauseFileTransfer(id: string): Promise<boolean> {
 }
 
 /**
- * Resume a paused download, or retry a failed transfer (a download from its bytes so far when it
- * is `resumable`).
+ * Continue a paused download from its bytes so far (a range request where the server allows one,
+ * else from the start).
+ *
+ * In the iOS / Android shell with the `DenextTransfer` plugin (`denext mobile add file-transfer`)
+ * it also retries a failed transfer: a download from its bytes so far when it is `resumable`,
+ * else anew, and an upload from the start. On the web and in a Deno Desktop window only a paused
+ * download resumes: a failed transfer resolves `false` (start it again with `downloadToFile`; on
+ * Deno Desktop the same URL to the same file continues from the partial file the runtime kept).
  *
  * @param id The transfer's id.
- * @returns Whether it resumed.
+ * @returns Whether it resumed: `false` for an id with no record, a transfer that is neither
+ *   paused nor (with the plugin) failed, or, outside the plugin, a failed one.
  */
 export async function resumeFileTransfer(id: string): Promise<boolean> {
   const page = pageTransfers.get(id);

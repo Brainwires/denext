@@ -31,6 +31,16 @@
  * and `expiresAt` in the v4 format), so neither the files nor the metadata can be swapped without the private key. The native plugin recomputes the version from the file
  * list and verifies the signature; the web side only forwards it.
  *
+ * The optional `appId` names the app the release is for (the iOS bundle id / Android application
+ * id, the Capacitor `appId`; `desktop.app.identifier` on Deno Desktop), and `appSignature` signs
+ * it with the same key: an ECDSA signature over {@linkcode otaAppSignaturePayload} (the v5 format,
+ * every field the v4 one covers plus `appId`). A shell that knows its own id refuses a manifest
+ * naming another app (code `app_mismatch`); one that verifies signatures (an app binary that
+ * embeds a public key, a desktop overlay configured with `desktop.app.identifier`) also requires
+ * the `appId` and a valid `appSignature`, so a feed for one app cannot hand another app that
+ * shares the signing key a validly signed UI. `signature` keeps covering the v1–v4 payload, so a
+ * shell from before `appId` existed verifies the same manifest as it always did.
+ *
  * The optional `platform` names the target the export was built for (`denext export --platform
  * ios`, see https://denext.dev/docs/platform-files): `checkForUiUpdate` and the desktop updater
  * refuse a manifest built for another target (code `platform_mismatch`). A platform export
@@ -138,11 +148,29 @@ export interface OtaManifest {
    */
   readonly platform?: string;
   /**
+   * The app the release is for (`denext ota manifest --app-id <id>`; a signed `spa.ota` export
+   * and `denext ota manifest --sign` stamp the Capacitor `appId` on an `ios` / `android` export,
+   * and `spa.ota` stamps `desktop.app.identifier` on a desktop one): the iOS bundle id, the
+   * Android application id, or the Deno Desktop app identifier ({@linkcode isOtaAppId}). A shell
+   * that knows its own id refuses another (code `app_mismatch`); an app that embeds a public key,
+   * and a desktop overlay configured with `desktop.app.identifier`, also refuse a manifest
+   * without one. Only with a `sequence`. Not part of the version; signed by `appSignature`.
+   */
+  readonly appId?: string;
+  /**
    * Standard (padded) base64 of the raw 64-byte `r‖s` ECDSA P-256 / SHA-256 signature over
    * {@linkcode otaSignaturePayload} (`denext ota manifest --sign <keyfile>`). An app whose binary
    * embeds a public key refuses a manifest without a valid one.
    */
   readonly signature?: string;
+  /**
+   * Standard (padded) base64 of the raw 64-byte `r‖s` ECDSA P-256 / SHA-256 signature over
+   * {@linkcode otaAppSignaturePayload} (the v5 format, which adds `appId` to what `signature`
+   * covers), made with the same key. Written beside `signature` whenever a signed manifest has an
+   * `appId`; a shell that requires the `appId` refuses a manifest without a valid one (code
+   * `signature`).
+   */
+  readonly appSignature?: string;
   /** Every file of the UI, sorted by path. */
   readonly files: ReadonlyArray<OtaManifestFile>;
 }
@@ -166,6 +194,8 @@ export interface OtaManifestMeta {
    * stamp holding the same name.
    */
   readonly platform?: string;
+  /** See {@linkcode OtaManifest.appId}. Omitted from the manifest unless a string. */
+  readonly appId?: string;
 }
 
 /** The longest `notes` a manifest may carry, in UTF-16 code units. */
@@ -181,6 +211,16 @@ function isSha256Hex(value: unknown): value is string {
 /** Whether `value` is an integer in `0 … Number.MAX_SAFE_INTEGER` (a `sequence` / `minNative`). */
 function isReleaseInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+
+const APP_ID = /^[A-Za-z0-9._-]{1,255}$/;
+
+/**
+ * Whether `value` may be a manifest's `appId`: 1–255 characters of `A-Z a-z 0-9 . _ -` (an iOS
+ * bundle id, an Android application id, or a Deno Desktop `desktop.app.identifier`).
+ */
+export function isOtaAppId(value: unknown): value is string {
+  return typeof value === "string" && APP_ID.test(value);
 }
 
 // deno-lint-ignore no-control-regex -- matching control characters is the point.
@@ -295,6 +335,55 @@ function unsequencedPayload(
   return `denext-ota-v1\n${head}`;
 }
 
+/**
+ * The bytes a manifest's `appSignature` covers: the v5 format, UTF-8 with `\n` separators and no
+ * trailing newline,
+ *
+ * `"denext-ota-v5\n" + version + "\n" + ("1" | "0") + "\n" + sha256hex(notes ?? "") + "\n" +
+ * sequence + "\n" + (minNative ?? "") + "\n" + (nativeFingerprint ?? "") + "\n" + (expiresAt ??
+ * "") + "\n" + appId`
+ *
+ * with each value encoded as in {@linkcode otaSignaturePayload} (an absent `nativeFingerprint` or
+ * `expiresAt` is the empty string). It is every field the v4 format covers plus the app id, under
+ * its own first line, so an `appSignature` never verifies as a `signature` or the reverse. The
+ * native `DenextOta` plugin and the desktop updater build the same bytes.
+ *
+ * @param manifest The version and the signed metadata, with an `appId` and a `sequence`.
+ * @returns The payload bytes.
+ * @throws RangeError when `appId` is missing or not {@linkcode isOtaAppId}, when there is no
+ *   `sequence`, or when a number or the fingerprint is malformed.
+ * @example
+ * ```ts
+ * import { otaAppSignaturePayload } from "denext/mobile";
+ * const bytes = await otaAppSignaturePayload({ version, sequence: 1758700000, appId: "com.example.app" });
+ * // "denext-ota-v5\n<version>\n0\n<sha256 of "">\n1758700000\n\n\n\ncom.example.app"
+ * ```
+ */
+export async function otaAppSignaturePayload(
+  manifest: Pick<
+    OtaManifest,
+    | "version"
+    | "required"
+    | "notes"
+    | "sequence"
+    | "minNative"
+    | "nativeFingerprint"
+    | "expiresAt"
+    | "appId"
+  >,
+): Promise<Uint8Array> {
+  const { sequence, minNative, nativeFingerprint, expiresAt, appId } = manifest;
+  if (!isOtaAppId(appId)) {
+    throw new RangeError("appId must be 1–255 characters of A-Z a-z 0-9 . _ -");
+  }
+  assertSignedFields({ sequence, minNative, nativeFingerprint, expiresAt });
+  const notesHash = await sha256Hex(new TextEncoder().encode(manifest.notes ?? ""));
+  const required = manifest.required === true ? "1" : "0";
+  const text = `denext-ota-v5\n${manifest.version}\n${required}\n${notesHash}\n${sequence}\n` +
+    `${minNative ?? ""}\n${nativeFingerprint ?? ""}\n${expiresAt ?? ""}\n${appId}`;
+  return new TextEncoder().encode(text);
+}
+
 /** Throw when a field the v2–v4 payloads sign is malformed. */
 function assertSignedFields(
   { sequence, minNative, nativeFingerprint, expiresAt }: Pick<
@@ -333,12 +422,13 @@ function sequencedPayload(
 
 /**
  * Sort `files` by path and stamp the version over them, adding `meta`'s `required`, `notes`,
- * `sequence`, `minNative`, `nativeFingerprint` and `expiresAt` when given (they never change the
- * version).
+ * `sequence`, `minNative`, `nativeFingerprint`, `expiresAt`, `platform` and `appId` when given
+ * (they never change the version).
  *
  * @throws RangeError when `meta.notes` is longer than {@linkcode OTA_NOTES_MAX_LENGTH}, when
  *   `sequence` / `minNative` / `expiresAt` is not a non-negative safe integer, when `expiresAt`
- *   is given without a `sequence`, when `nativeFingerprint` is not
+ *   or `appId` is given without a `sequence`, when `appId` is not {@linkcode isOtaAppId}, when
+ *   `nativeFingerprint` is not
  *   64 lowercase hex digits, or when a file path is not a valid manifest path
  *   ({@linkcode isOtaManifestPath}).
  */
@@ -382,6 +472,11 @@ function assertOtaMeta(meta: OtaManifestMeta): void {
       }`,
     );
   }
+  if (meta.appId !== undefined && !isOtaAppId(meta.appId)) {
+    throw new RangeError(
+      `appId must be 1–255 characters of A-Z a-z 0-9 . _ -, not ${JSON.stringify(meta.appId)}`,
+    );
+  }
 }
 
 /** Throw when `sequence` / `minNative` / `expiresAt` is malformed, or `expiresAt` has no sequence. */
@@ -392,8 +487,10 @@ function assertReleaseIntegers(meta: OtaManifestMeta): void {
       throw new RangeError(`${key} must be a non-negative safe integer, not ${value}`);
     }
   }
-  if (meta.expiresAt !== undefined && meta.sequence === undefined) {
-    throw new RangeError("expiresAt is only signed together with a sequence");
+  for (const key of ["expiresAt", "appId"] as const) {
+    if (meta[key] !== undefined && meta.sequence === undefined) {
+      throw new RangeError(`${key} is only signed together with a sequence`);
+    }
   }
 }
 
@@ -410,6 +507,7 @@ function metaFields(meta: OtaManifestMeta): OtaManifestMeta {
     ["nativeFingerprint", isString],
     ["expiresAt", isNumber],
     ["platform", isString],
+    ["appId", isString],
   ];
   const out: Record<string, unknown> = {};
   for (const [key, is] of kinds) if (is(meta[key])) out[key] = meta[key];
@@ -467,6 +565,37 @@ export async function otaPlatformMismatch(
 }
 
 /**
+ * Why a shell whose own app id is `expected` must refuse `manifest`, or null when it may install
+ * it: the manifest names another app, or (with `required`) names none. Without an `expected` id
+ * the shell cannot tell, and nothing is refused. The refusal's code is `app_mismatch`.
+ *
+ * `required` is for a shell that verifies signatures (an app binary that embeds a public key, a
+ * desktop overlay configured with `desktop.app.identifier`), which also verifies `appSignature`:
+ * the release must then be signed for this app, so a validly signed release for another app that
+ * shares the signing key is refused. An unsigned (pinned-origin) shell refuses only a manifest
+ * that names another app.
+ *
+ * @param manifest A manifest that passed {@linkcode isOtaManifest}.
+ * @param expected The shell's own app id, or undefined when it does not know it.
+ * @param required Whether a manifest without an `appId` is refused too.
+ */
+export function otaAppMismatch(
+  manifest: Pick<OtaManifest, "appId">,
+  expected: string | undefined,
+  required = false,
+): string | null {
+  if (expected === undefined) return null;
+  const { appId } = manifest;
+  if (appId === undefined) {
+    return required
+      ? `the manifest names no app; ${expected} takes only a release signed for it ` +
+        `(re-sign it: denext ota manifest --app-id ${expected} --sign)`
+      : null;
+  }
+  return appId === expected ? null : `the UI was released for ${appId}; this app is ${expected}`;
+}
+
+/**
  * Whether `file` is a well-formed manifest entry: a path without control characters
  * ({@linkcode isOtaManifestPath}), a SHA-256, a size.
  */
@@ -481,8 +610,8 @@ function isManifestFile(file: unknown): file is OtaManifestFile {
  * Whether `value` has the manifest's shape: a 64-hex `version`, a non-empty `files` array of
  * `{ path, sha256, size }` (paths without control characters), and, when present, a boolean
  * `required`, a string `notes` of at most {@linkcode OTA_NOTES_MAX_LENGTH} characters,
- * non-negative safe-integer `sequence` / `minNative` / `expiresAt`, a 64-hex `nativeFingerprint`, and a string
- * `signature`. Other keys are ignored. It checks the shape only; the native side re-checks every
+ * non-negative safe-integer `sequence` / `minNative` / `expiresAt`, a 64-hex `nativeFingerprint`, an
+ * {@linkcode isOtaAppId} `appId`, and string `signature` / `appSignature`. Other keys are ignored. It checks the shape only; the native side re-checks every
  * path, recomputes the version and verifies the signature before it downloads anything.
  */
 export function isOtaManifest(value: unknown): value is OtaManifest {
@@ -505,7 +634,9 @@ const OPTIONAL_FIELDS: Readonly<Record<string, (value: unknown) => boolean>> = {
   nativeFingerprint: isSha256Hex,
   expiresAt: isReleaseInteger,
   platform: isOtaPlatform,
+  appId: isOtaAppId,
   signature: (v) => typeof v === "string",
+  appSignature: (v) => typeof v === "string",
 };
 
 /**

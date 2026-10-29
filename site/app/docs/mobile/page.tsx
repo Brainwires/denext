@@ -2325,12 +2325,16 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         <code>onFileTransfer(fn)</code> receives events whose <code>type</code> is{" "}
         <code>"started"</code>, <code>"progress"</code>, <code>"paused"</code>, <code>"done"</code>,
         {" "}
-        <code>"failed"</code> or <code>"cancelled"</code>. <code>pauseFileTransfer(id)</code> and
-        {" "}
-        <code>resumeFileTransfer(id)</code> resolve a <code>boolean</code>: <code>false</code>{" "}
-        for an upload (uploads cannot pause), a download that is not running (or, to resume, not
-        paused), or an id with no record. With the plugin, <code>resumeFileTransfer</code>{" "}
-        also retries a failed transfer.
+        <code>"failed"</code> or <code>"cancelled"</code>. <code>pauseFileTransfer(id)</code>{" "}
+        resolves a <code>boolean</code>: <code>false</code>{" "}
+        for an upload (uploads cannot pause), a download that is not running, or an id with no
+        record. <code>resumeFileTransfer(id)</code>{" "}
+        continues a paused download everywhere. In the iOS / Android shell with the plugin it also
+        retries a failed transfer: a download from its bytes so far when it is{" "}
+        <code>resumable</code>, else anew, and an upload from the start. On the web and on Deno
+        Desktop only a paused download resumes, and a failed one resolves{" "}
+        <code>false</code>: start it again with <code>downloadToFile</code>{" "}
+        (on Deno Desktop the same URL to the same file continues from the kept partial file).
       </p>
       <p>
         A download pauses with its bytes kept (resume data on iOS, a <code>.part</code>{" "}
@@ -3545,7 +3549,15 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           refuses an older <code>sequence</code> (code <code>downgrade</code>), a{" "}
           <code>minNative</code> above its build (code <code>native_too_old</code>), and a{" "}
           <code>nativeFingerprint</code> other than the one the binary embeds (code{" "}
-          <code>native_mismatch</code>; only when both carry one).
+          <code>native_mismatch</code>; only when both carry one);
+        </li>
+        <li>
+          refuses a manifest whose <code>appId</code>{" "}
+          names another app than its bundle id / application id (code{" "}
+          <code>app_mismatch</code>), and with a public key embedded one that names no app or whose
+          {" "}
+          <code>appSignature</code> does not verify (codes <code>app_mismatch</code> /{" "}
+          <code>signature</code>).
         </li>
       </ul>
       <p>
@@ -3632,6 +3644,25 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           <code>denext ota manifest &lt;dir&gt; --platform ios --sign</code>. Unsigned apps (pinned
           https origins) still take an unstamped export. The page cannot tell whether the binary
           embeds a key, so only the native side refuses this one.
+        </li>
+        <li>
+          <code>app_mismatch</code>: the manifest&apos;s signed <code>appId</code>{" "}
+          names another app than this one (its iOS bundle id / Android application id). An app that
+          embeds a public key also refuses a manifest that names no app, so one signing key can
+          serve several apps without a feed for one installing its UI on another (from{" "}
+          <code>add-ota</code> template generation 12). <code>checkForUiUpdate</code>{" "}
+          refuses another app&apos;s manifest before the native side sees it (with{" "}
+          <code>appId</code> in its options, or the id the shell&apos;s status reports). A signed
+          {" "}
+          <code>spa.ota</code> export, <code>denext mobile build</code> and{" "}
+          <code>denext ota manifest &lt;dir&gt; --sign</code> stamp the Capacitor <code>appId</code>
+          {" "}
+          (a flavor&apos;s own under <code>mobile build --flavor</code>); otherwise pass{" "}
+          <code>--app-id &lt;id&gt;</code> or set{" "}
+          <code>DENEXT_OTA_APP_ID</code>. The id is signed in its own <code>appSignature</code>{" "}
+          (payload v5) beside the <code>signature</code>{" "}
+          older binaries verify, so one manifest serves both. Unsigned apps take a manifest without
+          one as before.
         </li>
         <li>
           <code>guard_unavailable</code>: the iOS bridge could not install its check on{" "}

@@ -69,8 +69,9 @@ import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
  * (iOS: `DenextOtaFileGuard`; Android: the route processor). A `/_capacitor_file_` path with a
  * control character or to a missing file is refused; iOS serves no downloaded UI when the guard
  * cannot be installed (code `guard_unavailable`, unless `plugins.DenextBridge.otaFileGuard: false`);
- * an app that embeds a public key requires the platform stamp; and a verified file is hashed again
- * when its stat changes. The bump keeps an older denext from rewriting those checks away.
+ * an app that embeds a public key requires the platform stamp; a verified file is hashed again
+ * when its stat changes; and a manifest's signed `appId` (`appSignature`, the v5 payload) must
+ * name this app (code `app_mismatch`), required when the app embeds a public key. The bump keeps an older denext from rewriting those checks away.
  */
 export const OTA_TEMPLATE_VERSION = 12;
 

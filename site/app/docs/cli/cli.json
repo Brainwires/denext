@@ -1953,10 +1953,16 @@
           "description": "manifest: the target the export was built for (ios, android, macos, windows, linux); shells of another target refuse it. web names no target (no stamp), as `denext export` does"
         },
         {
+          "name": "app-id",
+          "type": "string",
+          "valueName": "<id>",
+          "description": "manifest: the app this release is for (iOS bundle id / Android application id / desktop.app.identifier), signed; shells of another app refuse it. Default when signing: $DENEXT_OTA_APP_ID, else the Capacitor appId of --dir for an ios / android export"
+        },
+        {
           "name": "dir",
           "type": "string",
           "valueName": "<dir>",
-          "description": "manifest --native-fingerprint auto: the Capacitor project (default: the current directory)"
+          "description": "manifest --native-fingerprint auto / the default --app-id: the Capacitor project (default: the current directory)"
         },
         {
           "name": "force",

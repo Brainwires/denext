@@ -29,6 +29,9 @@
 //  5. NO PATH ESCAPE. Every manifest path is checked with `isOtaManifestPath` (no control
 //     characters) and split into segments that reject `""`, `.`, `..` and backslashes; the
 //     resolved path must stay inside the staging/version directory.
+//  3b. THE APP. A manifest's `appId` is trusted only under a valid `appSignature` (payload v5);
+//     with `appId` configured (`desktop.app.identifier`) a manifest naming another app, or none,
+//     is refused (`app_mismatch`), so a feed for another app sharing the key cannot install here.
 //  4b. EXPIRY. A manifest whose signed `expiresAt` has passed is refused (`expired`), as is one
 //     without an expiry once the bundled export's own manifest carries one (an expiry-aware
 //     app never takes an unexpiring release), so a feed that keeps serving an old release is
@@ -44,6 +47,8 @@ import {
   isOtaManifestPath,
   OTA_MANIFEST_PATH,
   OTA_PLATFORM_HEADER,
+  otaAppMismatch,
+  otaAppSignaturePayload,
   type OtaManifest,
   otaManifestVersion,
   otaPlatformMismatch,
@@ -82,6 +87,9 @@ const DEFAULT_APP_ID = "denext-desktop";
  *   app's OS (`macos`, `windows`, `linux`; {@linkcode DesktopUpdaterConfig.platform}), its
  *   `platform` disagrees with the export's stamp file, or that stamp (which the version covers,
  *   unlike the unsigned field) names another target, with or without the field;
+ * - `app_mismatch`: {@linkcode DesktopUpdaterConfig.appId} is set (`runDesktop` sets it to
+ *   `desktop.app.identifier`) and the manifest names another app, or none (re-sign it: `denext ota
+ *   manifest --app-id <id> --sign`);
  * - `expired`: the manifest's signed `expiresAt` has passed, or it carries none while the bundled
  *   export's manifest does (re-sign it: `denext ota manifest --sign`);
  * - `not_staged`: {@linkcode applyDesktopUpdate} named a version that is not staged;
@@ -96,6 +104,7 @@ export type DesktopUpdateErrorCode =
   | "signature"
   | "downgrade"
   | "platform_mismatch"
+  | "app_mismatch"
   | "expired"
   | "not_staged"
   | "rejected";
@@ -137,8 +146,10 @@ export interface DesktopUpdaterConfig {
    */
   readonly dataDir?: string;
   /**
-   * The app identifier used to build the default {@linkcode DesktopUpdaterConfig.dataDir}.
-   * Default `"denext-desktop"`. Ignored when `dataDir` is set.
+   * The app identifier (`desktop.app.identifier`, which `runDesktop` passes): it names the default
+   * {@linkcode DesktopUpdaterConfig.dataDir} (default `"denext-desktop"` when unset), and when set
+   * a manifest must name this app in its signed `appId` (`denext ota manifest --app-id`; a signed
+   * desktop `spa.ota` export stamps it), or it is refused (code `app_mismatch`).
    */
   readonly appId?: string;
   /** The manifest / file request timeout in ms. Default 30 000. */
@@ -417,21 +428,40 @@ async function assertVerified(manifest: OtaManifest, publicKey: string): Promise
   } catch (err) {
     throw new DesktopUpdateError("signature", `the public key is invalid: ${msg(err)}`);
   }
-  let ok = false;
+  // `otaSignaturePayload`: v1–v4, whatever the manifest says about its app.
+  if (!await verifies(key, manifest.signature, () => otaSignaturePayload(manifest))) {
+    throw new DesktopUpdateError("signature", "the manifest signature does not verify");
+  }
+  // Invariant 3b: an `appId` counts only under its own signature (payload v5).
+  if (
+    manifest.appId !== undefined &&
+    !await verifies(key, manifest.appSignature, () => otaAppSignaturePayload(manifest))
+  ) {
+    throw new DesktopUpdateError("signature", "the manifest's appSignature is missing or invalid");
+  }
+}
+
+/**
+ * Whether `signature` (standard base64 of the raw 64-byte r‖s) is `key`'s signature over the
+ * payload `payload()` builds; false for a missing or malformed signature, or a payload that does
+ * not build (e.g. an absurd sequence).
+ */
+async function verifies(
+  key: CryptoKey,
+  signature: string | undefined,
+  payload: () => Promise<Uint8Array>,
+): Promise<boolean> {
+  if (typeof signature !== "string") return false;
   try {
-    // Standard base64 → raw 64-byte r‖s, over `otaSignaturePayload` (v2 with a sequence, else v1).
-    const raw = base64ToBytes(manifest.signature);
-    const payload = await otaSignaturePayload(manifest);
-    ok = await crypto.subtle.verify(
+    return await crypto.subtle.verify(
       VERIFY_ALGORITHM,
       key,
-      raw as BufferSource,
-      payload as BufferSource,
+      base64ToBytes(signature) as BufferSource,
+      await payload() as BufferSource,
     );
   } catch {
-    ok = false; // malformed base64, bad r‖s length, or a bad payload (e.g. absurd sequence)
+    return false;
   }
-  if (!ok) throw new DesktopUpdateError("signature", "the manifest signature does not verify");
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -509,6 +539,15 @@ function feedHeaders(config: DesktopUpdaterConfig): Record<string, string> {
 async function assertPlatform(manifest: OtaManifest, config: DesktopUpdaterConfig): Promise<void> {
   const mismatch = await otaPlatformMismatch(manifest, desktopTarget(config));
   if (mismatch !== null) throw new DesktopUpdateError("platform_mismatch", mismatch);
+}
+
+/**
+ * Refuse a manifest for another app, or (with {@linkcode DesktopUpdaterConfig.appId} set) one that
+ * names none (`app_mismatch`). Its `appId` is already verified ({@linkcode assertVerified}).
+ */
+function assertApp(manifest: OtaManifest, config: DesktopUpdaterConfig): void {
+  const mismatch = otaAppMismatch(manifest, config.appId, true);
+  if (mismatch !== null) throw new DesktopUpdateError("app_mismatch", mismatch);
 }
 
 /** Fetch and validate `${feedUrl}/_denext/ota.json`. */
@@ -595,7 +634,7 @@ function assertNotDowngrade(
 
 /**
  * Fetch the feed's manifest and run the trust gate every path shares: integrity and signature
- * (invariants 2–3), the target, and freshness (invariant 4b). With the data dir and the bundle
+ * (invariants 2–3), the target, the app (3b), and freshness (invariant 4b). With the data dir and the bundle
  * record it read.
  */
 async function fetchTrustedManifest(config: DesktopUpdaterConfig): Promise<{
@@ -607,6 +646,7 @@ async function fetchTrustedManifest(config: DesktopUpdaterConfig): Promise<{
   const manifest = await fetchManifest(config);
   await assertVerified(manifest, config.publicKey);
   await assertPlatform(manifest, config);
+  assertApp(manifest, config);
   const bundle = await readBundleRecord(dir);
   assertFresh(manifest, bundle);
   return { dir, manifest, bundle };
@@ -627,7 +667,7 @@ async function fetchTrustedManifest(config: DesktopUpdaterConfig): Promise<{
 export async function checkForDesktopUpdate(
   config: DesktopUpdaterConfig,
 ): Promise<DesktopUpdateCheck> {
-  // Integrity + signature (verify-before-trust), the target, and freshness: before "not
+  // Integrity + signature (verify-before-trust), the target, the app and freshness: before "not
   // available", so a stale feed is an error.
   const { dir, manifest, bundle } = await fetchTrustedManifest(config);
 

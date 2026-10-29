@@ -23,6 +23,7 @@ import {
   OTA_SIGNING_KEY_ENV,
   verifyOtaManifest,
 } from "../src/build/ota-signing.ts";
+import { OTA_APP_ID_ENV } from "../src/build/ota-app-id.ts";
 import { symlinkDir } from "./helpers/symlink.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
@@ -188,6 +189,21 @@ Deno.test({
     const signed = JSON.parse(await Deno.readTextFile(join(out, "_denext", "ota.json")));
     assertEquals(signed.version, manifest.version);
     assert(await verifyOtaManifest(signed, publicKey), JSON.stringify(signed));
+    // No Capacitor appId / desktop.app.identifier here: a signed manifest that names no app.
+    assertEquals(signed.appId, undefined);
+    // DENEXT_OTA_APP_ID (what `denext mobile build` sets) names it, signed by `appSignature`.
+    Deno.env.set(OTA_SIGNING_KEY_ENV, privateKeyPem);
+    Deno.env.set(OTA_APP_ID_ENV, "com.example.app");
+    try {
+      await staticExport(dir);
+    } finally {
+      Deno.env.delete(OTA_SIGNING_KEY_ENV);
+      Deno.env.delete(OTA_APP_ID_ENV);
+    }
+    const bound = JSON.parse(await Deno.readTextFile(join(out, "_denext", "ota.json")));
+    assertEquals(bound.appId, "com.example.app");
+    assert(typeof bound.appSignature === "string");
+    assert(await verifyOtaManifest(bound, publicKey), JSON.stringify(bound));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

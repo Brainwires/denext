@@ -126,12 +126,12 @@ import UIKit
 /// \`otaReset\` from \`denext/mobile\`). \`DenextBridgeViewController\` registers it before the
 /// first page loads.
 ///
-/// - \`status() → { current, bundled, pending, rejected, staged, tampered }\`
+/// - \`status() → { current, bundled, pending, rejected, staged, tampered, appId }\`
 /// - \`download({ baseUrl, headers, manifest }) → { version, downloaded, copied, staged }\`: downloads
 ///   and verifies the version and records it as staged, WITHOUT switching to it (\`staged: false\`
 ///   when the version is already running); rejects with code \`invalid\`, \`busy\`, \`rejected\`,
 ///   \`download\`, \`integrity\`, \`signature\`, \`insecure\`, \`downgrade\`, \`native_too_old\`,
-///   \`native_mismatch\`, \`platform_mismatch\`, \`expired\` or \`guard_unavailable\` (all but
+///   \`native_mismatch\`, \`platform_mismatch\`, \`app_mismatch\`, \`expired\` or \`guard_unavailable\` (all but
 ///   \`busy\`, \`rejected\`, \`download\` and a file's \`integrity\` before any download: see
 ///   \`DenextOtaStore.ApplyRequest\`)
 /// - \`activate({ version }) → { version }\`: switches to the staged version (its trial launch);
@@ -232,7 +232,8 @@ public class DenextOtaPlugin: CAPPlugin, CAPBridgedPlugin, @unchecked Sendable {
                 "pending": store.pending ?? NSNull(),
                 "rejected": store.rejected ?? NSNull(),
                 "staged": store.staged ?? NSNull(),
-                "tampered": store.tampered ?? NSNull()
+                "tampered": store.tampered ?? NSNull(),
+                "appId": DenextOtaStore.ownAppId ?? NSNull()
             ])
         }
     }
@@ -635,7 +636,8 @@ final class DenextOtaStore: @unchecked Sendable {
     /// before anything is downloaded or any state changes: the manifest must be well formed and
     /// within the caps (code \`invalid\`), the file list must hash to its \`version\` (code
     /// \`integrity\`), \`checkTrust\` must accept the signature or the transport (codes \`signature\` /
-    /// \`insecure\`), \`checkPlatform\` its target (code \`platform_mismatch\`), and \`checkRelease\`
+    /// \`insecure\`), \`checkPlatform\` its target (code \`platform_mismatch\`), \`checkApp\` its app
+    /// (codes \`app_mismatch\` / \`signature\`), and \`checkRelease\`
     /// its \`sequence\`, \`minNative\`, \`nativeFingerprint\` and \`expiresAt\` (codes \`downgrade\` /
     /// \`native_too_old\` / \`native_mismatch\` / \`expired\`).
     struct ApplyRequest: Sendable {
@@ -652,6 +654,9 @@ final class DenextOtaStore: @unchecked Sendable {
         let nativeFingerprint: String?
         let expiresAt: Int64?
         let signature: String?
+        /// The app the release names, and its signature over the v5 payload (\`appSignaturePayload\`).
+        let appId: String?
+        let appSignature: String?
 
         init(baseUrl: String?, headers: JSObject?, manifest: JSObject?) throws {
             // No credentials and no backslash: the origin checks and the downloader must read the
@@ -679,6 +684,11 @@ final class DenextOtaStore: @unchecked Sendable {
             guard expiresAt == nil || sequence != nil else {
                 throw OtaError(code: "invalid", message: "The manifest's expiresAt needs a sequence.")
             }
+            let appId = try DenextOtaStore.appIdField(manifest["appId"])
+            guard appId == nil || sequence != nil else {
+                throw OtaError(code: "invalid", message: "The manifest's appId needs a sequence.")
+            }
+            let appSignature = manifest["appSignature"] as? String
             // The version is recomputed from the files, never trusted: files → version → signature.
             guard DenextOtaStore.manifestVersion(files) == version else {
                 throw OtaError(code: "integrity", message: "The manifest version does not match its files.")
@@ -700,6 +710,24 @@ final class DenextOtaStore: @unchecked Sendable {
                 signature: signature
             )
             try DenextOtaStore.checkPlatform(manifest["platform"], files: files, signed: DenextOtaStore.signsUpdates)
+            try DenextOtaStore.checkApp(
+                appId,
+                appSignature: appSignature,
+                payload: appId.map {
+                    DenextOtaStore.appSignaturePayload(
+                        version: version,
+                        required: required,
+                        notes: notes,
+                        sequence: sequence ?? 0,
+                        minNative: minNative,
+                        nativeFingerprint: nativeFingerprint,
+                        expiresAt: expiresAt,
+                        appId: $0
+                    )
+                },
+                own: DenextOtaStore.ownAppId,
+                key: DenextOtaStore.publicKey
+            )
             try DenextOtaStore.checkRelease(
                 sequence: sequence,
                 minNative: minNative,
@@ -717,6 +745,8 @@ final class DenextOtaStore: @unchecked Sendable {
             self.nativeFingerprint = nativeFingerprint
             self.expiresAt = expiresAt
             self.signature = signature
+            self.appId = appId
+            self.appSignature = appSignature
         }
     }
 
@@ -891,6 +921,22 @@ final class DenextOtaStore: @unchecked Sendable {
 
     /// The manifest's \`nativeFingerprint\`: nil when absent, else it must be 64 lowercase hex
     /// digits (anything else is \`invalid\`).
+    /// The manifest's \`appId\`: nil when absent, else 1–255 characters of \`A-Z a-z 0-9 . _ -\` (else
+    /// \`invalid\`), as denext's \`isOtaAppId\`.
+    static func appIdField(_ value: Any?) throws -> String? {
+        guard let value = value, !(value is NSNull) else { return nil }
+        guard let text = value as? String, (1...255).contains(text.utf8.count),
+              text.unicodeScalars.allSatisfy({ isAppIdScalar($0) }) else {
+            throw OtaError(code: "invalid", message: "The manifest's appId is not an app id (A-Z a-z 0-9 . _ -).")
+        }
+        return text
+    }
+
+    private static func isAppIdScalar(_ c: Unicode.Scalar) -> Bool {
+        return ("a"..."z").contains(c) || ("A"..."Z").contains(c) || ("0"..."9").contains(c) ||
+            c == "." || c == "_" || c == "-"
+    }
+
     static func fingerprintField(_ value: Any?) throws -> String? {
         guard let value = value, !(value is NSNull) else { return nil }
         guard let text = value as? String, isSha256(text) else {
@@ -1029,6 +1075,42 @@ final class DenextOtaStore: @unchecked Sendable {
             return Data("denext-ota-v2\\n\\(v2)".utf8)
         }
         return Data("denext-ota-v3\\n\\(v2)\\n\\(nativeFingerprint)".utf8)
+    }
+
+    /// The bytes a manifest's \`appSignature\` covers (denext's \`otaAppSignaturePayload\`), the v5
+    /// format: \`"denext-ota-v5\\n" + version + "\\n" + ("1" | "0") + "\\n" + sha256hex(notes) + "\\n" +
+    /// sequence + "\\n" + (minNative or "") + "\\n" + (nativeFingerprint or "") + "\\n" + (expiresAt
+    /// or "") + "\\n" + appId\`. Its own first line, so it never verifies as a \`signature\`.
+    static func appSignaturePayload(version: String, required: Bool, notes: String, sequence: Int64, minNative: Int64?, nativeFingerprint: String?, expiresAt: Int64?, appId: String) -> Data {
+        let head = "\\(version)\\n\\(required ? "1" : "0")\\n\\(sha256Hex(Data(notes.utf8)))\\n\\(sequence)"
+        let tail = "\\(minNative.map { String($0) } ?? "")\\n\\(nativeFingerprint ?? "")\\n\\(expiresAt.map { String($0) } ?? "")"
+        return Data("denext-ota-v5\\n\\(head)\\n\\(tail)\\n\\(appId)".utf8)
+    }
+
+    /// This app's id (the bundle identifier), which a manifest's \`appId\` must name.
+    static let ownAppId: String? = Bundle.main.bundleIdentifier
+
+    /// The manifest's app, checked after \`checkTrust\`: an \`appId\` other than this app's \`own\` is
+    /// refused (code \`app_mismatch\`), in any mode. With a public key embedded the release must be
+    /// signed for this app: an \`appId\` (else \`app_mismatch\`) under a valid \`appSignature\` over
+    /// \`payload\` (else \`signature\`), so a feed for another app that shares the signing key cannot
+    /// install its UI here. Without a key (unsigned, pinned-origin updates) a manifest without an
+    /// \`appId\` is accepted as before. The same rule as denext's \`otaAppMismatch\`.
+    static func checkApp(_ appId: String?, appSignature: String?, payload: Data?, own: String?, key: PublicKeyConfig) throws {
+        if let appId = appId, let own = own, appId != own {
+            throw OtaError(code: "app_mismatch", message: "The UI was released for \\(appId); this app is \\(own).")
+        }
+        guard case .key(let verifier) = key else { return }
+        guard appId != nil, let payload = payload else {
+            guard let own = own else { return }
+            throw OtaError(
+                code: "app_mismatch",
+                message: "The manifest names no app; this app (\\(own)) takes only a release signed for it (denext ota manifest --app-id \\(own) --sign)."
+            )
+        }
+        guard isValidSignature(appSignature, by: verifier, over: payload) else {
+            throw OtaError(code: "signature", message: "The manifest's appSignature is missing or does not verify.")
+        }
     }
 
     /// The download policy, checked before any file is fetched. With origins pinned
@@ -1833,6 +1915,8 @@ final class DenextOtaStore: @unchecked Sendable {
         if let nativeFingerprint = request.nativeFingerprint { manifest["nativeFingerprint"] = nativeFingerprint }
         if let expiresAt = request.expiresAt { manifest["expiresAt"] = expiresAt }
         if let signature = request.signature { manifest["signature"] = signature }
+        if let appId = request.appId { manifest["appId"] = appId }
+        if let appSignature = request.appSignature { manifest["appSignature"] = appSignature }
         return try JSONSerialization.data(withJSONObject: manifest)
     }
 
@@ -2327,13 +2411,14 @@ import org.json.JSONObject;
  * registers it. See {@link DenextOtaStore} for the files and state.
  *
  * <ul>
- *   <li>{@code status() → { current, bundled, pending, rejected, staged, tampered }}
+ *   <li>{@code status() → { current, bundled, pending, rejected, staged, tampered, appId }}
  *   <li>{@code download({ baseUrl, headers, manifest }) → { version, downloaded, copied, staged }}:
  *       downloads and verifies the version and records it as staged, WITHOUT switching to it
  *       ({@code staged: false} when the version is already running); rejects with code
  *       {@code invalid}, {@code busy}, {@code rejected}, {@code download}, {@code integrity},
- *       {@code signature}, {@code insecure}, {@code downgrade}, {@code native_too_old} or
- *       {@code native_mismatch} (the trust and release checks before any download: see
+ *       {@code signature}, {@code insecure}, {@code downgrade}, {@code native_too_old},
+ *       {@code native_mismatch}, {@code platform_mismatch}, {@code app_mismatch} or {@code expired}
+ *       (the trust and release checks before any download: see
  *       {@link #parseApplyRequest})
  *   <li>{@code activate({ version }) → { version }}: switches to the staged version (its trial
  *       launch); rejects with code {@code invalid}, {@code busy}, {@code not_staged} or
@@ -2430,6 +2515,7 @@ public class DenextOtaPlugin extends Plugin {
         result.put("rejected", orNull(store.rejected()));
         result.put("staged", orNull(store.staged()));
         result.put("tampered", orNull(store.tampered()));
+        result.put("appId", orNull(store.ownAppId()));
         call.resolve(result);
     }
 
@@ -2748,8 +2834,9 @@ public class DenextOtaPlugin extends Plugin {
      * caps (code invalid), the file list must hash to its version (code integrity),
      * {@link DenextOtaStore#checkTrust} must accept the signature or the transport (codes
      * signature / insecure), {@link DenextOtaStore#checkPlatform} its target (code
-     * platform_mismatch), and {@link DenextOtaStore#checkRelease} its sequence, minNative,
-     * nativeFingerprint and expiresAt (codes downgrade / native_too_old / native_mismatch / expired).
+     * platform_mismatch), {@link DenextOtaStore#checkApp} its app (codes app_mismatch / signature),
+     * and {@link DenextOtaStore#checkRelease} its sequence, minNative, nativeFingerprint and
+     * expiresAt (codes downgrade / native_too_old / native_mismatch / expired).
      */
     private static DenextOtaStore.ApplyRequest parseApplyRequest(PluginCall call, DenextOtaStore store)
         throws DenextOtaStore.OtaException {
@@ -2790,6 +2877,12 @@ public class DenextOtaPlugin extends Plugin {
         if (expiresAt != null && sequence == null) {
             throw new DenextOtaStore.OtaException("invalid", "The manifest's expiresAt needs a sequence.");
         }
+        String appId = DenextOtaStore.appIdField(manifest.opt("appId"));
+        if (appId != null && sequence == null) {
+            throw new DenextOtaStore.OtaException("invalid", "The manifest's appId needs a sequence.");
+        }
+        Object rawAppSignature = manifest.opt("appSignature");
+        String appSignature = rawAppSignature instanceof String ? (String) rawAppSignature : null;
         // The version is recomputed from the files, never trusted: files → version → signature.
         if (!DenextOtaStore.manifestVersion(files).equals(version)) {
             throw new DenextOtaStore.OtaException("integrity", "The manifest version does not match its files.");
@@ -2805,6 +2898,13 @@ public class DenextOtaPlugin extends Plugin {
             signature
         );
         DenextOtaStore.checkPlatform(manifest.opt("platform"), files, store.signsUpdates());
+        store.checkApp(
+            appId,
+            appSignature,
+            appId == null
+                ? null
+                : DenextOtaStore.appSignaturePayload(version, required, notes, sequence, minNative, nativeFingerprint, expiresAt, appId)
+        );
         store.checkRelease(sequence, minNative, nativeFingerprint, expiresAt);
         return new DenextOtaStore.ApplyRequest(
             baseUrl,
@@ -2817,7 +2917,9 @@ public class DenextOtaPlugin extends Plugin {
             minNative,
             nativeFingerprint,
             signature,
-            expiresAt
+            expiresAt,
+            appId,
+            appSignature
         );
     }
 }
@@ -3059,6 +3161,11 @@ final class DenextOtaStore {
         final String signature;
         @Nullable
         final Long expiresAt;
+        /** The app the release names, and its signature over the v5 payload ({@link #appSignaturePayload}). */
+        @Nullable
+        final String appId;
+        @Nullable
+        final String appSignature;
 
         ApplyRequest(
             String baseUrl,
@@ -3073,6 +3180,24 @@ final class DenextOtaStore {
             @Nullable String signature,
             @Nullable Long expiresAt
         ) {
+            this(baseUrl, headers, version, files, sequence, required, notes, minNative, nativeFingerprint, signature, expiresAt, null, null);
+        }
+
+        ApplyRequest(
+            String baseUrl,
+            Map<String, String> headers,
+            String version,
+            List<ManifestFile> files,
+            @Nullable Long sequence,
+            boolean required,
+            String notes,
+            @Nullable Long minNative,
+            @Nullable String nativeFingerprint,
+            @Nullable String signature,
+            @Nullable Long expiresAt,
+            @Nullable String appId,
+            @Nullable String appSignature
+        ) {
             this.baseUrl = baseUrl;
             this.headers = headers;
             this.version = version;
@@ -3084,6 +3209,8 @@ final class DenextOtaStore {
             this.nativeFingerprint = nativeFingerprint;
             this.signature = signature;
             this.expiresAt = expiresAt;
+            this.appId = appId;
+            this.appSignature = appSignature;
         }
     }
 
@@ -3254,6 +3381,21 @@ final class DenextOtaStore {
         throw new OtaException("invalid", "The manifest's " + name + " is not a non-negative integer.");
     }
 
+    /**
+     * The manifest's appId: null when absent, else 1–255 characters of {@code A-Z a-z 0-9 . _ -}
+     * (else invalid), as denext's {@code isOtaAppId}.
+     */
+    @Nullable
+    static String appIdField(@Nullable Object value) throws OtaException {
+        if (value == null || value == JSONObject.NULL) {
+            return null;
+        }
+        if (value instanceof String && ((String) value).matches("[A-Za-z0-9._-]{1,255}")) {
+            return (String) value;
+        }
+        throw new OtaException("invalid", "The manifest's appId is not an app id (A-Z a-z 0-9 . _ -).");
+    }
+
     /** The manifest's nativeFingerprint: null when absent, else 64 lowercase hex digits (else invalid). */
     @Nullable
     static String fingerprintField(@Nullable Object value) throws OtaException {
@@ -3312,6 +3454,68 @@ final class DenextOtaStore {
             }
         }
         return text.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * The bytes a manifest's {@code appSignature} covers (denext's {@code otaAppSignaturePayload}),
+     * the v5 format: {@code "denext-ota-v5\\n" + version + "\\n" + ("1" | "0") + "\\n" +
+     * sha256hex(notes) + "\\n" + sequence + "\\n" + (minNative or "") + "\\n" + (nativeFingerprint or
+     * "") + "\\n" + (expiresAt or "") + "\\n" + appId}. Its own first line, so it never verifies as a
+     * {@code signature}.
+     */
+    static byte[] appSignaturePayload(
+        String version,
+        boolean required,
+        String notes,
+        long sequence,
+        @Nullable Long minNative,
+        @Nullable String nativeFingerprint,
+        @Nullable Long expiresAt,
+        String appId
+    ) {
+        String text = "denext-ota-v5\\n" + version + "\\n" + (required ? "1" : "0") + "\\n" +
+            sha256Hex(notes.getBytes(StandardCharsets.UTF_8)) + "\\n" + sequence + "\\n" +
+            (minNative == null ? "" : String.valueOf(minNative)) + "\\n" +
+            (nativeFingerprint == null ? "" : nativeFingerprint) + "\\n" +
+            (expiresAt == null ? "" : String.valueOf(expiresAt)) + "\\n" + appId;
+        return text.getBytes(StandardCharsets.UTF_8);
+    }
+
+    /** This app's id (the application id, {@code Context.getPackageName()}), which a manifest's appId must name. */
+    String ownAppId() {
+        return context.getPackageName();
+    }
+
+    /**
+     * The manifest's app, checked after {@link #checkTrust}: an {@code appId} other than this app's
+     * is refused (code app_mismatch), in any mode. With a public key embedded the release must be
+     * signed for this app: an {@code appId} (else app_mismatch) under a valid {@code appSignature}
+     * over {@code payload} (else signature), so a feed for another app that shares the signing key
+     * cannot install its UI here. Without a key (unsigned, pinned-origin updates) a manifest without
+     * an {@code appId} is accepted as before. The same rule as denext's {@code otaAppMismatch}.
+     */
+    void checkApp(@Nullable String appId, @Nullable String appSignature, @Nullable byte[] payload) throws OtaException {
+        String own = ownAppId();
+        if (appId != null && own != null && !appId.equals(own)) {
+            throw new OtaException("app_mismatch", "The UI was released for " + appId + "; this app is " + own + ".");
+        }
+        String encodedKey = publicKeyMetaData();
+        if (encodedKey == null) {
+            return;
+        }
+        if (appId == null || payload == null) {
+            if (own == null) {
+                return;
+            }
+            throw new OtaException(
+                "app_mismatch",
+                "The manifest names no app; this app (" + own + ") takes only a release signed for it (denext ota manifest --app-id " + own + " --sign)."
+            );
+        }
+        PublicKey key = parsePublicKey(encodedKey);
+        if (key == null || !isValidSignature(key, payload, appSignature)) {
+            throw new OtaException("signature", "The manifest's appSignature is missing or does not verify.");
+        }
     }
 
     /**
@@ -4672,6 +4876,12 @@ final class DenextOtaStore {
         }
         if (request.signature != null) {
             manifest.put("signature", request.signature);
+        }
+        if (request.appId != null) {
+            manifest.put("appId", request.appId);
+        }
+        if (request.appSignature != null) {
+            manifest.put("appSignature", request.appSignature);
         }
         File target = new File(directory, MANIFEST_PATH);
         File parent = target.getParentFile();

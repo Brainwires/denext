@@ -5,6 +5,7 @@
 // binary, where the native DenextOta plugin verifies it. WebCrypto only: no dependency.
 
 import {
+  otaAppSignaturePayload,
   type OtaManifest,
   otaManifestVersion,
   otaSignaturePayload,
@@ -124,22 +125,31 @@ export async function parseOtaPublicKey(text: string): Promise<string> {
  * is signed over the v2 payload (which also covers `sequence` and `minNative`), or over v3 when it
  * also carries a `nativeFingerprint`; one without a `sequence` over v1; see
  * {@linkcode otaSignaturePayload}. `writeOtaManifest` stamps a `sequence` before signing unless
- * one is given, so only a manifest built by hand gets v1.
+ * one is given, so only a manifest built by hand gets v1. A manifest with an `appId` also gets an
+ * `appSignature` over the v5 payload ({@linkcode otaAppSignaturePayload}); `signature` stays over
+ * v1–v4, so shells from before `appId` existed verify it unchanged.
  *
- * @throws RangeError when `minNative` or `nativeFingerprint` is set without a `sequence`.
+ * @throws RangeError when `minNative`, `nativeFingerprint`, `expiresAt` or `appId` is set without
+ *   a `sequence`.
  */
 export async function signOtaManifest(
   manifest: OtaManifest,
   key: CryptoKey,
 ): Promise<OtaManifest> {
-  const payload = await otaSignaturePayload(manifest);
-  const raw = await crypto.subtle.sign(SIGN_ALGORITHM, key, payload as BufferSource);
-  return { ...manifest, signature: toBase64(new Uint8Array(raw)) };
+  const sign = async (payload: Uint8Array) =>
+    toBase64(
+      new Uint8Array(await crypto.subtle.sign(SIGN_ALGORITHM, key, payload as BufferSource)),
+    );
+  const { appSignature: _old, ...rest } = manifest;
+  const signature = await sign(await otaSignaturePayload(manifest));
+  if (manifest.appId === undefined) return { ...rest, signature };
+  return { ...rest, signature, appSignature: await sign(await otaAppSignaturePayload(manifest)) };
 }
 
 /**
- * Verify `manifest` the way the native plugin does: the version must match the file list, and
- * the signature must verify over {@linkcode otaSignaturePayload} with `publicKey`.
+ * Verify `manifest` the way the native plugin does: the version must match the file list, the
+ * signature must verify over {@linkcode otaSignaturePayload} with `publicKey`, and a manifest with
+ * an `appId` must carry an `appSignature` that verifies over {@linkcode otaAppSignaturePayload}.
  *
  * @param publicKey Base64 SPKI (as `denext ota keygen` writes to `<out>.pub`).
  */
@@ -157,14 +167,17 @@ export async function verifyOtaManifest(
       false,
       ["verify"],
     );
-    const signature = fromBase64(manifest.signature);
-    const payload = await otaSignaturePayload(manifest);
-    return await crypto.subtle.verify(
-      SIGN_ALGORITHM,
-      key,
-      signature as BufferSource,
-      payload as BufferSource,
-    );
+    const verify = async (signature: string, payload: Uint8Array) =>
+      await crypto.subtle.verify(
+        SIGN_ALGORITHM,
+        key,
+        fromBase64(signature) as BufferSource,
+        payload as BufferSource,
+      );
+    if (!await verify(manifest.signature, await otaSignaturePayload(manifest))) return false;
+    if (manifest.appId === undefined) return true;
+    return typeof manifest.appSignature === "string" &&
+      await verify(manifest.appSignature, await otaAppSignaturePayload(manifest));
   } catch {
     return false;
   }

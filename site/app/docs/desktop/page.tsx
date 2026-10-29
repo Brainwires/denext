@@ -1498,6 +1498,19 @@ try {
         <code>{"createOtaHandler({ platforms })"}</code> feed serves each OS its own export.
       </p>
       <p>
+        <strong>The release is for this app.</strong> With <code>desktop.app.identifier</code>{" "}
+        set (which <code>desktop.update.ui</code> requires, and <code>runDesktop</code>{" "}
+        passes as the updater&apos;s <code>appId</code>), a manifest must name the app in its signed
+        {" "}
+        <code>appId</code> (its own{" "}
+        <code>appSignature</code>, payload v5): another app&apos;s release, or one that names no
+        app, is refused (<code>app_mismatch</code>), so a signing key shared by several apps cannot
+        move one app&apos;s UI onto another. A signed desktop <code>spa.ota</code> export stamps
+        {" "}
+        <code>desktop.app.identifier</code>; for a manifest written by{" "}
+        <code>denext ota manifest</code>, pass <code>--app-id &lt;identifier&gt; --sign</code>.
+      </p>
+      <p>
         <strong>Tied to the app it was installed over.</strong>{" "}
         The overlay folder records which bundled export the overlay belongs to (the export&apos;s
         stamped version, else its <code>index.html</code>{" "}

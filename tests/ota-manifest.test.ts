@@ -255,6 +255,7 @@ Deno.test("denext ota: --required and --notes are declared flags", () => {
       ["min-native", "number"],
       ["native-fingerprint", "string"],
       ["platform", "string"],
+      ["app-id", "string"],
       ["dir", "string"],
       ["force", "boolean"],
       ["channel", "string"],

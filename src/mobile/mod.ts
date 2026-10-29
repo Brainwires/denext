@@ -49,7 +49,8 @@
  *   that `denext mobile add-ota` installs, which re-verifies a downloaded UI whenever it serves
  *   it ({@linkcode onOtaRejected} hears a refusal); {@linkcode prepareUiUpdate} /
  *   {@linkcode applyUiUpdate} split the download from the switch for an app's own prompt;
- *   {@linkcode otaSignaturePayload} builds the exact bytes a manifest signature covers.
+ *   {@linkcode otaSignaturePayload} / {@linkcode otaAppSignaturePayload} build the exact bytes
+ *   a manifest's `signature` / `appSignature` cover.
  * - Native capabilities, each through its official Capacitor plugin in the shell
  *   (`denext mobile add <capability>` installs it) and a web fallback elsewhere:
  *   {@linkcode haptic}, {@linkcode readClipboard} / {@linkcode writeClipboard} /
@@ -235,7 +236,12 @@ export {
   otaStatus,
   prepareUiUpdate,
 } from "./ota.ts";
-export { type OtaManifest, type OtaManifestFile, otaSignaturePayload } from "./ota-manifest.ts";
+export {
+  otaAppSignaturePayload,
+  type OtaManifest,
+  type OtaManifestFile,
+  otaSignaturePayload,
+} from "./ota-manifest.ts";
 export { haptic, type HapticKind } from "./haptics.ts";
 export {
   type ClipboardContent,

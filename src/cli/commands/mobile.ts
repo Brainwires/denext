@@ -38,9 +38,10 @@
 import { parsePlatform, scanPlatformGroups } from "../../build/platform-extensions.ts";
 import { relative, resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { defaultOtaExpiry, writeOtaManifest } from "../../build/ota-manifest.ts";
+import { defaultOtaExpiry, readPlatformStamp, writeOtaManifest } from "../../build/ota-manifest.ts";
+import { otaAppIdFor } from "../../build/ota-app-id.ts";
 import { parseRfc3339 } from "../../build/app-update.ts";
-import type { OtaManifest } from "../../mobile/ota-manifest.ts";
+import { isOtaAppId, type OtaManifest } from "../../mobile/ota-manifest.ts";
 import {
   generateOtaKeyPair,
   loadOtaSigningKey,
@@ -112,23 +113,32 @@ function printManifest(ctx: CommandContext, dir: string, dirArg: string, m: OtaM
         nativeFingerprint: m.nativeFingerprint ?? null,
         expiresAt: m.expiresAt ?? null,
         platform: m.platform ?? null,
+        appId: m.appId ?? null,
         signed: m.signature !== undefined,
       }),
     );
     return;
   }
-  const extra = (m.required ? ", required" : "") +
-    (m.sequence !== undefined ? `, sequence ${m.sequence}` : "") +
-    (m.minNative !== undefined ? `, min native ${m.minNative}` : "") +
-    (m.nativeFingerprint !== undefined ? `, native ${m.nativeFingerprint.slice(0, 12)}` : "") +
-    (m.expiresAt !== undefined
-      ? `, expires ${new Date(m.expiresAt * 1000).toISOString().replace(/\.000Z$/, "Z")}`
-      : "") +
-    (m.platform !== undefined ? `, platform ${m.platform}` : "") +
-    (m.signature ? ", signed" : "");
+  const extra = manifestDetails(m).map((d) => `, ${d}`).join("");
   console.log(
     `  wrote ${dirArg}/_denext/ota.json — version ${m.version} (${m.files.length} files${extra})`,
   );
+}
+
+/** The release metadata of `m` worth a mention on the summary line, each as a short phrase. */
+function manifestDetails(m: OtaManifest): string[] {
+  const expires = (at: number) => new Date(at * 1000).toISOString().replace(/\.000Z$/, "Z");
+  const details: Array<string | false | undefined> = [
+    m.required && "required",
+    m.sequence !== undefined && `sequence ${m.sequence}`,
+    m.minNative !== undefined && `min native ${m.minNative}`,
+    m.nativeFingerprint !== undefined && `native ${m.nativeFingerprint.slice(0, 12)}`,
+    m.expiresAt !== undefined && `expires ${expires(m.expiresAt)}`,
+    m.platform !== undefined && `platform ${m.platform}`,
+    m.appId !== undefined && `app ${m.appId}`,
+    m.signature !== undefined && "signed",
+  ];
+  return details.filter((d): d is string => typeof d === "string");
 }
 
 /**
@@ -221,6 +231,51 @@ async function warnUnstampedExport(ctx: CommandContext): Promise<void> {
   );
 }
 
+/**
+ * The manifest's `appId`: `--app-id` as given; without it, for a signed manifest only, the app id
+ * of the export's target ({@linkcode otaAppIdFor}: `DENEXT_OTA_APP_ID`, else the Capacitor `appId`
+ * of `--dir` for an `ios` / `android` export). Unsigned manifests get none unless asked for.
+ */
+async function appIdFlag(
+  ctx: CommandContext,
+  dir: string,
+  platform: string | undefined,
+  signing: boolean,
+): Promise<{ appId?: string }> {
+  const value = ctx.flags["app-id"];
+  if (value !== undefined) {
+    if (!isOtaAppId(value)) {
+      fail(
+        "denext ota manifest: --app-id takes the app's id (A-Z a-z 0-9 . _ -, e.g. com.example.app)",
+      );
+    }
+    return { appId: value };
+  }
+  if (!signing) return {};
+  const cwd = ctx.global.cwd ?? ".";
+  const project = resolve(cwd, typeof ctx.flags.dir === "string" ? ctx.flags.dir : ".");
+  const appId = await otaAppIdFor(project, platform ?? await readPlatformStamp(dir));
+  return appId === undefined ? {} : { appId };
+}
+
+/**
+ * The warnings a written manifest may call for: signed without naming its app, or naming no
+ * target for an app with platform files.
+ */
+async function warnAboutManifest(ctx: CommandContext, manifest: OtaManifest): Promise<void> {
+  if (manifest.signature !== undefined && manifest.appId === undefined) {
+    console.error(
+      "  warning: this signed manifest names no app: app binaries that embed the public key " +
+        "(and Deno Desktop overlays with desktop.app.identifier) refuse it (code " +
+        "app_mismatch). Pass --app-id <bundle id / application id / desktop.app.identifier>.",
+    );
+  }
+  // `--platform web` asked for the unstamped export every shell takes.
+  if (manifest.platform === undefined && ctx.flags.platform !== "web") {
+    await warnUnstampedExport(ctx);
+  }
+}
+
 /** `denext ota manifest <dir>`. */
 async function otaManifest(ctx: CommandContext): Promise<void> {
   const dirArg = ctx.positionals[1];
@@ -249,16 +304,14 @@ async function otaManifest(ctx: CommandContext): Promise<void> {
     const signingKey = await loadOtaSigningKey(
       typeof sign === "string" ? resolve(cwd, sign) : undefined,
     );
+    const appId = await appIdFlag(ctx, dir, meta.platform, signingKey !== undefined);
     const manifest = await writeOtaManifest(
       dir,
-      nativeFingerprint === undefined ? meta : { ...meta, nativeFingerprint },
+      { ...meta, ...appId, ...(nativeFingerprint === undefined ? {} : { nativeFingerprint }) },
       signingKey,
     );
     printManifest(ctx, dir, dirArg, manifest);
-    // `--platform web` asked for the unstamped export every shell takes.
-    if (manifest.platform === undefined && ctx.flags.platform !== "web") {
-      await warnUnstampedExport(ctx);
-    }
+    await warnAboutManifest(ctx, manifest);
   } catch (err) {
     fail(`denext ota manifest: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -440,11 +493,18 @@ export const otaCommand: CommandSpec = {
         "manifest: the target the export was built for (ios, android, macos, windows, linux); shells of another target refuse it. web names no target (no stamp), as `denext export` does",
     },
     {
+      name: "app-id",
+      type: "string",
+      valueName: "<id>",
+      help:
+        "manifest: the app this release is for (iOS bundle id / Android application id / desktop.app.identifier), signed; shells of another app refuse it. Default when signing: $DENEXT_OTA_APP_ID, else the Capacitor appId of --dir for an ios / android export",
+    },
+    {
       name: "dir",
       type: "string",
       valueName: "<dir>",
       help:
-        "manifest --native-fingerprint auto: the Capacitor project (default: the current directory)",
+        "manifest --native-fingerprint auto / the default --app-id: the Capacitor project (default: the current directory)",
     },
     {
       name: "force",
