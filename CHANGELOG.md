@@ -25,10 +25,32 @@ and this project adheres to
   ([GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99)), a stale optional peer;
   denext runs its own pinned esbuild binary. The published version ranges already admitted the
   fixed releases, so a fresh resolution in an app was not affected.
-- **`deno task audit:npm`** runs `deno audit` over the root `deno.lock` and fails on a high or
-  critical advisory. A fix still under Deno's minimum dependency age is held in
-  `security/npm-audit-allow.json` with the date it clears. CI's `cargo-audit` job and
-  `deno task precheck` (when `deno.lock`, a `deno.json` or the allowlist changes) run it.
+- **`deno task audit:npm`** runs `deno audit` over the root `deno.lock` and every example's own
+  `deno.lock`, and fails on a high or critical advisory in any of them. A fix still under Deno's
+  minimum dependency age is held in `security/npm-audit-allow.json` with the date it clears. CI's
+  `cargo-audit` job and `deno task precheck` (when a `deno.lock`, a `deno.json`, an example's
+  `package.json` or the allowlist changes) run it.
+- **The examples' lockfiles hold fixed releases.** `examples/clerk` resolves `electron` 45.0.0
+  ([GHSA-jr5w-w6x2-84p9](https://github.com/advisories/GHSA-jr5w-w6x2-84p9)) and `undici` 7.30.1
+  ([GHSA-4w7w-5xrc-9h26](https://github.com/advisories/GHSA-4w7w-5xrc-9h26),
+  [GHSA-2m5v-pch6-74hx](https://github.com/advisories/GHSA-2m5v-pch6-74hx),
+  [GHSA-qrxm-fqhp-jwvm](https://github.com/advisories/GHSA-qrxm-fqhp-jwvm),
+  [GHSA-xjj6-f33q-929c](https://github.com/advisories/GHSA-xjj6-f33q-929c) and four moderate
+  ones), and `@clerk/clerk-js` 6.40.1, which no longer brings in `@solana/web3.js` and with it the
+  vulnerable `stream-json` 1.9.1 and `uuid` 8.3.2; `@clerk/electron` stays 0.0.48, whose range
+  admits both. `examples/expo-app`'s `package-lock.json` moves `shell-quote` to 1.12.0
+  ([GHSA-pqg4-j6r4-53mv](https://github.com/advisories/GHSA-pqg4-j6r4-53mv), critical),
+  `node-forge` to 1.4.1 ([GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv))
+  and `@expo/config-plugins` to 57.0.11 (`xcode` 4, without `uuid`), and
+  `examples/scroll-bench/native`'s moves `shell-quote` to 1.12.0, `body-parser` to 2.4.0
+  ([GHSA-27r3-jxmh-p828](https://github.com/advisories/GHSA-27r3-jxmh-p828)), `launch-editor` to
+  2.14.2 ([GHSA-587h-7wmj-h5pm](https://github.com/advisories/GHSA-587h-7wmj-h5pm) and two
+  moderate ones) and `qs` to 6.17.0. Still open: `uuid` 7.0.3 (moderate,
+  [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq)) through
+  `@capacitor/cli` 8.5.2's `xcode` 3, fixed by Capacitor 8.6.0 once it clears the dependency-age
+  hold (2026-10-30); `expo-app`'s `zod` 3.25.76 (GHSA-mrhx-c7xc-m3w5, through `@expo/cli`, which
+  requires zod 3 throughout Expo SDK 57); and `decode-uri-component` 0.2.2 (moderate, through
+  `expo-router` 57's `query-string` 7).
 
 ### Added
 

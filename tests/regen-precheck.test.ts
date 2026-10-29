@@ -8,6 +8,7 @@ import { allOutputs, regen, type RegenStep, STEPS } from "../scripts/regen.ts";
 import { rewriteSerialList } from "../scripts/gen-serial-tests.ts";
 import {
   AFFECTED_TESTS_CAP,
+  budgetArgs,
   DRIFT_TESTS,
   isCheckable,
   isPublishedSource,
@@ -169,6 +170,15 @@ Deno.test("precheck: the type-check runs on denext's toolchain (TypeScript 7), n
   const src = await Deno.readTextFile(new URL("scripts/precheck.ts", ROOT));
   assert(src.includes("deno(typeCheckArgs(checkable))"), "the step runs typeCheckArgs");
   assertFalse(/deno\(\["check"/.test(src), "no type-check on the running Deno");
+});
+
+Deno.test("precheck: the bundle budget runs on denext's toolchain, never PATH's deno", async () => {
+  // CI's bundle-budget job measures with the toolchain; a stock 2.9 bundles examples/hello's
+  // shared chunks larger (64,655 B against 64,600 B) and would block every push.
+  assertEquals(budgetArgs(), ["run", "-A", "scripts/toolchain-deno.ts", "task", "budget"]);
+  const src = await Deno.readTextFile(new URL("scripts/precheck.ts", ROOT));
+  assert(src.includes("deno(budgetArgs())"), "the step runs budgetArgs");
+  assertFalse(src.includes(`deno(["task", "budget"])`), "no budget on the running Deno");
 });
 
 Deno.test("precheck: the badge check and the affected tests run, the tests capped", async () => {
