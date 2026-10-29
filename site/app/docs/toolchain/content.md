@@ -229,6 +229,7 @@ denext: deprecated: DENEXT_DENO=stock runs this command on stock Deno. denext 5.
 | What runs on stock Deno                                                 | The fix                                                          |
 | ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
 | `DENEXT_DENO=stock`                                                     | unset it                                                         |
+| `DENEXT_DENO=<path>` at a stock Deno binary                             | point it at denext's Deno, or unset it                           |
 | `DENEXT_DESKTOP_RUNTIME=stock`                                          | unset it (the pinned runtime downloads on first use)             |
 | `desktop run` / `dev` falling back to the stock Deno Desktop runtime    | `denext toolchain install`, and unset `DENEXT_DENO` / `DENO_BIN` |
 | the npm esbuild (the [esbuild](#esbuild) fallback)                      | `denext toolchain install`                                       |

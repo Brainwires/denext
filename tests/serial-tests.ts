@@ -95,6 +95,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/server-misc-coverage.test.ts",
   "tests/sourcemap-attribution.test.ts",
   "tests/spa-export.test.ts",
+  "tests/stock-deprecation.test.ts",
   "tests/tailwind.test.ts",
   "tests/toolchain-audit.test.ts",
   "tests/toolchain-download-timeouts.test.ts",

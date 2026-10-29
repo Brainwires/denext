@@ -234,6 +234,47 @@ Deno.test("maybeReexecToolchain: an opt-out continues in-process; a toolchain th
   }
 });
 
+Deno.test("maybeReexecToolchain: a DENEXT_DENO=<path> that is stock Deno, or a path marker on a stock process, is deprecated", async () => {
+  // The resolver flagged the binary as stock Deno: the notice before it re-runs there.
+  const stockPath = deps({ ...TOOLCHAIN, version: "path", deno: "/opt/deno", stock: true });
+  assert(await maybeReexecToolchain(true, stockPath.d));
+  assertEquals(stockPath.seen.warned.length, 1);
+  assertStringIncludes(stockPath.seen.warned[0], "DENEXT_DENO points at a stock Deno binary");
+  assertStringIncludes(stockPath.seen.warned[0], "denext 5.0 drops stock Deno support");
+  assertEquals(stockPath.vars.DENEXT_STOCK_DEPRECATION_SHOWN, "1");
+  assertEquals(stockPath.seen.spawned.length, 1);
+  // denext's own Deno at the path: nothing.
+  const own = deps({ ...TOOLCHAIN, version: "path", deno: "/opt/deno" });
+  assert(await maybeReexecToolchain(true, own.d));
+  assertEquals(own.seen.warned, []);
+  // The path marker (set by the parent, a unit or an image) on a process that runs stock Deno:
+  // it serves on stock Deno, so it says so.
+  const onStock = deps(TOOLCHAIN, { vars: { DENEXT_TOOLCHAIN_ACTIVE: "path" } });
+  assertEquals(await maybeReexecToolchain(true, onStock.d), false);
+  assertEquals(onStock.seen.warned.length, 1);
+  assertStringIncludes(onStock.seen.warned[0], "DENEXT_DENO points at a stock Deno binary");
+  assertEquals(onStock.seen.resolved, 0);
+  // Still once per process tree, and the opt-out hides it.
+  for (
+    const vars of [
+      { DENEXT_STOCK_DEPRECATION_SHOWN: "1" },
+      { DENEXT_NO_DEPRECATION_WARNINGS: "1" },
+    ] as Record<string, string>[]
+  ) {
+    const quiet = deps(TOOLCHAIN, { vars: { DENEXT_TOOLCHAIN_ACTIVE: "path", ...vars } });
+    assertEquals(await maybeReexecToolchain(true, quiet.d), false);
+    assertEquals(quiet.seen.warned, []);
+  }
+  // On denext's Deno (the identity marker), the path marker is silent.
+  const onDenext = deps(TOOLCHAIN, {
+    vars: { DENEXT_TOOLCHAIN_ACTIVE: "path" },
+    denoVersion: "3.0.0-denext.2",
+    denext: "3.0.0-denext.2",
+  });
+  assertEquals(await maybeReexecToolchain(true, onDenext.d), false);
+  assertEquals(onDenext.seen.warned, []);
+});
+
 Deno.test("maybeReexecToolchain: a project-code verb that can't start the toolchain refuses, never serves on stock", async () => {
   // The least-privilege `start` (no --allow-run) on stock Deno: it used to serve in-process, so
   // Deno.SQL / postgresClient() worked in `dev` and were missing in production.

@@ -233,6 +233,27 @@ export function parseDenoVersionOutput(text: string): DenoIdentity | null {
 }
 
 /**
+ * `<bin> --version`'s output.
+ *
+ * @param bin The Deno binary.
+ * @returns The output, or null (not runnable, or no answer within 10 s).
+ */
+export async function denoVersionOutput(bin: string): Promise<string | null> {
+  try {
+    const out = await new Deno.Command(bin, {
+      args: ["--version"],
+      stdin: "null",
+      stdout: "piped",
+      stderr: "null",
+      signal: AbortSignal.timeout(10_000),
+    }).output();
+    return out.success ? new TextDecoder().decode(out.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * The fallback for a Deno without the identity marker: whether its version alone names one of
  * denext's runtimes from before {@linkcode FIRST_MARKER_RUNTIME}. An old-scheme `2.9.7-denext.N`
  * always does (upstream never uses the suffix; the fork's own `3.0.0-denext.N` carries the
