@@ -7,6 +7,8 @@
 // The entry keeps the config's graph free of npm and of the bundler.
 
 import { assert, assertEquals } from "@std/assert";
+import { fromFileUrl } from "@std/path";
+import { boundedDeno } from "../scripts/deno-doc.ts";
 
 const root = new URL("../", import.meta.url);
 
@@ -21,14 +23,11 @@ Deno.test("plugin-kit/vite-emitter: exported, and the same function plugin-kit r
 Deno.test("plugin-kit/vite-emitter: its module graph has no npm package and no bundler", async () => {
   const cfg = JSON.parse(await Deno.readTextFile(new URL("deno.json", root)));
   const entry = new URL(cfg.exports["./plugin-kit/vite-emitter"] ?? "./src/plugin/kit.ts", root);
-  const { stdout, success } = await new Deno.Command(Deno.execPath(), {
-    args: ["info", "--json", entry.href],
-    cwd: root,
-    stdout: "piped",
-    stderr: "null",
-  }).output();
-  assert(success, "deno info failed");
-  const graph = JSON.parse(new TextDecoder().decode(stdout)) as {
+  const { stdout, success, stderr } = await boundedDeno(["info", "--json", entry.href], {
+    cwd: fromFileUrl(root),
+  });
+  assert(success, `deno info failed: ${stderr}`);
+  const graph = JSON.parse(stdout) as {
     modules: { specifier: string }[];
   };
   const npm = graph.modules.map((m) => m.specifier).filter((s) => s.startsWith("npm:"));

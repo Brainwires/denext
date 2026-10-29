@@ -20,7 +20,7 @@ import { widgetFor } from "../src/ui/form/widget.ts";
 import { Control } from "../src/ui/form/control.ts";
 import { decode, encode } from "../src/ui/form/value.ts";
 import { OVERRIDES } from "../src/ui/form/schema-overrides.ts";
-import { quietDeno } from "./helpers/quiet-deno.ts";
+import { boundedDeno } from "../scripts/deno-doc.ts";
 
 interface Harness {
   server: UiServer;
@@ -419,7 +419,7 @@ Deno.test("shutdown releases the port", async () => {
 Deno.test("the UI module graph never reaches the bundler or npm", async () => {
   // Rooted at the VERB, not the kernel: `denext ui` is what the user runs, and a stray import
   // in the command module (or anything it reaches) counts just as much as one in the server.
-  const output = await quietDeno(["info", "--json", "src/cli/commands/ui.ts"], {
+  const output = await boundedDeno(["info", "--json", "src/cli/commands/ui.ts"], {
     cwd: fromFileUrl(new URL("../", import.meta.url)),
   });
   assert(output.success, output.stderr);

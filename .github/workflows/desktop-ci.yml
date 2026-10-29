@@ -85,6 +85,7 @@ on:
       - "src/build/precompress.ts"
       - "src/build/bundle.ts"
       - "src/build/exited-output.ts"
+      - "scripts/deno-doc.ts" # bounded `deno doc` / `deno info` children
       - "src/build/windows-powershell.ts"
       # The vendored esbuild API (the sidecar bundler) and the esbuild the toolchain ships.
       - "src/build/esbuild/**"

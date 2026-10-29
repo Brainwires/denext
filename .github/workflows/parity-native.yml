@@ -38,6 +38,7 @@ on:
       - "src/build/next-compat.ts"
       - "src/build/esbuild/**" # the vendored esbuild API every bundle above runs through
       - "src/build/exited-output.ts" # child output read until exit (esbuild, the parity `deno doc`)
+      - "scripts/deno-doc.ts" # the parity `deno doc` children, bounded and retried on a stall
       - "src/build/reanimated*.ts"
       - "src/ts/program-api.ts" # the TypeScript program API the parity scripts read through
       - "src/build/require-context.ts" # Metro's require.context in React Native mode
