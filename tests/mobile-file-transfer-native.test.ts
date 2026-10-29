@@ -6,7 +6,8 @@
 // (DenextTransferHttp.java) compiled with javac and run (range resume, a server that ignores the
 // range, 416, uploads); and the Android worker, store and plugin compiled against plain-JDK
 // stand-ins (tests/fixtures/file-transfer/java/) and run with a scripted HTTP half, so a cancel
-// lands at a fixed point in the worker (during the download, after the move, after done). The
+// or a pause lands at a fixed point in the worker (during the download, after the move, after
+// done), and an id restarted while its old worker finishes is left alone. The
 // Android files also compile in the native-plugins workflow (Gradle). Each case runs where its
 // toolchain is: swiftc / the iOS SDK on macOS, a JDK (never skipped under CI, tests/_jdk.ts).
 
@@ -284,7 +285,8 @@ function javaFiles(dir: string): string[] {
 }
 
 Deno.test({
-  name: "file transfer (Android): a cancel never leaves a finished download behind (javac)",
+  name:
+    "file transfer (Android): a cancel or a pause as a download finishes, and a reused id, settle cleanly (javac)",
   ignore: IGNORE_WITHOUT_JDK,
   async fn() {
     requireJdk();
@@ -326,6 +328,13 @@ Deno.test({
       assert(out.includes("ok the cancel landed after the move"), out);
       assert(out.includes("ok a cancel after the move leaves no file"), out);
       assert(out.includes("ok a cancel after done answers false"), out);
+      assert(out.includes("ok a pause after the move answers false"), out);
+      assert(
+        out.includes("ok pause then cancel after the move: no cancelled transfer keeps a file"),
+        out,
+      );
+      assert(out.includes("ok a pause before the move is paused"), out);
+      assert(out.includes("ok an old worker does not finish the restarted transfer"), out);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

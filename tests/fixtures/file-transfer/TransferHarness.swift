@@ -1,8 +1,9 @@
 // Drives DenextTransferManager.swift (the iOS half of denext's file transfers) on macOS against
 // the local server tests/mobile-file-transfer-native.test.ts runs: downloads with progress, a
 // pause and a resume from resume data, multipart and binary uploads, an HTTP error, a cancel, the
-// saved records a new manager reads back, and the refusals. Foundation's URLSession is the same
-// API on iOS; the background session itself needs an app, so the harness uses the foreground one.
+// saved records a new manager reads back, the refusals, and a reused id's old task kept out of
+// the new transfer. Foundation's URLSession is the same API on iOS; the background session itself
+// needs an app, so the harness uses the foreground one.
 // Prints `ok <check>` / `FAIL <check>: why`, then `done <failures>`.
 import Foundation
 
@@ -187,6 +188,21 @@ do {
         "hello\r\n--B--\r\n"
     check("the multipart body is framed as RFC 7578 asks", text == expected, text.debugDescription)
 } catch { check("the multipart body is framed as RFC 7578 asks", false, "\(error)") }
+
+// 10. An id cancelled, forgotten and started again: the old task's late response bytes stay out of
+// the new transfer's body. Delivered here on purpose, so the race is not left to timing.
+do {
+    try manager.start(record("u3", "upload", "up/photo.jpg", url: "\(base)/raw", method: "PUT", mimeType: "image/jpeg"))
+    check("a reused id: cancel answers true", manager.cancel("u3"))
+    check("a reused id: forget answers true", manager.forget("u3"))
+    try manager.start(record("u3", "upload", "up/photo.jpg", url: "\(base)/raw", method: "PUT", mimeType: "image/jpeg"))
+    let stale = URLSession.shared.dataTask(with: URL(string: "\(base)/raw")!)
+    stale.taskDescription = "u3"
+    manager.urlSession(URLSession.shared, dataTask: stale, didReceive: Data("stale ".utf8))
+    _ = wait(30) { last("u3", "done") != nil || last("u3", "failed") != nil }
+    let body = last("u3", "done")?["body"] as? String ?? ""
+    check("a reused id's old task does not write into the new transfer's body", body == "PUT image/jpeg 100000", body)
+} catch { check("a reused id's old task does not write into the new transfer's body", false, "\(error)") }
 
 print("done \(failures)")
 exit(failures == 0 ? 0 : 1)

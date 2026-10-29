@@ -3,7 +3,8 @@
 // the plain-JDK stand-ins in java/) with a scripted DenextTransferHttp (below) in place of the
 // network, so the harness decides exactly where a cancel lands relative to the worker: during the
 // download, after the move into the target but before the record says done, after done, and after
-// an upload. Each cancel runs to completion at its point (a hook in the scripted HTTP half), so the
+// an upload; where a pause lands (before the move, after it, then a cancel or a resume); and an id
+// cancelled, forgotten and started again while its old worker is still finishing. Each cancel runs to completion at its point (a hook in the scripted HTTP half), so the
 // interleaving is fixed, not timed. Prints `ok <check>` / `FAIL <check>: why`, then
 // `done <failures>`.
 package dev.denext.transfer;
@@ -126,6 +127,27 @@ public final class TransferWorkerHarness {
         return call.resolved != null && call.resolved.optBoolean("cancelled");
     }
 
+    /** Pause through the plugin; what {@code pauseFileTransfer} resolves with. */
+    static boolean pause(String id) {
+        PluginCall call = call(id);
+        plugin.pause(call);
+        return call.resolved != null && call.resolved.optBoolean("paused");
+    }
+
+    /** Resume through the plugin; what {@code resumeFileTransfer} resolves with. */
+    static boolean resume(String id) {
+        PluginCall call = call(id);
+        plugin.resume(call);
+        return call.resolved != null && call.resolved.optBoolean("resumed");
+    }
+
+    /** Forget through the plugin. */
+    static boolean forget(String id) {
+        PluginCall call = call(id);
+        plugin.forget(call);
+        return call.resolved != null && call.resolved.optBoolean("forgotten");
+    }
+
     static String state(String id) {
         JSONObject record = store.record(id);
         return record == null ? "(none)" : record.optString("state");
@@ -212,6 +234,105 @@ public final class TransferWorkerHarness {
         check("a cancel after the move stays cancelled", state("late").equals("cancelled"), state("late"));
         check("a cancel after the move leaves no file", !late.exists(), "the complete download is still there");
         check("a cancel after the move leaves no partial file", !partLeft(late), "part left");
+
+        // A pause after the move is too late: the download is complete, so it ends done and the
+        // pause answers false (as the web fallback's pause during the last write does).
+        File pausedLate = dataFile("paused-late.bin");
+        start("pl", "download", "paused-late.bin");
+        boolean[] plPaused = {true};
+        DenextTransferHttp.onMoved = () -> plPaused[0] = pause("pl");
+        result = work("pl");
+        check("a pause after the move answers false", !plPaused[0], "paused a finished download");
+        check("a pause after the move ends done", state("pl").equals("done"), state("pl"));
+        check("a pause after the move keeps the file", pausedLate.isFile(), "file missing");
+        check("a pause after the move leaves no partial file", !partLeft(pausedLate), "part left");
+
+        // Pause after the move, then cancel: the cancel finds the transfer done, so the file stays
+        // and no cancelled transfer is left with a complete file at its path.
+        File pausedCancelled = dataFile("paused-cancelled.bin");
+        start("pc", "download", "paused-cancelled.bin");
+        boolean[] pcPaused = {true};
+        DenextTransferHttp.onMoved = () -> pcPaused[0] = pause("pc");
+        result = work("pc");
+        boolean pcCancelled = cancel("pc");
+        check("pause then cancel after the move: the pause answers false", !pcPaused[0], "paused");
+        check("pause then cancel after the move: the cancel answers false", !pcCancelled, "cancelled");
+        check("pause then cancel after the move ends done", state("pc").equals("done"), state("pc"));
+        check("pause then cancel after the move: no cancelled transfer keeps a file",
+            !(state("pc").equals("cancelled") && pausedCancelled.exists()),
+            "cancelled, with the complete download still at its path");
+
+        // Pause after the move, then resume: nothing to resume, the transfer is done.
+        File pausedResumed = dataFile("paused-resumed.bin");
+        start("pr", "download", "paused-resumed.bin");
+        boolean[] prPaused = {true};
+        DenextTransferHttp.onMoved = () -> prPaused[0] = pause("pr");
+        result = work("pr");
+        boolean prResumed = resume("pr");
+        check("pause then resume after the move: the pause answers false", !prPaused[0], "paused");
+        check("pause then resume after the move: the resume answers false", !prResumed, "resumed");
+        check("pause then resume after the move ends done", state("pr").equals("done"), state("pr"));
+        check("pause then resume after the move keeps the file", pausedResumed.isFile(), "file missing");
+
+        // A pause before the move still pauses: the partial file stays, the target is not written,
+        // and a resume finishes the download.
+        File pausedEarly = dataFile("paused-early.bin");
+        start("pe", "download", "paused-early.bin");
+        boolean[] pePaused = {false};
+        DenextTransferHttp.onDownloaded = () -> pePaused[0] = pause("pe");
+        result = work("pe");
+        check("a pause before the move answers true", pePaused[0], "not paused");
+        check("a pause before the move is paused", state("pe").equals("paused"), state("pe"));
+        check("a pause before the move keeps its partial file",
+            DenextTransferHttp.partFile(pausedEarly).isFile(), "no partial file");
+        check("a pause before the move does not write the target", !pausedEarly.exists(), "target written");
+        boolean peResumed = resume("pe");
+        result = work("pe");
+        check("a paused download resumes", peResumed && state("pe").equals("done"), peResumed + " / " + state("pe"));
+        check("a resumed download leaves its file", pausedEarly.isFile() && !partLeft(pausedEarly),
+            "target " + pausedEarly.isFile() + ", part " + partLeft(pausedEarly));
+
+        // A run after the process died while the worker was finishing: the marker is cleared, so
+        // a pause during the new download still pauses.
+        File rerun = dataFile("rerun.bin");
+        start("rr", "download", "rerun.bin");
+        store.update("rr", "running", r -> {
+            r.put("finishing", true);
+            return null;
+        });
+        boolean[] rrPaused = {false};
+        DenextTransferHttp.onDownloaded = () -> rrPaused[0] = pause("rr");
+        result = work("rr");
+        check("a rerun after the process died while finishing can pause", rrPaused[0]
+            && state("rr").equals("paused"), rrPaused[0] + " / " + state("rr"));
+        check("a rerun paused before the move does not write the target", !rerun.exists(), "target written");
+
+        // The id reused: cancelled, forgotten and started again while the old worker is between
+        // the move and its done update. The old worker leaves the new transfer alone.
+        File reused = dataFile("reused.bin");
+        start("re", "download", "reused.bin");
+        boolean[] restarted = {false};
+        DenextTransferHttp.onMoved = () -> {
+            boolean c = cancel("re");
+            boolean f = forget("re");
+            start("re", "download", "reused.bin");
+            restarted[0] = c && f;
+        };
+        result = work("re");
+        check("the id was cancelled, forgotten and started again", restarted[0], "not restarted");
+        check("an old worker does not finish the restarted transfer", state("re").equals("running"), state("re"));
+        JSONObject renewed = store.record("re");
+        check("an old worker does not report into the restarted transfer",
+            renewed != null && "0".equals(renewed.optString("bytes")) && !renewed.has("status"),
+            String.valueOf(renewed));
+        JSONObject seen = renewed == null ? null : store.info(renewed);
+        check("the page never sees a transfer's attempt", renewed != null && renewed.has("attempt")
+            && !seen.has("attempt") && !seen.has("finishing"), String.valueOf(seen));
+        result = work("re");
+        check("the restarted transfer finishes", state("re").equals("done") && result.equals("success"),
+            state("re") + " / " + result);
+        check("the restarted transfer leaves its file", reused.isFile() && !partLeft(reused),
+            "target " + reused.isFile() + ", part " + partLeft(reused));
 
         // An upload cancelled after it was sent: its source file is the app's, never deleted.
         File source = dataFile("source.txt");

@@ -255,6 +255,17 @@ and this project adheres to
   A cancel that comes once the transfer is done still answers `false` and keeps the file, and an
   upload's file is never touched. File-transfer template generation 5: run
   `denext mobile add file-transfer` again to upgrade an unedited copy, then ship a new binary.
+- **An Android download paused as it finished ends done, and a reused transfer id is left alone
+  by the old worker.** A `pauseFileTransfer` that landed after the worker moved the download into
+  place answered `true` and left the transfer paused with the complete file at its path (a later
+  cancel then left that file under a cancelled transfer). The download is complete there, so the
+  pause now answers `false` and the transfer ends done, as the web fallback's pause during the
+  last write does; a pause before that point still pauses. Each start and resume now gives the
+  transfer a new attempt token, kept in its saved record and in the worker's input, and a worker
+  whose token no longer matches changes nothing: an id cancelled, forgotten and started again
+  while its old worker was finishing could otherwise be marked done (or failed) by that worker.
+  On iOS, a cancelled upload's late response bytes no longer reach the body of a new transfer
+  started under the same id. Both ship in file-transfer template generation 5.
 
 ### Documentation
 

@@ -494,6 +494,8 @@ public final class DenextTransferManager: NSObject, URLSessionDownloadDelegate, 
     public func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
         guard let id = dataTask.taskDescription else { return }
         state.sync {
+            // A cancelled task of an id started again reports into nothing.
+            guard !superseded(id, dataTask) else { return }
             var body = bodies[id] ?? Data()
             if body.count < DenextTransferManager.maxBody {
                 body.append(data.prefix(DenextTransferManager.maxBody - body.count))
@@ -1153,9 +1155,18 @@ public class DenextTransferPlugin extends Plugin {
         return "denext-transfer-" + id;
     }
 
-    private void enqueue(String id) {
+    /** A new attempt token: the worker an enqueue starts only touches the record while it matches. */
+    private static String newAttempt() {
+        return java.util.UUID.randomUUID().toString();
+    }
+
+    private void enqueue(String id, String attempt) {
+        Data input = new Data.Builder()
+            .putString(DenextTransferWorker.KEY_ID, id)
+            .putString(DenextTransferWorker.KEY_ATTEMPT, attempt)
+            .build();
         OneTimeWorkRequest request = new OneTimeWorkRequest.Builder(DenextTransferWorker.class)
-            .setInputData(new Data.Builder().putString(DenextTransferWorker.KEY_ID, id).build())
+            .setInputData(input)
             .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 10, TimeUnit.SECONDS)
             .addTag("denext-transfer")
@@ -1208,8 +1219,10 @@ public class DenextTransferPlugin extends Plugin {
             DenextTransferHttp.metaFile(part).delete();
         }
         JSONObject record = new JSONObject();
+        String attempt = newAttempt();
         try {
             record.put("id", id);
+            record.put("attempt", attempt);
             record.put("kind", kind);
             record.put("url", url);
             record.put("directory", directory);
@@ -1229,7 +1242,7 @@ public class DenextTransferPlugin extends Plugin {
             return;
         }
         store.put(record);
-        enqueue(id);
+        enqueue(id, attempt);
         store.emit(record, "started");
         call.resolve(new JSObject().put("id", id));
     }
@@ -1238,13 +1251,19 @@ public class DenextTransferPlugin extends Plugin {
     public void pause(PluginCall call) {
         String id = id(call);
         if (id == null) return;
-        JSONObject record = store.record(id);
-        boolean paused = record != null && "download".equals(record.optString("kind"))
-            && store.update(id, "running", r -> {
-                r.put("state", "paused");
-                r.put("resumable", true);
-                return "paused";
-            });
+        boolean paused;
+        synchronized (store) {
+            // A download whose worker is moving it into place (finishing) is complete: too late to
+            // pause, it ends done.
+            JSONObject record = store.record(id);
+            paused = record != null && "download".equals(record.optString("kind"))
+                && !record.optBoolean("finishing")
+                && store.update(id, "running", r -> {
+                    r.put("state", "paused");
+                    r.put("resumable", true);
+                    return "paused";
+                });
+        }
         if (paused) WorkManager.getInstance(getContext()).cancelUniqueWork(workName(id));
         call.resolve(new JSObject().put("paused", paused));
     }
@@ -1255,15 +1274,18 @@ public class DenextTransferPlugin extends Plugin {
         if (id == null) return;
         JSONObject record = store.record(id);
         String state = record == null ? "" : record.optString("state");
+        String attempt = newAttempt();
         boolean resumed = (state.equals("paused") || state.equals("failed"))
             && store.update(id, state, r -> {
                 r.put("state", "running");
+                r.put("attempt", attempt);
+                r.remove("finishing");
                 r.remove("error");
                 r.remove("code");
                 r.remove("status");
                 return "started";
             });
-        if (resumed) enqueue(id);
+        if (resumed) enqueue(id, attempt);
         call.resolve(new JSObject().put("resumed", resumed));
     }
 
@@ -1335,7 +1357,9 @@ import org.json.JSONObject;
  * The transfer records (one JSON object per transfer, in the {@code denext_transfers} shared
  * preferences, so they outlive the process) and the observers {@link DenextTransferPlugin}
  * relays to the page. Every change goes through one lock, and a worker's progress or result is
- * applied only while the record is still running, so a pause or a cancel is never overwritten.
+ * applied only while the record is still running under the worker's attempt (the token each start
+ * and resume stores in the record and hands the worker it enqueues), so a pause or a cancel is
+ * never overwritten, and a worker left over from an earlier start of a reused id changes nothing.
  */
 final class DenextTransferStore {
 
@@ -1485,8 +1509,26 @@ final class DenextTransferStore {
      * null), save it, and send the event it names. Returns whether it applied.
      */
     synchronized boolean update(String id, String state, Change change) {
+        return update(id, state, null, change, false);
+    }
+
+    /**
+     * {@link #update(String, String, Change)} for a worker: it applies only while the record's
+     * attempt is {@code attempt} (a record and work enqueued before attempts both have none).
+     */
+    synchronized boolean update(String id, String state, String attempt, Change change) {
+        return update(id, state, attempt, change, true);
+    }
+
+    /** Whether {@code record} belongs to the worker started for {@code attempt}. */
+    static boolean owns(JSONObject record, String attempt) {
+        return record.optString("attempt", "").equals(attempt == null ? "" : attempt);
+    }
+
+    private synchronized boolean update(String id, String state, String attempt, Change change, boolean worker) {
         JSONObject record = record(id);
         if (record == null || (state != null && !state.equals(record.optString("state")))) return false;
+        if (worker && !owns(record, attempt)) return false;
         try {
             String type = change.apply(record);
             put(record);
@@ -1504,7 +1546,8 @@ final class DenextTransferStore {
             for (Iterator<String> keys = record.keys(); keys.hasNext();) {
                 String key = keys.next();
                 if (key.equals("headers") || key.equals("multipart") || key.equals("method")
-                    || key.equals("mimeType") || key.equals("background")) continue;
+                    || key.equals("mimeType") || key.equals("background") || key.equals("attempt")
+                    || key.equals("finishing")) continue;
                 out.put(key, record.get(key));
             }
             if (record.has("responseHeaders")) {
@@ -1563,11 +1606,14 @@ import org.json.JSONObject;
  * next run resumes with a range request; a network error is retried with backoff, up to
  * {@link #MAX_ATTEMPTS} runs. A pause or a cancel stops the work and sets the record's state
  * first, so this worker leaves the record alone; a cancel that lands after the download was moved
- * into place takes the file with it.
+ * into place takes the file with it, and a pause that lands then is refused (the download is
+ * complete and ends done). The worker acts only while the record carries its attempt, so one left
+ * over from an earlier start of the same id changes nothing.
  */
 public class DenextTransferWorker extends Worker {
 
     static final String KEY_ID = "id";
+    static final String KEY_ATTEMPT = "attempt";
     static final int MAX_ATTEMPTS = 6;
 
     public DenextTransferWorker(@NonNull Context context, @NonNull WorkerParameters params) {
@@ -1612,12 +1658,16 @@ public class DenextTransferWorker extends Worker {
      * A cancel that landed after the download was moved into {@code target} but before its
      * record said done (the record is cancelled, or cancelled and forgotten): the cancel found no
      * partial file to delete, so the finished file goes here. A record already done never gets
-     * here (the cancel answered false), and a paused one keeps the file.
+     * here (the cancel answered false), a paused one cannot (a pause is refused once the worker
+     * is finishing), and a record started again under the same id is another attempt's: its target
+     * is never touched.
      */
-    private static void dropIfCancelled(DenextTransferStore store, String id, File target) {
+    private static void dropIfCancelled(DenextTransferStore store, String id, String attempt, File target) {
         synchronized (store) {
             JSONObject now = store.record(id);
-            if (now == null || "cancelled".equals(now.optString("state"))) target.delete();
+            if (now == null || ("cancelled".equals(now.optString("state")) && DenextTransferStore.owns(now, attempt))) {
+                target.delete();
+            }
         }
     }
 
@@ -1626,14 +1676,23 @@ public class DenextTransferWorker extends Worker {
     public Result doWork() {
         DenextTransferStore store = DenextTransferStore.get(getApplicationContext());
         String id = getInputData().getString(KEY_ID);
+        String attempt = getInputData().getString(KEY_ATTEMPT);
         JSONObject record = id == null ? null : store.record(id);
-        if (record == null || !"running".equals(record.optString("state"))) return Result.success();
+        if (record == null || !"running".equals(record.optString("state"))
+            || !DenextTransferStore.owns(record, attempt)) return Result.success();
+        if (record.optBoolean("finishing")) {
+            // A run that stopped (the process gone) while it moved the file into place starts over.
+            store.update(id, "running", attempt, r -> {
+                r.remove("finishing");
+                return null;
+            });
+        }
         File target = store.file(record.optString("directory"), record.optString("path"));
-        if (target == null) return fail(store, id, "INVALID", "not a relative path", 0, null, false);
+        if (target == null) return fail(store, id, attempt, "INVALID", "not a relative path", 0, null, false, null);
         DenextTransferHttp.Listener listener = new DenextTransferHttp.Listener() {
             @Override
             public void progress(long bytes, long total) {
-                store.update(id, "running", r -> {
+                store.update(id, "running", attempt, r -> {
                     r.put("bytes", bytes);
                     if (total >= 0) r.put("total", total);
                     return "progress";
@@ -1643,7 +1702,8 @@ public class DenextTransferWorker extends Worker {
             @Override
             public boolean stopped() {
                 JSONObject now = store.record(id);
-                return isStopped() || now == null || !"running".equals(now.optString("state"));
+                return isStopped() || now == null || !"running".equals(now.optString("state"))
+                    || !DenextTransferStore.owns(now, attempt);
             }
         };
         Map<String, String> headers = strings(record.optJSONObject("headers"));
@@ -1653,6 +1713,13 @@ public class DenextTransferWorker extends Worker {
             if (download) {
                 File part = DenextTransferHttp.partFile(target);
                 result = DenextTransferHttp.download(record.optString("url"), headers, part, listener);
+                // From here a pause is too late (it is refused): the download is complete. A pause,
+                // a cancel or a restart that came first keeps the partial file for itself.
+                boolean finishing = store.update(id, "running", attempt, r -> {
+                    r.put("finishing", true);
+                    return null;
+                });
+                if (!finishing) return Result.success();
                 moveInto(part, target);
                 DenextTransferHttp.metaFile(part).delete();
             } else {
@@ -1674,8 +1741,9 @@ public class DenextTransferWorker extends Worker {
                 );
             }
             DenextTransferHttp.Result done = result;
-            boolean settled = store.update(id, "running", r -> {
+            boolean settled = store.update(id, "running", attempt, r -> {
                 r.put("state", "done");
+                r.remove("finishing");
                 r.put("status", done.status);
                 r.put("bytes", done.bytes);
                 r.put("total", done.bytes);
@@ -1684,32 +1752,37 @@ public class DenextTransferWorker extends Worker {
                 if (done.body != null) r.put("body", done.body);
                 return "done";
             });
-            if (!settled && download) dropIfCancelled(store, id, target);
+            if (!settled && download) dropIfCancelled(store, id, attempt, target);
             return Result.success();
         } catch (DenextTransferHttp.Stopped stopped) {
             // A pause or a cancel set the state; a system stop runs the work again.
             return Result.success();
         } catch (DenextTransferHttp.HttpError e) {
-            if (download) DenextTransferHttp.partFile(target).delete();
-            return fail(store, id, "HTTP", e.getMessage(), e.status, e.body, false);
+            File part = download ? DenextTransferHttp.partFile(target) : null;
+            return fail(store, id, attempt, "HTTP", e.getMessage(), e.status, e.body, false, part);
         } catch (IOException e) {
             if (isStopped()) return Result.success();
             if (getRunAttemptCount() + 1 < MAX_ATTEMPTS) return Result.retry();
-            return fail(store, id, "NETWORK", String.valueOf(e.getMessage()), 0, null, download);
+            return fail(store, id, attempt, "NETWORK", String.valueOf(e.getMessage()), 0, null, download, null);
         }
     }
 
     private Result fail(
         DenextTransferStore store,
         String id,
+        String attempt,
         String code,
         String message,
         int status,
         String body,
-        boolean resumable
+        boolean resumable,
+        File drop
     ) {
-        store.update(id, "running", r -> {
+        // The partial file goes only with this attempt's record: a restarted id's is not ours.
+        store.update(id, "running", attempt, r -> {
+            if (drop != null) drop.delete();
             r.put("state", "failed");
+            r.remove("finishing");
             r.put("code", code);
             r.put("error", message);
             r.put("resumable", resumable);
