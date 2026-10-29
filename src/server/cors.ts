@@ -19,8 +19,8 @@
 //   anything else gets none (the browser then refuses to send the request).
 //
 // - **Cookies keep the same-origin rule.** The endpoints whose same-origin check is the CSRF
-//   defense — Server Actions, the API batch and the Live handshake — let an allowed origin in
-//   only when the request carries no ambient credential ({@link corsCredentialless}: no
+//   defense — Server Actions, the API batch and the Live handshake — let an exactly listed
+//   origin in (never `["*"]`) only when the request carries no ambient credential ({@link corsCredentialless}: no
 //   `Cookie`, and no `Authorization` other than an explicit `Bearer`). A cookie-carrying
 //   cross-origin request still needs the same-origin / `allowedOrigins` check it always did.
 //
@@ -256,17 +256,22 @@ export function corsOriginAllowed(policy: CorsPolicy, origin: string | null): bo
 
 /**
  * Whether a cross-origin request may skip a same-origin (CSRF) gate under `policy`: its exact
- * `Origin` is allowed, and it carries no ambient credential — no `Cookie`, and no
+ * `Origin` is listed, and it carries no ambient credential — no `Cookie`, and no
  * `Authorization` but an explicit `Bearer` token the caller set itself. Whatever such a request
  * does, it does with credentials it presented, so a forged one from another page gains nothing.
  * A cookie-carrying request keeps the same-origin rule.
  *
+ * The `["*"]` policy never qualifies: a credentialless call still runs from the visitor's
+ * network position (an intranet or VPN app, `clientIp()`, per-address rate limits), so only an
+ * origin the app names may skip the gate.
+ *
  * @param request The request.
- * @param policy The effective policy (`null` → never).
+ * @param policy The effective policy (`null` or `["*"]` → never).
  * @returns `true` when the request may proceed without the same-origin check.
  */
 export function corsCredentialless(request: Request, policy: CorsPolicy | null): boolean {
-  if (!policy || !corsOriginAllowed(policy, request.headers.get("origin"))) return false;
+  if (!policy || policy.any) return false;
+  if (!corsOriginAllowed(policy, request.headers.get("origin"))) return false;
   if (request.headers.has("cookie")) return false;
   const authorization = request.headers.get("authorization");
   return authorization === null || /^bearer\s/i.test(authorization);
