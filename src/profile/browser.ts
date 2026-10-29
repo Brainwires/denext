@@ -21,6 +21,7 @@
 import { type Browser, launch } from "@astral/astral";
 import { runToExit } from "../build/exited-output.ts";
 import { withOwnModules } from "../build/windows-powershell.ts";
+import { ensureBrowserBinary } from "./browser-binary.ts";
 
 interface TrackedBrowser {
   browser: Browser;
@@ -129,7 +130,13 @@ function ciBrowserArgs(): string[] {
  * of astral's `launch` directly; still `close()` it in a `finally` for the normal path.
  */
 export async function launchManagedBrowser(extraArgs: string[] = []): Promise<Browser> {
-  const browser = await launch({ headless: true, args: [...ciBrowserArgs(), ...extraArgs] });
+  // The browser comes through denext's download deadlines and retries, not astral's own fetch.
+  const path = await ensureBrowserBinary() ?? undefined;
+  const browser = await launch({
+    headless: true,
+    args: [...ciBrowserArgs(), ...extraArgs],
+    path,
+  });
   const tracked: TrackedBrowser = { browser, pid: await chromiumPid(browser) };
   liveBrowsers.add(tracked);
   ensureSignalHandler();

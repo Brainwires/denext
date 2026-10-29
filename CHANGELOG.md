@@ -95,6 +95,18 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext profile` downloads its headless Chrome with deadlines and retries.** The browser astral
+  launches (Chrome for Testing, about 150 MB) was read through one `fetch` with no deadline, so a
+  connection that stalled mid-body held the launch until the server dropped it, minutes later, and
+  then failed it ("error reading a body from connection"). It now comes through the same download
+  path as the toolchain: given up on after `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS` without data, retried
+  on a new connection, extracted safely into astral's own cache (a browser astral fetched before is
+  used as it is, and `ASTRAL_BIN_PATH` still names one).
+- **`denext migrate` on a member of an npm workspace no longer stops on the jail exceptions.**
+  From runtime `3.0.0-denext.1` the jail settings of a project with no deno.json live in the
+  workspace root's package.json `"deno"` object, outside the app migrate was pointed at, which it
+  never writes; the migration failed with "refusing to write …/package.json: it is outside the
+  project". It now completes and prints the `supplyChain` snippet to add, naming that file.
 - **The toolchain pin carries the release's glibc floor when the release records one.**
   `deno task desktop:pin-runtime` now copies the release manifest's `cli.glibc` into the toolchain
   pin as `minGlibc`, which the Linux host check reads before a download (a pin without it keeps the
