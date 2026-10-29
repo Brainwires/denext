@@ -16,10 +16,14 @@
 // - locks carry a RANK and must be taken in increasing rank order, the fixed order that keeps
 //   two processes from each holding what the other waits for (Cargo PR #15698 fixed exactly
 //   that deadlock). Taking a lower rank while holding a higher one throws — a bug, not a wait.
+//   The check is per logical TASK (see `lockTask`): a lock counts against the task that took it
+//   and the work that task started, never against an unrelated task of the same process, which
+//   cannot be waiting on it.
 // - a filesystem that cannot lock at all (some network mounts) proceeds unlocked, as Cargo does,
 //   with one warning; so does a SHARED lock (a reader) whose lock file can't be created on a
 //   read-only or unwritable directory.
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { dirname, resolve } from "@std/path";
 
 /** A lock's mode: many `shared` holders at once, or one `exclusive` holder. */
@@ -77,10 +81,51 @@ export interface FileLock extends Disposable {
   release(): void;
 }
 
+/** A logical task of the rank check: the locks it took count against it and its subtasks. */
+interface LockTaskFrame {
+  /** The task this one was started in (`undefined` for the process's root task). */
+  readonly parent: LockTaskFrame | undefined;
+}
+
+/** The process's root task: work started outside every {@linkcode lockTask}. */
+const ROOT_TASK: LockTaskFrame = { parent: undefined };
+
+/** The running task, carried through the async context (timers and promises included). */
+const taskStorage = new AsyncLocalStorage<LockTaskFrame>();
+
+function currentTask(): LockTaskFrame {
+  return taskStorage.getStore() ?? ROOT_TASK;
+}
+
+/**
+ * Run `fn` as its own logical task of the lock-rank check. The locks it takes count against it
+ * and the work it starts, not against the rest of the process: a concurrent, unrelated task (one
+ * install downloading under a rank-4 lock while another task reads a different cache at rank 3)
+ * can't be waiting on them, so its lower-rank request is no order violation. The task still sees
+ * every lock held by the task it was started in (and that task's ancestors), which may be
+ * waiting on it: asking for a lower rank than any of those throws, exactly as before.
+ *
+ * Which context the held set follows: the async context work was STARTED in. A timer, a detached
+ * promise or a callback scheduled inside the task runs in the task, so it sees the task's locks for
+ * as long as they are held (a lock released before it runs no longer counts), and a lock it takes
+ * counts against the task, even after `fn` has settled. Code outside every task belongs to the
+ * process's root task, which every task sees. What the check can't see is a task holding a lock
+ * while it awaits a promise another task started (a shared, memoized one): keep such waits out of
+ * locked sections.
+ *
+ * @param fn The task's work.
+ * @returns What `fn` returns.
+ */
+export function lockTask<T>(fn: () => T): T {
+  return taskStorage.run({ parent: currentTask() }, fn);
+}
+
 interface Held {
   readonly mode: LockMode;
   readonly rank: number;
   refs: number;
+  /** The tasks holding a reference, with each one's count. */
+  readonly owners: Map<LockTaskFrame, number>;
   /** Settles once the OS lock is held. */
   readonly ready: Promise<Deno.FsFile | null>;
   /** The open, locked file once `ready` settled — `null` on a filesystem without locking. */
@@ -193,18 +238,33 @@ async function lockFile(path: string, opts: FileLockOptions): Promise<Deno.FsFil
   }
 }
 
-/** The highest rank this process holds, or -1. */
-function highestHeldRank(): number {
+/** The highest rank `task` holds, itself or through the tasks it was started in, or -1. */
+function highestHeldRank(task: LockTaskFrame): number {
+  const chain = new Set<LockTaskFrame>();
+  for (let t: LockTaskFrame | undefined = task; t; t = t.parent) chain.add(t);
   let max = -1;
-  for (const h of held.values()) max = Math.max(max, h.rank);
+  for (const h of held.values()) {
+    if (h.rank > max && [...h.owners.keys()].some((o) => chain.has(o))) max = h.rank;
+  }
   return max;
 }
 
-function handle(path: string, entry: Held): FileLock {
+function addOwner(entry: Held, task: LockTaskFrame): void {
+  entry.owners.set(task, (entry.owners.get(task) ?? 0) + 1);
+}
+
+function dropOwner(entry: Held, task: LockTaskFrame): void {
+  const n = (entry.owners.get(task) ?? 0) - 1;
+  if (n > 0) entry.owners.set(task, n);
+  else entry.owners.delete(task);
+}
+
+function handle(path: string, entry: Held, task: LockTaskFrame): FileLock {
   let released = false;
   const release = () => {
     if (released) return;
     released = true;
+    dropOwner(entry, task);
     if (--entry.refs > 0) return;
     held.delete(path);
     const file = entry.file;
@@ -221,15 +281,19 @@ function handle(path: string, entry: Held): FileLock {
 
 /**
  * Acquire an OS advisory lock on `path` (created, with its directory, when missing). Tries
- * first; when the lock is held elsewhere, prints one Blocking line and waits.
+ * first; when the lock is held elsewhere, prints one Blocking line and waits. The lock counts
+ * against the running {@linkcode lockTask} (the process's root task outside one) for the rank
+ * order.
  *
  * @param path The lock file.
  * @param opts Mode, description, rank.
  * @returns The held lock.
- * @throws When the acquisition would break the rank order, or upgrade a shared lock.
+ * @throws When the acquisition would break the rank order (a lower rank than the running task
+ *   holds), or upgrade a shared lock.
  */
 export async function acquireFileLock(path: string, opts: FileLockOptions): Promise<FileLock> {
   const key = resolve(path);
+  const task = currentTask();
   const existing = held.get(key);
   if (existing) {
     if (existing.mode === "shared" && opts.mode === "exclusive") {
@@ -239,22 +303,30 @@ export async function acquireFileLock(path: string, opts: FileLockOptions): Prom
       );
     }
     existing.refs++;
+    addOwner(existing, task);
     try {
       await existing.ready;
     } catch (err) {
       existing.refs--;
+      dropOwner(existing, task);
       throw err;
     }
-    return handle(key, existing);
+    return handle(key, existing, task);
   }
-  const top = highestHeldRank();
+  const top = highestHeldRank(task);
   if (opts.rank < top) {
     throw new Error(
       `denext: lock order violation — ${opts.description} (rank ${opts.rank}) requested while ` +
         `holding a rank-${top} lock`,
     );
   }
-  const entry: Held = { mode: opts.mode, rank: opts.rank, refs: 1, ready: lockFile(key, opts) };
+  const entry: Held = {
+    mode: opts.mode,
+    rank: opts.rank,
+    refs: 1,
+    owners: new Map([[task, 1]]),
+    ready: lockFile(key, opts),
+  };
   held.set(key, entry);
   try {
     entry.file = await entry.ready;
@@ -262,7 +334,7 @@ export async function acquireFileLock(path: string, opts: FileLockOptions): Prom
     held.delete(key);
     throw err;
   }
-  return handle(key, entry);
+  return handle(key, entry, task);
 }
 
 /** Several locks released as one (in reverse acquisition order). */

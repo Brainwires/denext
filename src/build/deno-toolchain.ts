@@ -36,6 +36,7 @@
 import { encodeHex } from "@std/encoding/hex";
 import { dirname, join, resolve } from "@std/path";
 import { acquireCacheLock } from "./project-locks.ts";
+import { lockTask } from "./file-lock.ts";
 import { denoCacheDir, renameRetrying } from "./desktop-runtime.ts";
 import { extractArchive } from "./safe-extract.ts";
 import {
@@ -930,7 +931,14 @@ export interface CacheSlot extends DownloadNames {
  * @param options The download seams (`fetch`, `log`).
  * @returns Whether it was already cached.
  */
-export async function ensureCached(
+export function ensureCached(
+  slot: CacheSlot,
+  options: EnsureDenoToolchainOptions,
+): Promise<boolean> {
+  return lockTask(() => ensureCachedInTask(slot, options));
+}
+
+async function ensureCachedInTask(
   slot: CacheSlot,
   options: EnsureDenoToolchainOptions,
 ): Promise<boolean> {

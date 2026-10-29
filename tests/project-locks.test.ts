@@ -9,7 +9,9 @@ import { fromFileUrl, join, relative, resolve } from "@std/path";
 import {
   acquireFileLock,
   blockingLine,
+  type FileLock,
   lockingUnsupported,
+  lockTask,
   lockTimeoutMs,
 } from "../src/build/file-lock.ts";
 import {
@@ -21,6 +23,7 @@ import {
   LOCK_RANK,
   outputLockPath,
   planProjectLocks,
+  withProjectLocks,
 } from "../src/build/project-locks.ts";
 import { coverageDir } from "../src/cli/commands/toolchain.ts";
 import { mobileBuildLocks } from "../src/cli/commands/mobile-build.ts";
@@ -363,6 +366,158 @@ Deno.test("re-entrant in one process; never upgraded; never out of rank order", 
       "lock order violation",
     );
     high.release();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** A promise and the function that settles it. */
+function gate(): { opened: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const opened = new Promise<void>((r) => open = r);
+  return { opened, open };
+}
+
+Deno.test("the rank order is per task: an unrelated concurrent task may take a lower rank", async () => {
+  // Two independent tasks of one process: one holds an output-dir lock (rank 2) across its work,
+  // the other locks another project's build directory (rank 1) meanwhile. Nothing either holds
+  // is something the other waits for, so it is no order violation (the process-wide check threw).
+  const [a, b] = [await Deno.makeTempDir(), await Deno.makeTempDir()];
+  try {
+    const holding = gate();
+    const done = gate();
+    const first = withProjectLocks({ projectDir: a, outputDirs: ["out"] }, async () => {
+      holding.open();
+      await done.opened;
+    });
+    await holding.opened;
+    try {
+      await withProjectLocks({ projectDir: b, buildDir: "exclusive" }, () => Promise.resolve());
+      // Outside every task (the process's root task) too: the holder is not this code's task.
+      (await acquireCacheLock(join(b, "cache"), "shared", "test cache")).release();
+      (await acquireFileLock(join(b, "low.lock"), {
+        mode: "exclusive",
+        description: "low",
+        rank: LOCK_RANK.packageOutput,
+      })).release();
+    } finally {
+      done.open();
+    }
+    await first;
+    // Explicit tasks: one holds a rank-4 lock, a sibling takes rank 3 and then rank 1.
+    const high = gate();
+    const finish = gate();
+    const holder = lockTask(async () => {
+      using _l = await acquireFileLock(join(a, "high.lock"), {
+        mode: "exclusive",
+        description: "high",
+        rank: LOCK_RANK.cacheDownload,
+      });
+      high.open();
+      await finish.opened;
+    });
+    await high.opened;
+    try {
+      await lockTask(async () => {
+        using _mid = await acquireFileLock(join(b, "mid.lock"), {
+          mode: "shared",
+          description: "mid",
+          rank: LOCK_RANK.cacheMutate,
+        });
+        await assertRejects(
+          () =>
+            acquireFileLock(join(b, "lower.lock"), {
+              mode: "exclusive",
+              description: "lower",
+              rank: LOCK_RANK.buildDir,
+            }),
+          Error,
+          "requested while holding a rank-3 lock", // its own rank, not the sibling's 4
+        );
+      });
+    } finally {
+      finish.open();
+    }
+    await holder;
+  } finally {
+    await Deno.remove(a, { recursive: true });
+    await Deno.remove(b, { recursive: true });
+  }
+});
+
+Deno.test("one task out of rank order still throws: across awaits, nested calls, work it started", async () => {
+  const dir = await Deno.makeTempDir();
+  const low = (rank: number = LOCK_RANK.buildDir) =>
+    acquireFileLock(join(dir, `low-${rank}.lock`), { mode: "exclusive", description: "low", rank });
+  const violation = (
+    p: () => Promise<unknown>,
+    message = "lock order violation — low (rank 1) requested while holding a rank-3 lock",
+  ) => assertRejects(p, Error, message);
+  try {
+    await lockTask(async () => {
+      using high = await acquireFileLock(join(dir, "high.lock"), {
+        mode: "exclusive",
+        description: "high",
+        rank: LOCK_RANK.cacheMutate,
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      // Later in the task, and from a function it calls after more awaits.
+      await violation(() => low());
+      const nested = async () => {
+        await Promise.resolve();
+        await new Promise((r) => setTimeout(r, 1));
+        return await low();
+      };
+      await violation(nested);
+      // A subtask started inside it sees what its task holds (the task may be waiting on it).
+      await violation(() => lockTask(() => low()));
+      await violation(
+        () => withProjectLocks({ projectDir: dir, buildDir: "exclusive" }, () => Promise.resolve()),
+        "(rank 1) requested while holding a rank-3 lock",
+      );
+      // A timer and a detached promise started under the lock run in the task too.
+      const fromTimer = new Promise<FileLock>((res, rej) =>
+        setTimeout(() => low().then(res, rej), 1)
+      );
+      await violation(() => fromTimer);
+      const later = gate();
+      const detached = later.opened.then(() => low());
+      await violation(() => Promise.resolve().then(() => low()));
+      // Once the lock is released, the work the task started no longer holds it.
+      high.release();
+      later.open();
+      (await detached).release();
+      (await low(LOCK_RANK.packageOutput)).release();
+    });
+    // Outside every task the order is still the process's: a lock taken there counts everywhere.
+    using root = await acquireFileLock(join(dir, "root-high.lock"), {
+      mode: "exclusive",
+      description: "high",
+      rank: LOCK_RANK.cacheMutate,
+    });
+    await violation(() => lockTask(() => low()));
+    root.release();
+    // A lock two tasks share (re-entrant) counts against each until that task drops its reference.
+    const path = join(dir, "shared.lock");
+    const opts = { mode: "shared", description: "high", rank: LOCK_RANK.cacheMutate } as const;
+    const hold = gate();
+    const drop = gate();
+    const other = lockTask(async () => {
+      const lock = await acquireFileLock(path, opts);
+      hold.open();
+      await drop.opened;
+      await violation(() => low());
+      lock.release();
+    });
+    await hold.opened;
+    await lockTask(async () => {
+      const mine = await acquireFileLock(path, opts);
+      await violation(() => low());
+      mine.release();
+      (await low()).release(); // the other task still holds it, but this one no longer does
+    });
+    drop.open();
+    await other;
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

@@ -20,6 +20,7 @@ import { denoCacheDir, renameRetrying } from "../desktop-runtime.ts";
 import { denoToolchainTarget, toolchainEsbuild } from "../deno-toolchain.ts";
 import type { DenoToolchainPin } from "../deno-toolchain.ts";
 import { acquireCacheLock } from "../project-locks.ts";
+import { lockTask } from "../file-lock.ts";
 import { extractArchive } from "../safe-extract.ts";
 import {
   assertTrustedCacheDirs,
@@ -302,7 +303,11 @@ function stampVouches(stamp: NpmStamp | null, a: EsbuildNpmArtifact, mtime: numb
  * @param options Seams.
  * @returns The binary's path.
  */
-export async function ensureNpmEsbuild(options: ResolveEsbuildBinaryOptions = {}): Promise<string> {
+export function ensureNpmEsbuild(options: ResolveEsbuildBinaryOptions = {}): Promise<string> {
+  return lockTask(() => ensureNpmEsbuildInTask(options));
+}
+
+async function ensureNpmEsbuildInTask(options: ResolveEsbuildBinaryOptions): Promise<string> {
   const env = options.env ?? processEnv;
   const target = options.target ?? denoToolchainTarget();
   const a = npmArtifact(options.npm ?? ESBUILD_NPM, target);

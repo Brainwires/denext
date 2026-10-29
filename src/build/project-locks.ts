@@ -22,7 +22,7 @@
 import { isAbsolute, join, relative, resolve } from "@std/path";
 import { encodeHex } from "@std/encoding/hex";
 import type { CommandLocks } from "../cli/command.ts";
-import { acquireFileLock, type FileLock, lockGroup, type LockMode } from "./file-lock.ts";
+import { acquireFileLock, type FileLock, lockGroup, type LockMode, lockTask } from "./file-lock.ts";
 
 /** The acquisition order of every denext lock (lower first). */
 export const LOCK_RANK = {
@@ -168,18 +168,22 @@ export async function acquireProjectLocks(
 }
 
 /**
- * Run `fn` holding `req`'s locks, releasing them when it settles.
+ * Run `fn` holding `req`'s locks, releasing them when it settles. It runs as its own
+ * {@linkcode lockTask}: the locks order `fn`'s own nested locks, not those of a concurrent,
+ * unrelated task of this process.
  *
  * @param req What to lock.
  * @param fn The work.
  * @returns What `fn` returns.
  */
-export async function withProjectLocks<T>(
+export function withProjectLocks<T>(
   req: ProjectLockRequest,
   fn: () => Promise<T>,
 ): Promise<T> {
-  using _locks = await acquireProjectLocks(req);
-  return await fn();
+  return lockTask(async () => {
+    using _locks = await acquireProjectLocks(req);
+    return await fn();
+  });
 }
 
 /**
@@ -240,9 +244,11 @@ async function cacheTurn(root: string): Promise<() => void> {
  *
  * Within one process the callers on a root take turns (one Cargo process drives its cache from
  * one thread): an install in flight holds the download lock (rank 4), and a second task's read
- * (rank 3) waits for it rather than tripping the rank check, which orders one task's nested
- * locks; the OS locks can't keep two tasks of one process apart. So a caller must not take a
- * second lock on the same root while it holds one (it would wait for itself).
+ * (rank 3) waits for it — the OS locks can't keep two tasks of one process apart. So a caller
+ * must not take a second lock on the same root while it holds one (it would wait for itself).
+ * A function that holds a cache lock across its work runs as its own
+ * {@linkcode lockTask} (`ensureCached`, `ensureDesktopRuntime`, …), so a concurrent task's
+ * lower-rank lock on something else is no order violation.
  *
  * @param root The cache root (the lock files live in it).
  * @param mode The access wanted.

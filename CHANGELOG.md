@@ -100,6 +100,13 @@ and this project adheres to
   a second one started in the same process asked for the cache's read lock and stopped with "lock
   order violation — … (rank 3) requested while holding a rank-4 lock". The callers on one cache now
   take turns within the process, so the second waits for the first and then finds its install.
+- **Unrelated work in one process no longer trips the lock order.** The order check counted every
+  lock the process held, so a task reading one cache, or locking a project's build directory, while
+  another task downloaded into a different cache stopped with "lock order violation". Neither
+  waits on the other, so nothing could deadlock. The check now follows each task: an install, a
+  cache prune and each locked build step count their own locks and the locks of the work that
+  started them, and a task that takes a lower-rank lock while it holds a higher one still fails as
+  before.
 - **A desktop app's sidecar log file has every line once `stopAll()` returns.** The lines a
   sidecar printed as it shut down were still being appended after the host reported it stopped.
 - **The report of a failed background CLI cache says when `deno cache` printed nothing.** It
