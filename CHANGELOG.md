@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Security
 
+- **Build-lock files are the user's alone.** A lock file under `.denext/`, an output directory or
+  the toolchain caches was created with the umask's mode (usually `0644`) and opened through a
+  symbolic link, so any local user who could reach the project or a shared `DENO_DIR` could open
+  it read-only and hold `flock(LOCK_EX)`, keeping every `denext build` / `dev` waiting forever
+  (`DENEXT_LOCK_TIMEOUT` is unset by default). Lock files are now created `0600`, an existing one
+  this user owns is narrowed to `0600`, and on macOS and Linux a lock path that is a symbolic link
+  or another user's file is refused with an error naming the path and the fix. On Windows the
+  directory's ACLs decide who can open it, unchanged.
 - **`@denext/graphql` 0.7.0 requires `graphql-yoga@^5.24.6`**, the first Yoga 5 releases on a
   `@graphql-tools/utils` that fixes
   [GHSA-7mx3-vvmw-hjmv](https://github.com/advisories/GHSA-7mx3-vvmw-hjmv) and

@@ -41,6 +41,10 @@
 //   taking a lock), so a parent's wait can't close a cycle through it. Counting subtasks against
 //   their parent would bring back the process-wide check, every task being a subtask of the
 //   root, and with it the false violations of two unrelated installs.
+// - a lock file is this user's alone: created 0600, an existing one narrowed to 0600, and on
+//   POSIX a symbolic link or another user's file is refused — `flock` needs only read access, so
+//   anyone who could open it could hold it and block every build (Windows: the directory's ACLs
+//   decide who can open it; denext doesn't change them);
 // - a filesystem that cannot lock at all (some network mounts) proceeds unlocked, as Cargo does,
 //   with one warning; so does a SHARED lock (a reader) whose lock file can't be created on a
 //   read-only or unwritable directory.
@@ -298,11 +302,104 @@ async function lockWithin(
   throw gaveUp(opts, path, timeoutMs, "process");
 }
 
+/** The mode a lock file is created with, and narrowed to when found looser: this user only. */
+const LOCK_FILE_MODE = 0o600;
+
+/** A lock path denext won't use: a symbolic link, or a file another user owns. */
+class UnsafeLockFileError extends Error {
+  override name = "UnsafeLockFileError";
+}
+
+function refuseLockFile(path: string, why: string): never {
+  throw new UnsafeLockFileError(
+    `denext: refusing the lock file ${path}: ${why}. Another local user could hold it to block ` +
+      `this command, or point it elsewhere; remove it (denext recreates it, mode 0600) or fix ` +
+      `its ownership with \`chown\``,
+  );
+}
+
+/**
+ * POSIX: refuse a lock path that is a symbolic link or another user's file (`flock` needs only
+ * read access, so anyone who can open the file can hold it and block every build). Missing is
+ * fine: the open creates it. Windows has no `flock`-by-reader and no uid here; its ACLs are
+ * the directory's.
+ */
+async function checkLockPath(path: string, uid: number | null): Promise<Deno.FileInfo | null> {
+  let info: Deno.FileInfo;
+  try {
+    info = await Deno.lstat(path);
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return null;
+    throw err;
+  }
+  if (info.isSymlink) refuseLockFile(path, "it is a symbolic link");
+  if (uid !== null && info.uid !== null && info.uid !== uid) {
+    refuseLockFile(path, `it is owned by uid ${info.uid}, not this user (uid ${uid})`);
+  }
+  return info;
+}
+
+/**
+ * This process's uid — or, where `--allow-sys=uid` isn't granted (a least-privilege process;
+ * queried, never prompted for), the owner of the lock file's directory, which denext created or
+ * the project's owner did.
+ */
+async function lockOwnerUid(path: string): Promise<number | null> {
+  try {
+    if (Deno.permissions.querySync({ name: "sys", kind: "uid" }).state === "granted") {
+      return Deno.uid();
+    }
+  } catch {
+    // no permissions API answer: fall back to the directory's owner
+  }
+  return (await Deno.lstat(dirname(path))).uid;
+}
+
+/**
+ * After the open: the file opened is the one checked (no symlink swapped in between), and one
+ * found readable or writable by others (an older denext's 0644) is narrowed to 0600.
+ */
+async function secureOpened(file: Deno.FsFile, path: string, uid: number | null): Promise<void> {
+  const opened = await file.stat();
+  const now = await checkLockPath(path, uid);
+  if (!now || now.ino !== opened.ino || now.dev !== opened.dev) {
+    refuseLockFile(path, "it changed while it was being opened");
+  }
+  if (opened.mode !== null && (opened.mode & 0o077) !== 0) {
+    await Deno.chmod(path, LOCK_FILE_MODE);
+  }
+}
+
+/**
+ * Open (creating) the lock file: on POSIX only a regular file this user owns, mode 0600 — closed
+ * again if it fails that check after the open.
+ */
+async function openLockFile(path: string): Promise<Deno.FsFile> {
+  await Deno.mkdir(dirname(path), { recursive: true });
+  if (Deno.build.os === "windows") {
+    return await Deno.open(path, { read: true, write: true, create: true, mode: LOCK_FILE_MODE });
+  }
+  const uid = await lockOwnerUid(path);
+  await checkLockPath(path, uid);
+  const file = await Deno.open(path, {
+    read: true,
+    write: true,
+    create: true,
+    mode: LOCK_FILE_MODE,
+  });
+  try {
+    await secureOpened(file, path, uid);
+  } catch (err) {
+    file.close();
+    throw err;
+  }
+  return file;
+}
+
 async function lockFile(path: string, opts: FileLockOptions): Promise<Deno.FsFile | null> {
   let file: Deno.FsFile;
   try {
-    await Deno.mkdir(dirname(path), { recursive: true });
-    file = await Deno.open(path, { read: true, write: true, create: true });
+    file = await openLockFile(path);
   } catch (err) {
     // A reader on a read-only tree has nothing to protect from itself: proceed (with a warning).
     if (opts.mode === "shared" && cannotCreate(err)) return proceedUnlocked(path, opts, err);

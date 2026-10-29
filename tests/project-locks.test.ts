@@ -952,6 +952,90 @@ Deno.test("more errnos mean a filesystem without locking; each lock file warns o
   }
 });
 
+Deno.test("a lock file is created 0600, and an older 0644 one is narrowed to 0600", async () => {
+  if (Deno.build.os === "windows") return; // POSIX modes
+  const dir = await Deno.makeTempDir();
+  try {
+    const opts = { mode: "exclusive", description: "x", rank: 1 } as const;
+    const fresh = join(dir, "fresh.lock");
+    (await acquireFileLock(fresh, opts)).release();
+    assertEquals((await Deno.stat(fresh)).mode! & 0o777, 0o600);
+    const loose = join(dir, "loose.lock");
+    await Deno.writeTextFile(loose, "");
+    await Deno.chmod(loose, 0o644);
+    (await acquireFileLock(loose, { ...opts, mode: "shared" })).release();
+    assertEquals((await Deno.stat(loose)).mode! & 0o777, 0o600);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a symlinked lock path is refused, naming the path and the fix", async () => {
+  if (Deno.build.os === "windows") return; // POSIX: symlinks need privileges there
+  const dir = await Deno.makeTempDir();
+  try {
+    const target = join(dir, "elsewhere");
+    await Deno.writeTextFile(target, "");
+    const link = join(dir, "link.lock");
+    await Deno.symlink(target, link);
+    for (const mode of ["shared", "exclusive"] as const) {
+      const err = await assertRejects(() =>
+        acquireFileLock(link, { mode, description: "x", rank: 1 })
+      );
+      assertStringIncludes(String(err), `refusing the lock file ${link}: it is a symbolic link`);
+      assertStringIncludes(String(err), "remove it");
+    }
+    // A dangling link is refused too, and nothing is created at its target.
+    const dangling = join(dir, "dangling.lock");
+    await Deno.symlink(join(dir, "nowhere"), dangling);
+    await assertRejects(() =>
+      acquireFileLock(dangling, { mode: "exclusive", description: "x", rank: 1 })
+    );
+    assertEquals(await Deno.lstat(join(dir, "nowhere")).then(() => true, () => false), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a lock file another user owns is refused (they could hold it forever)", async () => {
+  if (Deno.build.os === "windows") return; // POSIX owners
+  const dir = await Deno.makeTempDir();
+  const path = join(dir, "theirs.lock");
+  await Deno.writeTextFile(path, "");
+  const realLstat = Deno.lstat;
+  // No second uid on hand: the lock path's lstat answers as if another user owned it.
+  Deno.lstat = async (p: string | URL) => {
+    const info = await realLstat(p);
+    return String(p) === path ? { ...info, uid: (Deno.uid() ?? 0) + 1 } : info;
+  };
+  try {
+    const err = await assertRejects(() =>
+      acquireFileLock(path, { mode: "exclusive", description: "x", rank: 1 })
+    );
+    assertStringIncludes(String(err), `refusing the lock file ${path}: it is owned by uid`);
+    assertStringIncludes(String(err), "chown");
+  } finally {
+    Deno.lstat = realLstat;
+    await Deno.remove(dir, { recursive: true });
+  }
+  // A reader on such a file is refused too, not let through as "can't create".
+  const dir2 = await Deno.makeTempDir();
+  const path2 = join(dir2, "theirs.lock");
+  await Deno.writeTextFile(path2, "");
+  Deno.lstat = async (p: string | URL) => {
+    const info = await realLstat(p);
+    return String(p) === path2 ? { ...info, uid: (Deno.uid() ?? 0) + 1 } : info;
+  };
+  try {
+    await assertRejects(() =>
+      acquireFileLock(path2, { mode: "shared", description: "x", rank: 1 })
+    );
+  } finally {
+    Deno.lstat = realLstat;
+    await Deno.remove(dir2, { recursive: true });
+  }
+});
+
 Deno.test("a shared lock on an unwritable directory proceeds unlocked; an exclusive one fails", async () => {
   if (Deno.build.os === "windows") return; // POSIX modes
   const dir = await Deno.makeTempDir();
