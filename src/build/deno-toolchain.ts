@@ -44,13 +44,13 @@ import {
   DownloadIdleError,
   type DownloadProgress,
   downloadProgress,
-  downloadTimeoutMs,
   fetchWithConnectDeadline,
-  IDLE_TIMEOUT_MS,
   readJsonFile,
+  responseBody,
   sha256File,
   streamHashed,
   sweepLeftovers,
+  withDownloadRetries,
 } from "./verified-download.ts";
 import { ESBUILD_VERSION } from "./esbuild/version.ts";
 import { currentDenoIdentity, type DenoIdentity, isPinnedDenextDeno } from "./deno-version.ts";
@@ -437,13 +437,14 @@ async function netDenied(url: string): Promise<boolean> {
 }
 
 /**
- * GET `artifact`, mapping a network failure / HTTP error to a download error. A server that
- * sends no response headers within the connect deadline is given up on (the next source, if any,
- * is tried).
+ * GET `artifact`, mapping a network failure / HTTP error to a download error (its `cause` says
+ * whether a retry may help). A server that sends no response headers within the connect deadline
+ * is given up on.
  */
 async function openDownload(
   slot: DownloadNames,
   fetchImpl: typeof fetch,
+  connectMs: number,
 ): Promise<ReadableStream<Uint8Array>> {
   const { artifact, what } = slot;
   const hint = slot.offlineHint ? ` ${slot.offlineHint}` : "";
@@ -455,19 +456,19 @@ async function openDownload(
   }
   let res: Response;
   try {
-    res = await fetchWithConnectDeadline(fetchImpl, artifact.url, artifact.headers);
+    res = await fetchWithConnectDeadline(fetchImpl, artifact.url, artifact.headers, connectMs);
   } catch (err) {
     throw new DenoToolchainDownloadError(
       `denext: could not download denext's ${what} (${artifact.file}) from ` +
         `${artifact.url}: ${err instanceof Error ? err.message : err}. Are you offline?${hint}`,
+      { cause: err },
     );
   }
-  if (res.ok && res.body) return res.body;
-  await res.body?.cancel();
-  throw new DenoToolchainDownloadError(
-    `denext: downloading denext's ${what} failed: GET ${artifact.url} → ` +
-      `${res.status} ${res.statusText}`,
-  );
+  return await responseBody(res, artifact.url, (status) =>
+    new DenoToolchainDownloadError(
+      `denext: downloading denext's ${what} failed: ${status.message}`,
+      { cause: status },
+    ));
 }
 
 /** What a download's messages call it: the artifact, its name, and the way to fetch it ahead. */
@@ -479,22 +480,42 @@ export interface DownloadNames {
   readonly offlineHint?: string;
 }
 
-/** Stream the download into the new file `dest`; its size and SHA-256. */
-async function download(
+/**
+ * Stream the download into the new file `dest`; its size and SHA-256. A stalled or broken
+ * connection is retried on a new one (`withDownloadRetries`), the partial file deleted first.
+ */
+function download(
   slot: DownloadNames,
   dest: string,
   fetchImpl: typeof fetch,
+  log?: (line: string) => void,
 ): Promise<{ size: number; sha256: string }> {
   const { artifact, what } = slot;
-  const body = await openDownload(slot, fetchImpl);
   const cap = artifact.size ?? MAX_DOWNLOAD;
-  // A progress line on a terminal (bytes and percent); nothing in a log or CI.
-  const progress = downloadProgress(`${what} ${artifact.file}`, artifact.size);
-  try {
-    return await streamHashedTo(body, dest, cap, slot, progress);
-  } finally {
-    progress.done();
-  }
+  const hint = slot.offlineHint ? ` ${slot.offlineHint}` : "";
+  return withDownloadRetries(
+    `${what} ${artifact.file}`,
+    async ({ fetch: fetchOnce, deadlines }) => {
+      const body = await openDownload(slot, fetchOnce, deadlines.connectMs);
+      // A progress line on a terminal (bytes and percent); nothing in a log or CI.
+      const progress = downloadProgress(`${what} ${artifact.file}`, artifact.size);
+      try {
+        return await streamHashedTo(body, dest, cap, slot, progress, deadlines.idleMs);
+      } catch (err) {
+        await Deno.remove(dest).catch(() => {});
+        throw err;
+      } finally {
+        progress.done();
+      }
+    },
+    fetchImpl,
+    (report) =>
+      new DenoToolchainDownloadError(
+        `denext: could not download denext's ${what} (${artifact.file}) from ` +
+          `${artifact.url}${report}\n  Are you offline?${hint}`,
+      ),
+    { log },
+  );
 }
 
 /** {@linkcode streamHashed} with the toolchain's refusals. */
@@ -504,6 +525,7 @@ function streamHashedTo(
   cap: number,
   { artifact, what }: DownloadNames,
   progress: DownloadProgress,
+  idleMs: number,
 ): Promise<{ size: number; sha256: string }> {
   return streamHashed(
     body,
@@ -523,10 +545,11 @@ function streamHashedTo(
                 ? " (DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS raises the deadline)"
                 : ""
             }`,
+          { cause: err },
         ),
     },
     (bytes) => progress.update(bytes),
-    downloadTimeoutMs("DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS", IDLE_TIMEOUT_MS),
+    idleMs,
   );
 }
 
@@ -576,7 +599,7 @@ export async function downloadPinned(
   for (const [i, source] of sources.entries()) {
     const one = { ...names, artifact: { ...artifact, url: source.url, headers: source.headers } };
     try {
-      checkDownload(one, await download(one, dest, fetchImpl));
+      checkDownload(one, await download(one, dest, fetchImpl, log));
       return;
     } catch (err) {
       await Deno.remove(dest).catch(() => {});

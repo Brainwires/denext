@@ -186,10 +186,17 @@ older glibc, rather than downloading a binary that then fails with `GLIBC_2.35 n
   percent; in a log or CI it prints nothing.
 - Two commands starting at once download it once: the second prints
   `Blocking waiting for file lock on Deno toolchain cache` and adopts the first one's binary.
-- A download that gets no response within 30 s, or no data for 60 s mid-body (a half-open
-  connection, a stuck proxy), is given up on with an error that says which; the pin's fallback
-  mirrors are then tried. `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS` and
-  `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS` change the two deadlines (`0` turns one off).
+- A stalled connection rarely recovers and a new one usually answers, so a download waits briefly
+  and retries: no response within 10 s, or no data for 20 s mid-body (a half-open connection, a
+  stuck proxy; the gap between reads, never the total time, so a slow but steady download is
+  never cut off), and the attempt is given up on, its partial file deleted, and the download
+  retried on a new connection (a fresh HTTP client) after a short, jittered, growing wait. A
+  connection that breaks and a `408`, `429` or `5xx` answer are retried too; a size or SHA-256
+  refusal never is. Four attempts in all, and none starts once 120 s have passed since the first;
+  when every one fails, the error lists each attempt and which deadline fired, and the pin's
+  fallback mirrors are then tried. `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`,
+  `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS` and `DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS` change the deadlines
+  (milliseconds; `0` turns one off), `DENEXT_DOWNLOAD_ATTEMPTS` the number of attempts.
 
 ## Opting out, and when it falls back
 

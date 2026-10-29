@@ -739,10 +739,22 @@ and this project adheres to
 - **`build --compile` with a frozen lock fails closed.** When the compile rewrote the lock copy
   in another lockfile version (an older lock under a newer Deno) or left it unreadable, the frozen
   check was skipped and the binary built anyway; it is now refused with the fix.
-- **Toolchain and Deno Desktop runtime downloads time out.** A download that sends no response
-  within 30 s, or no data for 60 s mid-body, is given up on (the toolchain pin's fallback mirrors
-  are then tried) instead of hanging the build and holding the cache lock;
-  `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS` / `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS` change the deadlines.
+- **Toolchain and Deno Desktop runtime downloads give up on a stalled connection and retry.** A
+  download (the toolchain, its `denort`, Gleam, fastlane's Ruby, the Deno Desktop runtime) that
+  sends no response within 10 s, or no data for 20 s mid-body (the gap between reads, so a slow
+  but steady download is never cut off), no longer hangs the build and holds the cache lock: the
+  attempt is given up on, its partial file deleted, and the download retried on a new connection
+  (a fresh HTTP client) after a short, jittered, growing wait, as is a broken connection or a
+  `408` / `429` / `5xx` answer. Four attempts in all, none started once 120 s have passed; when
+  every one fails, the error lists each attempt and which deadline fired, and the toolchain pin's
+  fallback mirrors are then tried. The SHA-256 and size checks are unchanged.
+  `DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`, `DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS`,
+  `DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS` (`0`: none) and `DENEXT_DOWNLOAD_ATTEMPTS` change them.
+- **Caching the CLI's verbs for offline use can no longer hang or fail silently.** The `deno cache`
+  a remote CLI runs (in the background on its first run, in the foreground from
+  `denext toolchain install`) is stopped after 5 min (`DENEXT_CHILD_DEADLINE_MS` changes it), and
+  the end of what it printed is kept: `toolchain install` prints it with the exit code or the
+  deadline, and a background run that failed is reported once on the next run, as it retries.
 - **`DENEXT_CHILD_DEADLINE_MS` sets the build's `deno info` / `deno bundle` deadlines** (120 s and
   300 s; `0` removes them), for a first build with a cold cache on a slow link (a Docker
   `RUN denext task build`), which could be killed twice and fail with `ChildStallError`.
