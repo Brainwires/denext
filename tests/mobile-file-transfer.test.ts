@@ -50,6 +50,21 @@ let landed = 0;
 /** Wait until the fake OPFS has written `bytes` in all (a chunk let through is not yet written). */
 const written = (bytes: number) => until(() => landed >= bytes, `${bytes} bytes written`);
 
+/** Hold every fake OPFS write open until `release()` (to act while one is in flight). */
+function holdWrites() {
+  const waiting: Array<() => void> = [];
+  writeLatency = () => new Promise<void>((resolve) => waiting.push(resolve));
+  return {
+    get held() {
+      return waiting.length;
+    },
+    release() {
+      writeLatency = macrotask;
+      for (const resolve of waiting.splice(0)) resolve();
+    },
+  };
+}
+
 class FakeFile {
   readonly kind = "file" as const;
   bytes = new Uint8Array(0);
@@ -494,6 +509,75 @@ Deno.test("downloadToFile (web): streams into OPFS with progress, pauses and res
     assertEquals(await forgetFileTransfer("w1"), true);
     assertEquals((await fileTransfers()).length, 0);
   }, { fetch: server.fetch });
+});
+
+Deno.test("downloadToFile (web): a pause while a write is in flight keeps that write and resumes after it", async () => {
+  const server = streamingFetch(4 * 1024);
+  await withOpfs(async () => {
+    const done = downloadToFile("https://x.test/h.bin", "h.bin", { id: "h1" });
+    await server.step(1);
+    await written(1024);
+    const writes = holdWrites();
+    await server.step(1);
+    await until(() => writes.held === 1, "the second write");
+    const paused = nextEvent("h1", "paused");
+    const pausing = pauseFileTransfer("h1");
+    writes.release();
+    assertEquals(await pausing, true);
+    assertEquals([(await paused).bytes, (await paused).resumable], [2048, true]);
+    assertEquals(await resumeFileTransfer("h1"), true);
+    await server.drain();
+    assertEquals(await done, { path: "data/h.bin" });
+    assertEquals(server.requests[1].headers.get("range"), "bytes=2048-");
+    const file = await readFile("h.bin", { encoding: "base64" });
+    assertEquals(Uint8Array.from(atob(file), (c) => c.charCodeAt(0)), pattern(4 * 1024));
+  }, { fetch: server.fetch });
+});
+
+Deno.test("downloadToFile (web): a cancel while a write is in flight cancels, even after a pause", async () => {
+  const server = streamingFetch(4 * 1024);
+  await withOpfs(async () => {
+    for (const pauseFirst of [false, true]) {
+      const id = `k${pauseFirst}`;
+      const done = downloadToFile("https://x.test/k.bin", `${id}.bin`, { id });
+      await server.step(1);
+      await written(pauseFirst ? 3072 : 1024);
+      const writes = holdWrites();
+      await server.step(1);
+      await until(() => writes.held === 1, "the second write");
+      const pausing = pauseFirst ? pauseFileTransfer(id) : Promise.resolve(false);
+      assertEquals(await cancelFileTransfer(id), true);
+      writes.release();
+      assertEquals(await pausing, false);
+      assertEquals((await assertRejects(() => done, FileTransferError)).code, "CANCELLED");
+      const info = (await fileTransfers()).find((t) => t.id === id);
+      assertEquals(info?.state, "cancelled");
+    }
+  }, { fetch: server.fetch });
+});
+
+Deno.test("downloadToFile (web): during the last write a cancel still cancels; a pause is too late", async () => {
+  for (const control of ["cancel", "pause"] as const) {
+    const server = streamingFetch(1024);
+    await withOpfs(async () => {
+      const writes = holdWrites();
+      const done = downloadToFile("https://x.test/l.bin", "l.bin", { id: "l1" });
+      await server.step(1);
+      await until(() => writes.held === 1, "the last write");
+      await settle(); // the body is served to its end: the abort no longer errors it
+      if (control === "cancel") {
+        assertEquals(await cancelFileTransfer("l1"), true);
+        writes.release();
+        assertEquals((await assertRejects(() => done, FileTransferError)).code, "CANCELLED");
+      } else {
+        const pausing = pauseFileTransfer("l1");
+        writes.release();
+        assertEquals(await pausing, false); // it finished instead
+        assertEquals(await done, { path: "data/l.bin" });
+        assertEquals((await fileTransfers())[0].state, "done");
+      }
+    }, { fetch: server.fetch });
+  }
 });
 
 Deno.test("ifRangeValidator: a strong ETag, else Last-Modified; a weak ETag is never sent", () => {

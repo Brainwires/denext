@@ -231,6 +231,13 @@ and this project adheres to
   output pipe open for a moment; a caller that removed the project directory next could race it
   (Windows refuses to remove a directory a process still holds). Stopping it now resolves once
   the child has exited and its pipe is closed.
+- **A page download's pause and cancel hold while a write is in flight.** On the web, where
+  `downloadToFile` streams into the origin private file system, a `cancelFileTransfer` (or the
+  caller's `signal`) that arrived during the last write let the download finish: its promise
+  resolved and the file was kept, instead of rejecting with `CANCELLED`. A cancel that followed a
+  pause whose write was still landing ended paused instead of cancelled. Both now cancel, and
+  `pauseFileTransfer` answers once the request has stopped: `true` when it paused, `false` when
+  the download finished, failed or was cancelled first.
 
 ### Documentation
 

@@ -576,6 +576,11 @@ abstract class SettlingDownload<T> implements PageTransfer {
   info: FileTransferInfo;
   /** The current request's controller (a new one per attempt). */
   protected controller = new AbortController();
+  /**
+   * Why the current request was stopped: a cancel overrides a pause still landing (its write in
+   * flight), which the aborted signal's first reason alone would lose.
+   */
+  protected why: AbortWhy | null = null;
   #settle: Settle<T>;
   #onAbort = () => cancelPage(this.info.id, "caller");
 
@@ -600,11 +605,13 @@ abstract class SettlingDownload<T> implements PageTransfer {
   }
 
   abort(reason: AbortWhy): void {
+    if (reason !== "pause" || !this.why) this.why = reason;
     this.controller.abort(reason);
   }
 
   resume(): void {
     this.controller = new AbortController();
+    this.why = null;
     pageEvent(this, "started", { state: "running" });
     void this.attempt(true);
   }
@@ -631,6 +638,9 @@ abstract class SettlingDownload<T> implements PageTransfer {
 class PageDownload extends SettlingDownload<number> {
   #validator: string | null = null;
   #progress;
+  /** A pause asked for and not yet landed: whether the request stopped paused. */
+  #pausing: Promise<boolean> | null = null;
+  #onPaused: (paused: boolean) => void = () => {};
 
   constructor(
     spec: PageTransferSpec,
@@ -664,6 +674,25 @@ class PageDownload extends SettlingDownload<number> {
     } catch (err) {
       this.#stopped(err);
     }
+    this.#paused(false);
+  }
+
+  /**
+   * Pause: abort the request, and answer once it has stopped (a write in flight lands first):
+   * `false` when it finished, failed or was cancelled instead.
+   */
+  pause(): Promise<boolean> {
+    if (!this.#pausing) {
+      this.#pausing = new Promise((resolve) => (this.#onPaused = resolve));
+      this.abort("pause");
+    }
+    return this.#pausing;
+  }
+
+  /** Answer a pending pause. */
+  #paused(paused: boolean): void {
+    this.#onPaused(paused);
+    this.#pausing = null;
   }
 
   async #httpError(res: Response): Promise<void> {
@@ -702,6 +731,8 @@ class PageDownload extends SettlingDownload<number> {
         this.info = { ...this.info, bytes };
         this.#progress.report(bytes, total);
       }
+      // A cancel landing during the last write no longer errors the body (it has all arrived).
+      if (this.why === "cancel" || this.why === "caller") throw this.why;
     } finally {
       await writer.close();
     }
@@ -719,10 +750,10 @@ class PageDownload extends SettlingDownload<number> {
 
   /** The request stopped: a pause, a cancel, or a failure. */
   #stopped(err: unknown): void {
-    const reason = this.controller.signal.reason;
+    const reason = this.why;
     if (reason === "pause") {
       pageEvent(this, "paused", { state: "paused", resumable: this.#validator !== null });
-      return;
+      return this.#paused(true);
     }
     if (reason === "cancel" || reason === "caller") {
       pageEvent(this, "cancelled", { state: "cancelled", resumable: false });
