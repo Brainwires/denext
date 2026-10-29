@@ -11,6 +11,7 @@
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { startBuild } from "../packages/tanstack-start/src/compile.ts";
+import { mockEdgeId, selfDenialSource } from "../packages/tanstack-start/src/mock.ts";
 import {
   compileImportProtection,
   effectiveBehavior,
@@ -173,6 +174,60 @@ Deno.test("tanstack-start import protection: behavior resolves per command, as S
   const off = compileImportProtection({ enabled: false, behavior: "mock" }, "/p", "/p/src", "dev");
   assertEquals(off.behavior, "error");
   assertEquals(compileImportProtection({}, "/p", "/p/src").mockAccess, "error");
+});
+
+Deno.test("tanstack-start import protection: unreadable code keeps the default mock; no trace is []", () => {
+  const dev = compileImportProtection(undefined, "/p", "/p/src", "dev");
+  // Start's parsers throw on code they cannot read: the mock's names are then none.
+  const unreadable: StartMocks = {
+    ...fakeMocks,
+    getMockExportNamesBySource: () => {
+      throw new SyntaxError("unreadable");
+    },
+    getNamedExports: () => {
+      throw new SyntaxError("unreadable");
+    },
+  };
+  runtimeViolations.length = 0;
+  const edge = mockEdgeId(unreadable, dev, {
+    env: "client",
+    importer: "/p/src/bad.ts",
+    importerCode: "import {",
+    specifier: "./db.server.ts",
+  });
+  const payload = JSON.parse(decodeURIComponent(edge.slice(fakeMocks.MOCK_EDGE_PREFIX.length)));
+  assertEquals(payload.exports, [], "no names: the default export stands in");
+  assert(payload.runtimeId.startsWith(fakeMocks.MOCK_RUNTIME_PREFIX), "over the runtime mock");
+  const self = selfDenialSource(unreadable, dev, {
+    env: "client",
+    file: "/p/src/db.server.ts",
+    source: "export const",
+  });
+  assertStringIncludes(self, "export default mock;");
+  assert(!self.includes("export const"), "no named exports");
+  // Readable code that never names the specifier (a side-effect or dynamic import): no names.
+  const unnamed = mockEdgeId(fakeMocks, dev, {
+    env: "client",
+    importer: "/p/src/bad.ts",
+    importerCode: `import { a } from "./other.ts";\n`,
+    specifier: "./db.server.ts",
+  });
+  assertEquals(
+    JSON.parse(decodeURIComponent(unnamed.slice(fakeMocks.MOCK_EDGE_PREFIX.length))).exports,
+    [],
+  );
+  // Without a trace (a build that keeps no import trail) Start is handed an empty one.
+  assertEquals(
+    runtimeViolations.map((v) => [v.specifier, v.trace]),
+    [["./db.server.ts", []], ["src/db.server.ts", []], ["./db.server.ts", []]],
+  );
+  // In a build, unreadable code is still a self-contained mock with no names.
+  const build = compileImportProtection({ behavior: "mock" }, "/p", "/p/src", "build");
+  assertEquals(
+    selfDenialSource(unreadable, build, { env: "client", file: "/p/src/x.ts", source: "{" }),
+    `const mock = { selfContained: "SELF_CONTAINED_MOCK" };\n`,
+  );
+  runtimeViolations.length = 0;
 });
 
 Deno.test({
