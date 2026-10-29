@@ -95,6 +95,15 @@ and this project adheres to
 
 ### Fixed
 
+- **The esbuild loader's `deno info` children are bounded like the build's own.** The Deno loader
+  behind the server and dependency bundles learned each module graph from a `deno info` child that
+  had no deadline, ran beside the build's other Deno children instead of taking turns with them, and
+  was read until its pipes closed. On Windows such a child sometimes never exits, or a process
+  started meanwhile holds its pipe open, and the build waited forever after "bundling … server
+  module(s)". It now takes its turn with the module-graph crawl and `deno bundle`, is read until it
+  exits, and is killed and started once more past the same 120 s deadline
+  (`DENEXT_CHILD_DEADLINE_MS` replaces it); a second overrun fails the build with a
+  `ChildStallError` naming both pids.
 - **Two installs of one cache in a single process no longer fail the lock order.** While one
   install held a cache's download lock (the Deno Desktop runtime, the toolchain, esbuild, fastlane),
   a second one started in the same process asked for the cache's read lock and stopped with "lock

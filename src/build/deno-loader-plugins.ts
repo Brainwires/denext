@@ -34,6 +34,9 @@
 // an `npm:` import from `<absWorkingDir>/node_modules` alone; when the app has none (its packages
 // are hoisted), it is handed the nearest ancestor's instead, and esbuild's own lookup walks up from
 // there, as Deno's does.
+//
+// On every OS the loader's `deno info` children are bounded and serialized like the build's own
+// (loader-deno-info.ts).
 
 import {
   DEFAULT_LOADER,
@@ -45,6 +48,7 @@ import { dirname, extname, fromFileUrl, join, resolve, toFileUrl } from "@std/pa
 import { parse as parseJsonc } from "@std/jsonc";
 import type * as esbuild from "./esbuild/mod.ts";
 import { workspaceImportsSync, workspaceRootSync } from "./workspace-imports.ts";
+import { withBoundedDenoInfo } from "./loader-deno-info.ts";
 
 const WINDOWS = Deno.build.os === "windows";
 
@@ -416,20 +420,37 @@ function standaloneConfig(configPath: string): string {
   return standIn;
 }
 
+/** Options for {@linkcode denoLoaderPlugins} beyond the loader's own. */
+export interface DenoLoaderBounds {
+  /**
+   * Each `deno info` attempt's deadline in milliseconds (see loader-deno-info.ts); by default
+   * `DENEXT_CHILD_DEADLINE_MS`, else 2 minutes.
+   */
+  readonly infoDeadlineMs?: number;
+}
+
 /**
- * `denoPlugins(options)` with the Windows path fixes applied (identical elsewhere).
+ * `denoPlugins(options)` with the Windows path fixes applied (identical elsewhere), and the
+ * loader's `deno info` children bounded on every OS ({@linkcode withBoundedDenoInfo}).
  *
- * @param options The loader options; `configPath` may be a path or a `file://` URL.
+ * @param given The loader options; `configPath` may be a path or a `file://` URL.
+ * @param bounds The loader's `deno info` deadline.
  * @returns The plugins to append to an esbuild plugin chain.
  */
-export function denoLoaderPlugins(given: DenoPluginsOptions = {}): esbuild.Plugin[] {
+export function denoLoaderPlugins(
+  given: DenoPluginsOptions = {},
+  bounds: DenoLoaderBounds = {},
+): esbuild.Plugin[] {
   const options = given.configPath === undefined
     ? given
     : { ...given, configPath: standaloneConfig(given.configPath) };
   if (!WINDOWS) {
     return [
       denoResolverPlugin(options) as esbuild.Plugin,
-      withHoistedNodeModules(withLoaderMap(denoLoaderPlugin(options) as esbuild.Plugin)),
+      withBoundedDenoInfo(
+        withHoistedNodeModules(withLoaderMap(denoLoaderPlugin(options) as esbuild.Plugin)),
+        bounds.infoDeadlineMs,
+      ),
     ];
   }
   const resolverOptions = options.configPath === undefined
@@ -438,8 +459,11 @@ export function denoLoaderPlugins(given: DenoPluginsOptions = {}): esbuild.Plugi
   return [
     windowsPathSpecifiers(),
     withWindowsWasmPaths(denoResolverPlugin(resolverOptions) as esbuild.Plugin),
-    withHoistedNodeModules(withLoaderMap(
-      withWindowsWasmPaths(denoLoaderPlugin(windowsLoaderOptions(options)) as esbuild.Plugin),
-    )),
+    withBoundedDenoInfo(
+      withHoistedNodeModules(withLoaderMap(
+        withWindowsWasmPaths(denoLoaderPlugin(windowsLoaderOptions(options)) as esbuild.Plugin),
+      )),
+      bounds.infoDeadlineMs,
+    ),
   ];
 }

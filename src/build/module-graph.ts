@@ -32,7 +32,12 @@ import {
 } from "./platform-extensions.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs, prepareConfig } from "./bundle.ts";
-import { boundedOutput, childDeadlineMs, retryOnStall } from "./serial-child.ts";
+import {
+  boundedOutput,
+  childDeadlineMs,
+  DENO_INFO_DEADLINE_MS,
+  retryOnStall,
+} from "./serial-child.ts";
 import { quietThenExplain, type StderrMode } from "./exited-output.ts";
 
 // The boundary ids and the manifest's shape live in leaf modules the server runtime imports
@@ -461,13 +466,6 @@ async function redirectConfigArgs(tmpDir: string): Promise<string[]> {
   const { configPath, importMap } = redirects;
   return ["--config", await prepareConfig(tmpDir, { configPath, importMap })];
 }
-
-/**
- * How long one `deno info` attempt may run, by default, before it is killed and retried once (see
- * serial-child.ts): well past a warm crawl, and a cold npm install's crawl that overruns it
- * resumes from the cache it filled on the retry.
- */
-const DENO_INFO_DEADLINE_MS = 120_000;
 
 async function spawnDenoInfo(
   entryFiles: string[],

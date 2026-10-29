@@ -1193,8 +1193,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   toolchain and the Deno Desktop runtime give up on a stalled connection after 10 s with no response
   (`DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`) or 20 s with no data (`DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS`;
   `0` removes either) and retry on a new connection (`DENEXT_DOWNLOAD_ATTEMPTS`, 4 in all; none
-  starts after `DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS`, 120 s), and `DENEXT_CHILD_DEADLINE_MS` replaces the build's `deno info` /
-  `deno bundle` deadlines (120 s / 300 s; `0`: none) for a cold cache on a slow link. Every other verb that
+  starts after `DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS`, 120 s), and `DENEXT_CHILD_DEADLINE_MS` replaces the build's `deno info` (the
+  esbuild loader's too) / `deno bundle` deadlines (120 s / 300 s; `0`: none) for a cold cache on a slow link. Every other verb that
   starts `deno` (`fmt`, `lint`, `add`, `ui`, `mcp`, `create`, …) hands it the toolchain too.
   `denext task <name>` is Deno's `deno task` on the toolchain, and every
   `deno` inside it (its own steps, and any a script it starts finds on PATH) is the toolchain too; a
