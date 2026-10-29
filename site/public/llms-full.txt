@@ -1014,8 +1014,9 @@ at most once per idle period, 10 s apart, then only after 16 MB of growth). Neve
 or jobs. Opt out with `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0`.
 `start: { limits: { memory: "384m", cpuSeconds, deadlineSeconds } }` caps the same processes
 (runtime 3.0.0-rc.2+; `--max-memory` / `--max-cpu-time` / `--max-time`, exit 137 / 152 / 124 for
-the supervisor to restart; baked into a compiled binary; never `dev` or tests; not applied on stock
-Deno, with a warning): https://denext.dev/docs/deployment-targets#resource-limits
+the supervisor to restart; only on the process that serves, never a CLI re-run before it; baked
+into a compiled binary, whose `job` / `db` then run under them too; never `dev` or tests; not
+applied on stock Deno, with a warning): https://denext.dev/docs/deployment-targets#resource-limits
 
 **Long-lived server work (supervised services):** `services/<name>.ts` default-exports
 `defineService({ start(ctx) })` from `denext/server` — `start`'s promise is the service's life (a

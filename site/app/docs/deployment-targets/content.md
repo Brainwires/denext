@@ -314,16 +314,16 @@ production server starts:
 
 | Where                                                  | How                                                         |
 | ------------------------------------------------------ | ----------------------------------------------------------- |
-| `denext start`, when it starts the server process      | on that `deno run`, with `DENEXT_LIMITS_APPLIED`            |
+| `denext start`, on the process that serves             | on that `deno run`, with `DENEXT_LIMITS_APPLIED`            |
 | `denext build --compile`                               | baked into the binary, which enforces them as it runs       |
 | `denext generate docker`, the `docker` / `fly` presets | on the `CMD`'s `deno run`, with `ENV DENEXT_LIMITS_APPLIED` |
 | the `genericHost()` systemd unit                       | on `ExecStart`, with `Environment=DENEXT_LIMITS_APPLIED`    |
 
 `denext dev` (where a limit would end the dev server), tests and `denext job` never get
-them; a compiled binary enforces them on whatever it runs, `./app job` included. A `start` task run
-straight on the toolchain (`denext task start`) re-runs itself once with them when it has
-`--allow-run` for its own Deno; the least-privilege task has not, so it warns instead: put the
-flags after `run` in the task, and set `DENEXT_LIMITS_APPLIED` to them (space-separated) to say so.
+them. A `start` task run straight on the toolchain (`denext task start`) re-runs itself once with
+them when it has `--allow-run` for its own Deno; the least-privilege task has not, so it warns
+instead: put the flags after `run` in the task, and set `DENEXT_LIMITS_APPLIED` to them
+(space-separated) to say so.
 On stock Deno (`DENEXT_DENO=stock`) or an older toolchain they are never passed (Deno would refuse
 the flags), and `denext start` / `build --compile` warn that they are not applied. The Docker image
 needs a start task that is a plain `deno run` line, and the fly preset warns when `memory` is not
@@ -332,9 +332,28 @@ below the machine's memory (the OOM killer would end the server first).
 The config is read as the idle trim's is: what the last `denext build` recorded in
 `.denext/deploy-manifest.json` (`server.limits`), and before a first build the literal values in the
 config file. A generated file keeps the limits it was written with; regenerate after a change.
-When the CLI re-runs itself before serving (a compiled `denext` handing the project to its pinned
-version, a source checkout's module config), every hop carries the flags, so a `deadlineSeconds`
-counts from the first one, a few seconds before the server listens.
+
+`denext start` may re-run itself before it serves: onto denext's Deno toolchain from stock Deno, a
+compiled `denext` handing the project to its pinned version, a source checkout's CSS or module
+config. Only the last process, the one that serves, runs with the flags; the ones before it hand
+the limits down as data and run without them, so no CLI hop's `--max-time` ends before the
+server's (leaving it running without its parent) and no hop's own CPU time or heap counts.
+`DENEXT_LIMITS_APPLIED` is compared with the flags the serving process's runtime takes, and every
+re-run sets it for its child, so a value left in the environment by another process, or written
+before the limits changed, makes the server re-run with the current ones rather than be believed.
+When the hop before the server may still re-run, the server re-runs once more to take them, which
+costs one more short-lived `deno` start and one more waiting parent process. The serving process
+removes both variables from its own environment, so nothing it starts inherits them.
+
+### Compiled binaries: `job` and `db` run under the limits too
+
+`build --compile` bakes the limits into the executable, and denort reads them only from the
+binary's own metadata: it takes no `--max-*` flag at run time (every argument goes to the program)
+and no variable that lifts or changes them. So `./app job <name>` and `./app db migrate` run under
+the server's `memory`, `cpuSeconds` and `deadlineSeconds` as well, and a long migration or job past
+them ends with the limit's exit code. Those verbs print a notice naming the baked flags. Run long
+jobs and migrations with `denext job` / `denext db` from the project, or from a second binary
+compiled without `start.limits`.
 
 These are best-effort guardrails, not a security boundary: subprocesses are neither counted nor
 stopped, a `Worker` has its own heap (cap it with `new Worker(url, { deno: { memoryMb } })`), memory

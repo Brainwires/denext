@@ -12,6 +12,7 @@ import {
   handsToolchainToChildren,
   isStandaloneBinary,
   legacyAbortActive,
+  maybeReexecForLimits,
   maybeReexecPinned as reexecPinned,
   maybeReexecToolchain,
   mergeRunFlags,
@@ -22,8 +23,12 @@ import {
   toolchainConfigArgs,
   toolchainRuntimeFlags,
 } from "./self-exec.ts";
-import { loadDenoToolchainPin, resolveDenoToolchain } from "../build/deno-toolchain.ts";
-import { currentDenoIdentity } from "../build/deno-version.ts";
+import {
+  loadDenoToolchainPin,
+  resolveDenoToolchain,
+  TOOLCHAIN_ACTIVE_ENV,
+} from "../build/deno-toolchain.ts";
+import { currentDenoIdentity, isDenextDenoVersion } from "../build/deno-version.ts";
 import { applyNativeCheckEngine } from "../ts/engine.ts";
 import { denoPathEnv } from "./deno-path.ts";
 import { resolveProject } from "../build/paths.ts";
@@ -51,9 +56,12 @@ import { markBuildPhase } from "../server/phase.ts";
 import { cliNpmModeArgs } from "../build/pnpm-workspace.ts";
 import { configDisablesIdleTrim, idleTrimEnv, readEnv } from "../build/idle-trim.ts";
 import {
+  type ChildLimits,
   configuredLimitFlags,
-  limitFlagsFor,
+  handedLimits,
+  hopLimits,
   LIMITS_APPLIED_ENV,
+  START_LIMITS_ENV,
 } from "../build/resource-limits.ts";
 import { VERSION } from "../version.ts";
 import type { CommandContext, CommandSpec } from "./command.ts";
@@ -322,7 +330,6 @@ function spawnCliChild(
 function maybeReexecPinned(
   dir: string,
   childEnv: Record<string, string> = {},
-  childFlags: readonly string[] = [],
 ): Promise<boolean> {
   return reexecPinned(dir, VERSION, Deno.args, {
     standalone: isStandaloneBinary,
@@ -334,7 +341,6 @@ function maybeReexecPinned(
         denoExecutable(),
         [
           "-A",
-          ...childFlags,
           ...toolchainRuntimeFlags(
             childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity()),
           ),
@@ -437,28 +443,50 @@ export async function startLimits(command: CommandSpec, dir: string): Promise<st
   return await configuredLimitFlags(dir);
 }
 
-/** The resource-limit flags a CLI child runs with, and the environment that says so. */
-export interface ChildLimits {
-  /** The flags, after `run`. */
-  readonly flags: readonly string[];
-  /** `DENEXT_LIMITS_APPLIED` naming them, or nothing. */
-  readonly env: Readonly<Record<string, string>>;
-}
-
 /** No limits. */
 const NO_LIMITS: ChildLimits = { flags: [], env: {} };
 
 /**
- * The run flags and environment a CLI child on `marker` gets for the configured limits: the flags
- * its runtime takes ({@linkcode limitFlagsFor}), and `DENEXT_LIMITS_APPLIED` naming them.
- *
- * @param marker The toolchain the child runs (`undefined`: stock Deno).
- * @param limits The configured flags ({@linkcode startLimits}).
- * @returns The flags and the environment to add.
+ * Each re-run of `denext start`, and whether its child is the process that serves — the one that
+ * gets `start.limits` as flags ({@linkcode hopLimits}). The toolchain re-exec's child and a compiled
+ * `denext`'s pinned child may re-run again (for the CSS or module config, or the limits
+ * themselves), so they get them as data; the CSS / module-config child never re-runs, and the
+ * limits re-run ({@linkcode limitsGate}) is the last by definition.
  */
-export function childLimits(marker: string | undefined, limits: readonly string[]): ChildLimits {
-  const flags = limitFlagsFor(marker, limits);
-  return { flags, env: flags.length > 0 ? { [LIMITS_APPLIED_ENV]: flags.join(" ") } : {} };
+export const LIMIT_HOPS = {
+  toolchain: false,
+  pinned: false,
+  css: true,
+  modules: true,
+  limits: true,
+} as const satisfies Record<string, boolean>;
+
+/**
+ * The `deno run` flags of a CLI child on denext's Deno toolchain `marker` that re-runs this
+ * invocation (the toolchain re-exec, and the limits re-run of {@linkcode limitsGate}): this
+ * process's permissions, then `limits` (the resource-limit flags, for the child that serves), the
+ * toolchain's runtime flags and the config and resolution flags this process resolved with —
+ * started on `jsr:` (a `deno task`), it found the project's deno.json from the working directory,
+ * but the child runs the https URL that resolved to, which discovers no config at all.
+ *
+ * @param marker The toolchain the child runs.
+ * @param dir The project directory.
+ * @param limits The resource-limit flags (none for a child that may re-run again).
+ * @returns The flags, to go after `run`.
+ */
+async function toolchainChildFlags(
+  marker: string,
+  dir: string,
+  limits: readonly string[],
+): Promise<string[]> {
+  return [
+    ...await toolchainPermissionFlags(),
+    ...limits,
+    ...mergeRunFlags(
+      [...toolchainRuntimeFlags(marker), ...cliNpmModeArgs(dir), ...minDepAgeArgs()],
+      await toolchainConfigArgs(entrypointArg(entryUrl())),
+    ),
+  ];
 }
 
 /**
@@ -480,30 +508,17 @@ async function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise
     pinnedVersion: pinnedToolchainVersion(),
     standalone: () => standalone,
     resolve: () => resolveDenoToolchain(),
-    limits,
+    // This child may re-run again before it serves (the CSS / module-config re-exec): it gets
+    // `start.limits` as data, never as flags (src/build/resource-limits.ts `hopLimits`).
     spawn: async (deno, marker, env = {}) =>
       spawnCliChild(
         deno,
-        [
-          ...await toolchainPermissionFlags(),
-          ...childLimits(marker, limits).flags,
-          // The config and resolution flags this process resolved with: started on `jsr:` (a
-          // `deno task`), it found the project's deno.json from the working directory, but the
-          // child runs the https URL that resolved to, which discovers no config at all.
-          ...mergeRunFlags(
-            [
-              ...toolchainRuntimeFlags(marker),
-              ...cliNpmModeArgs(gateDir(command, ctx)),
-              ...minDepAgeArgs(),
-            ],
-            await toolchainConfigArgs(entrypointArg(entryUrl())),
-          ),
-        ],
+        await toolchainChildFlags(marker, gateDir(command, ctx), []),
         entrypointArg(entryUrl()),
         {
           ...env,
           ...await startIdleTrimEnv(command, gateDir(command, ctx), marker),
-          ...childLimits(marker, limits).env,
+          ...hopLimits(LIMIT_HOPS.toolchain, marker, limits).env,
           DENEXT_TOOLCHAIN_ACTIVE: marker,
         },
       ),
@@ -656,19 +671,82 @@ async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<bo
   const dir = gateDir(command, ctx);
   const marker = childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity());
   const pinnedEnv = await startIdleTrimEnv(command, dir, marker);
-  // `start.limits` ride every re-run of `denext start`, so the process that serves has them.
-  const limits = childLimits(marker, await startLimits(command, dir));
-  if (await maybeReexecPinned(dir, { ...pinnedEnv, ...limits.env }, limits.flags)) return true;
+  // `start.limits` go on the process that serves only: the pinned denext's child may re-run again
+  // and gets them as data; the CSS / module-config child never re-runs and gets the flags.
+  const configured = await startLimits(command, dir);
+  const handOff = hopLimits(LIMIT_HOPS.pinned, marker, configured);
+  if (await maybeReexecPinned(dir, { ...pinnedEnv, ...handOff.env })) return true;
+  const css = hopLimits(LIMIT_HOPS.css, marker, configured);
+  const modules = hopLimits(LIMIT_HOPS.modules, marker, configured);
   await loadEnv({ dir, mode: envTierFor(command) });
   // `dev` builds unminified CSS; the other module verbs minify (matching 1.x).
   // `doctor` reports leaked css-shim entries instead of silently healing them.
   const cssGate = command.name !== "start" || !(await startServesCss(dir));
   const minify = command.name !== "dev";
-  if (cssGate && await maybeReexecForCss(dir, minify, command.name !== "doctor", limits)) {
+  if (cssGate && await maybeReexecForCss(dir, minify, command.name !== "doctor", css)) {
     return true;
   }
-  if (await maybeReexecForModules(dir, limits)) return true;
+  if (await maybeReexecForModules(dir, modules)) return true;
   return false;
+}
+
+/**
+ * The runtime this process runs, for {@linkcode limitsGate}: denext's Deno version (its identity,
+ * src/build/deno-version.ts), `"path"` for a `DENEXT_DENO=<path>` Deno that is not known to be
+ * one, else `undefined` (stock Deno).
+ */
+function ownRuntime(): string | undefined {
+  const identity = currentDenoIdentity();
+  if (isDenextDenoVersion(identity)) return identity.deno;
+  return Deno.env.get(TOOLCHAIN_ACTIVE_ENV) === "path" ? "path" : undefined;
+}
+
+/** Read and remove an environment variable of this process (absent without the env grant). */
+function takeEnv(name: string): string | undefined {
+  let value: string | undefined;
+  try {
+    value = Deno.env.get(name);
+    if (value !== undefined) Deno.env.delete(name);
+  } catch { /* not granted: nothing to read, or to keep from the server's children */ }
+  return value;
+}
+
+/**
+ * `denext start`'s last gate, in the process that serves (after every re-exec): `start.limits` go
+ * on this process — the CLI hops before it handed them down as data — through
+ * {@linkcode maybeReexecForLimits}, which re-runs it once with them when it was not started with
+ * them. The hand-off variables are removed from this process's environment either way, so nothing
+ * the server starts (a job's `deno`, another `denext start`) inherits them. A no-op for every other
+ * verb. Returns whether the process re-ran (it then exits with the child's code).
+ */
+async function limitsGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
+  if (!servesInProcess(command) || command.name !== "start") return false;
+  const handed = handedLimits(takeEnv(START_LIMITS_ENV));
+  const applied = takeEnv(LIMITS_APPLIED_ENV);
+  const dir = gateDir(command, ctx);
+  const runtime = ownRuntime();
+  return await maybeReexecForLimits({
+    configured: handed ?? await startLimits(command, dir),
+    runtime,
+    applied,
+    mayRespawn: !isStandaloneBinary() && mayRespawnSelf(),
+    pid: Deno.pid,
+    spawn: async (flags, env) =>
+      spawnCliChild(
+        Deno.execPath(),
+        [
+          ...await toolchainChildFlags(runtime ?? "path", dir, flags),
+          // A CSS / module-config child loads Next.js modules with extensionless imports.
+          ...(Deno.env.get("DENEXT_CSS_ACTIVE") || Deno.env.get("DENEXT_MODULE_ACTIVE")
+            ? ["--unstable-sloppy-imports"]
+            : []),
+        ],
+        entrypointArg(entryUrl()),
+        { ...await startIdleTrimEnv(command, dir, runtime), ...env },
+      ),
+    exit: (code) => Deno.exit(code),
+    warn: (message) => console.error(message),
+  });
 }
 
 /**
@@ -741,6 +819,7 @@ export async function runVerb(
     await applyNativeCheckEngine({ running }).catch(() => {});
   }
   if (await moduleGate(command, ctx)) return;
+  if (await limitsGate(command, ctx)) return;
   await noticeShadow(command, cwd);
   // Cargo-style build locks, taken here — in the process that runs the verb, after any re-exec —
   // and held for the whole run (the OS drops them if the process exits or is killed).

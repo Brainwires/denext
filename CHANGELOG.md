@@ -37,13 +37,17 @@ and this project adheres to
   server's JavaScript heap (`memory`: megabytes or `"512m"` / `"2g"`, at least 32 MB), its CPU time
   and its wall-clock lifetime (whole seconds), through the `--max-memory` / `--max-cpu-time` /
   `--max-time` flags of denext's Deno from runtime 3.0.0-rc.2; each ends the process with its own
-  exit code (137, 152, 124) for a supervisor to restart it. `denext start` passes them to the server
-  process it starts (re-running itself once when started on the toolchain without them, or warning
-  when it may not), `build --compile` bakes them into the binary, and `generate docker`, the
-  `docker` / `fly` presets and the `genericHost()` systemd unit write them onto the server's
-  `deno run`; the fly preset warns when the heap limit is not below the machine's memory. Never for
-  `dev`, tests or `denext job`; on stock Deno or an older toolchain they are not passed, and a
-  warning says so. The config validator checks the values the runtime accepts, and the deploy
+  exit code (137, 152, 124) for a supervisor to restart it. `denext start` puts them on the process
+  that serves and on no CLI re-run before it (the toolchain re-exec, a compiled `denext`'s pinned
+  child): those hand them down as data (`DENEXT_START_LIMITS`), so no hop's deadline ends before the
+  server's and no hop's own CPU or heap counts. The serving process re-runs itself once with them
+  when it was not started with them — `DENEXT_LIMITS_APPLIED` is compared with the flags its
+  runtime takes, so a stale value never counts — or warns when it may not re-run. `build --compile`
+  bakes them into the binary; the runtime reads them only from there and can't lift them, so the
+  binary's `job` and `db` run under them too and say so. `generate docker`, the `docker` / `fly`
+  presets and the `genericHost()` systemd unit write them onto the server's `deno run`; the fly
+  preset warns when the heap limit is not below the machine's memory. Never for `dev`, tests or
+  `denext job`; on stock Deno or an older toolchain they are not passed, and a warning says so. The config validator checks the values the runtime accepts, and the deploy
   manifest records them as `server.limits`. See
   [Deployment targets › Resource limits](https://denext.dev/docs/deployment-targets#resource-limits).
 - **The lifecycle-script jail of runtime `3.0.0-denext.1`.** Everything below is gated on the

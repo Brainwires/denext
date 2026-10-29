@@ -1,11 +1,12 @@
 // The production server's resource limits (src/build/resource-limits.ts, `start.limits`): the
-// config's validation, the flags each path produces — the `denext start` child, a server already
-// on the toolchain, the `build --compile` argv, the Docker image — the stock-Deno gate, and one
-// real run on denext's Deno that ends at its memory limit with the documented exit code.
+// config's validation, the flags each path produces — every `denext start` re-run (only the one
+// that serves gets them), the last gate and its stale-marker re-run, the `build --compile` argv and
+// the compiled `job` / `db` notice, the Docker image — the stock-Deno gate, and one real chain on
+// denext's Deno whose serving process ends at its memory limit with the documented exit code.
 // The systemd unit and fly.toml are in tests/deploy-presets.test.ts.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import {
   currentDenoIdentity,
   FIRST_RESOURCE_LIMITS_RUNTIME,
@@ -13,20 +14,30 @@ import {
   supportsResourceLimits,
 } from "../src/build/deno-version.ts";
 import {
+  bakedLimitsNotice,
   compileLimitFlags,
   configTextLimits,
   configuredLimitFlags,
+  handedLimits,
+  hopLimits,
   limitFlagsFor,
   LIMITS_APPLIED_ENV,
   pinnedLimitFlags,
   resourceLimitFlags,
+  START_LIMITS_ENV,
   withLimitFlags,
 } from "../src/build/resource-limits.ts";
 import { memoryLimitBytes } from "../src/server/config-validate/limits.ts";
 import { renderDockerfile } from "../src/build/docker-template.ts";
 import { resolveDocker } from "../src/build/docker-detect.ts";
-import { childLimits, startLimits } from "../src/cli/run-verb.ts";
-import { maybeReexecToolchain, type ReexecToolchainDeps } from "../src/cli/self-exec.ts";
+import { LIMIT_HOPS, startLimits } from "../src/cli/run-verb.ts";
+import {
+  type LimitsGateDeps,
+  maybeReexecForLimits,
+  maybeReexecToolchain,
+  type ReexecToolchainDeps,
+} from "../src/cli/self-exec.ts";
+import { entrySource } from "../src/build/compile-app.ts";
 import type { DenoToolchainChoice } from "../src/build/deno-toolchain.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
@@ -107,12 +118,15 @@ Deno.test("resource limits: never passed to a runtime that would refuse them", (
   }
   assertEquals(pinnedLimitFlags(FLAGS), FLAGS);
   assertEquals(pinnedLimitFlags(FLAGS, "3.0.0-rc.1"), []);
-  // The start child gets them with the marker naming them; none, no marker.
-  assertEquals(childLimits("3.0.0-denext.2", FLAGS), {
+  // The serving child gets them with the marker naming them; on stock Deno none, an empty marker.
+  assertEquals(hopLimits(true, "3.0.0-denext.2", FLAGS), {
     flags: FLAGS,
-    env: { [LIMITS_APPLIED_ENV]: FLAGS.join(" ") },
+    env: { [LIMITS_APPLIED_ENV]: FLAGS.join(" "), [START_LIMITS_ENV]: FLAGS.join(" ") },
   });
-  assertEquals(childLimits(undefined, FLAGS), { flags: [], env: {} });
+  assertEquals(hopLimits(true, undefined, FLAGS), {
+    flags: [],
+    env: { [LIMITS_APPLIED_ENV]: "", [START_LIMITS_ENV]: FLAGS.join(" ") },
+  });
 });
 
 Deno.test("resource limits: inserted after `run` of a `deno run` command only", () => {
@@ -217,120 +231,182 @@ Deno.test("resource limits: only the `start` verb asks for them", async () => {
   }
 });
 
-/** Recording {@linkcode ReexecToolchainDeps} for a `denext start` with limits configured. */
-function deps(
-  choice: DenoToolchainChoice,
-  over: Partial<ReexecToolchainDeps> & { vars?: Record<string, string> } = {},
-) {
-  const vars: Record<string, string> = { ...over.vars };
-  const seen = { spawned: [] as string[][], exits: [] as number[], warned: [] as string[] };
-  const d: ReexecToolchainDeps = {
-    env: (k) => vars[k],
-    setEnv: (k, v) => void (vars[k] = v),
-    denoVersion: "2.9.8",
-    pinnedVersion: "3.0.0-denext.2",
-    standalone: () => false,
-    resolve: () => Promise.resolve(choice),
-    spawn: (deno, marker, env) => (
-      seen.spawned.push([deno, marker, JSON.stringify(env ?? {})]), Promise.resolve(137)
-    ),
+Deno.test("resource limits: only the hop that serves gets them as flags; the others as data", () => {
+  const configured = resourceLimitFlags({ memory: 512, cpuSeconds: 3600, deadlineSeconds: 86400 });
+  assertEquals(configured, FLAGS);
+  // Each `denext start` re-run, in order: the toolchain re-exec and a compiled `denext`'s pinned
+  // child may re-run again; the CSS / module-config child and the limits re-run serve.
+  assertEquals(LIMIT_HOPS, {
+    toolchain: false,
+    pinned: false,
+    css: true,
+    modules: true,
+    limits: true,
+  });
+  const argv = (hop: keyof typeof LIMIT_HOPS) => {
+    const { flags, env } = hopLimits(LIMIT_HOPS[hop], "3.0.0-denext.2", configured);
+    return { args: ["run", ...flags, "-A", "cli.ts", "start"], env };
+  };
+  for (const hop of ["toolchain", "pinned"] as const) {
+    const { args, env } = argv(hop);
+    assert(!args.some((a) => a.startsWith("--max-")), `${hop}: ${args.join(" ")}`);
+    // Handed down as data, and the child is told it runs without them (an inherited marker
+    // never speaks for it).
+    assertEquals(env, { [LIMITS_APPLIED_ENV]: "", [START_LIMITS_ENV]: FLAGS.join(" ") }, hop);
+    assertEquals(handedLimits(env[START_LIMITS_ENV]), FLAGS);
+  }
+  for (const hop of ["css", "modules", "limits"] as const) {
+    const { args, env } = argv(hop);
+    assertEquals(args, ["run", ...FLAGS, "-A", "cli.ts", "start"], hop);
+    assertEquals(env[LIMITS_APPLIED_ENV], FLAGS.join(" "), hop);
+  }
+  // A serving child on a runtime that can't take them: no flags, and it is told so.
+  assertEquals(hopLimits(true, undefined, configured).flags, []);
+  assertEquals(hopLimits(true, "3.0.0-rc.1", configured).env[LIMITS_APPLIED_ENV], "");
+  // Nothing configured (every verb but `start`): nothing at all.
+  for (const serves of [true, false]) {
+    assertEquals(hopLimits(serves, "3.0.0-denext.2", []), {
+      flags: [],
+      env: {},
+    });
+  }
+  assertEquals(handedLimits(undefined), undefined);
+  assertEquals(handedLimits(""), []);
+});
+
+/** Recording {@linkcode LimitsGateDeps} of the process about to serve `denext start`. */
+function gate(over: Partial<LimitsGateDeps> = {}) {
+  const seen = {
+    spawned: [] as { flags: readonly string[]; env: Record<string, string> }[],
+    exits: [] as number[],
+    warned: [] as string[],
+  };
+  const d: LimitsGateDeps = {
+    configured: FLAGS,
+    runtime: "3.0.0-denext.2",
+    applied: undefined,
+    mayRespawn: true,
+    pid: 200,
+    spawn: (flags, env) => (seen.spawned.push({ flags, env }), Promise.resolve(137)),
     exit: (code) => void seen.exits.push(code),
     warn: (m) => void seen.warned.push(m),
-    limits: FLAGS,
     ...over,
   };
   return { d, seen };
 }
 
-const TOOLCHAIN: DenoToolchainChoice = {
-  kind: "toolchain",
-  deno: "/cache/deno",
-  version: "3.0.0-denext.2",
-};
-
-/** Seams of `denext start` already on the pinned toolchain. */
-const onToolchain = (over: Partial<ReexecToolchainDeps> & { vars?: Record<string, string> } = {}) =>
-  deps(TOOLCHAIN, {
-    denoVersion: "3.0.0-denext.2",
-    denext: "3.0.0-denext.2",
-    execPath: "/linked/deno",
-    pids: { pid: 200, ppid: 100 },
-    legacyAbort: () => Promise.resolve(false),
-    ...over,
-  });
-
-Deno.test("resource limits: `denext start` from stock Deno spawns the toolchain child (which adds them)", async () => {
-  const { d, seen } = deps(TOOLCHAIN);
-  assert(await maybeReexecToolchain(true, d));
-  assertEquals(seen.spawned.map((s) => s.slice(0, 2)), [["/cache/deno", "3.0.0-denext.2"]]);
-  assertEquals(seen.exits, [137], "the limit's exit code is the CLI's");
-  assertEquals(seen.warned, []);
+Deno.test("resource limits: the process that serves re-runs once with them when it lacks them", async () => {
+  // Started without them (directly on the toolchain, or after a hop that handed them down).
+  for (const applied of [undefined, ""]) {
+    const { d, seen } = gate({ applied });
+    assert(await maybeReexecForLimits(d));
+    assertEquals(seen.spawned, [{
+      flags: FLAGS,
+      env: {
+        [LIMITS_APPLIED_ENV]: FLAGS.join(" "),
+        [START_LIMITS_ENV]: FLAGS.join(" "),
+        DENEXT_RUNTIME_FLAGS_FOR: "200", // its toolchain gate does not re-run it again
+      },
+    }]);
+    assertEquals(seen.exits, [137], "the limit's exit code is the CLI's");
+    assertEquals(seen.warned, []);
+  }
+  // Its child — started with exactly the flags this runtime takes — serves: no loop.
+  const child = gate({ applied: FLAGS.join(" ") });
+  assertEquals(await maybeReexecForLimits(child.d), false);
+  assertEquals([child.seen.spawned.length, child.seen.warned.length], [0, 0]);
+  // Nothing configured: nothing to do.
+  const none = gate({ configured: [] });
+  assertEquals(await maybeReexecForLimits(none.d), false);
+  assertEquals([none.seen.spawned.length, none.seen.warned.length], [0, 0]);
 });
 
-Deno.test("resource limits: on stock Deno they are not passed, and a warning says so", async () => {
-  const stock = deps({ kind: "stock" } as DenoToolchainChoice);
-  assertEquals(await maybeReexecToolchain(true, stock.d), false);
+Deno.test("resource limits: a stale marker is compared with the serving process's own flags", async () => {
+  // Limits changed since the marker was written (a stale Docker image, an exported variable):
+  // re-run with the configured ones.
+  const stale = gate({ applied: "--max-time=5" });
+  assert(await maybeReexecForLimits(stale.d));
+  assertEquals(stale.seen.spawned[0].flags, FLAGS);
+  // The same words in another order are not the flags this process was given.
+  const reordered = gate({ applied: [...FLAGS].reverse().join(" ") });
+  assert(await maybeReexecForLimits(reordered.d));
+  // A marker naming the configured flags on a runtime that takes none of them never counts:
+  // the comparison is with what this process's runtime takes, here nothing, so a warning.
+  const old = gate({ runtime: "3.0.0-rc.1", applied: FLAGS.join(" ") });
+  assertEquals(await maybeReexecForLimits(old.d), false);
+  assertEquals(old.seen.spawned, []);
+  assertStringIncludes(old.seen.warned.join("\n"), "predates runtime 3.0.0-rc.2");
+});
+
+Deno.test("resource limits: on stock Deno, an unknown Deno or without --allow-run, a warning", async () => {
+  const stock = gate({ runtime: undefined });
+  assertEquals(await maybeReexecForLimits(stock.d), false);
   assertEquals(stock.seen.spawned, []);
   assertEquals(stock.seen.warned.length, 1);
   assertStringIncludes(stock.seen.warned[0], "start.limits (--max-memory=512m");
   assertStringIncludes(stock.seen.warned[0], "stock Deno");
-  // A DENEXT_DENO=<path> child: its version is unknown.
-  const path = deps(TOOLCHAIN, { vars: { DENEXT_TOOLCHAIN_ACTIVE: "path" } });
-  assertEquals(await maybeReexecToolchain(true, path.d), false);
+  const path = gate({ runtime: "path" });
+  assertEquals(await maybeReexecForLimits(path.d), false);
   assertStringIncludes(path.seen.warned.join("\n"), "DENEXT_DENO=<path>");
-  // No limits configured: nothing to say.
-  const quiet = deps({ kind: "stock" } as DenoToolchainChoice, { limits: [] });
-  await maybeReexecToolchain(true, quiet.d);
-  assertEquals(quiet.seen.warned, []);
-});
-
-Deno.test("resource limits: a server already on the toolchain without them re-runs once with them", async () => {
-  const { d, seen } = onToolchain();
-  assert(await maybeReexecToolchain(true, d));
-  assertEquals(seen.spawned, [[
-    "/linked/deno",
-    "3.0.0-denext.2",
-    JSON.stringify({ DENEXT_RUNTIME_FLAGS_FOR: "200" }),
-  ]]);
-  // Its child: told by its parent, or naming the limits it runs under — no second re-run.
-  const told: Record<string, string>[] = [
-    { DENEXT_RUNTIME_FLAGS_FOR: "100" },
-    { [LIMITS_APPLIED_ENV]: FLAGS.join(" ") },
-  ];
-  for (const vars of told) {
-    const child = onToolchain({ vars });
-    assertEquals(await maybeReexecToolchain(true, child.d), false);
-    assertEquals([child.seen.spawned.length, child.seen.warned.length], [0, 0]);
-  }
-  // Limits changed since the marker was written (a stale Docker image): re-run with the new ones.
-  const stale = onToolchain({ vars: { [LIMITS_APPLIED_ENV]: "--max-time=5" } });
-  assert(await maybeReexecToolchain(true, stale.d));
-  // No limits: as before, nothing (the legacy abort is off on this runtime).
-  const none = onToolchain({ limits: [] });
-  assertEquals(await maybeReexecToolchain(true, none.d), false);
-});
-
-Deno.test("resource limits: on the toolchain without --allow-run, or an older one, a warning", async () => {
-  const leastPrivilege = onToolchain({ legacyAbort: undefined });
-  assertEquals(await maybeReexecToolchain(true, leastPrivilege.d), false);
+  const leastPrivilege = gate({ mayRespawn: false });
+  assertEquals(await maybeReexecForLimits(leastPrivilege.d), false);
   assertEquals(leastPrivilege.seen.spawned, []);
   assertStringIncludes(leastPrivilege.seen.warned.join("\n"), "after `run` in the start task");
   // The generated Docker image / systemd unit put them on the command line and say so: silent.
-  const generated = onToolchain({
-    legacyAbort: undefined,
-    vars: { [LIMITS_APPLIED_ENV]: FLAGS.join(" ") },
-  });
-  assertEquals(await maybeReexecToolchain(true, generated.d), false);
+  const generated = gate({ mayRespawn: false, applied: FLAGS.join(" ") });
+  assertEquals(await maybeReexecForLimits(generated.d), false);
   assertEquals(generated.seen.warned, []);
-  // A toolchain from before runtime 3.0.0-rc.2 can't take them: no re-run, a warning.
-  const old = onToolchain({
-    denoVersion: "3.0.0-rc.1",
-    denext: undefined,
-    pinnedVersion: "3.0.0-rc.1",
-  });
-  assertEquals(await maybeReexecToolchain(true, old.d), false);
-  assertEquals(old.seen.spawned, []);
-  assertStringIncludes(old.seen.warned.join("\n"), "predates runtime 3.0.0-rc.2");
+  // No limits configured: nothing to say.
+  const quiet = gate({ runtime: undefined, configured: [] });
+  await maybeReexecForLimits(quiet.d);
+  assertEquals(quiet.seen.warned, []);
+});
+
+Deno.test("resource limits: the toolchain re-exec itself carries none", async () => {
+  // `maybeReexecToolchain` knows nothing of the limits; run-verb's spawn adds the hand-off
+  // (`LIMIT_HOPS.toolchain`), never the flags, and a server already on the toolchain no longer
+  // re-runs for them there (the last gate does).
+  const vars: Record<string, string> = {};
+  const spawned: string[][] = [];
+  const d: ReexecToolchainDeps = {
+    env: (k) => vars[k],
+    setEnv: (k, v) => void (vars[k] = v),
+    denoVersion: "3.0.0-denext.2",
+    denext: "3.0.0-denext.2",
+    pinnedVersion: "3.0.0-denext.2",
+    standalone: () => false,
+    resolve: () => Promise.resolve({ kind: "stock" } as DenoToolchainChoice),
+    spawn: (deno, marker) => (spawned.push([deno, marker]), Promise.resolve(0)),
+    exit: () => {},
+    warn: () => {},
+    legacyAbort: () => Promise.resolve(false),
+    execPath: "/linked/deno",
+    pids: { pid: 200, ppid: 100 },
+  };
+  assertEquals(await maybeReexecToolchain(true, d), false);
+  assertEquals(spawned, []);
+});
+
+Deno.test("resource limits: a compiled binary bakes them in and says so on `job` and `db`", () => {
+  // denort reads the limits only from the binary's metadata (no run-time flag or variable lifts
+  // them), so its `job` and `db` run under them too: the generated entry names them, and those
+  // verbs print a notice.
+  const entry = entrySource("file:///p/.denext/compile/main.ts", "file:///p/", false, FLAGS);
+  assertStringIncludes(entry, `Deno.args, { limitsBaked: ${JSON.stringify(FLAGS)} });`);
+  assertStringIncludes(
+    entrySource("file:///p/.denext/compile/main.ts", "file:///p/", true, ["--max-time=60"]),
+    'Deno.args, { idleTrimBaked: true, limitsBaked: ["--max-time=60"] });',
+  );
+  assert(!entrySource("file:///p/.denext/compile/main.ts", "file:///p/").includes("limitsBaked"));
+  for (const verb of ["job", "db"]) {
+    const notice = bakedLimitsNotice("app", verb, ["--max-time=60"]);
+    assert(notice !== null);
+    assertStringIncludes(notice, `app: this binary enforces the start.limits it was compiled with`);
+    assertStringIncludes(notice, `(--max-time=60) on \`${verb}\` too`);
+    assertStringIncludes(notice, "`denext job` / `denext db`");
+  }
+  assertEquals(bakedLimitsNotice("app", "start", ["--max-time=60"]), null);
+  assertEquals(bakedLimitsNotice("app", "job", []), null);
 });
 
 Deno.test("resource limits: the Docker server image runs its start command under them", async () => {
@@ -384,33 +460,92 @@ Deno.test("resource limits: the Docker server image runs its start command under
   }
 });
 
-// The one real run: a program that grows its heap without bound, started with the flags
-// `denext start`'s toolchain child gets for `start: { limits: { memory: 32 } }`, ends at the limit
-// with exit code 137 and the runtime's message. Only on denext's Deno from runtime 3.0.0-rc.2.
+// The one real run: a `denext start`-shaped chain on denext's Deno. A parent started WITHOUT the
+// flags (as every CLI hop now is) reaches the last gate with `start: { limits: { memory: 32 } }`
+// handed down, re-runs itself once with them, and its child — the one that serves, here a program
+// that grows its heap without bound — ends at the limit with exit code 137 and the runtime's
+// message, which the parent exits with. Each process records its own command line: only the
+// child's carries the flag. Only on denext's Deno from runtime 3.0.0-rc.2.
 const runtime = currentDenoIdentity();
 const onLimitsRuntime = isDenextDenoVersion(runtime) && supportsResourceLimits(runtime.deno);
 
+/** The chain's script: the gate, then (in the process that serves) unbounded heap growth. */
+const CHAIN = `
+import { maybeReexecForLimits, ownCommandLine } from ${
+  JSON.stringify(
+    new URL("../src/cli/self-exec.ts", import.meta.url).href,
+  )
+};
+import { handedLimits, START_LIMITS_ENV, LIMITS_APPLIED_ENV } from ${
+  JSON.stringify(
+    new URL("../src/build/resource-limits.ts", import.meta.url).href,
+  )
+};
+const [out] = Deno.args;
+const role = Deno.env.get(LIMITS_APPLIED_ENV) ? "server" : "hop";
+await Deno.writeTextFile(out + "." + role, JSON.stringify(await ownCommandLine()));
+const reran = await maybeReexecForLimits({
+  configured: handedLimits(Deno.env.get(START_LIMITS_ENV)) ?? [],
+  runtime: Deno.version.deno,
+  applied: Deno.env.get(LIMITS_APPLIED_ENV),
+  mayRespawn: true,
+  pid: Deno.pid,
+  spawn: (flags, env) =>
+    new Deno.Command(Deno.execPath(), {
+      args: ["run", ...flags, "-A", "--config", ${
+  JSON.stringify(
+    fromFileUrl(new URL("../deno.json", import.meta.url)),
+  )
+}, import.meta.filename!, out],
+      env,
+      stdout: "null",
+      stderr: "inherit",
+    }).spawn().status.then((s) => s.code),
+  exit: (code) => Deno.exit(code),
+  warn: (m) => console.error(m),
+});
+if (!reran) {
+  const a: unknown[] = [];
+  for (;;) a.push(new Array(1e5).fill({ x: Math.random() }));
+}
+`;
+
 Deno.test({
-  name: "resource limits: a server over its memory limit exits 137 on denext's Deno",
+  name: "resource limits: only the serving process runs with them, and exits 137 at the limit",
   ignore: !onLimitsRuntime,
   async fn() {
     const dir = await Deno.makeTempDir();
     try {
-      const script = join(dir, "grow.ts");
-      await Deno.writeTextFile(
-        script,
-        "const a: unknown[] = []; for (;;) a.push(new Array(1e5).fill({ x: Math.random() }));\n",
-      );
-      const { flags, env } = childLimits(runtime.deno, resourceLimitFlags({ memory: 32 }));
-      assertEquals(flags, ["--max-memory=32m"]);
-      const out = await new Deno.Command(Deno.execPath(), {
-        args: ["run", ...flags, "--no-config", script],
-        env,
+      const script = join(dir, "chain.ts");
+      const out = join(dir, "argv");
+      await Deno.writeTextFile(script, CHAIN);
+      const configured = resourceLimitFlags({ memory: 32 });
+      assertEquals(configured, ["--max-memory=32m"]);
+      // The hop: started as the toolchain re-exec starts its child (the limits as data).
+      const handOff = hopLimits(LIMIT_HOPS.toolchain, runtime.deno, configured);
+      assertEquals(handOff.flags, []);
+      const result = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          ...handOff.flags,
+          "-A",
+          "--config",
+          fromFileUrl(new URL("../deno.json", import.meta.url)),
+          script,
+          out,
+        ],
+        env: handOff.env,
         stdout: "null",
         stderr: "piped",
       }).output();
-      assertEquals(out.code, 137);
-      assertStringIncludes(new TextDecoder().decode(out.stderr), "Memory limit exceeded");
+      assertEquals(result.code, 137);
+      assertStringIncludes(new TextDecoder().decode(result.stderr), "Memory limit exceeded");
+      const hop = JSON.parse(await Deno.readTextFile(`${out}.hop`)) as string[] | null;
+      const server = JSON.parse(await Deno.readTextFile(`${out}.server`)) as string[] | null;
+      if (hop && server) { // where the OS lets a process read its command line
+        assert(!hop.some((a) => a.startsWith("--max-")), hop.join(" "));
+        assert(server.includes("--max-memory=32m"), server.join(" "));
+      }
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
