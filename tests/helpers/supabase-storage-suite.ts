@@ -676,6 +676,9 @@ export async function runSupabaseStorageSuite(t: Deno.TestContext, h: StorageHar
       });
       assertEquals(wrongObject.status, 400);
       await wrongObject.body?.cancel();
+      // tus-js-client throttles its progress callback (lodash.throttle, 100 ms): let the trailing
+      // call's timer fire inside the test.
+      await new Promise((r) => setTimeout(r, 150));
 
       const headers = {
         "tus-resumable": "1.0.0",
