@@ -56,9 +56,12 @@ address (see §7).
 `denext migrate --check` runs the migration as a dry run and writes nothing: it lists the files
 `denext migrate` would create, modify, move or delete, what won't migrate and why, and a verdict
 (`ready`, `review` or `blocked`). It needs read access to the project, run access to evaluate
-your `next.config.*` (in a `deno` subprocess that can only read the project, never through a
-symlink in it that leads elsewhere, and may read the machine's CPU, memory and OS release but
-not its hostname, user or home directory) and jsr.io when run from JSR; add `--json` for a machine-readable report. Without `--allow-run` the report says the
+your `next.config.*` and jsr.io when run from JSR; add `--json` for a machine-readable report.
+The config runs in a `deno` subprocess that can read only the project (a workspace member's
+whole workspace root, so pnpm's store and sibling packages resolve), never through a symlink
+that leads out of it, and the machine's CPU, memory and OS release but not its hostname, user or
+home directory. A symlink in `node_modules` that leads out stops the evaluation, since Deno reads
+a `require()` there without a permission check. Without `--allow-run` the report says the
 config couldn't be evaluated, instead of listing its keys as not migrating. A config that
 never finishes is killed after 15 seconds (`DENEXT_NEXT_EVAL_TIMEOUT_MS` changes it), and the
 evaluator is also killed when the `migrate` that started it dies:

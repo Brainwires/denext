@@ -5,15 +5,15 @@
 // child is spawned, with what permissions, for how long, and how its answer is read back.
 //
 // The config is the app's own code, but it runs on the migrating/inspecting machine, so the
-// child gets least privilege: read the project directory (never through a symlink that leads
-// out of it), read env, query the machine's CPU / memory / OS release — never write, spawn,
-// or reach the network. It runs in the app's own
-// directory so the config's npm plugin imports (`@next/mdx`, …) resolve from the app's
+// child gets least privilege: read the project directory, or a workspace member's whole
+// workspace (never through a symlink that leads out of it), read env, query the machine's
+// CPU / memory / OS release — never write, spawn, or reach the network. It runs in the app's
+// own directory so the config's npm plugin imports (`@next/mdx`, …) resolve from the app's
 // node_modules, not from denext's module graph. Array args only, never a shell.
 
 import { resolve, toFileUrl } from "@std/path";
 import { denoExecutable } from "./bundle.ts";
-import { allowReadFlags, containedReadGrants } from "./contained-read.ts";
+import { allowReadFlags, containedReadGrants, containmentRoot } from "./contained-read.ts";
 import { exitedOutput, type StderrMode } from "./exited-output.ts";
 
 /** The evaluation deadline when neither the caller nor the environment sets one. */
@@ -39,7 +39,10 @@ cfg = await cfg;
 
 /** What {@linkcode evalNextConfigProgram} runs. */
 export interface NextConfigEvalOptions {
-  /** The app directory: the child's cwd and the only path it may read. */
+  /**
+   * The app directory: the child's cwd, and what it may read (with the rest of its workspace
+   * when it is a member of one), minus any symlink that leads out.
+   */
   readonly dir: string;
   /** The config file — a name relative to `dir`, or an absolute path already inside it. */
   readonly file: string;
@@ -272,9 +275,10 @@ function evalEnv(): Record<string, string> {
 
 /**
  * Evaluate an app's `next.config.*` with a caller-supplied program in a bounded,
- * least-privilege `deno run -` subprocess (read access to `<dir>` minus any symlink in it that
- * leads elsewhere, `--allow-env`, `--allow-sys=cpus,osRelease,systemMemoryInfo`, no prompt, no write/run/net, no downloads, and an environment cleared down to Next's own public
- * variables). A side-effectful config — a watcher, a DB connect, an unresolved
+ * least-privilege `deno run -` subprocess (read access to `<dir>`, or to its workspace when it
+ * is a member of one, minus any symlink that leads out; `--allow-env`;
+ * `--allow-sys=cpus,osRelease,systemMemoryInfo`; no prompt, no write/run/net, no downloads, and
+ * an environment cleared down to Next's own public variables). A side-effectful config — a watcher, a DB connect, an unresolved
  * top-level await — would otherwise hang the caller forever: at the deadline the child is
  * killed and awaited, so it never outlives the call. A reaper process ties the child to this
  * one: if the caller dies mid-evaluation, the child is killed too, never left running.
@@ -301,7 +305,8 @@ export async function evalNextConfigProgram(
     };
   }
   const file = await canonical(resolve(options.dir, options.file));
-  const grants = await containedReadGrants(dir);
+  // A workspace member reads its workspace (pnpm's store, sibling packages), never past it.
+  const grants = await containedReadGrants(await containmentRoot(dir), dir);
   if (!grants.ok) {
     return { ok: false, reason: `couldn't grant the project read access safely: ${grants.reason}` };
   }

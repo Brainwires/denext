@@ -19,7 +19,12 @@ and this project adheres to
   --json`. The read grant now leaves out every symlink that resolves outside the project (or
   nowhere), and every link into a directory that holds one: a directory with no such link is
   granted whole, one with a link is granted entry by entry, so any other spelling of the path is
-  refused. The evaluator's `--allow-sys` is narrowed to `cpus`, `osRelease` and
+  refused. An app that is a member of a workspace (a deno.json `workspace`, a package.json
+  `workspaces` or a `pnpm-workspace.yaml` that lists it) is contained in the workspace root
+  instead, so pnpm's `node_modules` links into the root's store and links to sibling packages keep
+  working. Deno reads a `require()` under `node_modules` without any permission check, so a link
+  there that leads out (directly or through a directory that holds one) refuses the evaluation
+  instead of only being left out of the grant. The evaluator's `--allow-sys` is narrowed to `cpus`, `osRelease` and
   `systemMemoryInfo` (what `os.cpus()`, `os.totalmem()` and `os.release()` read); the hostname,
   user and home directory are no longer readable. Affects 2.0.0 through 4.10.1.
 

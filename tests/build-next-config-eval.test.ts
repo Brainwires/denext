@@ -313,6 +313,118 @@ export default {
   },
 });
 
+/**
+ * A pnpm workspace under a temp dir: the app in `apps/web`, its `node_modules/x` linking into
+ * the root's `.pnpm` store, a sibling file at the root, and `outside/` beside the workspace.
+ * `listed` says whether pnpm-workspace.yaml lists the app.
+ */
+async function pnpmWorkspace(
+  listed: boolean,
+  fn: (root: string, app: string, outside: string) => Promise<void>,
+): Promise<void> {
+  const parent = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-next-eval-" }));
+  try {
+    const root = join(parent, "repo");
+    const app = join(root, "apps", "web");
+    const outside = join(parent, "outside");
+    const store = join(root, "node_modules", ".pnpm", "x@1.0.0", "node_modules", "x");
+    await Deno.mkdir(store, { recursive: true });
+    await Deno.mkdir(join(app, "node_modules"), { recursive: true });
+    await Deno.mkdir(outside);
+    await Deno.writeTextFile(join(outside, "s.txt"), "OUTSIDE-SECRET");
+    await Deno.writeTextFile(join(root, "root.txt"), "root");
+    await Deno.writeTextFile(
+      join(root, "pnpm-workspace.yaml"),
+      `packages:\n  - "${listed ? "apps/*" : "packages/*"}"\n`,
+    );
+    await Deno.writeTextFile(join(store, "package.json"), '{"name":"x","main":"index.js"}');
+    await Deno.writeTextFile(join(store, "index.js"), 'module.exports = "from-the-store";\n');
+    await Deno.writeTextFile(join(app, "package.json"), '{"dependencies":{"x":"1.0.0"}}');
+    await Deno.symlink(
+      join("..", "..", "..", "node_modules", ".pnpm", "x@1.0.0", "node_modules", "x"),
+      join(app, "node_modules", "x"),
+    );
+    await Deno.symlink(join("..", "..", "..", "outside"), join(app, "home"));
+    await fn(root, app, outside);
+  } finally {
+    await Deno.remove(parent, { recursive: true });
+  }
+}
+
+const WORKSPACE_PROBE = `
+const read = (p) => { try { return Deno.readTextFileSync(p); } catch (e) { return e.name; } };
+let x;
+try { x = (await import("x")).default; } catch (e) { x = e.name; }
+export default {
+  env: { x, out: read("home/s.txt"), root: read("../../root.txt"), list: read("package.json") },
+};
+`;
+
+Deno.test({
+  name: "a pnpm workspace member imports from the root's store; a link out of the root is refused",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await pnpmWorkspace(true, async (_root, app) => {
+      await Deno.writeTextFile(join(app, "next.config.mjs"), WORKSPACE_PROBE);
+      const value = valueOf(await evalIn(app, "next.config.mjs")) as {
+        env: Record<string, string>;
+      };
+      assertEquals(value.env.x, "from-the-store");
+      assertEquals(value.env.root, "root");
+      assertMatch(value.env.out, /NotCapable|PermissionDenied|NotFound/);
+      assertFalse(JSON.stringify(value).includes("OUTSIDE-SECRET"));
+    });
+  },
+});
+
+Deno.test({
+  name: "a pnpm-workspace.yaml that doesn't list the app widens nothing",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await pnpmWorkspace(false, async (_root, app) => {
+      // The app is contained in its own directory, so its node_modules link into the root's
+      // store leads out of it, and a require() would read through it: refused outright.
+      await Deno.writeTextFile(join(app, "next.config.mjs"), WORKSPACE_PROBE);
+      const reason = reasonOf(await evalIn(app, "next.config.mjs"));
+      assertStringIncludes(reason, "node_modules");
+      assertStringIncludes(reason, "require()");
+    });
+  },
+});
+
+Deno.test({
+  name: "a node_modules link out of the project refuses the evaluation (require() ignores grants)",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const parent = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-next-eval-" }));
+    try {
+      const dir = join(parent, "app");
+      const outside = join(parent, "outside");
+      await Deno.mkdir(join(dir, "node_modules"), { recursive: true });
+      await Deno.mkdir(join(dir, "src"));
+      await Deno.mkdir(outside);
+      await Deno.writeTextFile(join(outside, "config.json"), '{"token":"OUTSIDE-SECRET"}');
+      await Deno.writeTextFile(join(dir, "package.json"), '{"dependencies":{"evil":"1"}}');
+      // Through a link into a project directory that holds the link out, too.
+      await Deno.symlink(join("..", "..", "outside"), join(dir, "src", "u"));
+      await Deno.symlink(join("..", "src"), join(dir, "node_modules", "evil"));
+      await Deno.writeTextFile(
+        join(dir, "next.config.mjs"),
+        `import { createRequire } from "node:module";
+let token = "none";
+try { token = createRequire(import.meta.url)("evil/u/config.json").token; } catch {}
+export default { env: { token } };
+`,
+      );
+      const result = await evalIn(dir, "next.config.mjs");
+      assertFalse(JSON.stringify(result).includes("OUTSIDE-SECRET"), JSON.stringify(result));
+      assertStringIncludes(reasonOf(result), "node_modules");
+    } finally {
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
+});
+
 Deno.test("the child reads the machine's sizing through node:os, not its name, user or home", async () => {
   const probe = `
 import os from "node:os";

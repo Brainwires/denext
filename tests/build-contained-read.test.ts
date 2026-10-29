@@ -3,7 +3,11 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
-import { allowReadFlags, containedReadGrants } from "../src/build/contained-read.ts";
+import {
+  allowReadFlags,
+  containedReadGrants,
+  containmentRoot,
+} from "../src/build/contained-read.ts";
 
 /** A canonical temp dir with `app/` (the root) and `outside/` beside it; removed afterwards. */
 async function withProject(fn: (root: string, outside: string) => Promise<void>): Promise<void> {
@@ -42,18 +46,51 @@ Deno.test(
   symlinks,
   async () => {
     await withProject(async (root, outside) => {
-      await Deno.mkdir(join(root, "node_modules", "@repo"), { recursive: true });
-      await Deno.mkdir(join(root, "node_modules", "react"));
+      await Deno.mkdir(join(root, "vendor", "@repo"), { recursive: true });
+      await Deno.mkdir(join(root, "vendor", "react"));
       await Deno.mkdir(join(root, "src"));
       await Deno.writeTextFile(join(root, "next.config.mjs"), "");
-      await Deno.symlink(outside, join(root, "node_modules", "@repo", "ui"));
-      await Deno.writeTextFile(join(root, "node_modules", "@repo", "x.txt"), "");
+      await Deno.symlink(outside, join(root, "vendor", "@repo", "ui"));
+      await Deno.writeTextFile(join(root, "vendor", "@repo", "x.txt"), "");
       assertEquals(await grants(root), [
         "next.config.mjs",
-        join("node_modules", "@repo", "x.txt"),
-        join("node_modules", "react"),
         "src",
+        join("vendor", "@repo", "x.txt"),
+        join("vendor", "react"),
       ]);
+    });
+  },
+);
+
+Deno.test(
+  "a node_modules link out (or into a directory holding one) refuses the grant",
+  symlinks,
+  async () => {
+    for (const via of [false, true]) {
+      await withProject(async (root, outside) => {
+        await Deno.mkdir(join(root, "node_modules"));
+        await Deno.mkdir(join(root, "src"));
+        if (via) {
+          await Deno.symlink(outside, join(root, "src", "u"));
+          await Deno.symlink(join("..", "src"), join(root, "node_modules", "pkg"));
+        } else {
+          await Deno.symlink(outside, join(root, "node_modules", "pkg"));
+        }
+        const result = await containedReadGrants(root);
+        assert(!result.ok, "expected a refusal");
+        assertEquals(
+          result.reason.startsWith(join(root, "node_modules", "pkg")),
+          true,
+          result.reason,
+        );
+      });
+    }
+    // A dangling one is no read path, so it is only left out.
+    await withProject(async (root) => {
+      await Deno.mkdir(join(root, "node_modules"));
+      await Deno.symlink("missing", join(root, "node_modules", "gone"));
+      await Deno.writeTextFile(join(root, "f.txt"), "");
+      assertEquals(await grants(root), ["f.txt"]);
     });
   },
 );
@@ -92,3 +129,63 @@ Deno.test("allowReadFlags comma-joins, splitting long lists across flags", () =>
   for (const flag of flags) assert(flag.length < 33_000, String(flag.length));
   assertEquals(flags.flatMap((f) => f.slice("--allow-read=".length).split(",")), many);
 });
+
+/** A canonical temp dir holding `files` (relative path → contents); removed afterwards. */
+async function withTree(
+  files: Record<string, string>,
+  fn: (root: string) => Promise<void>,
+): Promise<void> {
+  const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-contained-ws-" }));
+  try {
+    for (const [rel, text] of Object.entries(files)) {
+      await Deno.mkdir(join(root, rel, ".."), { recursive: true });
+      await Deno.writeTextFile(join(root, rel), text);
+    }
+    await fn(root);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+}
+
+Deno.test("containmentRoot: a workspace member is contained in its workspace root", async () => {
+  const app = "apps/web/package.json";
+  const cases: Array<[string, Record<string, string>, boolean]> = [
+    ["deno.json workspace", { "deno.json": '{"workspace":["apps/web"]}', [app]: "{}" }, true],
+    ["npm workspaces", { "package.json": '{"workspaces":["apps/*"]}', [app]: "{}" }, true],
+    ["pnpm apps/*", { "pnpm-workspace.yaml": "packages:\n  - 'apps/*'\n", [app]: "{}" }, true],
+    ["pnpm apps/**", { "pnpm-workspace.yaml": "packages:\n  - apps/**\n", [app]: "{}" }, true],
+    ["pnpm path", { "pnpm-workspace.yaml": "packages:\n  - ./apps/web\n", [app]: "{}" }, true],
+    [
+      "pnpm not listed",
+      { "pnpm-workspace.yaml": "packages:\n  - packages/*\n", [app]: "{}" },
+      false,
+    ],
+    [
+      "pnpm negated",
+      { "pnpm-workspace.yaml": "packages:\n  - apps/*\n  - '!apps/web'\n", [app]: "{}" },
+      false,
+    ],
+    ["deno.json not listing it", { "deno.json": '{"workspace":["pkg"]}', [app]: "{}" }, false],
+    ["no workspace", { [app]: "{}" }, false],
+  ];
+  for (const [label, files, member] of cases) {
+    await withTree(files, async (root) => {
+      const dir = join(root, "apps", "web");
+      assertEquals(await containmentRoot(dir), member ? root : dir, label);
+    });
+  }
+});
+
+Deno.test(
+  "a workspace's grants are spelled relative to the member it runs in",
+  symlinks,
+  async () => {
+    await withTree({ "apps/web/next.config.mjs": "", "root.txt": "" }, async (root) => {
+      const dir = join(root, "apps", "web");
+      await Deno.symlink("/", join(root, "escape"));
+      const result = await containedReadGrants(root, dir);
+      assert(result.ok, result.ok ? "" : result.reason);
+      assertEquals(result.paths, ["..", join("..", "..", "root.txt")]);
+    });
+  },
+);
