@@ -448,8 +448,13 @@ function throttled(ms: number, fn: (bytes: number, total: number | null) => void
 export interface DownloadSink {
   open(at: number): Promise<{
     write(chunk: Uint8Array<ArrayBuffer>): Promise<void>;
+    /** Keep what was written (a pause, a failure, the end). */
     close(): Promise<void>;
+    /** Let go without keeping this opening's writes (a cancel); else it is closed. */
+    abort?(): Promise<void>;
   }>;
+  /** Delete the file (a cancelled download's), once the writer has let go of it. */
+  remove?(): Promise<void>;
 }
 
 /** The parts of a page transfer the filesystem module passes in. */
@@ -618,7 +623,18 @@ abstract class SettlingDownload<T> implements PageTransfer {
 
   cancelPaused(why: "cancel" | "caller"): void {
     pageEvent(this, "cancelled", { state: "cancelled", resumable: false });
-    this.fail(cancelError("downloadToFile", this.info.id, why, this.spec.options.signal));
+    const err = cancelError("downloadToFile", this.info.id, why, this.spec.options.signal);
+    void this.discard().then(() => this.fail(err));
+  }
+
+  /** Drop what a cancelled download kept (its promise rejects once it is gone). */
+  protected discard(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  /** Whether the current request was cancelled (by a cancel or the caller's signal). */
+  protected get cancelled(): boolean {
+    return this.why === "cancel" || this.why === "caller";
   }
 
   /** Reject the download's promise. */
@@ -641,6 +657,8 @@ class PageDownload extends SettlingDownload<number> {
   /** A pause asked for and not yet landed: whether the request stopped paused. */
   #pausing: Promise<boolean> | null = null;
   #onPaused: (paused: boolean) => void = () => {};
+  /** Whether this download has opened its file (so a cancel has a file of its own to drop). */
+  #opened = false;
 
   constructor(
     spec: PageTransferSpec,
@@ -672,7 +690,7 @@ class PageDownload extends SettlingDownload<number> {
       if (!res.ok) return await this.#httpError(res);
       this.succeed(await this.#receive(res));
     } catch (err) {
-      this.#stopped(err);
+      await this.#stopped(err);
     }
     this.#paused(false);
   }
@@ -721,6 +739,7 @@ class PageDownload extends SettlingDownload<number> {
     this.#validator = ifRangeValidator(res.headers);
     const total = announced(res, start);
     const writer = await writing(() => this.sink.open(start));
+    this.#opened = true;
     let bytes = start;
     try {
       this.#progress.flush(bytes, total);
@@ -731,11 +750,13 @@ class PageDownload extends SettlingDownload<number> {
         this.info = { ...this.info, bytes };
         this.#progress.report(bytes, total);
       }
-      // A cancel landing during the last write no longer errors the body (it has all arrived).
-      if (this.why === "cancel" || this.why === "caller") throw this.why;
     } finally {
-      await writer.close();
+      // A cancel lets go without committing; a pause or a failure keeps the bytes written.
+      await (this.cancelled && writer.abort ? writer.abort() : writer.close());
     }
+    // A cancel landing during the last write or the close errored nothing (the body had all
+    // arrived): it still cancels.
+    if (this.cancelled) throw this.why;
     this.#progress.flush(bytes, total ?? bytes);
     pageEvent(this, "done", {
       state: "done",
@@ -748,8 +769,19 @@ class PageDownload extends SettlingDownload<number> {
     return bytes;
   }
 
+  /** A cancel drops the file this download wrote (none when it never opened one). */
+  protected override async discard(): Promise<void> {
+    if (!this.#opened) return;
+    this.#opened = false;
+    try {
+      await this.sink.remove?.();
+    } catch {
+      // Already gone, or the browser cannot delete it: the cancel stands.
+    }
+  }
+
   /** The request stopped: a pause, a cancel, or a failure. */
-  #stopped(err: unknown): void {
+  async #stopped(err: unknown): Promise<void> {
     const reason = this.why;
     if (reason === "pause") {
       pageEvent(this, "paused", { state: "paused", resumable: this.#validator !== null });
@@ -757,6 +789,7 @@ class PageDownload extends SettlingDownload<number> {
     }
     if (reason === "cancel" || reason === "caller") {
       pageEvent(this, "cancelled", { state: "cancelled", resumable: false });
+      await this.discard();
       return this.fail(
         cancelError("downloadToFile", this.info.id, reason, this.spec.options.signal),
       );
@@ -906,16 +939,18 @@ class TrackedDownload extends SettlingDownload<{ path: string }> {
   /** The run stopped: a pause (the promise stays pending), a cancel, or a failure. */
   #stopped(err: unknown): void {
     const pause = this.#pausing ? this.engine.paused(err) : undefined;
-    if (pause) {
+    if (pause && !this.cancelled) {
       pageEvent(this, "paused", { state: "paused", ...pause });
       return;
     }
+    // A cancel that landed while the pause was settling: the engine kept the partial file.
+    if (pause) void this.engine.discard(this.info.id).catch(() => {});
     this.fail(this.#failure(err));
   }
 
   /** The error the download rejects with (its event sent; none when the engine is absent). */
   #failure(err: unknown): unknown {
-    const reason = this.controller.signal.reason;
+    const reason = this.why;
     if (reason === "cancel" || reason === "caller") {
       pageEvent(this, "cancelled", { state: "cancelled", resumable: false });
       return cancelError("downloadToFile", this.info.id, reason, this.spec.options.signal);
@@ -1269,7 +1304,8 @@ export async function fileTransfers(): Promise<FileTransferInfo[]> {
  * request guarded by `If-Range`.
  *
  * @param id The transfer's id.
- * @returns Whether it paused.
+ * @returns Whether it paused: `false` too for a download that finished, failed or was cancelled
+ * before the pause landed.
  */
 export async function pauseFileTransfer(id: string): Promise<boolean> {
   const page = pageTransfers.get(id);
@@ -1302,8 +1338,9 @@ export async function resumeFileTransfer(id: string): Promise<boolean> {
 }
 
 /**
- * Cancel a running or paused transfer; a download's partial file is dropped. Its promise
- * rejects with a {@linkcode FileTransferError} of code `"CANCELLED"`.
+ * Cancel a running or paused transfer; a download's partial file is dropped (on the web, the
+ * OPFS file it was writing, what a pause kept included). Its promise rejects with a
+ * {@linkcode FileTransferError} of code `"CANCELLED"`.
  *
  * @param id The transfer's id.
  * @returns Whether it was cancelled.

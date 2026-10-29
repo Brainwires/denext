@@ -2310,8 +2310,10 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         {" "}
         <code>resumeFileTransfer(id)</code> resolve a <code>boolean</code>: <code>false</code>{" "}
         for an upload (uploads cannot pause), a download that is not running (or, to resume, not
-        paused), or an id with no record. With the plugin, <code>resumeFileTransfer</code>{" "}
-        also retries a failed transfer.
+        paused), or an id with no record. A pause answers once the request has stopped, so it is
+        also <code>false</code>{" "}
+        for a download that finished, failed or was cancelled first. With the plugin,{" "}
+        <code>resumeFileTransfer</code> also retries a failed transfer.
       </p>
       <p>
         A download pauses with its bytes kept (resume data on iOS, a <code>.part</code>{" "}
@@ -2320,10 +2322,11 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         <code>Last-Modified</code>); a server that answers <code>200</code>{" "}
         to it starts the download over. Uploads cannot pause. <code>cancelFileTransfer(id)</code>
         {" "}
-        drops a download&apos;s partial file and rejects its promise with a{" "}
-        <code>FileTransferError</code> of code <code>"CANCELLED"</code> (an aborted{" "}
-        <code>signal</code>{" "}
-        rejects with the signal&apos;s reason). A non-2xx answer rejects with code{" "}
+        drops a download&apos;s partial file (on the web, the OPFS file it was writing, even one a
+        pause kept) and rejects its promise with a <code>FileTransferError</code> of code{" "}
+        <code>"CANCELLED"</code>; an aborted <code>signal</code>{" "}
+        does the same, rejecting with the signal&apos;s reason. A non-2xx answer rejects with code
+        {" "}
         <code>"HTTP"</code>, its <code>status</code> and <code>body</code>; a network failure with
         {" "}
         <code>"NETWORK"</code>, <code>resumable</code>{" "}

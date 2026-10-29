@@ -233,11 +233,21 @@ and this project adheres to
   the child has exited and its pipe is closed.
 - **A page download's pause and cancel hold while a write is in flight.** On the web, where
   `downloadToFile` streams into the origin private file system, a `cancelFileTransfer` (or the
-  caller's `signal`) that arrived during the last write let the download finish: its promise
+  caller's `signal`) that arrived during the last write (or while it was being committed) let the download finish: its promise
   resolved and the file was kept, instead of rejecting with `CANCELLED`. A cancel that followed a
-  pause whose write was still landing ended paused instead of cancelled. Both now cancel, and
-  `pauseFileTransfer` answers once the request has stopped: `true` when it paused, `false` when
-  the download finished, failed or was cancelled first.
+  pause whose write was still landing ended paused instead of cancelled. Both now cancel, and `pauseFileTransfer` answers once the
+  request has stopped: `true` when it paused, `false` when the download finished, failed or was
+  cancelled first.
+- **A cancelled page download deletes its file.** On the web, `cancelFileTransfer` (or the
+  caller's `signal`) left the file the download was writing in the origin private file system,
+  though a cancel is documented to drop a download's partial file. The writes in flight are now
+  aborted rather than committed and the file is removed, including one a pause kept; a pause still
+  keeps it for the resume, and a cancel before the download opened its file leaves the file
+  already at that path alone.
+- **A tracked download cancelled while its pause settled stays cancelled.** A download another
+  engine runs (a Deno Desktop window's) that was cancelled after its engine accepted a pause but
+  before the run stopped ended paused, its promise pending. It now cancels and the engine drops
+  the bytes it kept.
 
 ### Documentation
 

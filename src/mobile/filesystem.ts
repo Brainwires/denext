@@ -533,11 +533,18 @@ export async function listDir(
   return entries.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** The OPFS (or picked) file a page download writes, opened anew or to append. */
+/**
+ * The OPFS (or picked) file a page download writes, opened anew or to append. Writes land in the
+ * stream's own copy until `close()` commits them; a cancel `abort()`s that copy (the file keeps
+ * what an earlier pause committed) and then removes the file, which a browser refuses while a
+ * writable on it is still open.
+ */
 function webSink(directory: FileDirectory, rel: string): DownloadSink {
+  let file: WebFile | undefined;
   return {
     async open(at) {
-      const { handle } = await webFile("downloadToFile", directory, rel, true, true, true);
+      file = await webFile("downloadToFile", directory, rel, true, true, true);
+      const { handle } = file;
       const writable = at > 0
         ? await handle.createWritable({ keepExistingData: true })
         : await handle.createWritable();
@@ -545,8 +552,10 @@ function webSink(directory: FileDirectory, rel: string): DownloadSink {
       return {
         write: (chunk) => writable.write(chunk),
         close: () => writable.close(),
+        abort: () => writable.abort(),
       };
     },
+    remove: () => file?.remove() ?? Promise.resolve(),
   };
 }
 
@@ -610,7 +619,8 @@ function urlOf(fn: string, url: string): string {
  *   downloaded to the same file again.
  * - Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System
  *   with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range
- *   request (a server that answers 200 starts it over).
+ *   request (a server that answers 200 starts it over). {@linkcode cancelFileTransfer} or
+ *   aborting `signal` cancels it and deletes the file it was writing.
  *
  * @param url The `http(s)` URL to fetch.
  * @param path The file's path inside `directory`; no `..` segments.
