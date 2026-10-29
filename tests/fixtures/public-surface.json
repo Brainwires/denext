@@ -2578,6 +2578,7 @@
     "ScannedBarcode:interface",
     "ScheduledLocalNotification:interface",
     "SecureStore:interface",
+    "SecureStoreAccessibility:typeAlias",
     "SecureStoreFallback:typeAlias",
     "SecureStoreGetOptions:interface",
     "SecureStoreSetOptions:interface",

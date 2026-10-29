@@ -30,6 +30,18 @@ and this project adheres to
   `security/npm-audit-allow.json` with the date it clears. CI's `cargo-audit` job and
   `deno task precheck` (when `deno.lock`, a `deno.json` or the allowlist changes) run it.
 
+- **The OTA plugin's serve check, hardened** (`denext mobile add-ota` template generation 12; re-run
+  it and ship a new binary). The iOS and Android plugins check a manifest's platform stamp
+  themselves and refuse another target's signed export with `platform_mismatch`, as
+  `checkForUiUpdate` already did in the page. The check on served files fails closed: a base
+  other than the bundled UI or a downloaded version's directory is refused, where it used to
+  pass. A `/_capacitor_file_` request (`Capacitor.convertFileSrc`) for a file inside the
+  downloaded versions, however the path is spelled (`..`, a symbolic link, another case), now
+  gets the same manifest check as the router's requests, and a changed file quarantines the
+  version; files elsewhere are served as before. On iOS the bridge turns Capacitor's asset
+  handler into `DenextOtaFileGuard` for this, since Capacitor answers those requests without
+  the router. Valid updates are served exactly as before.
+
 ### Added
 
 - **The lifecycle-script jail of runtime `3.0.0-denext.1`.** Everything below is gated on the
@@ -81,6 +93,15 @@ and this project adheres to
   The next Gleam build rewrites `.denext/lustre-view.ts` to pass Lustre's `insertMetadataChild`.
 - **`broadcastChannelTransport()` returns a `close()`** that closes its `BroadcastChannel`
   (an open one keeps the process's event loop alive).
+
+- **`secureStore.set(key, value, { accessibility })`** picks the iOS Keychain class:
+  `"whenUnlocked"` (the default, unchanged), `"whenUnlockedThisDeviceOnly"`, `"afterFirstUnlock"`,
+  `"afterFirstUnlockThisDeviceOnly"` or `"whenPasscodeSetThisDeviceOnly"`, so a refresh token can
+  stay out of backups and off other devices. On Android the secure-storage plugin's Keystore key
+  is already device-bound and readable after the first unlock; on the web and in a Deno Desktop
+  window the option is accepted and has no effect. An unknown class, or one other than
+  `"whenPasscodeSetThisDeviceOnly"` beside `requireBiometric`, is a `TypeError`. The type is
+  exported as `SecureStoreAccessibility`.
 
 ### Changed
 

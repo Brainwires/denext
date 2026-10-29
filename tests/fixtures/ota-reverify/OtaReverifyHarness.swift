@@ -55,15 +55,23 @@ struct Device {
     let suite: String
     var defaults: UserDefaults { UserDefaults(suiteName: suite)! }
     var dir: URL { root.appendingPathComponent(version, isDirectory: true) }
+    /// The app's bundled `public/` (only its path matters: the store never checks its files).
+    let bundled: URL
 
     init(_ name: String) {
         root = work.appendingPathComponent(name).appendingPathComponent("denext-ota", isDirectory: true)
         suite = "dev.denext.ota-reverify.\(name).\(UUID().uuidString)"
+        bundled = work.appendingPathComponent(name).appendingPathComponent("App.app/public", isDirectory: true)
     }
 
     /// A new process.
     func launch(key: DenextOtaStore.PublicKeyConfig) -> DenextOtaStore {
-        DenextOtaStore(root: root, defaults: defaults, publicKey: key)
+        DenextOtaStore(root: root, defaults: defaults, publicKey: key, bundled: bundled)
+    }
+
+    /// What the asset handler asks for a `/_capacitor_file_` request of `path` (a file path).
+    func capacitorFile(_ store: DenextOtaStore, _ path: String) -> Bool {
+        store.admitCapacitorFile("/_capacitor_file_" + path)
     }
 
     /// Puts the version in place the way a finished download leaves it.
@@ -111,7 +119,27 @@ do {
     check("the stored manifest is served (pageUiVersion)", clean.admit(store, "/_denext/ota.json"))
     check("a missing unlisted file is refused without quarantining", !clean.admit(store, "/nope.js") && store.tampered == nil)
     check("a path that climbs out is refused without quarantining", !clean.admit(store, "/../secret") && store.tampered == nil)
-    check("the bundled UI is not checked", store.admit("/App.app/public/app.js", servedFrom: "/App.app/public"))
+    check("the bundled UI is not checked", store.admit(clean.bundled.path + "/app.js", servedFrom: clean.bundled.path))
+    // Fail closed: native code only ever serves the bundled UI or a version directory.
+    check("fail closed: a base outside the versions root and the bundled UI is refused", !store.admit("/elsewhere/app.js", servedFrom: "/elsewhere"))
+    check("fail closed: the versions root itself is refused as a base", !store.admit(clean.root.path + "/app.js", servedFrom: clean.root.path))
+    check("fail closed: a bundled-UI route outside its directory is refused", !store.admit("/etc/passwd", servedFrom: clean.bundled.path))
+    // Capacitor's /_capacitor_file_ paths skip the router: the asset handler asks the store.
+    check("capacitor file: a file outside the versions root passes through", clean.capacitorFile(store, "/tmp/photo.jpg"))
+    check("capacitor file: an untampered file of a downloaded UI is served", clean.capacitorFile(store, clean.dir.path + "/app.js"))
+    try Data("x".utf8).write(to: clean.root.appendingPathComponent("stray.txt"))
+    check("capacitor file: a file outside a version directory is refused", !clean.capacitorFile(store, clean.root.path + "/stray.txt") && store.tampered == nil)
+    check(
+        "capacitor file: a path that climbs into the versions root is checked",
+        !clean.capacitorFile(store, clean.dir.path + "/../" + version + "/nope.js") && store.tampered == nil
+    )
+    let link = clean.root.deletingLastPathComponent().appendingPathComponent("ota-link")
+    try fm.createSymbolicLink(at: link, withDestinationURL: clean.root)
+    check(
+        "capacitor file: a symlinked spelling of the versions root is checked",
+        !clean.capacitorFile(store, link.path + "/stray.txt") && clean.capacitorFile(store, link.path + "/" + version + "/app.js")
+    )
+    check("capacitor file: the bridge's router paths are not checked here", store.admitCapacitorFile("/app.js"))
 
     // ---- one file changed after the download -----------------------------------------------
     try clean.tamper("app.js", "steal(document.cookie)")
@@ -130,6 +158,21 @@ do {
     check("nothing else of it is served afterwards", !clean.admit(store, "/index.html"))
     check("the fallback is the bundled UI", store.fallbackDirectory() == nil)
     check("the next launch serves the bundled UI", clean.launch(key: signed).prepareLaunch().directory == nil)
+
+    // ---- a changed file read through /_capacitor_file_ ---------------------------------------
+    let viaFile = try device("capacitor-file", manifest: storedManifest(signature: sign(key)))
+    try viaFile.tamper("app.js", "steal(document.cookie)")
+    store = viaFile.launch(key: signed)
+    heard = []
+    store.setTamperHandler { version, _, serving in heard.append("\(version) \(serving)") }
+    _ = store.prepareLaunch()
+    check(
+        "capacitor file: a changed file is refused and quarantines the UI",
+        !viaFile.capacitorFile(store, "/_capacitor_file_" + viaFile.dir.path + "/app.js") &&
+            store.tampered == version
+    )
+    drain()
+    check("capacitor file: the plugin is told while the version is being served", heard == ["\(version) true"])
 
     // ---- the stored manifest changed ---------------------------------------------------------
     let edited = try device("manifest", manifest: storedManifest(notes: "hello (edited)", signature: sign(key)))
@@ -262,6 +305,29 @@ do {
     check("debug build: an unsigned UI from loopback is accepted", refusal(manifest([:])) == nil)
     check("a baseUrl with credentials is invalid", refusal(manifest([:]), baseUrl: "http://user:pw@127.0.0.1/ui") == "invalid")
     check("a baseUrl with a backslash is invalid", refusal(manifest([:]), baseUrl: "http://127.0.0.1\\@evil.example/ui") == "invalid")
+
+    // The platform stamp (`denext export --platform`), checked natively too: a signed export of
+    // another target is refused by the shell, not only by the page.
+    func stamped(_ stamp: String?, platform: Any?) -> JSObject {
+        var list = manifestFiles
+        if let stamp {
+            list.append(DenextOtaStore.ManifestFile(path: "_denext/platform.txt", sha256: DenextOtaStore.sha256Hex(Data(stamp.utf8)), size: Int64(stamp.utf8.count)))
+        }
+        var object: JSObject = [
+            "version": DenextOtaStore.manifestVersion(list),
+            "files": list.map { ["path": $0.path, "sha256": $0.sha256, "size": Int($0.size)] as JSObject } as JSArray,
+            "sequence": 7,
+        ]
+        if let platform = platform as? JSValue { object["platform"] = platform }
+        return object
+    }
+    check("platform: an iOS export is accepted", refusal(stamped("ios", platform: "ios")) == nil)
+    check("platform: an iOS stamp without the field is accepted", refusal(stamped("ios", platform: nil)) == nil)
+    check("platform: an Android export is refused (platform_mismatch)", refusal(stamped("android", platform: "android")) == "platform_mismatch")
+    check("platform: an Android stamp without the field is refused", refusal(stamped("android", platform: nil)) == "platform_mismatch")
+    check("platform: the field without a matching stamp is refused", refusal(stamped(nil, platform: "ios")) == "platform_mismatch")
+    check("platform: a field that disagrees with the stamp is refused", refusal(stamped("android", platform: "ios")) == "platform_mismatch")
+    check("platform: a field that is not a string is invalid", refusal(stamped("ios", platform: 1)) == "invalid")
 
     let folders = try device("folders", manifest: storedManifest(signature: sign(key)))
     store = folders.launch(key: signed)

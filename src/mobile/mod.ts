@@ -258,6 +258,7 @@ export { hideSplash } from "./splash.ts";
 export {
   type SecureStore,
   secureStore,
+  type SecureStoreAccessibility,
   type SecureStoreFallback,
   type SecureStoreGetOptions,
   type SecureStoreSetOptions,

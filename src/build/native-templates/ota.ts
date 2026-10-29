@@ -17,11 +17,13 @@ export const OTA_IOS_FILES: Readonly<Record<string, string>> = {
 // https://denext.dev/docs/desktop.
 
 @preconcurrency import Capacitor
+import ObjectiveC
 import UIKit
 
 /// A \`CAPBridgeViewController\` that serves the over-the-air UI (see \`DenextOtaStore\`). Its
 /// router (\`DenextOtaRouter\`) serves a downloaded UI's files only while they match the UI's
-/// signed manifest.
+/// signed manifest, and \`DenextOtaFileGuard\` applies the same check to the
+/// \`/_capacitor_file_\` requests Capacitor answers without the router.
 ///
 /// Use it where the app would use \`CAPBridgeViewController\`: \`Main.storyboard\`'s view
 /// controller class and \`SceneDelegate\`'s root view controller (\`denext mobile add-ota\`
@@ -55,11 +57,43 @@ class DenextBridgeViewController: CAPBridgeViewController {
 
     override func capacitorDidLoad() {
         super.capacitorDidLoad()
+        DenextOtaFileGuard.install(on: bridge)
         let plugin = DenextOtaPlugin()
         bridge?.registerPluginInstance(plugin)
         if otaTrialLaunch {
             plugin.armWatchdog()
         }
+    }
+}
+
+/// Capacitor's asset handler reads a \`/_capacitor_file_<path>\` request straight from \`<path>\`
+/// (\`Capacitor.convertFileSrc\`) without asking the router, and \`loadView()\`, which creates the
+/// handler, is final. So the handler the bridge made becomes this subclass (it adds no stored
+/// properties), which asks \`DenextOtaStore.admitCapacitorFile\` first: a file inside the
+/// versions root is served only when it matches its UI's signed manifest. Every other request,
+/// and every file outside the versions root, goes to Capacitor's handler unchanged.
+final class DenextOtaFileGuard: WebViewAssetHandler {
+    override func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        // WKURLSchemeHandler calls arrive on the main thread.
+        if let path = urlSchemeTask.request.url?.path, !DenextOtaStore.shared.admitCapacitorFile(path) {
+            urlSchemeTask.didFailWithError(URLError(.fileDoesNotExist))
+            return
+        }
+        super.webView(webView, start: urlSchemeTask)
+    }
+
+    /// Main thread, from \`capacitorDidLoad()\` (before the first page). Only Capacitor's own
+    /// handler class is changed; an app that registers its own subclass keeps it (and is told).
+    static func install(on bridge: CAPBridgeProtocol?) {
+        guard let bridge = bridge, let scheme = bridge.config.localURL.scheme,
+              let handler = bridge.webView?.configuration.urlSchemeHandler(forURLScheme: scheme) else { return }
+        guard object_getClass(handler) == WebViewAssetHandler.self else {
+            if !(handler is DenextOtaFileGuard) {
+                CAPLog.print("denext OTA: the web view's asset handler is the app's own; /_capacitor_file_ requests are not checked.")
+            }
+            return
+        }
+        object_setClass(handler, DenextOtaFileGuard.self)
     }
 }
 `,
@@ -570,8 +604,9 @@ final class DenextOtaStore: @unchecked Sendable {
     /// before anything is downloaded or any state changes: the manifest must be well formed and
     /// within the caps (code \`invalid\`), the file list must hash to its \`version\` (code
     /// \`integrity\`), \`checkTrust\` must accept the signature or the transport (codes \`signature\` /
-    /// \`insecure\`), and \`checkRelease\` its \`sequence\`, \`minNative\`, \`nativeFingerprint\` and
-    /// \`expiresAt\` (codes \`downgrade\` / \`native_too_old\` / \`native_mismatch\` / \`expired\`).
+    /// \`insecure\`), \`checkPlatform\` its target (code \`platform_mismatch\`), and \`checkRelease\`
+    /// its \`sequence\`, \`minNative\`, \`nativeFingerprint\` and \`expiresAt\` (codes \`downgrade\` /
+    /// \`native_too_old\` / \`native_mismatch\` / \`expired\`).
     struct ApplyRequest: Sendable {
         let baseUrl: URL
         let headers: [String: String]
@@ -633,6 +668,7 @@ final class DenextOtaStore: @unchecked Sendable {
                 ),
                 signature: signature
             )
+            try DenextOtaStore.checkPlatform(manifest["platform"], files: files)
             try DenextOtaStore.checkRelease(
                 sequence: sequence,
                 minNative: minNative,
@@ -666,19 +702,23 @@ final class DenextOtaStore: @unchecked Sendable {
     private var launchPrepared = false
 
     let root: URL
+    /// The bundled UI's directory: the only one outside \`root\` the asset handler may serve.
+    private let bundled: URL?
     /// The key a stored manifest is re-verified with (Info.plist \`DenextOtaPublicKey\`).
     private let storedManifestKey: PublicKeyConfig
 
-    /// \`shared\` uses the defaults; a test passes its own directory, defaults and key.
+    /// \`shared\` uses the defaults; a test passes its own directory, defaults, key and bundled UI.
     init(
         root: URL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("denext-ota", isDirectory: true),
         defaults: UserDefaults = .standard,
-        publicKey: PublicKeyConfig = DenextOtaStore.publicKey
+        publicKey: PublicKeyConfig = DenextOtaStore.publicKey,
+        bundled: URL? = DenextOtaStore.bundledDirectory
     ) {
         self.root = root
         self.defaults = defaults
         self.storedManifestKey = publicKey
+        self.bundled = bundled
     }
 
     private(set) var current: String? {
@@ -1002,6 +1042,37 @@ final class DenextOtaStore: @unchecked Sendable {
         return key.isValidSignature(ecdsa, for: payload)
     }
 
+    /// This shell's target, as \`denext export --platform\` names it.
+    static let platform = "ios"
+    /// The stamp a platform export carries, relative to the UI directory (its SHA-256 is that of
+    /// the target's name, and the manifest version covers it).
+    static let platformStampPath = "_denext/platform.txt"
+
+    /// The manifest's target, checked after \`checkTrust\`: a manifest naming another target, a
+    /// \`platform\` field without the matching stamp in the file list, or a stamp of another target
+    /// is refused (code \`platform_mismatch\`). The stamp is what the version (and so the signature)
+    /// covers; the field is not signed, so the stamp decides whether or not the field is there. A
+    /// manifest with neither (an unstamped web export) fits every shell. The same rule as
+    /// \`otaPlatformMismatch\` in denext, so the page's check and this one agree.
+    static func checkPlatform(_ raw: Any?, files: [ManifestFile]) throws {
+        let ownStamp = sha256Hex(Data(platform.utf8))
+        let stamp = files.first { $0.path == platformStampPath }
+        if let raw = raw, !(raw is NSNull) {
+            guard let named = raw as? String else {
+                throw OtaError(code: "invalid", message: "The manifest's platform is not a string.")
+            }
+            guard stamp?.sha256 == sha256Hex(Data(named.utf8)) else {
+                throw OtaError(code: "platform_mismatch", message: "The manifest says \(named), but its files carry no matching \(platformStampPath).")
+            }
+            guard named == platform else {
+                throw OtaError(code: "platform_mismatch", message: "The UI was built for \(named); this app runs on \(platform).")
+            }
+        }
+        if let stamp = stamp, stamp.sha256 != ownStamp {
+            throw OtaError(code: "platform_mismatch", message: "The UI's \(platformStampPath) stamp is another target's; this app runs on \(platform).")
+        }
+    }
+
     /// The release policy, checked after \`checkTrust\` (so a signed manifest's values are
     /// authentic) and before any file is fetched: no \`sequence\` below the highest this device
     /// accepted, and none missing once one was (code \`downgrade\`); no \`minNative\` above this
@@ -1304,20 +1375,31 @@ final class DenextOtaStore: @unchecked Sendable {
     }
 
     /// Main thread. Whether the asset handler may read \`file\`, which the router resolved for a
-    /// request while serving \`base\`. Anything outside a downloaded UI (the bundled \`public/\`,
-    /// which the app's code signature covers) passes. Inside one, the file must match the signed
-    /// manifest (\`InstalledUi.check\`); a mismatch quarantines the version and tells the plugin,
-    /// which switches the webview away.
+    /// request while serving \`base\`. Native code only ever serves the bundled \`public/\` (which
+    /// the app's code signature covers, so its files pass) or a version directory under the
+    /// versions root; any other base fails closed. Inside a downloaded UI, the file must match the
+    /// signed manifest (\`InstalledUi.check\`); a mismatch quarantines the version and tells the
+    /// plugin, which switches the webview away.
     func admit(_ file: String, servedFrom base: String) -> Bool {
+        return admit(file, servedFrom: base, serving: true)
+    }
+
+    /// \`admit\`, for a version the webview shows (\`serving\`) or not: a quarantine switches away
+    /// from it only in the first case.
+    private func admit(_ file: String, servedFrom base: String, serving: Bool) -> Bool {
         let served = URL(fileURLWithPath: base).standardizedFileURL
         let rootPath = root.standardizedFileURL.path
-        guard served.path.hasPrefix(rootPath + "/") else { return true }
+        let prefix = base.hasSuffix("/") ? base : base + "/"
+        guard served.path.hasPrefix(rootPath + "/") else {
+            // Outside the versions root, only the bundled UI is ever served.
+            guard let bundled = bundled, served.path == bundled.standardizedFileURL.path else { return false }
+            return file == base || file.hasPrefix(prefix)
+        }
         let version = served.lastPathComponent
         // Under the versions root, only a version directory is ever served.
         guard served.deletingLastPathComponent().path == rootPath, DenextOtaStore.isSha256(version) else {
             return false
         }
-        let prefix = base.hasSuffix("/") ? base : base + "/"
         guard file.hasPrefix(prefix) else { return file == base }
         let relative = String(file.dropFirst(prefix.count))
         // The directory itself: the handler cannot read it, so the request fails anyway.
@@ -1328,7 +1410,7 @@ final class DenextOtaStore: @unchecked Sendable {
         } catch let error as OtaError where error.code == DenextOtaStore.unavailableCode {
             return false
         } catch {
-            report(version, reason: error.localizedDescription, serving: true)
+            report(version, reason: error.localizedDescription, serving: serving)
             return false
         }
         switch verdict {
@@ -1337,9 +1419,36 @@ final class DenextOtaStore: @unchecked Sendable {
         case .missing, .unavailable:
             return false
         case .tampered(let reason):
-            report(version, reason: reason, serving: true)
+            report(version, reason: reason, serving: serving)
             return false
         }
+    }
+
+    /// The prefix of a request Capacitor's asset handler reads straight from the file system
+    /// (\`Capacitor.convertFileSrc\`), without asking the router.
+    static let capacitorFilePrefix = "/_capacitor_file_"
+
+    /// Main thread. Whether the asset handler may answer \`requestPath\` (a request's decoded path)
+    /// when it is a \`/_capacitor_file_\` request (\`DenextOtaFileGuard\`); any other request is the
+    /// router's (\`admit\`). The file is the one Capacitor reads (every \`/_capacitor_file_\`
+    /// removed). One outside the versions root passes, as before. One inside it, by any spelling
+    /// (\`..\`, a symbolic link, another case on a case-insensitive volume), gets \`admit\`'s check:
+    /// only a file of a version directory, matching that version's signed manifest, and a mismatch
+    /// quarantines the version.
+    func admitCapacitorFile(_ requestPath: String) -> Bool {
+        guard requestPath.hasPrefix(DenextOtaStore.capacitorFilePrefix) else { return true }
+        let file = requestPath.replacingOccurrences(of: DenextOtaStore.capacitorFilePrefix, with: "")
+        let target = URL(fileURLWithPath: file).standardizedFileURL.resolvingSymlinksInPath().path
+        let resolvedRoot = root.standardizedFileURL.resolvingSymlinksInPath().path
+        let lowered = target.lowercased()
+        let loweredRoot = resolvedRoot.lowercased()
+        guard lowered == loweredRoot || lowered.hasPrefix(loweredRoot + "/") else { return true }
+        let relative = target.count > resolvedRoot.count ? String(target.dropFirst(resolvedRoot.count + 1)) : ""
+        let parts = relative.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2, DenextOtaStore.isSha256(String(parts[0])) else { return false }
+        let version = String(parts[0])
+        let base = versionDirectory(version).path
+        return admit(base + "/" + parts[1], servedFrom: base, serving: version == (pending ?? current))
     }
 
     /// Main thread. Quarantines \`version\` and tells the plugin (later, once it has loaded, for a
@@ -2462,7 +2571,8 @@ public class DenextOtaPlugin extends Plugin {
      * anything is downloaded or any state changes: the manifest must be well formed and within the
      * caps (code invalid), the file list must hash to its version (code integrity),
      * {@link DenextOtaStore#checkTrust} must accept the signature or the transport (codes
-     * signature / insecure), and {@link DenextOtaStore#checkRelease} its sequence, minNative,
+     * signature / insecure), {@link DenextOtaStore#checkPlatform} its target (code
+     * platform_mismatch), and {@link DenextOtaStore#checkRelease} its sequence, minNative,
      * nativeFingerprint and expiresAt (codes downgrade / native_too_old / native_mismatch / expired).
      */
     private static DenextOtaStore.ApplyRequest parseApplyRequest(PluginCall call, DenextOtaStore store)
@@ -2518,6 +2628,7 @@ public class DenextOtaPlugin extends Plugin {
             DenextOtaStore.signaturePayload(version, required, notes, sequence, minNative, nativeFingerprint, expiresAt),
             signature
         );
+        DenextOtaStore.checkPlatform(manifest.opt("platform"), files);
         store.checkRelease(sequence, minNative, nativeFingerprint, expiresAt);
         return new DenextOtaStore.ApplyRequest(
             baseUrl,
@@ -3058,6 +3169,52 @@ final class DenextOtaStore {
         }
         if (!isValidSignature(key, payload, signature)) {
             throw new OtaException("signature", "The manifest signature is missing or does not verify.");
+        }
+    }
+
+    /** This shell's target, as {@code denext export --platform} names it. */
+    static final String PLATFORM = "android";
+    /**
+     * The stamp a platform export carries, relative to the UI directory (its SHA-256 is that of the
+     * target's name, and the manifest version covers it).
+     */
+    static final String PLATFORM_STAMP_PATH = "_denext/platform.txt";
+
+    /**
+     * The manifest's target, checked after {@link #checkTrust}: a manifest naming another target, a
+     * {@code platform} field without the matching stamp in the file list, or a stamp of another
+     * target is refused (code platform_mismatch). The stamp is what the version (and so the
+     * signature) covers; the field is not signed, so the stamp decides whether or not the field is
+     * there. A manifest with neither (an unstamped web export) fits every shell. The same rule as
+     * {@code otaPlatformMismatch} in denext, so the page's check and this one agree.
+     */
+    static void checkPlatform(@Nullable Object raw, List<ManifestFile> files) throws OtaException {
+        String stamp = null;
+        for (ManifestFile file : files) {
+            if (PLATFORM_STAMP_PATH.equals(file.path)) {
+                stamp = file.sha256;
+            }
+        }
+        if (raw != null && raw != JSONObject.NULL) {
+            if (!(raw instanceof String)) {
+                throw new OtaException("invalid", "The manifest's platform is not a string.");
+            }
+            String named = (String) raw;
+            if (!sha256Hex(named.getBytes(StandardCharsets.UTF_8)).equals(stamp)) {
+                throw new OtaException(
+                    "platform_mismatch",
+                    "The manifest says " + named + ", but its files carry no matching " + PLATFORM_STAMP_PATH + "."
+                );
+            }
+            if (!PLATFORM.equals(named)) {
+                throw new OtaException("platform_mismatch", "The UI was built for " + named + "; this app runs on " + PLATFORM + ".");
+            }
+        }
+        if (stamp != null && !stamp.equals(sha256Hex(PLATFORM.getBytes(StandardCharsets.UTF_8)))) {
+            throw new OtaException(
+                "platform_mismatch",
+                "The UI's " + PLATFORM_STAMP_PATH + " stamp is another target's; this app runs on " + PLATFORM + "."
+            );
         }
     }
 
@@ -3695,15 +3852,22 @@ final class DenextOtaStore {
     }
 
     /**
-     * Whether the local server may read {@code path} (a request path) from {@code served}, the
-     * directory the bridge serves. Anything outside a downloaded UI passes. Inside one, the file
-     * must match the signed manifest ({@link InstalledUi#check}); a mismatch quarantines the
-     * version and tells the plugin, which switches the webview away. Any thread.
+     * Whether the local server may read {@code path} (a request path) from {@code served}, a
+     * directory the bridge serves. The bundled UI is served from the APK's assets, never through
+     * here, so native code only ever serves a version directory under the versions root: any other
+     * directory fails closed. Inside a downloaded UI, the file must match the signed manifest
+     * ({@link InstalledUi#check}); a mismatch quarantines the version and tells the plugin, which
+     * switches the webview away. Any thread.
      */
     boolean admit(String served, String path) {
-        String rootPath = root.getPath();
-        if (!served.equals(rootPath) && !served.startsWith(rootPath + "/")) {
-            return true;
+        return admit(served, path, true);
+    }
+
+    /** {@link #admit}, for a version the webview shows ({@code serving}) or not. */
+    private boolean admit(String served, String path, boolean serving) {
+        String rootPath = root.getAbsolutePath();
+        if (!served.startsWith(rootPath + "/")) {
+            return false;
         }
         // Under the versions root, only a version directory is ever served.
         File base = new File(served);
@@ -3721,7 +3885,7 @@ final class DenextOtaStore {
             ui = installedUi(version);
         } catch (OtaException ex) {
             if (!UNAVAILABLE.equals(ex.code)) {
-                report(version, ex.getMessage(), true);
+                report(version, ex.getMessage(), serving);
             }
             return false;
         }
@@ -3730,9 +3894,49 @@ final class DenextOtaStore {
             String why = relative.equals(MANIFEST_PATH)
                 ? " changed after it was verified."
                 : ui.lists(relative) ? " does not match the signed manifest." : " is not in the signed manifest.";
-            report(version, relative + why, true);
+            report(version, relative + why, serving);
         }
         return verdict == Verdict.SERVE;
+    }
+
+    /**
+     * Whether the local server may read a {@code /_capacitor_file_} request's file, which it reads
+     * straight from the file system ({@code Capacitor.convertFileSrc}). The file is the one
+     * Capacitor opens (every {@code /_capacitor_file_} removed). One outside the versions root
+     * passes, as before. One inside it, by any spelling ({@code ..}, a symbolic link, another case),
+     * gets {@link #admit}'s check: only a file of a version directory, matching that version's
+     * signed manifest, and a mismatch quarantines the version. {@code served}: the directory the
+     * bridge serves, if any (a quarantine switches the webview away only from that version). A
+     * path that cannot be resolved fails closed. Any thread.
+     */
+    boolean admitCapacitorFile(String requestPath, @Nullable String served) {
+        String file = requestPath.replace(Bridge.CAPACITOR_FILE_START, "");
+        String target;
+        String resolvedRoot;
+        try {
+            target = new File(file).getCanonicalPath();
+            resolvedRoot = root.getCanonicalPath();
+        } catch (IOException ex) {
+            return false;
+        }
+        String lowered = target.toLowerCase(Locale.ROOT);
+        String loweredRoot = resolvedRoot.toLowerCase(Locale.ROOT);
+        if (!lowered.equals(loweredRoot) && !lowered.startsWith(loweredRoot + "/")) {
+            return true;
+        }
+        String relative = target.length() > resolvedRoot.length() ? target.substring(resolvedRoot.length() + 1) : "";
+        int slash = relative.indexOf('/');
+        if (slash < 0 || !isSha256(relative.substring(0, slash))) {
+            return false;
+        }
+        String version = relative.substring(0, slash);
+        String base = versionDirectory(version).getAbsolutePath();
+        return admit(base, relative.substring(slash), base.equals(served));
+    }
+
+    /** The {@code /_capacitor_file_} path the local server reads for a refused file: a directory, which it cannot read. */
+    String refusedCapacitorFile() {
+        return Bridge.CAPACITOR_FILE_START + root.getAbsolutePath();
     }
 
     /** Quarantines {@code version} and tells the plugin (later, once it is attached, for a launch). */
@@ -3789,8 +3993,9 @@ final class DenextOtaStore {
      * While the bundled assets are served it answers as Capacitor would without one; while a
      * directory is served (a downloaded UI) it answers with the file under that directory once
      * {@link #admit} accepts it, else with the directory itself, which the server cannot read
-     * (the request fails). Capacitor's {@code /_capacitor_file_} and {@code /_capacitor_content_}
-     * paths pass through.
+     * (the request fails). Capacitor's {@code /_capacitor_file_} paths, which it reads from the file
+     * system whatever is served, pass through once {@link #admitCapacitorFile} accepts them, else
+     * read a directory (the request fails); {@code /_capacitor_content_} paths pass through.
      */
     static final class Routes implements RouteProcessor {
 
@@ -3808,10 +4013,12 @@ final class DenextOtaStore {
             String served = bridge != null ? bridge.getServerBasePath() : started == null ? null : started.getAbsolutePath();
             boolean files = served != null && served.startsWith("/");
             route.setAsset(!files);
-            if (!files) {
+            if (path.startsWith(Bridge.CAPACITOR_FILE_START)) {
+                route.setPath(store.admitCapacitorFile(path, files ? served : null) ? path : store.refusedCapacitorFile());
+            } else if (!files) {
                 // The local server adds the asset directory itself (and passes it as basePath for index.html).
                 route.setPath(basePath + path);
-            } else if (path.startsWith(Bridge.CAPACITOR_FILE_START) || path.startsWith(Bridge.CAPACITOR_CONTENT_START)) {
+            } else if (path.startsWith(Bridge.CAPACITOR_CONTENT_START)) {
                 route.setPath(path);
             } else {
                 route.setPath(store.admit(served, path) ? served + path : served);

@@ -112,21 +112,15 @@ Low findings of the 4.8 backend audit (realtime and storage):
 
 The audit's lows that were security gaps have landed (see the CHANGELOG: manifest expiry, loopback OTA only in
 debug builds, `booted()` bound to a version, directory requests, OS-enforced `requireBiometric`,
-print confinement, `baseUrl` credentials, the bridge's origin guard, PKCE on mobile `openAuthSession`). What is left, each with why it is not done there:
+print confinement, `baseUrl` credentials, the bridge's origin guard, PKCE on mobile `openAuthSession`,
+the native platform-stamp check, the fail-closed serve check and its `/_capacitor_file_` half, and
+the `secureStore` `accessibility` option). What is left, each with why it is not done there:
 
 - **`requireBiometric` on Deno Desktop:** the desktop keychain items have no biometric access
   control, so the gate is in the page there; it needs a runtime capability (macOS
   `SecAccessControl`, Windows Hello) in the Brainwires/deno fork.
-- **OTA serve check, the rest:** checking the platform stamp natively (a signed export of the same
-  publisher for another target, not a trust breach), `admit` failing closed outside the versions
-  root (the served base is chosen by native code, never by the page) and the check on
-  `/_capacitor_file_/` paths (needs write access to the app container already) are hardening, not
-  gaps. NFC/NFD variants do not reach it (Swift compares paths by canonical equivalence; Android's
-  filesystems are normalization-sensitive).
-- **Small ones:** Android transfer record names from a hash of the id (a collision overwrites a
-  record, but the page chooses every id: no boundary is crossed); a `secureStore` accessibility
-  option (ThisDeviceOnly for tokens) is new API and changing the default changes documented
-  behaviour, so it needs a decision.
+- **Android transfer record names** come from a hash of the id (a collision overwrites a record,
+  but the page chooses every id: no boundary is crossed).
 
 ## Build toolchain: waiting on `deno bundle`
 

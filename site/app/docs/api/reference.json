@@ -5921,7 +5921,7 @@
           "name": "broadcastChannelTransport",
           "slug": "broadcastChannelTransport",
           "kind": "function",
-          "signature": "broadcastChannelTransport(name?: string): ChannelTransport",
+          "signature": "broadcastChannelTransport(name?: string): ChannelTransport & object",
           "doc": "A transport over the Web BroadcastChannel API: every instance that shares the channel name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.",
           "docFull": "A transport over the Web `BroadcastChannel` API: every instance that shares the channel\nname (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.",
           "params": [
@@ -5930,7 +5930,7 @@
               "doc": "The BroadcastChannel name (default \"denext-channels\")."
             }
           ],
-          "returns": "The transport.",
+          "returns": "The transport; its close() closes the BroadcastChannel (which otherwise keeps the process's event loop alive for as long as it is open).",
           "examples": [],
           "denextOnly": true
         },
@@ -19525,7 +19525,7 @@
           "kind": "function",
           "signature": "createTestApp(projectDir: string, options?: TestAppOptions): Promise<TestApp>",
           "doc": "Build an in-process request handler for a real project directory — **no build step, no socket**. It renders Server Components, runs Server Actions and middleware.ts, and reads cookies/sessions, exactly as production does, but it ships no client bundle — so it drives the **JavaScript-disabled** path your app must support. The handler keeps one PageCache, so revalidate-based ISR is exercised across successive requests. Pair it with createTestClient.",
-          "docFull": "Build an in-process request handler for a real project directory — **no build\nstep, no socket**. It renders Server Components, runs Server Actions and\n`middleware.ts`, and reads cookies/sessions, exactly as production does, but it\nships no client bundle — so it drives the **JavaScript-disabled** path your app\nmust support. The handler keeps one `PageCache`, so `revalidate`-based ISR is\nexercised across successive requests. Pair it with {@linkcode createTestClient}.\n\nThe `plugins` in the project's `denext.config.ts` run as they do under `denext dev`: their\nprepare steps once, their route synthesizers over the scanned routes, and their request\nhandlers for what the App Router does not match — so a Pages Router app\n(`@denext/pages-router`) or a plugin-served route answers here too. Their build steps run as\nwell, and the files they emit are served. `jobs/` is registered (`runJob` works) and\n`services/` is started, as `denext start` does ({@linkcode TestAppOptions} turns each off).\nCall `close()` (or `await using`) to stop the services and run the plugins' teardowns. Each\ncall gets its own plugin set.\n\n```ts\nimport { createTestApp, createTestClient } from \"@denext/denext/testing\";\nimport { runJob } from \"@denext/denext/server\";\nawait using app = await createTestApp(\"./\");\nconst client = createTestClient(app);\nawait runJob(\"cleanup\");\n```",
+          "docFull": "Build an in-process request handler for a real project directory — **no build\nstep, no socket**. It renders Server Components, runs Server Actions and\n`middleware.ts`, and reads cookies/sessions, exactly as production does, but it\nships no client bundle — so it drives the **JavaScript-disabled** path your app\nmust support. The handler keeps one `PageCache`, so `revalidate`-based ISR is\nexercised across successive requests. Pair it with {@linkcode createTestClient}.\n\nThe `plugins` in the project's `denext.config.ts` run as they do under `denext dev`: their\nprepare steps once, their route synthesizers over the scanned routes, and their request\nhandlers for what the App Router does not match — so a Pages Router app\n(`@denext/pages-router`) or a plugin-served route answers here too. Their build steps run as\nwell, and the files they emit are served. `jobs/` is registered (`runJob` works) and\n`services/` is started, as `denext start` does ({@linkcode TestAppOptions} turns each off).\nCall `close()` (or `await using`) to stop the services and run the plugins' teardowns; it\nalso cancels the response bodies the test never read, as a server does when the client goes\naway (an unread body keeps the request's deadline timer running). Each call gets its own\nplugin set.\n\n```ts\nimport { createTestApp, createTestClient } from \"@denext/denext/testing\";\nimport { runJob } from \"@denext/denext/server\";\nawait using app = await createTestApp(\"./\");\nconst client = createTestClient(app);\nawait runJob(\"cleanup\");\n```",
           "params": [
             {
               "name": "projectDir",
@@ -29759,7 +29759,7 @@
           "kind": "variable",
           "signature": "secureStore: SecureStore",
           "doc": "A string key-value store for secrets.",
-          "docFull": "A string key-value store for secrets.\n\n- Inside the native shell with `@aparajita/capacitor-secure-storage` installed (`denext\n  mobile add secure-store`), values live in the iOS Keychain (accessible when the device is\n  unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the\n  plugin's default prefix, so its own `SecureStorage.getItem`/`setItem` see the same\n  entries.\n- Inside a Deno Desktop window (`denext desktop add secure-store`), the OS credential store,\n  through the desktop runtime: the macOS Keychain, the Windows `PasswordVault`, or the Secret\n  Service on Linux (gnome-keyring or KWallet, through the runtime's libsecret). When that store\n  is not usable (Linux without a Secret Service provider, with the keyring locked, or under a\n  runtime without its own store) the call fails with `backend_unavailable` and says why: a real\n  error, never `null` and never the plaintext web fallback.\n- **On the web it is NOT secret.** The fallback is a plain IndexedDB database\n  (`denext-secure-store`) that any script on the origin, and anyone with the device's\n  browser profile, can read. It keeps a web build working; it does not protect anything.\n\nValues are strings: `JSON.stringify` anything else.\n\n`set(key, value, { fallback: \"session\" })` / `get(key, { fallback: \"session\" })` opt in to\n`sessionStorage` when the OS store refuses (a locked or absent Linux keyring): the call warns\nonce and `set` resolves `{ stored: \"session\" }`. `get` also answers from that copy when the OS\nstore resolves with no value for the key (its own value, when present, wins). A successful OS\n`set` clears the copy and `delete` clears both. That copy is NOT secret and ends with the tab.\n\n`set(key, value, { requireBiometric: true })` gates the value: every `get` asks for Face ID /\nTouch ID / a fingerprint first (`denext mobile add biometrics`) and rejects with a\n`BiometricError` when the user is not verified, including always on the web. In a current\niOS / Android shell the OS enforces it (a Keychain access control, an Android Keystore key that\nneeds the user); in an older shell and on Deno Desktop it is denext's code in the page (see\n{@linkcode SecureStoreSetOptions.requireBiometric}).",
+          "docFull": "A string key-value store for secrets.\n\n- Inside the native shell with `@aparajita/capacitor-secure-storage` installed (`denext\n  mobile add secure-store`), values live in the iOS Keychain (accessible when the device is\n  unlocked, not synced to iCloud) or encrypted with an Android Keystore key. Keys share the\n  plugin's default prefix, so its own `SecureStorage.getItem`/`setItem` see the same\n  entries.\n- Inside a Deno Desktop window (`denext desktop add secure-store`), the OS credential store,\n  through the desktop runtime: the macOS Keychain, the Windows `PasswordVault`, or the Secret\n  Service on Linux (gnome-keyring or KWallet, through the runtime's libsecret). When that store\n  is not usable (Linux without a Secret Service provider, with the keyring locked, or under a\n  runtime without its own store) the call fails with `backend_unavailable` and says why: a real\n  error, never `null` and never the plaintext web fallback.\n- **On the web it is NOT secret.** The fallback is a plain IndexedDB database\n  (`denext-secure-store`) that any script on the origin, and anyone with the device's\n  browser profile, can read. It keeps a web build working; it does not protect anything.\n\nValues are strings: `JSON.stringify` anything else.\n\n`set(key, value, { fallback: \"session\" })` / `get(key, { fallback: \"session\" })` opt in to\n`sessionStorage` when the OS store refuses (a locked or absent Linux keyring): the call warns\nonce and `set` resolves `{ stored: \"session\" }`. `get` also answers from that copy when the OS\nstore resolves with no value for the key (its own value, when present, wins). A successful OS\n`set` clears the copy and `delete` clears both. That copy is NOT secret and ends with the tab.\n\n`set(key, value, { accessibility: \"afterFirstUnlockThisDeviceOnly\" })` picks the iOS Keychain\nclass (default `\"whenUnlocked\"`; see {@linkcode SecureStoreSetOptions.accessibility}): a\n`\"…ThisDeviceOnly\"` value never leaves the device in a backup.\n\n`set(key, value, { requireBiometric: true })` gates the value: every `get` asks for Face ID /\nTouch ID / a fingerprint first (`denext mobile add biometrics`) and rejects with a\n`BiometricError` when the user is not verified, including always on the web. In a current\niOS / Android shell the OS enforces it (a Keychain access control, an Android Keystore key that\nneeds the user); in an older shell and on Deno Desktop it is denext's code in the page (see\n{@linkcode SecureStoreSetOptions.requireBiometric}).",
           "params": [],
           "returns": "",
           "examples": [
@@ -29774,6 +29774,18 @@
           "signature": "interface SecureStore",
           "doc": "The store secureStore implements.",
           "docFull": "The store {@linkcode secureStore} implements.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "SecureStoreAccessibility",
+          "slug": "SecureStoreAccessibility",
+          "kind": "typeAlias",
+          "signature": "type SecureStoreAccessibility = whenUnlocked | whenUnlockedThisDeviceOnly | afterFirstUnlock | afterFirstUnlockThisDeviceOnly | whenPasscodeSetThisDeviceOnly",
+          "doc": "The iOS Keychain accessibility classes SecureStoreSetOptions.accessibility takes (kSecAttrAccessibleWhenUnlocked, …WhenUnlockedThisDeviceOnly, …AfterFirstUnlock, …AfterFirstUnlockThisDeviceOnly, …WhenPasscodeSetThisDeviceOnly).",
+          "docFull": "The iOS Keychain accessibility classes {@linkcode SecureStoreSetOptions.accessibility} takes\n(`kSecAttrAccessibleWhenUnlocked`, `…WhenUnlockedThisDeviceOnly`, `…AfterFirstUnlock`,\n`…AfterFirstUnlockThisDeviceOnly`, `…WhenPasscodeSetThisDeviceOnly`).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -33102,6 +33114,18 @@
           "denextOnly": true
         },
         {
+          "name": "LustreInsertMetadata",
+          "slug": "LustreInsertMetadata",
+          "kind": "typeAlias",
+          "signature": "type LustreInsertMetadata = (kind: number, parent: LustreMetadata | null, node: Node, index: number, key: string | null) => LustreMetadata",
+          "doc": "insertMetadataChild(kind, parent, node, index, key) from Lustre's lustre/vdom/reconciler.ffi.mjs: attach metadata to node as child index of parent.",
+          "docFull": "`insertMetadataChild(kind, parent, node, index, key)` from Lustre's\n`lustre/vdom/reconciler.ffi.mjs`: attach metadata to `node` as child `index` of `parent`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "lustreIsland",
           "slug": "lustreIsland",
           "kind": "function",
@@ -33164,6 +33188,18 @@
           "signature": "interface LustreKit",
           "doc": "What denext/gleam's Lustre helpers call: the app's Lustre build, wrapped.",
           "docFull": "What denext/gleam's Lustre helpers call: the app's Lustre build, wrapped.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LustreMetadata",
+          "slug": "LustreMetadata",
+          "kind": "interface",
+          "signature": "interface LustreMetadata",
+          "doc": "Lustre's reconciler metadata for one node (MetadataNode), as far as adoption touches it.",
+          "docFull": "Lustre's reconciler metadata for one node (`MetadataNode`), as far as adoption touches it.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -33310,13 +33346,17 @@
           "name": "lustreViewIsland",
           "slug": "lustreViewIsland",
           "kind": "function",
-          "signature": "lustreViewIsland(Reconciler: LustreReconcilerClass): (props: LustreViewIslandProps) => VNode",
+          "signature": "lustreViewIsland(Reconciler: LustreReconcilerClass, insertMetadata?: LustreInsertMetadata): (props: LustreViewIslandProps) => VNode",
           "doc": "The browser island for defineLustreView, bound to Lustre's reconciler. The Gleam build calls this in the generated .denext/lustre-view.ts; apps don't.",
           "docFull": "The browser island for `defineLustreView`, bound to Lustre's reconciler. The Gleam build calls\nthis in the generated `.denext/lustre-view.ts`; apps don't.",
           "params": [
             {
               "name": "Reconciler",
               "doc": "Reconciler from the app's @gleam/lustre/lustre/vdom/reconciler.ffi.mjs."
+            },
+            {
+              "name": "insertMetadata",
+              "doc": "insertMetadataChild from the same module: the server-rendered first paint is adopted when the view mounts (its nodes, focus and typed text kept). Without it the first mount replaces the root's contents."
             }
           ],
           "returns": "The island component.",

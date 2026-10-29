@@ -507,6 +507,13 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   script can read the value. Android needs 9 or later (8 and earlier refuse it); the passcode as
   a fallback (`allowDeviceCredential`) needs Android 11. A gated value is dropped when the enrolled
   biometrics change, and it is never backed up.
+- **`secureStore`'s `accessibility` is an iOS Keychain class.** On Android the secure-storage
+  plugin's Keystore key never leaves the device and needs no unlock, so every value behaves as
+  `"afterFirstUnlockThisDeviceOnly"` whatever is passed (no `whenUnlocked` lock requirement there);
+  on the web and in a Deno Desktop window the option has no effect.
+- **The OTA check on `/_capacitor_file_` requests (iOS) needs Capacitor's own asset handler:** the
+  bridge turns that handler into `DenextOtaFileGuard`; an app that installs its own handler
+  subclass keeps it, and those requests are not checked (the bridge logs it).
 - **`denext fastlane` (the managed fastlane)** runs on macOS and Linux only (arm64, x64); Windows
   is not supported. Its first install needs a C compiler, because several of fastlane's gems
   build C extensions. It runs denext's pinned gems, so plugins in `fastlane/Pluginfile` need the

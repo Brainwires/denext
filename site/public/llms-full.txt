@@ -496,7 +496,7 @@ to Capacitor through `window.Capacitor`, so no `@capacitor/*` import. iOS moment
 survives virtualized-list scroll corrections automatically (the runtime installs the shim on iOS
 WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
-`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
+`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web; `{ accessibility }` sets the iOS Keychain class), `readFile`/`writeFile`/
 `listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickMedia` (several photos and
 videos)/`pickDocument`/`scanBarcode`/`pickContact` (`null` when cancelled), `setQuickActions`/`useQuickAction`
 (home-screen shortcuts), `openSqlite` (the
@@ -1760,7 +1760,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `bootMigrate(sql: SqlClient, options: BootMigrateOptions): Promise<void>` — Bring a feature's schema up at startup or first use. With boot-time DDL on, apply the pending migrations (the server's NOTICEs silenced) and print one line when any were applied. With it off, apply nothing: throw a BootSchemaError unless every migration is recorded.
 - `interface BootMigrateOptions` — Options for bootMigrate: the migrations and their tracking table, and who asks.
 - `class BootSchemaError` — Why a feature can't start with boot-time DDL off: its schema is not (all) there.
-- `broadcastChannelTransport(name?: string): ChannelTransport` — A transport over the Web BroadcastChannel API: every instance that shares the channel name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.
+- `broadcastChannelTransport(name?: string): ChannelTransport & object` — A transport over the Web BroadcastChannel API: every instance that shares the channel name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.
 - `buildAuthnRequest(options: BuildAuthnRequestOptions): Promise<object>` — Build an AuthnRequest and the IdP URL that carries it (HTTP-Redirect binding: the XML is DEFLATE-compressed, base64-encoded and URL-encoded into SAMLRequest). The request names this SP's HTTP-POST ACS URL, and is signed (SigAlg + Signature) when sp.signingKey is set. Remember the returned id (with the RelayState) and pass it as expectedInResponseTo when the Response arrives.
 - `interface BuildAuthnRequestOptions` — Options for buildAuthnRequest.
 - `buildLogoutRequest(options: BuildLogoutRequestOptions): Promise<object>` — Build an SP-initiated LogoutRequest, signed over the HTTP-Redirect binding (RSA-SHA256), and the IdP URL that carries it. Remember the returned id: the LogoutResponse must answer it.
@@ -3501,6 +3501,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `scheduleNotification(notification: LocalNotificationInput): Promise<number>` — Schedule a local notification (or show it now, without a trigger). Scheduling an id that is already pending replaces it.
 - `secureStore: SecureStore` — A string key-value store for secrets.
 - `interface SecureStore` — The store secureStore implements.
+- `type SecureStoreAccessibility = whenUnlocked | whenUnlockedThisDeviceOnly | afterFirstUnlock | afterFirstUnlockThisDeviceOnly | whenPasscodeSetThisDeviceOnly` — The iOS Keychain accessibility classes SecureStoreSetOptions.accessibility takes (kSecAttrAccessibleWhenUnlocked, …WhenUnlockedThisDeviceOnly, …AfterFirstUnlock, …AfterFirstUnlockThisDeviceOnly, …WhenPasscodeSetThisDeviceOnly).
 - `type SecureStoreFallback = session` — The opt-in fallbacks of SecureStoreSetOptions.fallback.
 - `interface SecureStoreGetOptions` — Options for SecureStore.get.
 - `interface SecureStoreSetOptions` — Options for SecureStore.set.
@@ -3747,10 +3748,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `lustreElement<Attrs>(kit: LustreKit, tag: string, app: LustreApp<undefined>): (props: LustreElementAttributes<Attrs>) => VNode` — Turn a Lustre component into a denext component that renders it as the custom element tag. Export the result from a "use client" module.
 - `type LustreElementAttributes<Attrs> = Partial<Attrs> & object` — The props of a Lustre custom element in JSX: its attributes (each a string, the component's on_attribute_change decoders parse them), the usual global ones, and light-DOM children for the component's slots.
 - `interface LustreEventPayload` — A DOM event a Lustre view's client sent, after the built-in shape check.
+- `type LustreInsertMetadata = (kind: number, parent: LustreMetadata | null, node: Node, index: number, key: string | null) => LustreMetadata` — insertMetadataChild(kind, parent, node, index, key) from Lustre's lustre/vdom/reconciler.ffi.mjs: attach metadata to node as child index of parent.
 - `lustreIsland<Flags, Props>(kit: LustreKit, app: LustreApp<Flags>, options?: LustreIslandOptions<Flags, Props>): (props: Props) => VNode` — Turn a Lustre app into a denext island component. Export the result from a "use client" module.
 - `interface LustreIslandOptions<Flags, Props>` — How lustreIsland maps the component's props onto the app.
 - `lustreKit(modules: LustreModules): LustreKit` — Wrap the app's Lustre functions for denext/gleam. The generated .denext/lustre.ts calls this; app code imports the kit from there.
 - `interface LustreKit` — What denext/gleam's Lustre helpers call: the app's Lustre build, wrapped.
+- `interface LustreMetadata` — Lustre's reconciler metadata for one node (MetadataNode), as far as adoption touches it.
 - `interface LustreModules` — The functions lustreKit takes, imported from the app's Lustre build.
 - `interface LustreReconciler` — Lustre's client reconciler (lustre/vdom/reconciler.ffi.mjs), as far as this module uses it.
 - `type LustreReconcilerClass = (root: Element, decodeEvent: (event: Event, path: string, name: string, include?: string[]) => unknown, dispatch: (event: Event, data: unknown) => void) => LustreReconciler` — The Reconciler class: new Reconciler(root, decodeEvent, dispatch).
@@ -3762,7 +3765,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type LustreServerRuntime = object` — A running Lustre server component.
 - `interface LustreViewComponent<Props>` — The component defineLustreView returns.
 - `interface LustreViewConfig<Flags, Props>` — What defineLustreView takes.
-- `lustreViewIsland(Reconciler: LustreReconcilerClass): (props: LustreViewIslandProps) => VNode` — The browser island for defineLustreView, bound to Lustre's reconciler. The Gleam build calls this in the generated .denext/lustre-view.ts; apps don't.
+- `lustreViewIsland(Reconciler: LustreReconcilerClass, insertMetadata?: LustreInsertMetadata): (props: LustreViewIslandProps) => VNode` — The browser island for defineLustreView, bound to Lustre's reconciler. The Gleam build calls this in the generated .denext/lustre-view.ts; apps don't.
 - `interface LustreViewIslandProps` — The island's props (written by defineLustreView's server render).
 - `interface PrerenderedShadow` — A custom element's prerendered shadow root (a <template shadowrootmode>).
 

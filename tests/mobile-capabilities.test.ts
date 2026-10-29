@@ -546,6 +546,72 @@ Deno.test("secureStore: native SecureStorage internal* calls with the plugin's p
   await assertRejects(() => secureStore.set("k", 1 as Any), TypeError, "must be a string");
 });
 
+Deno.test("secureStore: accessibility picks the plugin's Keychain class; the default is unchanged", async () => {
+  const { plugin, calls } = recorder(["internalGetItem", "internalSetItem", "internalRemoveItem"]);
+  const classes = [
+    "whenUnlocked",
+    "whenUnlockedThisDeviceOnly",
+    "afterFirstUnlock",
+    "afterFirstUnlockThisDeviceOnly",
+    "whenPasscodeSetThisDeviceOnly",
+  ] as const;
+  await inShell({ SecureStorage: plugin }, async () => {
+    await secureStore.set("token", "tok");
+    for (const accessibility of classes) {
+      assertEquals(await secureStore.set("token", "tok", { accessibility }), {
+        stored: "keychain",
+      });
+    }
+  });
+  // KeychainAccess: whenUnlocked 0 … whenPasscodeSetThisDeviceOnly 4; no option is whenUnlocked.
+  assertEquals(
+    calls.map(([, arg]) => (arg as { access: number }).access),
+    [0, 0, 1, 2, 3, 4],
+  );
+});
+
+Deno.test("secureStore: an unknown accessibility, or one beside requireBiometric, is a TypeError everywhere", async () => {
+  const { plugin, calls } = recorder(["internalGetItem", "internalSetItem", "internalRemoveItem"]);
+  await inShell({ SecureStorage: plugin }, async () => {
+    await assertRejects(
+      () => secureStore.set("k", "v", { accessibility: "always" as Any }),
+      TypeError,
+      "accessibility must be one of whenUnlocked",
+    );
+    await assertRejects(
+      () =>
+        secureStore.set("k", "v", {
+          requireBiometric: true,
+          accessibility: "afterFirstUnlockThisDeviceOnly",
+        }),
+      TypeError,
+      "always whenPasscodeSetThisDeviceOnly",
+    );
+  });
+  assertEquals(calls, []);
+  // The web refuses the same value before touching IndexedDB.
+  const idb = fakeIndexedDB();
+  await withGlobals({ indexedDB: idb.indexedDB }, async () => {
+    await assertRejects(
+      () => secureStore.set("k", "v", { accessibility: "nope" as Any }),
+      TypeError,
+      "accessibility",
+    );
+  });
+  assertEquals(idb.opened, []);
+});
+
+Deno.test("secureStore: on the web accessibility is accepted and has no effect", async () => {
+  const idb = fakeIndexedDB();
+  await withGlobals({ indexedDB: idb.indexedDB }, async () => {
+    assertEquals(
+      await secureStore.set("a", "1", { accessibility: "afterFirstUnlockThisDeviceOnly" }),
+      { stored: "indexeddb" },
+    );
+    assertEquals(await secureStore.get("a"), "1");
+  });
+});
+
 Deno.test('secureStore: native fallback "session" when the plugin refuses the write but reads null', async () => {
   const warn = console.warn;
   console.warn = () => {};

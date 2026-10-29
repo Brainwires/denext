@@ -88,6 +88,55 @@ Deno.test("OTA re-verification: generation 9 carries it on both platforms", () =
   );
 });
 
+Deno.test("OTA serve hardening: generation 12 checks the platform stamp, /_capacitor_file_ and fails closed", () => {
+  assert(OTA_TEMPLATE_VERSION >= 12);
+  // iOS: the request parse checks the stamp between the trust and the release checks.
+  const request = IOS_STORE.slice(IOS_STORE.indexOf("struct ApplyRequest: Sendable {"));
+  const trust = request.indexOf("try DenextOtaStore.checkTrust(");
+  const platform = request.indexOf(
+    'try DenextOtaStore.checkPlatform(manifest["platform"], files: files)',
+  );
+  assert(trust >= 0 && platform > trust, "iOS: checkPlatform after checkTrust");
+  assert(
+    platform < request.indexOf("try DenextOtaStore.checkRelease("),
+    "iOS: before checkRelease",
+  );
+  assertStringIncludes(IOS_STORE, 'static let platform = "ios"');
+  // The bridge turns Capacitor's asset handler into the guard before the first page.
+  const didLoad = member(IOS_BRIDGE, "    override func capacitorDidLoad() {");
+  assert(
+    didLoad.indexOf("super.capacitorDidLoad()") <
+      didLoad.indexOf("DenextOtaFileGuard.install(on: bridge)"),
+    didLoad,
+  );
+  assertStringIncludes(IOS_BRIDGE, "final class DenextOtaFileGuard: WebViewAssetHandler {");
+  assertStringIncludes(IOS_BRIDGE, "DenextOtaStore.shared.admitCapacitorFile(path)");
+  // A base outside the versions root other than the bundled UI fails closed.
+  assertStringIncludes(
+    member(
+      IOS_STORE,
+      "    private func admit(_ file: String, servedFrom base: String, serving: Bool) -> Bool {",
+    ),
+    "guard let bundled = bundled, served.path == bundled.standardizedFileURL.path else { return false }",
+  );
+  // Android: the same, in the plugin's parse and the store's route processor.
+  assertStringIncludes(
+    ANDROID_PLUGIN,
+    'DenextOtaStore.checkPlatform(manifest.opt("platform"), files);',
+  );
+  assertStringIncludes(ANDROID_STORE, 'static final String PLATFORM = "android";');
+  const process = member(
+    ANDROID_STORE,
+    "        public ProcessedRoute process(String basePath, String path) {",
+  );
+  assert(
+    process.indexOf("path.startsWith(Bridge.CAPACITOR_FILE_START)") <
+      process.indexOf("} else if (!files) {"),
+    process,
+  );
+  assertStringIncludes(process, "store.admitCapacitorFile(path, files ? served : null)");
+});
+
 Deno.test("OTA re-verification: the stored manifest keeps every field the signature covers", () => {
   const swift = member(
     IOS_STORE,
@@ -444,6 +493,47 @@ const IOS_LOW_CHECKS = [
   "the UI is still served after it",
 ];
 
+/**
+ * The serve check's hardening (OTA template generation 12), in both harnesses: `/_capacitor_file_`
+ * requests into the versions root get the manifest check, a served base outside it fails closed,
+ * and the shell checks the platform stamp itself.
+ */
+const SERVE_HARDENING_CHECKS = [
+  "capacitor file: a file outside the versions root passes through",
+  "capacitor file: an untampered file of a downloaded UI is served",
+  "capacitor file: a file outside a version directory is refused",
+  "capacitor file: a path that climbs into the versions root is checked",
+  "capacitor file: a symlinked spelling of the versions root is checked",
+  "capacitor file: a changed file is refused and quarantines the UI",
+  "capacitor file: the plugin is told while the version is being served",
+  "fail closed: the versions root itself is refused as a base",
+  "platform: the field without a matching stamp is refused",
+  "platform: a field that disagrees with the stamp is refused",
+  "platform: a field that is not a string is invalid",
+];
+
+/** The generation-12 checks only the Swift harness runs (through `admit` and `ApplyRequest`). */
+const IOS_SERVE_HARDENING_CHECKS = [
+  "fail closed: a base outside the versions root and the bundled UI is refused",
+  "fail closed: a bundled-UI route outside its directory is refused",
+  "capacitor file: the bridge's router paths are not checked here",
+  "platform: an iOS export is accepted",
+  "platform: an iOS stamp without the field is accepted",
+  "platform: an Android export is refused (platform_mismatch)",
+  "platform: an Android stamp without the field is refused",
+];
+
+/** The generation-12 checks only the Java harness runs (through the route processor). */
+const ANDROID_SERVE_HARDENING_CHECKS = [
+  "fail closed: a served directory outside the versions root is refused",
+  "capacitor file: a refused file reads a directory (the request fails)",
+  "capacitor file: checked while the bundled assets are served too",
+  "platform: an Android export is accepted",
+  "platform: an Android stamp without the field is accepted",
+  "platform: an iOS export is refused (platform_mismatch)",
+  "platform: an iOS stamp without the field is refused",
+];
+
 /** Asserts a harness's output: every line ok, the shared checks all present, a clean tally. */
 function assertHarness(output: string, platform: string): void {
   const lines = output.trim().split(/\r?\n/);
@@ -451,6 +541,7 @@ function assertHarness(output: string, platform: string): void {
   assertEquals(failed, [], `${platform}:\n${output}`);
   const passed = new Set(lines.filter((l) => l.startsWith("ok ")).map((l) => l.slice(3)));
   for (const name of SHARED_CHECKS) assert(passed.has(name), `${platform}: no "${name}"`);
+  for (const name of SERVE_HARDENING_CHECKS) assert(passed.has(name), `${platform}: no "${name}"`);
   if (!IS_ROOT) {
     for (const name of UNREADABLE_CHECKS) assert(passed.has(name), `${platform}: no "${name}"`);
   }
@@ -485,7 +576,9 @@ Deno.test({
       await Deno.mkdir(work);
       const out = await run("java", ["-cp", classes, "dev.denext.ota.OtaReverifyHarness", work]);
       assertHarness(out, "android");
-      for (const name of EXPIRY_CHECKS) assertStringIncludes(out, `ok ${name}`);
+      for (const name of [...EXPIRY_CHECKS, ...ANDROID_SERVE_HARDENING_CHECKS]) {
+        assertStringIncludes(out, `ok ${name}`);
+      }
       assertStringIncludes(out, "ok the bundled assets are answered as Capacitor does");
       assertStringIncludes(
         out,
@@ -551,7 +644,7 @@ Deno.test({
       const out = await run(bin, [work]);
       assertHarness(out, "ios");
       assertStringIncludes(out, "ok an embedded key that does not parse refuses it (fail closed)");
-      for (const name of [...EXPIRY_CHECKS, ...IOS_LOW_CHECKS]) {
+      for (const name of [...EXPIRY_CHECKS, ...IOS_LOW_CHECKS, ...IOS_SERVE_HARDENING_CHECKS]) {
         assertStringIncludes(out, `ok ${name}`);
       }
       // The Swift v4 payload is byte for byte denext's otaSignaturePayload.

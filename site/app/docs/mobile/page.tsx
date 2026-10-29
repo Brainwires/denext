@@ -588,7 +588,26 @@ denext mobile add haptics share network secure-store`}
           with the option also reads it when the OS store answers with no value for the key (a value
           the OS store holds wins). A later keychain <code>set</code> of the key clears it,{" "}
           <code>delete</code> clears both, and <code>requireBiometric</code>{" "}
-          never falls back. Without the option a refusal still rejects.
+          never falls back. Without the option a refusal still rejects.{" "}
+          <code>{'{ accessibility: "afterFirstUnlockThisDeviceOnly" }'}</code> on <code>set</code>
+          {" "}
+          picks the iOS Keychain class (<code>kSecAttrAccessible…</code>):{" "}
+          <code>&quot;whenUnlocked&quot;</code> (the default, unchanged),{" "}
+          <code>&quot;whenUnlockedThisDeviceOnly&quot;</code>,{" "}
+          <code>&quot;afterFirstUnlock&quot;</code>,{" "}
+          <code>&quot;afterFirstUnlockThisDeviceOnly&quot;</code> or{" "}
+          <code>&quot;whenPasscodeSetThisDeviceOnly&quot;</code>. A <code>…ThisDeviceOnly</code>
+          {" "}
+          value is never in a backup and never moves to another device, which suits a refresh token;
+          an <code>afterFirstUnlock…</code>{" "}
+          value stays readable while the device is locked again, for background work. On Android the
+          plugin&apos;s Keystore key never leaves the device and needs no unlock, so every value
+          already behaves as{" "}
+          <code>&quot;afterFirstUnlockThisDeviceOnly&quot;</code>. On the web and in a Deno Desktop
+          window the option is accepted and has no effect. An unknown class is a{" "}
+          <code>TypeError</code> everywhere, and so is a class other than{" "}
+          <code>&quot;whenPasscodeSetThisDeviceOnly&quot;</code> beside{" "}
+          <code>requireBiometric</code>.
         </li>
         <li>
           <code>openSqlite(name)</code> (<code>sqlite</code>): a SQLite database with{" "}
@@ -3602,7 +3621,9 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         <li>
           <code>platform_mismatch</code>: the manifest names another platform's export (
           <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>); checked
-          by <code>checkForUiUpdate</code> before the native side sees it.
+          by <code>checkForUiUpdate</code>{" "}
+          before the native side sees it, and by the native side too (from <code>add-ota</code>{" "}
+          template generation 12), so a call that skips the page's check is refused the same way.
         </li>
       </ul>
       <p>
@@ -3650,9 +3671,14 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         the embedded key, and its version recomputed from the file list), and the shell checks each
         file's SHA-256 and size the first time it serves it in a process (iOS: the bridge's router;
         Android: the bridge's route processor). Only the files a page actually loads are hashed, so
-        a large UI does not slow the launch. A file changed, added or removed on the device after
-        the download (another app on a rooted or jailbroken device, malware with storage access,
-        corruption) is never served: the version is moved to{" "}
+        a large UI does not slow the launch. The same check covers a <code>/_capacitor_file_</code>
+        {" "}
+        request (<code>Capacitor.convertFileSrc</code>) for a file inside the downloaded versions,
+        however the path is spelled; files elsewhere are served as before. The shell serves only the
+        bundled UI or a downloaded version's directory, and refuses a request from any other base. A
+        file changed, added or removed on the device after the download (another app on a rooted or
+        jailbroken device, malware with storage access, corruption) is never served: the version is
+        moved to{" "}
         <code>quarantine/</code>, the webview switches to the bundled UI (or the confirmed download,
         re-verified), and <code>onOtaRejected</code> fires there. <code>otaStatus()</code>{" "}
         reports the version as <code>tampered</code> until <code>otaReset()</code>; it is not{" "}

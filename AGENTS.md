@@ -492,7 +492,7 @@ to Capacitor through `window.Capacitor`, so no `@capacitor/*` import. iOS moment
 survives virtualized-list scroll corrections automatically (the runtime installs the shim on iOS
 WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
-`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
+`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web; `{ accessibility }` sets the iOS Keychain class), `readFile`/`writeFile`/
 `listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickMedia` (several photos and
 videos)/`pickDocument`/`scanBarcode`/`pickContact` (`null` when cancelled), `setQuickActions`/`useQuickAction`
 (home-screen shortcuts), `openSqlite` (the
