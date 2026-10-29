@@ -81,6 +81,11 @@ and this project adheres to
   The next Gleam build rewrites `.denext/lustre-view.ts` to pass Lustre's `insertMetadataChild`.
 - **`broadcastChannelTransport()` returns a `close()`** that closes its `BroadcastChannel`
   (an open one keeps the process's event loop alive).
+- **`DENEXT_CHILD_PROBE=1`, a diagnostic for a build child that hangs.** The build's `deno info`
+  and `deno bundle` children then run with Deno's debug log on, and one still running at its
+  deadline is reported, in the retry warning and the final error, with the log's last 80 lines and
+  two CPU samples taken before the kill (`Get-Process` with the threads' wait reasons on Windows,
+  `ps` elsewhere). Off by default: without it the children run as before.
 
 ### Changed
 

@@ -24,7 +24,7 @@
 //   config field only where config-validate.ts enforces that exact bound, and
 //   `@widget textarea` marks a multi-line string (`spa.head`, `spa.loading`).
 
-import { denoDocJson } from "./deno-doc.ts";
+import { denoDocJsonMany } from "./deno-doc.ts";
 import {
   description,
   interfaceSchema,
@@ -131,9 +131,10 @@ export async function formatWith(text: string, ext: "ts" | "json"): Promise<stri
 export async function generate(): Promise<{ keysModule: string; schema: string }> {
   // `DenextConfig` references interfaces declared in sibling modules (`I18nConfig`,
   // `CspSetting`, …); doc those too so the schema expands them instead of leaving `{}`.
-  const table = symbolTable(await denoDocJson(CONFIG_SOURCE));
-  for (const extra of CONFIG_TYPE_SOURCES) {
-    for (const [name, decl] of symbolTable(await denoDocJson(extra))) {
+  const [configDoc, ...extraDocs] = await denoDocJsonMany([CONFIG_SOURCE, ...CONFIG_TYPE_SOURCES]);
+  const table = symbolTable(configDoc);
+  for (const extraDoc of extraDocs) {
+    for (const [name, decl] of symbolTable(extraDoc)) {
       if (!table.has(name)) table.set(name, decl);
     }
   }

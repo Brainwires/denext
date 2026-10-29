@@ -10,40 +10,27 @@
  * (src/build/serial-child.ts): one at a time in this process, killed at a deadline and started
  * once more, and a second stall is a named failure.
  *
- * To say where a stalled child was, each runs with Deno's debug log on (`DENO_LOG`, minus the
- * import map's and the permission checker's per-specifier lines). Its stderr is kept as a short
- * tail in memory and printed only when the child stalls, with its CPU time sampled twice before
- * the kill (`Get-Process` on Windows, `ps` elsewhere), so a child blocked on a lock, a pipe or the
- * network reads differently from one that spins. A child that finishes costs only that tail.
+ * To say where a stalled child was, each is probed (src/build/child-probe.ts, which the build's
+ * own children use under `DENEXT_CHILD_PROBE=1`): it runs with Deno's debug log on (`DENO_LOG`,
+ * minus the import map's and the permission checker's per-specifier lines), its stderr is kept as
+ * a short tail in memory and printed only when the child stalls, with its CPU time sampled twice
+ * before the kill (`Get-Process` on Windows, `ps` elsewhere), so a child blocked on a lock, a pipe
+ * or the network reads differently from one that spins. A child that finishes costs only that tail.
+ *
+ * `deno doc --json` takes many modules at once, and {@linkcode denoDocJsonMany} documents them a
+ * batch per child: a few children instead of one per module.
  *
  * @module
  */
 
-import { drainUntilExit } from "../src/build/exited-output.ts";
-import {
-  boundedOutput as boundedChildOutput,
-  childDeadlineMs,
-  ChildStallError,
-  retryOnStall,
-} from "../src/build/serial-child.ts";
+import { resolve, toFileUrl } from "@std/path";
+import { boundedSpawn, DENO_CHILD_LOG } from "../src/build/child-probe.ts";
+import { childDeadlineMs, ChildStallError, retryOnStall } from "../src/build/serial-child.ts";
+
+export { DENO_CHILD_LOG, sampleProcess } from "../src/build/child-probe.ts";
 
 /** Each attempt's deadline unless `DENEXT_CHILD_DEADLINE_MS` replaces it: room for a cold cache. */
 const DENO_CHILD_DEADLINE_MS = 120_000;
-
-/** How many of a stalled child's last stderr lines its failure carries. */
-const TAIL_LINES = 80;
-
-/**
- * The child's `DENO_LOG` filter: debug from every crate (the module graph, the HTTP and npm
- * caches, the resolver, the lockfile, the SQLite caches), except the import map's and the
- * permission checker's per-specifier lines, which are most of the volume and say nothing about a
- * stall.
- */
-export const DENO_CHILD_LOG = "debug,import_map=info,deno_permissions=info";
-
-/** A line Deno's logger writes at debug or trace level (`DEBUG RS - target:line - …`). */
-// deno-lint-ignore no-control-regex -- a colored log line starts with ANSI escapes
-const DEBUG_LINE = /^(?:\x1b\[[0-9;]*m)*(?:DEBUG|TRACE) RS - /;
 
 /** What {@linkcode boundedDeno} reports. */
 export interface BoundedDenoResult {
@@ -65,7 +52,7 @@ export interface BoundedDenoOptions {
   readonly env?: Record<string, string>;
   /** Each attempt's deadline in ms (default 120 s, or `DENEXT_CHILD_DEADLINE_MS`). */
   readonly deadlineMs?: number;
-  /** Where the one-line retry notice goes (default: stderr). */
+  /** Where the retry notice (with the stalled attempt's report) goes (default: stderr). */
   readonly onStall?: (line: string) => void;
 }
 
@@ -87,184 +74,6 @@ export class DenoChildStallError extends Error {
     this.name = "DenoChildStallError";
     this.attempts = attempts;
   }
-}
-
-/** A stream's last {@linkcode TAIL_LINES} lines, and its non-debug lines (capped). */
-class StderrTail {
-  readonly #decoder = new TextDecoder();
-  #partial = "";
-  readonly #tail: string[] = [];
-  #plain = "";
-  #inDebug = false;
-  /** Lines seen. */
-  lines = 0;
-  /** When the last chunk came (`performance.now()`; 0: none). */
-  lastAt = 0;
-
-  push(chunk: Uint8Array): void {
-    this.lastAt = performance.now();
-    const parts = (this.#partial + this.#decoder.decode(chunk, { stream: true })).split("\n");
-    this.#partial = parts.pop() ?? "";
-    for (const line of parts) this.#line(line.replace(/\r$/, ""));
-  }
-
-  #line(line: string): void {
-    this.lines++;
-    this.#tail.push(line);
-    if (this.#tail.length > TAIL_LINES) this.#tail.shift();
-    if (this.#isDebug(line)) return;
-    if (this.#plain.length < 256 * 1024) this.#plain += `${line}\n`;
-  }
-
-  /**
-   * Whether `line` belongs to a debug record: it starts one, or continues the one before it (a
-   * record printing a value over several lines, such as the workspace's import map, goes on with
-   * indented lines and a closing bracket).
-   */
-  #isDebug(line: string): boolean {
-    this.#inDebug = DEBUG_LINE.test(line) ||
-      (this.#inDebug && (/^\s/.test(line) || /^[}\]]/.test(line)));
-    return this.#inDebug;
-  }
-
-  /** The stream without its debug records. */
-  plain(): string {
-    return this.#plain + (this.#partial && !this.#isDebug(this.#partial) ? this.#partial : "");
-  }
-
-  /** The last lines, the unterminated one included. */
-  tail(): string[] {
-    return this.#partial ? [...this.#tail.slice(1 - TAIL_LINES), this.#partial] : [...this.#tail];
-  }
-}
-
-/** The command that samples `pid` twice, two seconds apart. */
-function sampleCommand(pid: number): [string, string[]] {
-  if (Deno.build.os === "windows") {
-    // `Get-Process` gives the CPU time where `Win32_Process` is refused; the threads' wait
-    // reasons tell a lock or a pipe (`Executive`, `UserRequest`) from a child at work.
-    const once = `$p = Get-Process -Id ${pid} -ErrorAction Stop; ` +
-      `"cpu $([math]::Round($p.CPU, 2))s threads $($p.Threads.Count) " + ` +
-      `"handles $($p.HandleCount) ws $([math]::Round($p.WorkingSet64 / 1MB))MB states " + ` +
-      `(($p.Threads | ForEach-Object { if ($_.ThreadState -eq 'Wait') ` +
-      `{ "Wait:$($_.WaitReason)" } else { "$($_.ThreadState)" } } | Group-Object | ` +
-      `ForEach-Object { "$($_.Count)x$($_.Name)" }) -join ',')`;
-    return [
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-Command", `${once}; Start-Sleep -Seconds 2; ${once}`],
-    ];
-  }
-  const once = `ps -o time=,stat=,rss= -p ${pid}`;
-  return ["sh", ["-c", `${once}; sleep 2; ${once}`]];
-}
-
-/**
- * `pid`'s CPU time, threads and state, sampled twice two seconds apart: equal CPU times mean a
- * child blocked on something (a lock, a pipe, the network), growing ones a child at work. Never
- * waits more than 30 s; returns why there is no sample instead of throwing.
- *
- * @param pid The process.
- * @returns One line per sample, joined by `->`.
- */
-export async function sampleProcess(pid: number): Promise<string> {
-  const [program, args] = sampleCommand(pid);
-  try {
-    const out = await boundedChildOutput(
-      new Deno.Command(program, { args, stdin: "null", stdout: "piped", stderr: "piped" })
-        .spawn(),
-      { stdout: true, stderr: true },
-      30_000,
-      program,
-    );
-    const dec = new TextDecoder();
-    const samples = dec.decode(out.stdout).split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
-    if (samples.length === 0) {
-      return `(no sample: ${dec.decode(out.stderr).trim() || `exit ${out.code}`})`;
-    }
-    return samples.join(" -> ") + (Deno.build.os === "windows" ? "" : " (time stat rss-KB)");
-  } catch (err) {
-    return `(no sample: ${err instanceof Error ? err.message.split("\n")[0] : err})`;
-  }
-}
-
-/** One attempt's outcome: the output, or the stall report. */
-type Attempt =
-  | { readonly stalled: false; readonly result: BoundedDenoResult }
-  | { readonly stalled: true; readonly pid: number; readonly report: string };
-
-/** `chunks`, joined. */
-function joined(chunks: readonly Uint8Array[]): Uint8Array {
-  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
-  let at = 0;
-  for (const c of chunks) at += (out.set(c, at), c.length);
-  return out;
-}
-
-/** Run `program args` once under `deadlineMs`; a child still running then is sampled and killed. */
-async function attemptOnce(
-  program: string,
-  args: readonly string[],
-  options: BoundedDenoOptions,
-  deadlineMs: number,
-): Promise<Attempt> {
-  const started = performance.now();
-  const child = new Deno.Command(program, {
-    args: [...args],
-    cwd: options.cwd,
-    env: { DENO_LOG: DENO_CHILD_LOG, ...options.env },
-    stdin: "null",
-    stdout: "piped",
-    stderr: "piped",
-  }).spawn();
-  const stdout: Uint8Array[] = [];
-  let stdoutAt = 0;
-  const stderr = new StderrTail();
-  const reads = Promise.all([
-    drainUntilExit(child.stdout, child.status, (chunk) => {
-      stdout.push(chunk);
-      stdoutAt = performance.now();
-    }),
-    drainUntilExit(child.stderr, child.status, (chunk) => stderr.push(chunk)),
-  ]);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const late = new Promise<"late">((resolve) => {
-    if (Number.isFinite(deadlineMs)) timer = setTimeout(() => resolve("late"), deadlineMs);
-  });
-  const ended = await Promise.race([child.status, late]);
-  clearTimeout(timer);
-  if (ended !== "late") {
-    await reads;
-    return {
-      stalled: false,
-      result: {
-        code: ended.code,
-        success: ended.success,
-        stdout: new TextDecoder().decode(joined(stdout)),
-        stderr: stderr.plain(),
-      },
-    };
-  }
-  // Still running: sample it BEFORE the kill, then kill it and stop reading.
-  const sample = await sampleProcess(child.pid);
-  const killedAt = performance.now();
-  try {
-    child.kill("SIGKILL");
-  } catch { /* exited meanwhile */ }
-  let grace: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([reads, new Promise((r) => grace = setTimeout(r, 10_000))]);
-  clearTimeout(grace);
-  const ago = (t: number) =>
-    t === 0 ? "never" : `${((killedAt - t) / 1000).toFixed(1)} s before the kill`;
-  const bytes = stdout.reduce((n, c) => n + c.length, 0);
-  const report = [
-    `  pid ${child.pid}, killed ${((killedAt - started) / 1000).toFixed(1)} s after its start`,
-    `    cpu: ${sample}`,
-    `    stdout: ${bytes} bytes, last ${ago(stdoutAt)}; ` +
-    `stderr: ${stderr.lines} lines, last ${ago(stderr.lastAt)}`,
-    `    its last stderr lines (DENO_LOG=${options.env?.DENO_LOG ?? DENO_CHILD_LOG}):`,
-    ...stderr.tail().map((l) => `      ${l}`),
-  ].join("\n");
-  return { stalled: true, pid: child.pid, report };
 }
 
 /**
@@ -291,10 +100,32 @@ export async function boundedDeno(
       label,
       args.slice(1),
       async (deadline) => {
-        const run = await attemptOnce(program, args, options, deadline);
-        if (!run.stalled) return run.result;
-        reports.push(run.report);
-        throw new ChildStallError(label, run.pid, deadline, run.report);
+        try {
+          const out = await boundedSpawn(
+            program,
+            {
+              args: [...args],
+              cwd: options.cwd,
+              env: { DENO_LOG: DENO_CHILD_LOG, ...options.env },
+              stdin: "null",
+              stdout: "piped",
+              stderr: "piped",
+            },
+            deadline,
+            label,
+            true,
+          );
+          const dec = new TextDecoder();
+          return {
+            code: out.code,
+            success: out.success,
+            stdout: dec.decode(out.stdout),
+            stderr: dec.decode(out.stderr),
+          };
+        } catch (err) {
+          if (err instanceof ChildStallError && err.probe !== undefined) reports.push(err.probe);
+          throw err;
+        }
       },
       deadlineMs,
       options.onStall,
@@ -319,4 +150,226 @@ export async function denoDocJson(
   const { code, stdout, stderr } = await boundedDeno(["doc", "--json", file], options);
   if (code !== 0) throw new Error(`deno doc failed for ${file}: ${stderr}`);
   return JSON.parse(stdout);
+}
+
+/** How many modules one {@linkcode denoDocJsonMany} child documents. */
+export const DOC_BATCH = 50;
+
+/** The `deno doc --json` document's shape: one node per documented module. */
+interface DocJson {
+  readonly version?: unknown;
+  readonly nodes?: Record<string, unknown>;
+}
+
+/** The key `deno doc --json` gives `file`'s node: its real path's `file:` URL. */
+async function docKey(file: string, cwd: string | undefined): Promise<string> {
+  const path = resolve(cwd ?? Deno.cwd(), file);
+  return toFileUrl(await Deno.realPath(path).catch(() => path)).href;
+}
+
+/** A source position as `deno doc` writes one (`location`, a reference's `def.target`). */
+interface DocPosition {
+  readonly filename?: unknown;
+  readonly line?: unknown;
+  readonly col?: unknown;
+}
+
+/** `filename:line:col` of a position, or `undefined` when it isn't one. */
+function positionKey(at: DocPosition | undefined): string | undefined {
+  return typeof at?.filename === "string" ? `${at.filename}:${at.line}:${at.col}` : undefined;
+}
+
+/** What a module's node says about where its symbols are declared. */
+interface NodePositions {
+  /** The targets of its `reference` declarations into other files. */
+  readonly refs: Set<string>;
+  /** The positions of the declarations it describes. */
+  readonly described: Set<string>;
+}
+
+/** A declaration's fields {@linkcode positionsOf} reads. */
+interface DocDecl {
+  readonly kind?: unknown;
+  readonly location?: DocPosition;
+  readonly def?: { readonly target?: DocPosition };
+}
+
+/** Add what `decl` says to `into`: a reference's target out of `self`, or where it is declared. */
+function notePosition(decl: DocDecl, self: string, into: NodePositions): void {
+  if (decl.kind !== "reference") {
+    const at = positionKey(decl.location);
+    if (at !== undefined) into.described.add(at);
+    return;
+  }
+  const target = positionKey(decl.def?.target);
+  if (target !== undefined && decl.def?.target?.filename !== self) into.refs.add(target);
+}
+
+/** `node`'s {@linkcode NodePositions}; `self` is its own file URL. */
+function positionsOf(node: unknown, self: string): NodePositions {
+  const into: NodePositions = { refs: new Set(), described: new Set() };
+  const walk = (value: unknown): void => {
+    if (value === null || typeof value !== "object") return;
+    if (!Array.isArray(value)) notePosition(value as DocDecl, self, into);
+    Object.values(value).forEach(walk);
+  };
+  walk(node);
+  return into;
+}
+
+/**
+ * `files` cut into batches of at most `size` in which no two modules are known to clash: each
+ * module joins the first batch that has room and none of the modules it clashes with.
+ */
+function conflictFreeBatches(
+  files: readonly string[],
+  clashes: ReadonlyMap<string, ReadonlySet<string>>,
+  size: number,
+): string[][] {
+  const batches: string[][] = [];
+  for (const file of files) {
+    const mine = clashes.get(file);
+    const fits = batches.find((b) => b.length < size && !b.some((other) => mine?.has(other)));
+    if (fits) fits.push(file);
+    else batches.push([file]);
+  }
+  return batches;
+}
+
+/** The most rounds {@linkcode denoDocJsonMany} batches; what is left then is documented alone. */
+const MAX_DOC_ROUNDS = 6;
+
+/** What one batch settled, and what it leaves for a later round or for a run alone. */
+interface BatchOutcome {
+  /** The modules whose batched document is theirs alone. */
+  readonly settled: [file: string, doc: unknown][];
+  /** The modules to batch again, apart from the ones they clash with. */
+  readonly again: string[];
+  /** The modules to document alone. */
+  readonly alone: string[];
+  /** Pairs of modules that must not share a batch. */
+  readonly clashes: [string, string][];
+}
+
+/**
+ * Sort a batch's modules by their nodes: one with no reference into another file is settled. One
+ * with such a reference clashes with every other module of the batch that describes or refers to
+ * the same declaration (so two that both lost a symbol to a third are parted too) and is batched
+ * again, unless no earlier module describes it: then it refers to that file even alone.
+ */
+function sortBatch(
+  batch: readonly string[],
+  keys: readonly string[],
+  parsed: DocJson & { readonly nodes: Record<string, unknown> },
+): BatchOutcome {
+  const out: BatchOutcome = { settled: [], again: [], alone: [], clashes: [] };
+  const positions = keys.map((k) => positionsOf(parsed.nodes[k], k));
+  batch.forEach((file, i) => {
+    const refs = [...positions[i].refs];
+    if (refs.length === 0) {
+      out.settled.push([file, {
+        version: parsed.version,
+        nodes: { [keys[i]]: parsed.nodes[keys[i]] },
+      }]);
+      return;
+    }
+    const describes = (j: number) => refs.some((r) => positions[j].described.has(r));
+    if (!batch.some((_, j) => j < i && describes(j))) {
+      out.alone.push(file);
+      return;
+    }
+    batch.forEach((other, j) => {
+      if (j !== i && (describes(j) || refs.some((r) => positions[j].refs.has(r)))) {
+        out.clashes.push([file, other]);
+      }
+    });
+    out.again.push(file);
+  });
+  return out;
+}
+
+/** Document `batch` in one child; a batch that fails, or lacks a module's node, goes alone. */
+async function documentBatch(
+  batch: readonly string[],
+  options: BoundedDenoOptions,
+): Promise<BatchOutcome> {
+  const keys = await Promise.all(batch.map((f) => docKey(f, options.cwd)));
+  const { code, stdout } = await boundedDeno(["doc", "--json", ...batch], options);
+  const parsed = code === 0 ? JSON.parse(stdout) as DocJson : undefined;
+  const nodes = parsed?.nodes;
+  if (parsed === undefined || nodes === undefined || !keys.every((k) => Object.hasOwn(nodes, k))) {
+    return { settled: [], again: [], alone: [...batch], clashes: [] };
+  }
+  return sortBatch(batch, keys, { ...parsed, nodes });
+}
+
+/** What {@linkcode denoDocJsonMany}'s rounds have found so far. */
+interface DocRounds {
+  /** The settled modules' documents. */
+  readonly docs: Map<string, unknown>;
+  /** The modules each must not share a batch with. */
+  readonly clashes: Map<string, Set<string>>;
+  /** The modules to document alone. */
+  readonly alone: string[];
+}
+
+/** Record that `a` and `b` must not share a batch. */
+function addClash(clashes: Map<string, Set<string>>, a: string, b: string): void {
+  clashes.set(a, (clashes.get(a) ?? new Set()).add(b));
+  clashes.set(b, (clashes.get(b) ?? new Set()).add(a));
+}
+
+/** One round: batch `pending` apart from its known clashes; returns the modules to batch again. */
+async function docRound(
+  pending: readonly string[],
+  state: DocRounds,
+  options: BoundedDenoOptions,
+  batchSize: number,
+): Promise<string[]> {
+  const again: string[] = [];
+  for (const batch of conflictFreeBatches(pending, state.clashes, batchSize)) {
+    const out = batch.length === 1
+      ? { settled: [], again: [], alone: batch, clashes: [] }
+      : await documentBatch(batch, options);
+    for (const [file, doc] of out.settled) state.docs.set(file, doc);
+    for (const [a, b] of out.clashes) addClash(state.clashes, a, b);
+    again.push(...out.again);
+    state.alone.push(...out.alone);
+  }
+  return again;
+}
+
+/**
+ * `deno doc --json` over each of `files`, as {@linkcode denoDocJson} returns it for that file
+ * alone, from one child per {@linkcode DOC_BATCH} modules instead of one per module: each
+ * module's document is `{ version, nodes: { "<its file URL>": <its node> } }`, cut from the
+ * batch's.
+ *
+ * In one run `deno doc` describes a symbol once: a later module that exports it too gets a
+ * `reference` to where it is declared, not the description it gets alone. So a module whose node
+ * holds a reference into another file is documented again in a later round, never again batched
+ * with the earlier modules that describe what it refers to. One whose reference no earlier module
+ * of its batch explains (it has it alone too), and any left after {@linkcode MAX_DOC_ROUNDS}
+ * rounds, is documented alone. A batch that fails, or whose output lacks one of its modules'
+ * nodes, is documented one module at a time, so the result (or the error naming the module) is
+ * the per-module path's.
+ *
+ * @param files The modules (a repeated one is documented once).
+ * @param options Working directory, environment, deadline.
+ * @param batchSize Modules per child.
+ * @returns Each module's `deno doc --json` document, in the order of `files`.
+ */
+export async function denoDocJsonMany(
+  files: readonly string[],
+  options: BoundedDenoOptions = {},
+  batchSize: number = DOC_BATCH,
+): Promise<unknown[]> {
+  const state: DocRounds = { docs: new Map(), clashes: new Map(), alone: [] };
+  let pending = [...new Set(files)];
+  for (let round = 0; pending.length > 0 && round < MAX_DOC_ROUNDS; round++) {
+    pending = await docRound(pending, state, options, batchSize);
+  }
+  const { docs, alone } = state;
+  for (const file of [...alone, ...pending]) docs.set(file, await denoDocJson(file, options));
+  return files.map((f) => docs.get(f));
 }

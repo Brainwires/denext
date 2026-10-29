@@ -32,7 +32,8 @@ import {
 } from "./platform-extensions.ts";
 import { isChannel } from "../runtime/channel-brand.ts";
 import { denoExecutable, frameworkRoot, minDepAgeArgs, prepareConfig } from "./bundle.ts";
-import { boundedOutput, childDeadlineMs, retryOnStall } from "./serial-child.ts";
+import { boundedSpawn } from "./child-probe.ts";
+import { childDeadlineMs, retryOnStall } from "./serial-child.ts";
 import { quietThenExplain, type StderrMode } from "./exited-output.ts";
 
 // The boundary ids and the manifest's shape live in leaf modules the server runtime imports
@@ -489,36 +490,30 @@ async function spawnDenoInfo(
       // A file URL, not the path: `deno info C:\…` reads the drive letter as a URL scheme.
       toFileUrl(barrel).href,
     ];
-    const spawn = (stderr: StderrMode) =>
-      new Deno.Command(denoExecutable(), {
-        // Run in the app's folder so Deno discovers its config (and import map) as it does for
-        // the app's own commands. Without one: a process whose working directory was deleted (a
-        // test that removed its temp cwd) can't spawn `deno info` from it; run from the first
-        // entry's folder instead.
-        ...(configDir ? { cwd: configDir } : liveCwd() ? {} : { cwd: dirname(entryFiles[0]) }),
-        // sloppy-imports so extensionless Next.js app imports resolve in the graph
-        // crawl (permissive fallback; see runDenoBundle in bundle.ts).
-        args,
-        stdin: "null",
-        stdout: "piped",
-        stderr,
-      }).spawn();
+    const spawnOptions = (stderr: StderrMode): Deno.CommandOptions => ({
+      // Run in the app's folder so Deno discovers its config (and import map) as it does for
+      // the app's own commands. Without one: a process whose working directory was deleted (a
+      // test that removed its temp cwd) can't spawn `deno info` from it; run from the first
+      // entry's folder instead.
+      ...(configDir ? { cwd: configDir } : liveCwd() ? {} : { cwd: dirname(entryFiles[0]) }),
+      // sloppy-imports so extensionless Next.js app imports resolve in the graph
+      // crawl (permissive fallback; see runDenoBundle in bundle.ts).
+      args,
+      stdin: "null",
+      stdout: "piped",
+      stderr,
+    });
     // Read until `deno info` exits, not until its pipes close: a process spawned meanwhile by
     // another thread (Windows) can hold them open for its whole life. One crawl at a time per
     // process; one that never exits is killed at the deadline and started once more. stderr is
     // discarded unless the crawl fails (see quietThenExplain): a quiet stderr pipe held for the
-    // crawl's whole life is what starves other children's reads on Windows.
+    // crawl's whole life is what starves other children's reads on Windows. Under
+    // DENEXT_CHILD_PROBE a stall reports the crawl's debug log and CPU samples (child-probe.ts).
     const output = await quietThenExplain((mode) =>
       retryOnStall(
         "deno info",
         args,
-        (deadline) =>
-          boundedOutput(
-            spawn(mode),
-            { stdout: true, stderr: mode === "piped" },
-            deadline,
-            "deno info",
-          ),
+        (deadline) => boundedSpawn(denoExecutable(), spawnOptions(mode), deadline, "deno info"),
         deadlineMs,
       )
     );

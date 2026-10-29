@@ -9,6 +9,7 @@ import {
   DENO_CHILD_LOG,
   DenoChildStallError,
   denoDocJson,
+  denoDocJsonMany,
   sampleProcess,
 } from "../scripts/deno-doc.ts";
 
@@ -114,4 +115,51 @@ Deno.test("sampleProcess: two CPU samples of a live process; a reason for a gone
   const child = new Deno.Command(Deno.execPath(), { args: ["eval", ""], stdout: "null" }).spawn();
   await child.status;
   assertMatch(await sampleProcess(child.pid), /^\(no sample: /);
+});
+
+Deno.test("denoDocJsonMany: a batch documents each module exactly as it is documented alone", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-deno-doc-many-" });
+  try {
+    const write = (name: string, text: string) => Deno.writeTextFile(join(dir, name), text);
+    // `b.ts` and `c.ts` re-export `a.ts`'s symbols: documented in one run, the later of them
+    // would point at the earlier one's description instead of describing them.
+    await write(
+      "a.ts",
+      "/** A. */\nexport interface A { x: number }\n/** Two. */\nexport const two = 2;\n",
+    );
+    await write("b.ts", 'export { type A, two } from "./a.ts";\n/** B. */\nexport const b = 1;\n');
+    await write("c.ts", 'export * from "./b.ts";\n/** C. */\nexport function c(): void {}\n');
+    await write("d.ts", "/** D. */\nexport class D {}\n");
+    const files = ["c.ts", "b.ts", "a.ts", "d.ts", "b.ts"].map((f) => join(dir, f));
+    const alone = await Promise.all(files.map((f) => denoDocJson(f)));
+    for (const batchSize of [50, 2]) {
+      const batched = await denoDocJsonMany(files, {}, batchSize);
+      assertEquals(batched.length, files.length);
+      batched.forEach((doc, i) => {
+        assertEquals(
+          JSON.stringify(doc),
+          JSON.stringify(alone[i]),
+          `${files[i]} (batch ${batchSize})`,
+        );
+      });
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("denoDocJsonMany: a module that can't be documented fails as it does alone", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-deno-doc-many-" });
+  try {
+    await Deno.writeTextFile(join(dir, "ok.ts"), "export const ok = 1;\n");
+    const missing = join(dir, "missing.ts");
+    const err = await denoDocJsonMany([join(dir, "ok.ts"), missing]).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    assert(err instanceof Error, String(err));
+    assertStringIncludes(err.message, `deno doc failed for ${missing}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

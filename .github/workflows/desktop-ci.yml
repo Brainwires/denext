@@ -86,6 +86,7 @@ on:
       - "src/build/bundle.ts"
       - "src/build/exited-output.ts"
       - "scripts/deno-doc.ts" # bounded `deno doc` / `deno info` children
+      - "src/build/child-probe.ts" # their stall probe (and the build's, under DENEXT_CHILD_PROBE)
       - "src/build/windows-powershell.ts"
       # The vendored esbuild API (the sidecar bundler) and the esbuild the toolchain ships.
       - "src/build/esbuild/**"
