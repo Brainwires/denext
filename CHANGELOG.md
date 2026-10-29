@@ -264,8 +264,17 @@ and this project adheres to
   transfer a new attempt token, kept in its saved record and in the worker's input, and a worker
   whose token no longer matches changes nothing: an id cancelled, forgotten and started again
   while its old worker was finishing could otherwise be marked done (or failed) by that worker.
-  On iOS, a cancelled upload's late response bytes no longer reach the body of a new transfer
-  started under the same id. Both ship in file-transfer template generation 5.
+  An Android download's partial file is now named for its attempt (a resume renames it to the
+  new one, so a pause still resumes after the process is gone): an old worker that had not opened
+  its partial file yet writes into its own, never into the bytes of the transfer started again
+  under its id, and drops it once it stops. A cancel deletes the partial file, or a download
+  already moved into place, under the same lock as its state change, and a worker never deletes
+  the downloaded file itself, so one stopped long ago no longer removes a later transfer's file
+  at the same path. A start deletes the partial files that no live transfer to that path owns.
+  Records and work from before attempts keep the old name and still finish. On iOS, a cancelled
+  upload's late response bytes no longer reach the body of a new transfer started under the same
+  id, and a cancelled pause's late resume data no longer lands in a new transfer's pause (or
+  ends its wait for its own). Both ship in file-transfer template generation 5.
 
 ### Documentation
 

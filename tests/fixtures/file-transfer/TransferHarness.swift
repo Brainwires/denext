@@ -2,10 +2,12 @@
 // the local server tests/mobile-file-transfer-native.test.ts runs: downloads with progress, a
 // pause and a resume from resume data, multipart and binary uploads, an HTTP error, a cancel, the
 // saved records a new manager reads back, the refusals, and a reused id's old task kept out of
-// the new transfer. Foundation's URLSession is the same API on iOS; the background session itself
+// the new transfer (its late response bytes, and its pause's resume data, whose completion handler
+// the harness captures and calls itself). Foundation's URLSession is the same API on iOS; the background session itself
 // needs an app, so the harness uses the foreground one.
 // Prints `ok <check>` / `FAIL <check>: why`, then `done <failures>`.
 import Foundation
+import ObjectiveC
 
 let args = CommandLine.arguments
 let base = args[1]
@@ -203,6 +205,73 @@ do {
     let body = last("u3", "done")?["body"] as? String ?? ""
     check("a reused id's old task does not write into the new transfer's body", body == "PUT image/jpeg 100000", body)
 } catch { check("a reused id's old task does not write into the new transfer's body", false, "\(error)") }
+
+// 11. An id paused, cancelled, forgotten, started again and paused again: the first pause's
+// resume data arrives last. URLSession calls a cancel(byProducingResumeData:) completion when it
+// likes, so the harness swaps that method on the download task class for one that keeps the
+// handler (and cancels the task plainly), then calls the handlers in the order it wants.
+nonisolated(unsafe) var capturing = false
+nonisolated(unsafe) var captured: [(Data?) -> Void] = []
+func captureResumeHandlers() -> Bool {
+    let probe = URLSession(configuration: .default).downloadTask(with: URL(string: base)!)
+    defer { probe.cancel() }
+    guard let cls = object_getClass(probe) else { return false }
+    let sel = NSSelectorFromString("cancelByProducingResumeData:")
+    guard let method = class_getInstanceMethod(cls, sel) else { return false }
+    typealias Original = @convention(c) (AnyObject, Selector, @escaping @convention(block) (Data?) -> Void) -> Void
+    let original = unsafeBitCast(method_getImplementation(method), to: Original.self)
+    let replacement: @convention(block) (AnyObject, @escaping @convention(block) (Data?) -> Void) -> Void = { task, handler in
+        if capturing {
+            captured.append(handler)
+            (task as? URLSessionTask)?.cancel()
+        } else {
+            original(task, sel, handler)
+        }
+    }
+    class_replaceMethod(cls, sel, imp_implementationWithBlock(replacement), method_getTypeEncoding(method))
+    return true
+}
+do {
+    check("the harness captures resume-data handlers", captureResumeHandlers(), "no cancelByProducingResumeData: to swap")
+    capturing = true
+    try manager.start(record("d6", "download", "reused.bin", url: "\(base)/slow"))
+    _ = wait(20) { (eventsFor("d6").last { $0["type"] as? String == "progress" }?["bytes"] as? Int64 ?? 0) > 0 }
+    check("a reused id: the first pause answers true", manager.pause("d6"))
+    check("a reused id: cancel after the pause answers true", manager.cancel("d6"))
+    check("a reused id: forget answers true (pause)", manager.forget("d6"))
+    _ = wait(0.2) { false }
+    let before = eventsFor("d6").count
+    try manager.start(record("d6", "download", "reused.bin", url: "\(base)/slow"))
+    _ = wait(20) {
+        (eventsFor("d6").dropFirst(before).last { $0["type"] as? String == "progress" }?["bytes"] as? Int64 ?? 0) > 0
+    }
+    check("a reused id: the second pause answers true", manager.pause("d6"))
+    capturing = false
+    check("both pauses' handlers were captured", captured.count == 2, "\(captured.count)")
+    if captured.count == 2 {
+        let resumeFile = stateDir.appendingPathComponent("transfers/d6.resume")
+        captured[0](Data("the first task's resume data".utf8))
+        _ = wait(0.5) { false }
+        let written = (try? Data(contentsOf: resumeFile)).map { String(decoding: $0, as: UTF8.self) }
+        check("a stale pause callback does not write the new transfer's resume data", written == nil,
+              written ?? "")
+        check("a stale pause callback does not settle the new transfer's pause",
+              !eventsFor("d6").dropFirst(before).contains { $0["type"] as? String == "paused" },
+              "\(eventsFor("d6").dropFirst(before).filter { $0["type"] as? String == "paused" })")
+        if written == nil {
+            // The new transfer is still waiting for its own data: a resume now continues from it.
+            check("a reused id: resume answers true while its pause settles", (try? manager.resume("d6")) == true)
+            _ = wait(0.3) { false }
+            let started = eventsFor("d6").filter { $0["type"] as? String == "started" }.count
+            check("the resume waits for the new transfer's own pause", started == 2, "\(started) starts")
+            captured[1](nil)
+            _ = wait(60) { last("d6", "done") != nil || last("d6", "failed") != nil }
+            check("the reused id's download finishes", last("d6", "done") != nil, "\(eventsFor("d6").suffix(3))")
+        } else {
+            check("a reused id: resume answers true while its pause settles", false, "skipped: stale resume data on disk")
+        }
+    }
+} catch { check("a reused id: the first pause answers true", false, "\(error)") }
 
 print("done \(failures)")
 exit(failures == 0 ? 0 : 1)

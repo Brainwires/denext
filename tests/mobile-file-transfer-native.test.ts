@@ -7,9 +7,10 @@
 // range, 416, uploads); and the Android worker, store and plugin compiled against plain-JDK
 // stand-ins (tests/fixtures/file-transfer/java/) and run with a scripted HTTP half, so a cancel
 // or a pause lands at a fixed point in the worker (during the download, after the move, after
-// done), and an id restarted while its old worker finishes is left alone. The
-// Android files also compile in the native-plugins workflow (Gradle). Each case runs where its
-// toolchain is: swiftc / the iOS SDK on macOS, a JDK (never skipped under CI, tests/_jdk.ts).
+// done), and an id restarted while its old worker finishes (or before it opens its partial file,
+// or long after it stopped) is left alone. The Android files also compile in the native-plugins
+// workflow (Gradle). Each case runs where its toolchain is: swiftc / the iOS SDK on macOS, a JDK
+// (never skipped under CI, tests/_jdk.ts).
 
 import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
@@ -178,6 +179,10 @@ Deno.test({
       const out = await runHarness(bin, [server.base, work]);
       assertHarness(out);
       assert(out.includes("ok the resumed file is complete and in order"), out);
+      assert(
+        out.includes("ok a stale pause callback does not write the new transfer's resume data"),
+        out,
+      );
       assert(server.ranges() >= 1, "the resume sent no range request");
     } finally {
       await server.close();
@@ -335,6 +340,19 @@ Deno.test({
       );
       assert(out.includes("ok a pause before the move is paused"), out);
       assert(out.includes("ok an old worker does not finish the restarted transfer"), out);
+      assert(out.includes("ok a long-stopped old worker leaves the later transfer's file"), out);
+      assert(
+        out.includes(
+          "ok an unopened old worker does not write into the new transfer's partial file",
+        ),
+        out,
+      );
+      assert(out.includes("ok a cancel leaves the restarted transfer's partial file"), out);
+      assert(
+        out.includes("ok a paused transfer from before attempts resumes from its partial file"),
+        out,
+      );
+      assert(out.includes("ok a start deletes the dead attempts' partial files"), out);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

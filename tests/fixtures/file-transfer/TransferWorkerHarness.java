@@ -3,15 +3,19 @@
 // the plain-JDK stand-ins in java/) with a scripted DenextTransferHttp (below) in place of the
 // network, so the harness decides exactly where a cancel lands relative to the worker: during the
 // download, after the move into the target but before the record says done, after done, and after
-// an upload; where a pause lands (before the move, after it, then a cancel or a resume); and an id
-// cancelled, forgotten and started again while its old worker is still finishing. Each cancel runs to completion at its point (a hook in the scripted HTTP half), so the
-// interleaving is fixed, not timed. Prints `ok <check>` / `FAIL <check>: why`, then
+// an upload; where a pause lands (before the move, after it, then a cancel or a resume); an id
+// cancelled, forgotten and started again while its old worker is still finishing, has not opened
+// its partial file yet, or is long stopped; a start between a cancel's state change and its
+// cleanup; records and work from before attempts; and a start's cleanup of dead attempts'
+// partial files. Each step runs to completion at its point (a hook in the scripted HTTP half or
+// in WorkManager's cancel), so the interleaving is fixed, not timed. Prints `ok <check>` / `FAIL <check>: why`, then
 // `done <failures>`.
 package dev.denext.transfer;
 
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Environment;
+import androidx.work.Data;
 import androidx.work.OneTimeWorkRequest;
 import androidx.work.WorkManager;
 import androidx.work.WorkerParameters;
@@ -153,9 +157,31 @@ public final class TransferWorkerHarness {
         return record == null ? "(none)" : record.optString("state");
     }
 
+    /** The partial files (and validators) beside {@code target}, of any attempt. */
+    static String[] parts(File target) {
+        String prefix = target.getName() + ".";
+        String[] names = target.getParentFile().list((dir, name) -> name.startsWith(prefix)
+            && (name.endsWith(".denext-part") || name.endsWith(".denext-part.meta")));
+        return names == null ? new String[0] : names;
+    }
+
     static boolean partLeft(File target) {
-        File part = DenextTransferHttp.partFile(target);
-        return part.exists() || new File(part.getPath() + ".meta").exists();
+        return parts(target).length > 0;
+    }
+
+    /** A record of {@code id} as one written before attempts: no attempt token. */
+    static void putLegacy(String id, String path, String state) throws Exception {
+        JSONObject record = new JSONObject();
+        record.put("id", id);
+        record.put("kind", "download");
+        record.put("url", "https://example.test/" + id);
+        record.put("directory", "DATA");
+        record.put("path", path);
+        record.put("method", "GET");
+        record.put("state", state);
+        record.put("bytes", state.equals("paused") ? DenextTransferHttp.BODY.length : 0);
+        record.put("resumable", state.equals("paused"));
+        store.put(record);
     }
 
     public static void main(String[] args) throws Exception {
@@ -225,7 +251,7 @@ public final class TransferWorkerHarness {
         boolean[] lateCancelled = {false};
         boolean[] inWindow = {false};
         DenextTransferHttp.onMoved = () -> {
-            inWindow[0] = late.isFile() && !DenextTransferHttp.partFile(late).exists();
+            inWindow[0] = late.isFile() && !partLeft(late);
             lateCancelled[0] = cancel("late");
         };
         result = work("late");
@@ -283,11 +309,14 @@ public final class TransferWorkerHarness {
         result = work("pe");
         check("a pause before the move answers true", pePaused[0], "not paused");
         check("a pause before the move is paused", state("pe").equals("paused"), state("pe"));
-        check("a pause before the move keeps its partial file",
-            DenextTransferHttp.partFile(pausedEarly).isFile(), "no partial file");
+        check("a pause before the move keeps its partial file", partLeft(pausedEarly), "no partial file");
         check("a pause before the move does not write the target", !pausedEarly.exists(), "target written");
         boolean peResumed = resume("pe");
+        DenextTransferHttp.found = null;
         result = work("pe");
+        check("a resume continues from the paused attempt's partial file",
+            java.util.Arrays.equals(DenextTransferHttp.found, DenextTransferHttp.BODY),
+            "found " + (DenextTransferHttp.found == null ? "nothing" : DenextTransferHttp.found.length + " bytes"));
         check("a paused download resumes", peResumed && state("pe").equals("done"), peResumed + " / " + state("pe"));
         check("a resumed download leaves its file", pausedEarly.isFile() && !partLeft(pausedEarly),
             "target " + pausedEarly.isFile() + ", part " + partLeft(pausedEarly));
@@ -334,6 +363,127 @@ public final class TransferWorkerHarness {
         check("the restarted transfer leaves its file", reused.isFile() && !partLeft(reused),
             "target " + reused.isFile() + ", part " + partLeft(reused));
 
+        // A long-stopped old worker: the id is cancelled, forgotten, started again, finished and
+        // forgotten again while the first worker is still between its move and its done update.
+        // Nothing then names that worker's transfer, and the file at the path is the later one's.
+        File longStopped = dataFile("long-stopped.bin");
+        start("ls", "download", "long-stopped.bin");
+        boolean[] lsRestarted = {false};
+        DenextTransferHttp.onMoved = () -> {
+            boolean c = cancel("ls");
+            boolean f = forget("ls");
+            start("ls", "download", "long-stopped.bin");
+            String later = work("ls");
+            lsRestarted[0] = c && f && state("ls").equals("done") && later.equals("success")
+                && longStopped.isFile() && forget("ls");
+        };
+        result = work("ls");
+        check("the id was finished and forgotten again under the old worker", lsRestarted[0], "not restarted");
+        check("a long-stopped old worker leaves the later transfer's file", longStopped.isFile()
+            && longStopped.length() == DenextTransferHttp.BODY.length, "the later download was deleted");
+        check("a long-stopped old worker leaves no partial file", !partLeft(longStopped),
+            String.join(", ", parts(longStopped)));
+
+        // An old worker that has not opened its partial file yet when the id is cancelled, forgotten
+        // and started again (the new transfer then paused with its bytes): it writes into a file of
+        // its own, never into the new transfer's, and leaves nothing behind.
+        File unopened = dataFile("unopened.bin");
+        start("uo", "download", "unopened.bin");
+        boolean[] uoRestarted = {false};
+        DenextTransferHttp.onOpen = () -> {
+            boolean c = cancel("uo");
+            boolean f = forget("uo");
+            start("uo", "download", "unopened.bin");
+            boolean[] paused = {false};
+            DenextTransferHttp.onDownloaded = () -> paused[0] = pause("uo");
+            work("uo");
+            DenextTransferHttp.nextBody = DenextTransferHttp.STALE;
+            uoRestarted[0] = c && f && paused[0];
+        };
+        result = work("uo");
+        check("the id was restarted and paused before the old worker opened its file", uoRestarted[0],
+            "not restarted");
+        check("an unopened old worker leaves only the new transfer's partial file", parts(unopened).length == 1,
+            String.join(", ", parts(unopened)));
+        DenextTransferHttp.found = null;
+        boolean uoResumed = resume("uo");
+        result = work("uo");
+        check("an unopened old worker does not write into the new transfer's partial file",
+            uoResumed && java.util.Arrays.equals(DenextTransferHttp.found, DenextTransferHttp.BODY),
+            DenextTransferHttp.found == null ? "nothing to resume from"
+                : new String(DenextTransferHttp.found, StandardCharsets.UTF_8));
+        check("the new transfer finishes", state("uo").equals("done") && unopened.isFile() && !partLeft(unopened),
+            state("uo") + ", " + String.join(", ", parts(unopened)));
+
+        // A start that lands between a cancel's state change and the rest of the cancel (here, from
+        // the WorkManager cancel the plugin makes): the cancel's cleanup is done by then, so the
+        // transfer started again under the id keeps its partial file.
+        File recancelled = dataFile("recancelled.bin");
+        start("rc", "download", "recancelled.bin");
+        WorkManager manager = WorkManager.getInstance(context);
+        boolean[] rcRestarted = {false};
+        manager.onCancel = () -> {
+            manager.onCancel = null;
+            start("rc", "download", "recancelled.bin");
+            boolean[] paused = {false};
+            DenextTransferHttp.onDownloaded = () -> paused[0] = pause("rc");
+            work("rc");
+            rcRestarted[0] = paused[0];
+        };
+        boolean rcCancelled = cancel("rc");
+        manager.onCancel = null;
+        check("a start inside the cancel was paused with its bytes", rcCancelled && rcRestarted[0],
+            rcCancelled + " / " + rcRestarted[0]);
+        check("a cancel leaves the restarted transfer's partial file", partLeft(recancelled), "deleted");
+        DenextTransferHttp.found = null;
+        boolean rcResumed = resume("rc");
+        result = work("rc");
+        check("the restarted transfer resumes from its own bytes",
+            rcResumed && java.util.Arrays.equals(DenextTransferHttp.found, DenextTransferHttp.BODY),
+            DenextTransferHttp.found == null ? "nothing to resume from" : DenextTransferHttp.found.length + " bytes");
+
+        // Records and work from before attempts (no token, the partial file <target>.denext-part):
+        // a paused one resumes from its bytes, a running one's work finishes.
+        File legacyPaused = dataFile("legacy-paused.bin");
+        putLegacy("lp", "legacy-paused.bin", "paused");
+        legacyPaused.getParentFile().mkdirs();
+        Files.write(new File(legacyPaused.getPath() + ".denext-part").toPath(), DenextTransferHttp.BODY);
+        DenextTransferHttp.found = null;
+        boolean lpResumed = resume("lp");
+        result = work("lp");
+        check("a paused transfer from before attempts resumes from its partial file",
+            lpResumed && java.util.Arrays.equals(DenextTransferHttp.found, DenextTransferHttp.BODY),
+            lpResumed + " / " + (DenextTransferHttp.found == null ? "nothing" : DenextTransferHttp.found.length));
+        check("a paused transfer from before attempts finishes", state("lp").equals("done")
+            && legacyPaused.isFile() && !partLeft(legacyPaused), state("lp") + ", " + String.join(", ", parts(legacyPaused)));
+        File legacyRunning = dataFile("legacy-running.bin");
+        putLegacy("lr", "legacy-running.bin", "running");
+        manager.enqueued.put("denext-transfer-lr", new OneTimeWorkRequest.Builder(DenextTransferWorker.class)
+            .setInputData(new Data.Builder().putString(DenextTransferWorker.KEY_ID, "lr").build())
+            .build());
+        result = work("lr");
+        check("work from before attempts finishes its transfer", state("lr").equals("done")
+            && legacyRunning.isFile() && !partLeft(legacyRunning), state("lr") + " / " + result);
+
+        // A start cleans up the partial files of dead attempts at its path (and one from before
+        // attempts), but not a live transfer's, of another id, to the same path, nor other files.
+        File shared = dataFile("shared.bin");
+        start("sa", "download", "shared.bin");
+        DenextTransferHttp.onDownloaded = () -> pause("sa");
+        work("sa");
+        String[] live = parts(shared);
+        File dead = new File(shared.getPath() + ".deadbeef.denext-part");
+        File deadMeta = new File(dead.getPath() + ".meta");
+        File oldPart = new File(shared.getPath() + ".denext-part");
+        File other = new File(shared.getPath() + ".notes.txt");
+        for (File f : new File[] {dead, deadMeta, oldPart, other}) Files.write(f.toPath(), DenextTransferHttp.BODY);
+        start("sb", "download", "shared.bin");
+        check("a start deletes the dead attempts' partial files", !dead.exists() && !deadMeta.exists()
+            && !oldPart.exists(), "left: " + String.join(", ", parts(shared)));
+        check("a start keeps a live transfer's partial file at the same path", live.length == 1
+            && new File(shared.getParentFile(), live[0]).isFile(), "live " + String.join(", ", live));
+        check("a start keeps other files beside the target", other.isFile(), "deleted " + other.getName());
+
         // An upload cancelled after it was sent: its source file is the app's, never deleted.
         File source = dataFile("source.txt");
         source.getParentFile().mkdirs();
@@ -351,11 +501,21 @@ public final class TransferWorkerHarness {
 }
 
 /**
- * The HTTP half, scripted: a download writes {@link #BODY} to its partial file, an upload sends
- * nothing. The hooks run once each, at the point their name says, then clear.
+ * The HTTP half, scripted: a download notes what its partial file held ({@link #found}) and
+ * writes {@link #BODY} to it, an upload sends nothing. The hooks run once each, at the point
+ * their name says, then clear.
  */
 final class DenextTransferHttp {
     static final byte[] BODY = "denext transfer body".getBytes(StandardCharsets.UTF_8);
+    /** What a stale worker writes, told apart from {@link #BODY}. */
+    static final byte[] STALE = "a stale worker's body".getBytes(StandardCharsets.UTF_8);
+
+    /** The partial file's bytes when the last download began (null: there was none). */
+    static byte[] found;
+    /** Written by the next download in place of {@link #BODY}, once. */
+    static byte[] nextBody;
+    /** When a download begins, before it reads or opens its partial file. */
+    static Runnable onOpen;
 
     /** After a download's bytes are written, before it returns (the worker has not moved them). */
     static Runnable onDownloaded;
@@ -405,6 +565,12 @@ final class DenextTransferHttp {
         Multipart(String field, String fileName, String mimeType, Map<String, String> fields) {}
     }
 
+    private static void fireOpen() {
+        Runnable hook = onOpen;
+        onOpen = null;
+        if (hook != null) hook.run();
+    }
+
     private static void fire(boolean download, boolean moved) {
         Runnable hook;
         if (moved) {
@@ -420,8 +586,9 @@ final class DenextTransferHttp {
         if (hook != null) hook.run();
     }
 
-    static File partFile(File target) {
-        return new File(target.getPath() + ".denext-part");
+    static File partFile(File target, String attempt) {
+        if (attempt == null || attempt.isEmpty()) return new File(target.getPath() + ".denext-part");
+        return new File(target.getPath() + "." + attempt.substring(0, Math.min(8, attempt.length())) + ".denext-part");
     }
 
     static File metaFile(File part) {
@@ -431,12 +598,16 @@ final class DenextTransferHttp {
 
     static Result download(String url, Map<String, String> headers, File part, Listener listener)
         throws IOException {
+        fireOpen();
+        found = part.isFile() ? Files.readAllBytes(part.toPath()) : null;
+        byte[] body = nextBody == null ? BODY : nextBody;
+        nextBody = null;
         part.getParentFile().mkdirs();
-        Files.write(part.toPath(), BODY);
-        listener.progress(BODY.length, BODY.length);
+        Files.write(part.toPath(), body);
+        listener.progress(body.length, body.length);
         fire(true, false);
         if (listener.stopped()) throw new Stopped();
-        return new Result(200, BODY.length, null, new HashMap<>());
+        return new Result(200, body.length, null, new HashMap<>());
     }
 
     static Result upload(
