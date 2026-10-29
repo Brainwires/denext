@@ -571,6 +571,12 @@ const SERVE_HARDENING_CHECKS = [
   "platform: a signed app takes its own platform's export",
   "platform: a signed app refuses another platform's export",
   "platform: an unsigned app takes an unstamped export",
+  // Another case of a UI file's path is refused, never a reason to quarantine.
+  "case: another case of a UI file is refused without quarantining",
+  "case: another case of the stored manifest is refused without quarantining",
+  "capacitor file: another case of a UI file is refused without quarantining",
+  "case: the UI is still served after it",
+  "case: a UI file under another name still quarantines the UI",
 ];
 
 /** The generation-12 checks only the Swift harness runs (through `admit` and `ApplyRequest`). */

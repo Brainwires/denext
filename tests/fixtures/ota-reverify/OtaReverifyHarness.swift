@@ -189,6 +189,48 @@ do {
     drain()
     check("capacitor file: the plugin is told while the version is being served", heard == ["\(version) true"])
 
+    // ---- another case of a UI file's path ---------------------------------------------------
+    // On a case-insensitive volume (APFS's default) `APP.JS` opens `app.js`; any page script can
+    // ask for one, so it is refused and never quarantines. On a case-sensitive volume a hard link
+    // stands in for that second spelling of the same file.
+    let cased = try device("case", manifest: storedManifest(signature: sign(key)))
+    for (file, variant) in [("app.js", "APP.JS"), ("assets/logo.svg", "Assets/Logo.svg"), (DenextOtaStore.manifestPath, "_DENEXT/OTA.JSON")]
+    where !fm.fileExists(atPath: cased.dir.appendingPathComponent(variant).path) {
+        let to = cased.dir.appendingPathComponent(variant)
+        try fm.createDirectory(at: to.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fm.linkItem(at: cased.dir.appendingPathComponent(file), to: to)
+    }
+    store = cased.launch(key: signed)
+    heard = []
+    store.setTamperHandler { version, _, serving in heard.append("\(version) \(serving)") }
+    _ = store.prepareLaunch()
+    check(
+        "case: another case of a UI file is refused without quarantining",
+        !cased.admit(store, "/APP.JS") && !cased.admit(store, "/Assets/Logo.svg") && store.tampered == nil
+    )
+    check(
+        "case: another case of the stored manifest is refused without quarantining",
+        !cased.admit(store, "/_DENEXT/OTA.JSON") && store.tampered == nil
+    )
+    check(
+        "capacitor file: another case of a UI file is refused without quarantining",
+        !cased.capacitorFile(store, cased.dir.path + "/APP.JS") &&
+            !cased.capacitorFile(store, cased.root.path + "/" + version.uppercased() + "/app.js") && store.tampered == nil
+    )
+    drain()
+    check(
+        "case: the UI is still served after it",
+        cased.admit(store, "/app.js") && cased.capacitorFile(store, cased.dir.path + "/app.js") &&
+            store.current == version && heard.isEmpty
+    )
+    // A file of the UI under a name that is not another case of its own (a hard link) was added.
+    try fm.linkItem(at: cased.dir.appendingPathComponent("app.js"), to: cased.dir.appendingPathComponent("copy.js"))
+    check(
+        "case: a UI file under another name still quarantines the UI",
+        !cased.admit(store, "/copy.js") && store.tampered == version
+    )
+    drain()
+
     // ---- a verified file rewritten while the process runs ------------------------------------
     // The same size and modification date: only the change time (and the bytes) tell it apart.
     let rewritten = try device("rewritten", manifest: storedManifest(signature: sign(key)))

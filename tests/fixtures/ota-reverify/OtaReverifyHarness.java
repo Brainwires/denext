@@ -466,6 +466,51 @@ public final class OtaReverifyHarness {
         );
         check("capacitor file: the plugin is told while the version is being served", events.equals(List.of(version + " true")));
 
+        // ---- another case of a UI file's path ------------------------------------------------------
+        // On a case-insensitive volume APP.JS opens app.js; any page script can ask for one, so it is
+        // refused and never quarantines. On a case-sensitive volume (Android's app storage) a hard
+        // link stands in for that second spelling of the same file.
+        app = new App(new File(work, "case"), publicKey);
+        launch(app).startDirectory();
+        dir = install(app, version, storedManifest(version, "hello", signature));
+        String[][] variants = { { "app.js", "APP.JS" }, { "assets/logo.svg", "Assets/Logo.svg" }, { "_denext/ota.json", "_DENEXT/OTA.JSON" } };
+        for (String[] variant : variants) {
+            File to = new File(dir, variant[1]);
+            if (!to.exists()) {
+                to.getParentFile().mkdirs();
+                Files.createLink(to.toPath(), new File(dir, variant[0]).toPath());
+            }
+        }
+        app.prefs.values.put("current", version);
+        events.clear();
+        store = launch(app);
+        store.startDirectory();
+        bridge = attach(store);
+        bridge.served = dir.getAbsolutePath();
+        check(
+            "case: another case of a UI file is refused without quarantining",
+            refused(store, dir, "/APP.JS") && refused(store, dir, "/Assets/Logo.svg") && call(store, "tampered") == null
+        );
+        check(
+            "case: another case of the stored manifest is refused without quarantining",
+            refused(store, dir, "/_DENEXT/OTA.JSON") && call(store, "tampered") == null
+        );
+        check(
+            "capacitor file: another case of a UI file is refused without quarantining",
+            !fileServed(store, dir.getAbsolutePath() + "/APP.JS") && call(store, "tampered") == null
+        );
+        check(
+            "case: the UI is still served after it",
+            served(store, dir, "/app.js") && fileServed(store, dir.getAbsolutePath() + "/app.js") &&
+                version.equals(app.prefs.getString("current", null)) && events.isEmpty()
+        );
+        // A file of the UI under a name that is not another case of its own (a hard link) was added.
+        Files.createLink(new File(dir, "copy.js").toPath(), new File(dir, "app.js").toPath());
+        check(
+            "case: a UI file under another name still quarantines the UI",
+            refused(store, dir, "/copy.js") && version.equals(call(store, "tampered"))
+        );
+
         // ---- a verified file rewritten while the process runs ---------------------------------------
         // The same size and modification time: only the change time (and the bytes) tell it apart.
         app = new App(new File(work, "rewritten"), publicKey);

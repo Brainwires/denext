@@ -3690,7 +3690,9 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         request (<code>Capacitor.convertFileSrc</code>) for a file inside the downloaded versions,
         however the path is spelled; files elsewhere are served as before, but a path with a control
         character (a NUL would crash Capacitor's iOS handler) or to a file that is not there is
-        refused. On iOS that check is{" "}
+        refused. So is a request for a UI file in another letter case (<code>APP.JS</code> for{" "}
+        <code>app.js</code>, which a case-insensitive volume opens as that file): it fails, and
+        never quarantines the version. On iOS that check is{" "}
         <code>DenextOtaFileGuard</code>, which the bridge makes of Capacitor's own asset handler.
         When it cannot (the web view's handler is the app's own class), the app serves no downloaded
         UI: the launch runs the bundled UI, <code>onOtaRejected</code> fires with{" "}
@@ -3699,13 +3701,14 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         does its own checks opts out with <code>plugins.DenextBridge.otaFileGuard: false</code>{" "}
         in the Capacitor config; its downloaded UIs are then served with{" "}
         <code>/_capacitor_file_</code>{" "}
-        reads of their files unchecked, so a file changed on the device can reach the page that way.
-        A file is hashed again whenever its size, modification or change time, or inode differs from
-        when it was last verified, so one rewritten while the app runs is caught too. The shell
-        serves only the bundled UI or a downloaded version's directory, and refuses a request from
-        any other base. A file changed, added or removed on the device after the download (another
-        app on a rooted or jailbroken device, malware with storage access, corruption) is never
-        served: the version is moved to{" "}
+        reads of their files unchecked, so a file changed on the device can reach the page that way
+        (<code>denext mobile doctor</code>{" "}
+        warns while it is set). A file is hashed again whenever its size, modification or change
+        time, or inode differs from when it was last verified, so one rewritten while the app runs
+        is caught too. The shell serves only the bundled UI or a downloaded version's directory, and
+        refuses a request from any other base. A file changed, added or removed on the device after
+        the download (another app on a rooted or jailbroken device, malware with storage access,
+        corruption) is never served: the version is moved to{" "}
         <code>quarantine/</code>, the webview switches to the bundled UI (or the confirmed download,
         re-verified), and <code>onOtaRejected</code> fires there. <code>otaStatus()</code>{" "}
         reports the version as <code>tampered</code> until <code>otaReset()</code>; it is not{" "}

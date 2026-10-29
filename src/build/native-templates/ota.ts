@@ -1323,6 +1323,9 @@ final class DenextOtaStore: @unchecked Sendable {
         let version: String
         let directory: URL
         private let files: [String: ManifestFile]
+        /// The manifest's paths (the stored manifest's too) by their lowercased spelling: on a
+        /// case-insensitive volume another case of a path opens the same file.
+        private let folded: [String: String]
         private let manifestSha256: String
         private let lock = NSLock()
         /// The paths whose bytes already matched in this process, with the file's \`FileStamp\` from
@@ -1333,6 +1336,10 @@ final class DenextOtaStore: @unchecked Sendable {
             self.version = version
             self.directory = directory
             self.files = Dictionary(files.map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+            self.folded = Dictionary(
+                ([DenextOtaStore.manifestPath] + files.map { $0.path }).map { ($0.lowercased(), $0) },
+                uniquingKeysWith: { first, _ in first }
+            )
             self.manifestSha256 = manifestSha256
         }
 
@@ -1359,9 +1366,15 @@ final class DenextOtaStore: @unchecked Sendable {
                 // \`assets\`, say) is not, and the handler cannot serve it anyway.
                 var isDirectory: ObjCBool = false
                 let exists = FileManager.default.fileExists(atPath: target.path, isDirectory: &isDirectory)
-                return exists && !isDirectory.boolValue
-                    ? .tampered("\\(relative) is not in the signed manifest.")
-                    : .missing
+                guard exists && !isDirectory.boolValue else { return .missing }
+                // Another case of a file of the UI (\`APP.JS\` for \`app.js\`) opens that same file on a
+                // case-insensitive volume: nothing was added, so it is refused (as a case-sensitive
+                // server would), never a reason to quarantine. Any page script could ask for one.
+                if let listed = folded[relative.lowercased()], listed != relative,
+                   DenextOtaStore.isSameFile(target, directory.appendingPathComponent(listed, isDirectory: false)) {
+                    return .missing
+                }
+                return .tampered("\\(relative) is not in the signed manifest.")
             }
             lock.lock()
             let known = verified[relative]
@@ -1547,8 +1560,9 @@ final class DenextOtaStore: @unchecked Sendable {
     /// removed). One outside the versions root passes, as before. One inside it, by any spelling
     /// (\`..\`, a symbolic link, another case on a case-insensitive volume), gets \`admit\`'s check:
     /// only a file of a version directory, matching that version's signed manifest, and a mismatch
-    /// quarantines the version. A path with a control character, or one that is not there, is
-    /// refused wherever it points.
+    /// quarantines the version; another case of a UI file's own path is refused, never a reason to
+    /// quarantine. A path with a control character, or one that is not there, is refused wherever
+    /// it points.
     func admitCapacitorFile(_ requestPath: String) -> Bool {
         guard requestPath.hasPrefix(DenextOtaStore.capacitorFilePrefix) else { return true }
         let file = requestPath.replacingOccurrences(of: DenextOtaStore.capacitorFilePrefix, with: "")
@@ -1571,6 +1585,12 @@ final class DenextOtaStore: @unchecked Sendable {
         let parts = relative.split(separator: "/", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2, DenextOtaStore.isSha256(String(parts[0])) else { return false }
         let version = String(parts[0])
+        // realpath(3) spells the file as the volume stores it, so another case of a UI file
+        // (\`APP.JS\` for \`app.js\`) resolves to the manifest's own spelling. The request names no
+        // file of the manifest: refuse it, as the router does (\`InstalledUi.check\`).
+        let tail = "/" + relative
+        let requested = URL(fileURLWithPath: file).standardizedFileURL.path
+        if !requested.hasSuffix(tail), requested.lowercased().hasSuffix(tail.lowercased()) { return false }
         let base = versionDirectory(version).path
         return admit(base + "/" + parts[1], servedFrom: base, serving: version == (pending ?? current))
     }
@@ -1916,6 +1936,12 @@ final class DenextOtaStore: @unchecked Sendable {
             modified: [Int64(info.st_mtimespec.tv_sec), Int64(info.st_mtimespec.tv_nsec)],
             changed: [Int64(info.st_ctimespec.tv_sec), Int64(info.st_ctimespec.tv_nsec)]
         )
+    }
+
+    /// Whether \`a\` and \`b\` are the same file (device and inode, following links as the read does).
+    static func isSameFile(_ a: URL, _ b: URL) -> Bool {
+        guard let first = fileStamp(a), let second = fileStamp(b) else { return false }
+        return first.device == second.device && first.inode == second.inode
     }
 
     /// Whether \`url\` is a regular file. Its metadata stays readable while data protection
@@ -3853,6 +3879,11 @@ final class DenextOtaStore {
         final String version;
         final File directory;
         private final Map<String, ManifestFile> files = new HashMap<>();
+        /**
+         * The manifest's paths (the stored manifest's too) by their lowercased spelling: on a
+         * case-insensitive volume another case of a path opens the same file.
+         */
+        private final Map<String, String> folded = new HashMap<>();
         private final String manifestSha256;
         /**
          * The paths whose bytes already matched in this process, with the file's {@link #fileStamp}
@@ -3864,8 +3895,10 @@ final class DenextOtaStore {
         InstalledUi(String version, File directory, List<ManifestFile> files, String manifestSha256) {
             this.version = version;
             this.directory = directory;
+            folded.put(MANIFEST_PATH.toLowerCase(Locale.ROOT), MANIFEST_PATH);
             for (ManifestFile file : files) {
                 this.files.put(file.path, file);
+                folded.putIfAbsent(file.path.toLowerCase(Locale.ROOT), file.path);
             }
             this.manifestSha256 = manifestSha256;
         }
@@ -3893,7 +3926,17 @@ final class DenextOtaStore {
             if (file == null) {
                 // Only a file counts as added on the device: a directory of the UI (a request for
                 // assets, say) is not, and the handler cannot serve it anyway.
-                return target.exists() && !target.isDirectory() ? Verdict.TAMPERED : Verdict.MISSING;
+                if (!target.exists() || target.isDirectory()) {
+                    return Verdict.MISSING;
+                }
+                // Another case of a file of the UI (APP.JS for app.js) opens that same file on a
+                // case-insensitive volume: nothing was added, so it is refused (as a case-sensitive
+                // server would), never a reason to quarantine. Any page script could ask for one.
+                String listed = folded.get(relative.toLowerCase(Locale.ROOT));
+                if (listed != null && !listed.equals(relative) && isSameFile(target, new File(directory, listed))) {
+                    return Verdict.MISSING;
+                }
+                return Verdict.TAMPERED;
             }
             // Taken before the hash, so a file changed while it is hashed has another stamp next time.
             String stamp = fileStamp(target);
@@ -4092,7 +4135,8 @@ final class DenextOtaStore {
      * Capacitor opens (every {@code /_capacitor_file_} removed). One outside the versions root
      * passes, as before. One inside it, by any spelling ({@code ..}, a symbolic link, another case),
      * gets {@link #admit}'s check: only a file of a version directory, matching that version's
-     * signed manifest, and a mismatch quarantines the version. {@code served}: the directory the
+     * signed manifest, and a mismatch quarantines the version; another case of a UI file's own path
+     * is refused ({@link InstalledUi#check}), never a reason to quarantine. {@code served}: the directory the
      * bridge serves, if any (a quarantine switches the webview away only from that version). A
      * path that cannot be resolved, or one with a control character (no file Capacitor names has
      * one, and native code cuts a path short at a NUL), fails closed. Any thread.
@@ -4452,6 +4496,17 @@ final class DenextOtaStore {
                 info.st_ctime;
         } catch (ErrnoException ex) {
             return null;
+        }
+    }
+
+    /** Whether {@code a} and {@code b} are the same file (device and inode, following links as the read does). */
+    static boolean isSameFile(File a, File b) {
+        try {
+            StructStat first = Os.stat(a.getPath());
+            StructStat second = Os.stat(b.getPath());
+            return first.st_dev == second.st_dev && first.st_ino == second.st_ino;
+        } catch (ErrnoException ex) {
+            return false;
         }
     }
 
