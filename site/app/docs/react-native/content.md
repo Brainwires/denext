@@ -1208,10 +1208,18 @@ writes `<>…</>` with React's fragment brand. What the app adds is Skia's web s
    the `csp` config or the route's `csp` export. Styles need no opt-in
    ([Under a Content-Security-Policy](#under-a-content-security-policy)).
 
-A context does not cross into the Canvas, as in React: a component inside `<Canvas>` reads a
-context's default value. Unlike React, a provider placed inside the Canvas does not reach it
-either, so pass the values the drawing needs as props. A class component inside such a
-renderer's tree is not supported (see [Known limitations](/docs/limitations)). Animating with Reanimated
+Contexts and class components work inside a `react-reconciler` renderer's tree as they do on
+React. A provider inside the tree reaches `useContext`, `use` and `<Context.Consumer>` there (each
+denext context has a React-shaped twin the renderer provides and reads), and a class component
+mounts, updates through `setState` / `forceUpdate` and unmounts with its lifecycles. A provider
+_above_ the renderer's root reaches it when the renderer bridges contexts, as
+react-three-fiber's `<Canvas>` and react-konva's `<Stage>` do with its-fine's
+`useContextBridge()`: its-fine walks the fiber tree from a class component's
+`this._reactInternals`, and a denext class answers with a read-only, React-shaped view of its
+fiber. Skia's `<Canvas>` does not bridge, on React or on denext: a component inside it reads a
+context's default value unless the app forwards it, with its-fine's `useContextBridge()` as on
+React or by passing the values as props. One gap remains: a class's `static contextType` inside
+such a tree reads nothing (see [Known limitations](/docs/limitations)). Animating with Reanimated
 (`useDerivedValue`, `useFrameCallback`) and the Capacitor shell's WebViews are not yet covered
 by a test; [`tests/e2e/react-native-skia.e2e.test.ts`](https://github.com/Brainwires/denext/blob/development/tests/e2e/react-native-skia.e2e.test.ts)
 draws shapes, a stateful component and a fragment inside the Canvas, re-renders it on a press,
