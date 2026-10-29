@@ -95,6 +95,11 @@ and this project adheres to
 
 ### Fixed
 
+- **Two installs of one cache in a single process no longer fail the lock order.** While one
+  install held a cache's download lock (the Deno Desktop runtime, the toolchain, esbuild, fastlane),
+  a second one started in the same process asked for the cache's read lock and stopped with "lock
+  order violation — … (rank 3) requested while holding a rank-4 lock". The callers on one cache now
+  take turns within the process, so the second waits for the first and then finds its install.
 - **`denext profile` downloads its headless Chrome with deadlines and retries.** The browser astral
   launches (Chrome for Testing, about 150 MB) was read through one `fetch` with no deadline, so a
   connection that stalled mid-body held the launch until the server dropped it, minutes later, and

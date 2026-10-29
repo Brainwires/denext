@@ -332,6 +332,35 @@ Deno.test("ensureDesktopRuntime: two concurrent installs end with one verified t
   }
 });
 
+Deno.test("ensureDesktopRuntime: an install started while another downloads waits for it", async () => {
+  const f = await fixture(await fixtureArchive());
+  try {
+    // The first install holds the cache's download lock while its fetch is held open.
+    let downloading!: () => void;
+    const started = new Promise<void>((r) => downloading = r);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => release = r);
+    const held: typeof fetch = async (input, init) => {
+      downloading();
+      await gate;
+      return await fetch(input, init);
+    };
+    const first = ensure(f, { fetch: held });
+    await started;
+    // A second one in this process reads the cache (a shared lock, rank 3) meanwhile: it waits
+    // for the first, then finds its tree, instead of failing the lock order.
+    const second = ensure(f);
+    await new Promise((r) => setTimeout(r, 50));
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    assertEquals([a.cached, b.cached], [false, true]);
+    assertEquals(a.dir, b.dir);
+    assertEquals(f.hits(), 1);
+  } finally {
+    await f.close();
+  }
+});
+
 Deno.test("ensureDesktopRuntime re-downloads a damaged cache (cheap size check, full --verify)", async () => {
   const f = await fixture(await fixtureArchive());
   try {

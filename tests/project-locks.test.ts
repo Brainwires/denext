@@ -13,6 +13,7 @@ import {
   lockTimeoutMs,
 } from "../src/build/file-lock.ts";
 import {
+  acquireCacheLock,
   BUILD_DIR_LOCK,
   buildDirLockPath,
   CACHE_DOWNLOAD_LOCK,
@@ -362,6 +363,39 @@ Deno.test("re-entrant in one process; never upgraded; never out of rank order", 
       "lock order violation",
     );
     high.release();
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("cache locks: another task of this process waits its turn on the cache root", async () => {
+  // Two installs in one process (two `ensure*` calls in flight): while one holds the download
+  // lock (rank 4), the other's shared read (rank 3) waits for it instead of tripping the rank
+  // check, which orders one task's nested locks, not two tasks' independent ones.
+  const dir = await Deno.makeTempDir();
+  try {
+    const order: string[] = [];
+    const writer = await acquireCacheLock(dir, "download", "test cache");
+    const reader = acquireCacheLock(dir, "shared", "test cache").then((lock) => {
+      order.push("reader");
+      return lock;
+    });
+    const replacer = acquireCacheLock(dir, "mutate", "test cache").then((lock) => {
+      order.push("replacer");
+      return lock;
+    });
+    await new Promise((r) => setTimeout(r, 50));
+    assertEquals(order, [], "both wait while the download lock is held");
+    order.push("writer released");
+    writer.release();
+    (await reader).release();
+    (await replacer).release();
+    assertEquals(order, ["writer released", "reader", "replacer"]);
+    // A failed acquisition gives the turn back: the next one is not stuck behind it.
+    await withFsFile("tryLock", () => Promise.reject(new Error("boom")), async () => {
+      await assertRejects(() => acquireCacheLock(dir, "shared", "test cache"), Error, "boom");
+    });
+    using _again = await acquireCacheLock(dir, "mutate", "test cache");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
