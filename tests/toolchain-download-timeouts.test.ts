@@ -119,12 +119,15 @@ async function pinFor(url: string, body: Uint8Array) {
 const BODY = new TextEncoder().encode("the pinned toolchain bytes");
 
 Deno.test("downloadPinned: a connection that goes silent is retried on a new one, which answers", async () => {
+  // The deadline the stall must hit is 1 s, and the attempt that answers has that second for its
+  // headers: a loaded machine's scheduling stalls stay well inside it. The other deadline, which
+  // nothing here should hit, is 5 s (the first attempt's headers, or the answer's instant body).
   for (const first of ["silent", "stall-mid-body"] as const) {
     const server = standIn(BODY, (n) => n === 0 ? first : "answer");
     try {
       await withVars({
-        DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS: "300",
-        DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS: "300",
+        DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS: first === "silent" ? "1000" : "5000",
+        DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS: first === "silent" ? "5000" : "1000",
       }, async (dest) => {
         const lines: string[] = [];
         await downloadPinned(await pinFor(server.url, BODY), dest, fetch, (l) => lines.push(l));
@@ -134,7 +137,7 @@ Deno.test("downloadPinned: a connection that goes silent is retried on a new one
         assertStringIncludes(lines[0], "retrying on a new connection (attempt 2 of 4)");
         assertStringIncludes(
           lines[0],
-          first === "silent" ? "no response within 0.3 s" : "no data for 0.3 s",
+          first === "silent" ? "no response within 1 s" : "no data for 1 s",
         );
       });
     } finally {

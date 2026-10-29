@@ -244,7 +244,10 @@ Deno.test("ensureDesktopRuntime gives up on a stalled download: no headers, or n
     );
     assertStringIncludes(connect.message, "DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS");
     assertDownloadHint(connect.message);
-    // Headers and a first chunk, then nothing.
+    // Headers and a first chunk, then nothing. Only the idle deadline may end these attempts: the
+    // headers come at once, so the connect deadline is out of the way (5 s, not 200 ms, which a
+    // loaded machine's scheduling stall before the answer could pass).
+    Deno.env.set("DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS", "5000");
     f.setBody(() =>
       new Response(
         new ReadableStream({
