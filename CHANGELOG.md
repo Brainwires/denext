@@ -44,6 +44,13 @@ and this project adheres to
 
 ### Added
 
+- **`expo-secure-store`'s `keychainAccessible` and `react-native-keychain`'s `accessible` choose
+  the iOS Keychain class.** They reach `secureStore.set`'s `accessibility` instead of being
+  ignored: `WHEN_UNLOCKED`, `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, `AFTER_FIRST_UNLOCK`,
+  `AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY` and `WHEN_PASSCODE_SET_THIS_DEVICE_ONLY` map one to one;
+  the deprecated `ALWAYS` and `ALWAYS_THIS_DEVICE_ONLY` take the `AFTER_FIRST_UNLOCK` classes, the
+  replacement both libraries and Apple recommend. A `requireAuthentication` value keeps its
+  `WHEN_PASSCODE_SET_THIS_DEVICE_ONLY` class. The constants themselves are unchanged.
 - **The lifecycle-script jail of runtime `3.0.0-denext.1`.** Everything below is gated on the
   runtime version, so stock Deno and older runtimes behave as before; the `3.0.0-denext.2` pin
   turns it on. `jailRuntime(version)` (from `src/build/jail-scripts.ts`) says what a runtime takes.

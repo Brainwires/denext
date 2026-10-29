@@ -829,7 +829,7 @@ export const EXPO_SHIMS: Readonly<Record<string, ExpoShim>> = {
       "is NOT secret, so isAvailableAsync() is false there. requireAuthentication gates reads " +
       "behind denext/mobile's authenticateBiometric (`denext mobile add biometrics`): enforced " +
       "in denext's code, not by a Keychain access control (the plugin has none); without a " +
-      "secret store it is refused, never stored. Accessibility options are ignored.",
+      "secret store it is refused, never stored. keychainAccessible reaches secureStore's accessibility class (the deprecated ALWAYS* take AFTER_FIRST_UNLOCK*); accessGroup is ignored.",
   },
   "expo-sensors": {
     module: "./sensors.ts",
