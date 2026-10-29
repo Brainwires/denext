@@ -37,6 +37,12 @@ and this project adheres to
 - **`bcrypt` and `bufferutil` in the "needs nothing" list** said approving them works. They load a
   prebuilt binary at run time, so leave their install scripts unapproved; approving them works
   only where the OS confines lifecycle scripts, from runtime `3.0.0-denext.1`.
+- **Windows helpers work when started from PowerShell 7.** An app or the CLI launched from a
+  `pwsh` terminal handed Windows PowerShell 7's module path, so its own modules failed to load
+  (`CouldNotAutoloadMatchingModule`): the desktop `dialogs` file panels, the `shell` trash, the
+  `secure-store` credential vault, `denext stack`'s free-space check and `denext profile`'s
+  browser cleanup on Windows. Each script now loads Windows PowerShell's own modules first (the
+  free-space check uses .NET and no module at all), without changing the child's environment.
 
 ### Documentation
 
