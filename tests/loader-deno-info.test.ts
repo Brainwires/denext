@@ -27,6 +27,7 @@ const BODY = 'export const served = "SERVED_ON_RETRY";\n';
 function silentServer(hangFirst: number) {
   const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const held: Deno.Conn[] = [];
+  const serving: Promise<void>[] = [];
   let connections = 0;
   const serve = async (conn: Deno.Conn) => {
     try {
@@ -56,7 +57,7 @@ function silentServer(hangFirst: number) {
       for await (const conn of listener) {
         connections++;
         if (connections <= hangFirst) held.push(conn);
-        else void serve(conn);
+        else serving.push(serve(conn));
       }
     } catch { /* listener closed */ }
   })();
@@ -71,6 +72,7 @@ function silentServer(hangFirst: number) {
       }
       listener.close();
       await accepting;
+      await Promise.all(serving);
     },
   };
 }
@@ -121,8 +123,6 @@ function build(app: string) {
 
 Deno.test({
   name: "loader deno info: one that never exits fails the build within its deadline, naming it",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const server = silentServer(Infinity);
     const app = await remoteApp(server.port);
@@ -144,8 +144,6 @@ Deno.test({
 
 Deno.test({
   name: "loader deno info: one that stalls once is killed and the retry builds",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const server = silentServer(1);
     const app = await remoteApp(server.port);
