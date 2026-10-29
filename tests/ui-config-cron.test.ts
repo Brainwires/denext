@@ -12,6 +12,7 @@ import type { UiContext } from "../src/ui/html.ts";
 import { parseJsonDocument } from "../src/ui/child-json.ts";
 import {
   cronPanel,
+  historyDeadlineReason,
   nextRuns,
   setCronDiscoveryBudget,
   setCronHistoryBudget,
@@ -966,11 +967,37 @@ Deno.test("a history child past its deadline says so, not that it printed nothin
     const twin = await (await call(dir, { json: true })).json();
     assertEquals(twin.history.enabled, true);
     assertEquals(twin.history.available, false);
-    assertEquals(twin.history.reason, "denext job --history did not finish within 1 s");
+    // Where it stopped follows the deadline: its last line, or that it printed nothing.
+    assertMatch(
+      twin.history.reason,
+      /^denext job --history did not finish within 1 s \((?:it printed nothing|its last output: .+)\)$/,
+    );
   } finally {
     setCronHistoryBudget(previous);
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("a deadline-killed history child's reason names its last meaningful line", () => {
+  // A Windows child that ran into the deadline must say where it stopped: the last line that is
+  // more than Deno's chatter (colour codes stripped), or that it printed nothing at all.
+  assertEquals(
+    historyDeadlineReason("--history", 300_000, [
+      "loading the history store",
+      "\x1b[33mwaiting on the store's read\x1b[0m",
+      "Download https://jsr.io/@std/path/meta.json",
+      "",
+    ]),
+    "denext job --history did not finish within 300 s (its last output: waiting on the store's read)",
+  );
+  assertEquals(
+    historyDeadlineReason("--clear-history", 15_000, ["Check file:///app/denext.config.ts", " "]),
+    "denext job --clear-history did not finish within 15 s (it printed nothing)",
+  );
+  assertEquals(
+    historyDeadlineReason("--history", 1000, []),
+    "denext job --history did not finish within 1 s (it printed nothing)",
+  );
 });
 
 Deno.test("an app's own history store is read and cleared through it, never opened here", async () => {

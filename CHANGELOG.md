@@ -8,6 +8,21 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Deprecated
+
+- **Stock Deno.** denext 5.0 drops stock Deno support: project code will run on denext's own Deno
+  only. Until then every path that still runs on stock Deno prints one notice per process tree
+  (never again from the processes it starts) naming 5.0 and the fix: `DENEXT_DENO=stock`,
+  `DENEXT_DESKTOP_RUNTIME=stock`, `desktop run` / `dev` falling back to the stock Deno Desktop
+  runtime, the npm esbuild fallback, and `createTestApp()` under a plain `deno test` / `deno task`
+  on stock Deno. `DENEXT_NO_DEPRECATION_WARNINGS=1` hides it. See the toolchain guide.
+
+### Fixed
+
+- **A `denext job --history` child that hits its deadline says where it stopped.** `denext ui`'s
+  Cron page reported only "did not finish within N s"; it now adds the child's last meaningful
+  output line, or "(it printed nothing)", so a hang shows what the child was doing.
+
 ## [4.10.0] - 2026-10-29
 
 ### Added

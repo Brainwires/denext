@@ -11,6 +11,7 @@ import {
 } from "../build/deno-version.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
 import { runToExit } from "../build/exited-output.ts";
+import { warnStockDeprecation } from "../build/stock-deprecation.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
@@ -820,6 +821,15 @@ export interface ReexecToolchainDeps {
 }
 
 /**
+ * Say what the resolver asked to be said about its choice, and that the explicit
+ * `DENEXT_DENO=stock` opt-out is deprecated (once per process tree: 5.0 refuses it).
+ */
+function announceChoice(choice: DenoToolchainChoice, deps: ReexecToolchainDeps): void {
+  if (choice.warning) deps.warn(choice.warning);
+  if (choice.kind === "stock" && choice.optedOut) warnStockDeprecation("deno-env", deps);
+}
+
+/**
  * A compiled binary's half of {@linkcode maybeReexecToolchain}: it cannot swap its own runtime, so
  * it resolves the toolchain (downloading it on first need) and hands it to every child through its
  * own environment — `DENO_BIN` (what `denoExecutable()` spawns), the toolchain marker, and a PATH
@@ -832,7 +842,7 @@ async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false
   // Under `deno run` on the toolchain already, `denoExecutable()` is this very binary.
   if (!deps.standalone() && onToolchainNow(deps)) return false;
   const choice = await deps.resolve();
-  if (choice.warning) deps.warn(choice.warning);
+  announceChoice(choice, deps);
   if (choice.kind === "stock") return false;
   deps.setEnv(TOOLCHAIN_ACTIVE_ENV, choice.version);
   deps.setEnv("DENO_BIN", choice.deno);
@@ -910,7 +920,7 @@ export async function maybeReexecToolchain(
   if (marker === "path") return false;
   if (onToolchainNow(deps)) return await reexecForRuntimeFlags(deps);
   const choice = await deps.resolve();
-  if (choice.warning) deps.warn(choice.warning);
+  announceChoice(choice, deps);
   if (choice.kind === "stock" && choice.refusal) throw new Error(choice.refusal);
   if (choice.kind === "stock") return false;
   // The child gets the runtime flags with the spawn; told so, it skips their check.

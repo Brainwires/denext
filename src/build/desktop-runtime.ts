@@ -55,6 +55,7 @@ import {
 import { denoSupportsNetSplit, NET_SPLIT_RELEASE, supportsNetSplit } from "./net-permissions.ts";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
+import { warnStockDeprecation } from "./stock-deprecation.ts";
 
 /** A runtime backend (`deno desktop --backend`). */
 export type DesktopRuntimeBackend = "webview" | "cef";
@@ -1165,6 +1166,11 @@ async function crossHostLaufeyDir(
   return join(shim, "laufey");
 }
 
+/** The deprecation notice's seams: the caller's env seam when it has one, and its log. */
+function deprecationDeps(env: EnvGet | undefined, log: (l: string) => void) {
+  return env ? { env, warn: log } : { warn: log };
+}
+
 /** The stock fallback of `desktop run` / `dev` for a `deno` of another version (a warning). */
 function stockForMismatch(
   found: string,
@@ -1204,6 +1210,7 @@ export async function resolveDesktopRuntimeEnv(
     log(
       `  denext: ${RUNTIME_ENV}=stock — building with the STOCK Deno Desktop runtime (${STOCK_LACKS}).`,
     );
+    warnStockDeprecation("desktop-env", deprecationDeps(options.env, log));
     return { mode: "stock", env: {} };
   }
   const localDir = env(RUNTIME_DIR_ENV);
@@ -1218,7 +1225,11 @@ export async function resolveDesktopRuntimeEnv(
   const deno = options.deno ?? "deno";
   const found = asIdentity(await (options.denoVersion ?? denoCliVersion)(deno));
   if (denoReleaseVersion(found) !== pin.deno) {
-    if (options.onDenoMismatch === "stock") return stockForMismatch(found.deno, pin, deno, log);
+    if (options.onDenoMismatch === "stock") {
+      const stock = stockForMismatch(found.deno, pin, deno, log);
+      warnStockDeprecation("desktop-mismatch", deprecationDeps(options.env, log));
+      return stock;
+    }
     throw new Error(denoVersionMismatchMessage(found.deno, pin, deno));
   }
   const backend = options.backend ?? await projectDesktopBackend(options.projectDir);

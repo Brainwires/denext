@@ -1187,7 +1187,10 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   2.9.8: `Deno.SQL`, Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced (every API, flag
   and env var it adds over Deno 2.9.8, by version: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
-  opts out, `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
+  opts out (deprecated: denext 5.0 drops stock Deno; every stock path — `DENEXT_DENO=stock`,
+  `DENEXT_DESKTOP_RUNTIME=stock`, the npm esbuild, `createTestApp()` under a stock `deno test` —
+  prints one notice per process tree with the fix, `DENEXT_NO_DEPRECATION_WARNINGS=1` hides it),
+  `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
   first use, no build for the host, a failed download) the command stops with the fix
   (`denext toolchain install`) — denext never runs another Deno on its own. Downloads of the
   toolchain and the Deno Desktop runtime give up after 30 s with no response

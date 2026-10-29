@@ -29,6 +29,7 @@ import {
   sweepLeftovers,
 } from "../verified-download.ts";
 import { ESBUILD_VERSION } from "./version.ts";
+import { type StockDeprecationDeps, warnStockDeprecation } from "../stock-deprecation.ts";
 
 /** esbuild's own override: the binary to run, unverified. */
 export const ESBUILD_BINARY_PATH_ENV = "ESBUILD_BINARY_PATH";
@@ -112,6 +113,22 @@ export interface ResolvedEsbuildBinary {
   readonly source: EsbuildBinarySource;
   /** Say this once (the toolchain's esbuild was refused and the npm one runs instead). */
   readonly warning?: string;
+}
+
+/**
+ * Say that the npm esbuild — the fallback for stock Deno and a missing toolchain, gone in 5.0 —
+ * is deprecated, once per process tree. Silent for the toolchain's esbuild and
+ * `ESBUILD_BINARY_PATH`.
+ *
+ * @param binary What {@linkcode resolveEsbuildBinary} chose.
+ * @param deps Seams for the notice (default: the process).
+ * @returns Whether the notice was printed.
+ */
+export function noteStockEsbuild(
+  binary: Pick<ResolvedEsbuildBinary, "source">,
+  deps?: StockDeprecationDeps,
+): boolean {
+  return binary.source === "npm" && warnStockDeprecation("esbuild", deps);
 }
 
 /** Env reader. */

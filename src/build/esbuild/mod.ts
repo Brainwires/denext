@@ -30,7 +30,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as common from "./vendor/common.ts";
 import type * as types from "./vendor/types.ts";
-import { ESBUILD_BINARY_PATH_ENV, resolveEsbuildBinary } from "./binary.ts";
+import { ESBUILD_BINARY_PATH_ENV, noteStockEsbuild, resolveEsbuildBinary } from "./binary.ts";
 import { ESBUILD_VERSION } from "./version.ts";
 import * as ourselves from "./mod.ts";
 
@@ -125,6 +125,8 @@ async function startService(): Promise<Service> {
     warned = true;
     console.warn(binary.warning);
   }
+  // The npm esbuild is the stock-Deno fallback, gone in 5.0 (once per process tree).
+  noteStockEsbuild(binary);
   // The toolchain and npm binaries are hash-pinned to ESBUILD_VERSION; an override is only as
   // good as its word, so ask it first and refuse with a message that names the variable.
   if (binary.source === "env") await checkOverrideVersion(binary.path);
