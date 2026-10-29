@@ -82,6 +82,29 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Read the Gleam pin
+        # The unit suites that compile real Gleam (tests/gleam.test.ts, tests/migrate-lustre.test.ts)
+        # run with denext's pinned Gleam, which `toolchain install --with gleam` below downloads into
+        # <DENO_DIR>/denext-deno/gleam/<version>/<target> and SHA-256-verifies
+        # (src/build/gleam-toolchain.ts). The cache below only saves that download (~10 MB); the CLI
+        # still verifies what it finds there before running it. The same step as e2e.yml's.
+        id: gleam-pin
+        shell: bash
+        run: |
+          pin=src/build/gleam-toolchain-pin.json
+          case "$RUNNER_ARCH" in X64) arch=x86_64 ;; ARM64) arch=aarch64 ;; *) arch="$RUNNER_ARCH" ;; esac
+          target="linux-$arch"
+          version=$(jq -r .version "$pin")
+          sha=$(jq -r --arg t "$target" '.targets[$t].sha256' "$pin")
+          echo "path=$HOME/.cache/deno/denext-deno/gleam/$version/$target" >> "$GITHUB_OUTPUT"
+          echo "key=gleam-$target-$version-$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the pinned Gleam compiler
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ steps.gleam-pin.outputs.path }}
+          key: ${{ steps.gleam-pin.outputs.key }}
+
       - name: Format check
         run: deno fmt --check
 
@@ -102,6 +125,10 @@ jobs:
         # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
         run: deno run -A scripts/ci/toolchain-on-path.ts
 
+      - name: Install the pinned Gleam compiler
+        # From the cache above when the pin is unchanged (verified, not downloaded again).
+        run: deno run -A cli.ts toolchain install --with gleam
+
       - name: Type check
         # The toolchain's checker: native TypeScript 7, as `denext check` and the dev overlay run it.
         run: deno check cli.ts mod.ts
@@ -111,7 +138,11 @@ jobs:
         # Excludes tests/e2e/ (real headless Chromium; `deno task test:e2e`) and
         # tests/integration/ (heavy build/bundle tests; the `integration` job).
         # --unstable-kv enables the Deno KV cache-store tests.
+        # DENEXT_TEST_GLEAM: the pinned Gleam installed above, so the suites that compile real
+        # Gleam run (and fail, rather than skip, if that install is broken).
         run: deno task test:unit
+        env:
+          DENEXT_TEST_GLEAM: ${{ steps.gleam-pin.outputs.path }}/gleam
 
       - name: Test-count badge is current
         # Deterministic, source-derived count (like `deno fmt --check`): fails if

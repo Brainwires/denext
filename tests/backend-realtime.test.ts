@@ -1932,6 +1932,24 @@ Deno.test("publicationTable / triggerArgs / dropTriggersSql: a catalog row as a 
 /** Every frame of `conns`, in order, without their `seq`. */
 const unnumbered = (frames: TableChangesFrame[]) => frames.map(({ seq: _seq, ...rest }) => rest);
 
+/**
+ * Wait for the replayed frame carrying `key` (the last a replay sends): the hub delivers a
+ * subscriber's frames in order, so every frame before it has arrived too, and a lost one shows
+ * as a wrong list rather than a timeout.
+ */
+const untilReplayed = (conn: { frames: TableChangesFrame[] }, key: string) =>
+  until(
+    () => conn.frames.some((f) => f.changes?.some((c) => c.key === key)),
+    3_000,
+    () => `the replayed change to ${key} (frames so far: ${JSON.stringify(conn.frames)})`,
+  );
+
+/** Block the event loop for `ms` (a loaded host's stall). */
+function stall(ms: number): void {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { /* busy */ }
+}
+
 Deno.test("realtime replay: a reconnecting subscriber gets what it missed, re-read under its policies", async () => {
   const env = await setUp();
   try {
@@ -2002,12 +2020,48 @@ Deno.test("realtime replay: a truncate while away clears the subscriber's rows b
     await realtimeEngine().flush();
     const back = env.hub.conn(env.a);
     assert((await env.hub.subscribe(back, "notes", { key })).ok);
-    await until(() => back.frames.length === 3, 3_000, "resumed, truncate, insert");
+    await untilReplayed(back, "2");
     assertEquals(unnumbered(back.frames), [
       { resumed: true },
       { changes: [{ op: "truncate" }] },
       { changes: [{ op: "insert", key: "2", row: { id: 2, owner: A, body: "after it" } }] },
     ]);
+  } finally {
+    await env.done();
+  }
+});
+
+// The engine paces a subscriber's frames by the wall clock, which once kept the Live hub from
+// merging two of them only while the event loop ran on time: a loaded host that stalled between
+// the truncate's publish and the replayed rows (the re-read's completion runs before the hub's
+// coalescing timer) had the hub keep only the rows, and the truncate frame was lost. The
+// realtime channel is `ordered` now, so the hub delivers every frame whatever the timing.
+Deno.test("realtime replay: a stalled event loop between the truncate and the replayed rows loses neither", async () => {
+  const env = await setUp();
+  try {
+    env.sql.tables.get("notes")!.set("7", { id: 7, owner: A, body: "old" });
+    const ca = env.hub.conn(env.a);
+    const { key } = await env.hub.subscribe(ca, "notes");
+    env.hub.drop(ca);
+    env.sql.tables.get("notes")!.clear();
+    env.sql.notify(JSON.stringify({ table: "notes", op: "truncate", ts: 1 }));
+    env.sql.insert("notes", { id: 2, owner: A, body: "after it" });
+    await realtimeEngine().flush();
+    // The replay's re-read is issued just after the truncate went out: stall the loop (longer
+    // than the engine's pace) in a timer due before both the re-read's and the hub's.
+    env.sql.failWhen = (text) => {
+      if (/to_jsonb\(t\)::text as r/.test(text)) setTimeout(() => stall(40), 0);
+      return false;
+    };
+    const back = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(back, "notes", { key })).ok);
+    await untilReplayed(back, "2");
+    assertEquals(unnumbered(back.frames), [
+      { resumed: true },
+      { changes: [{ op: "truncate" }] },
+      { changes: [{ op: "insert", key: "2", row: { id: 2, owner: A, body: "after it" } }] },
+    ]);
+    assertEquals(back.frames.map((f) => f.seq), [1, 2, 3], "no frame lost");
   } finally {
     await env.done();
   }

@@ -199,7 +199,6 @@ invalid tanstackStart() options: `importProtection.cleint` is not an option (did
 
 ## Limitations
 
-A mocked import's runtime message in `denext dev` lists no import trace; with
-`generateRouteTree: false`, `denext export` prerenders only the `pages` listed and their links;
-and the app's own `react` import must resolve to denext (`compatibilityMode`). The full list is in
+With `generateRouteTree: false`, `denext export` prerenders only the `pages` listed and their
+links, and the app's own `react` import must resolve to denext (`compatibilityMode`). The full list is in
 [Known limitations](/docs/limitations).

@@ -2,7 +2,8 @@
 // under tests/fixtures/gleam/greeter is real `gleam build --target javascript` output (Gleam
 // 1.15.0, `typescript_declarations = true`), committed as Gleam wrote it: these tests type-check
 // TypeScript against it under Deno, drive the plugin and `denext add gleam:` through a fake
-// `gleam`, and — when a real `gleam` is installed — compile a project end to end.
+// `gleam`, and — with a real `gleam` (`DENEXT_TEST_GLEAM`, denext's pinned one once
+// `denext toolchain install --with gleam` cached it, or one on PATH) — compile a project end to end.
 
 import {
   assert,
@@ -25,7 +26,11 @@ import type { PluginContext, PluginPrepareStep } from "../src/plugin/mod.ts";
 import { removeTempDirSync } from "./helpers/temp.ts";
 import { quietDeno } from "./helpers/quiet-deno.ts";
 import { DenoToolchainDownloadError, DenoToolchainHashError } from "../src/build/deno-toolchain.ts";
-import { ensureGleamToolchain, GLEAM_PREFETCH } from "../src/build/gleam-toolchain.ts";
+import {
+  ensureGleamToolchain,
+  GLEAM_PREFETCH,
+  gleamToolchainStatus,
+} from "../src/build/gleam-toolchain.ts";
 
 const FIXTURE = fromFileUrl(new URL("./fixtures/gleam/greeter", import.meta.url));
 
@@ -309,23 +314,38 @@ if (DOWNLOAD_ROOT) {
 }
 
 /**
- * A real `gleam`, or null: with DENEXT_TEST_GLEAM_DOWNLOAD=1 the pinned one, downloaded and
- * verified into a temp cache (the path users take); else `DENEXT_TEST_GLEAM`, else `gleam` on PATH.
+ * A real `gleam`, or null (and why): with DENEXT_TEST_GLEAM_DOWNLOAD=1 the pinned one, downloaded
+ * and verified into a temp cache (the path users take); else `DENEXT_TEST_GLEAM`, used as given
+ * (CI sets it to the pinned one it installed, so a broken install fails rather than skips); else
+ * denext's pinned one when `denext toolchain install --with gleam` cached it; else `gleam` on PATH.
  */
-async function realGleam(): Promise<string | null> {
+async function realGleam(): Promise<{ bin: string | null; why: string }> {
   if (DOWNLOAD_ROOT) {
-    return (await ensureGleamToolchain({ cacheRoot: DOWNLOAD_ROOT, env: () => undefined })).gleam;
+    const { gleam } = await ensureGleamToolchain({
+      cacheRoot: DOWNLOAD_ROOT,
+      env: () => undefined,
+    });
+    return { bin: gleam, why: "" };
   }
-  const bin = Deno.env.get("DENEXT_TEST_GLEAM") ?? "gleam";
+  const given = Deno.env.get("DENEXT_TEST_GLEAM");
+  if (given) return { bin: given, why: "" };
+  const pinned = await gleamToolchainStatus();
+  if (pinned.state === "cached" && pinned.path) return { bin: pinned.path, why: "" };
   try {
-    const out = await new Deno.Command(bin, { args: ["--version"] }).output();
-    return out.success ? bin : null;
+    const out = await new Deno.Command("gleam", { args: ["--version"] }).output();
+    if (out.success) return { bin: "gleam", why: "" };
   } catch {
-    return null;
+    // not on PATH
   }
+  return {
+    bin: null,
+    why: `no Gleam compiler (${pinned.detail}): run \`${GLEAM_PREFETCH}\`, or set ` +
+      "DENEXT_TEST_GLEAM to a gleam, to compile a project end to end",
+  };
 }
 
-const GLEAM = await realGleam();
+const { bin: GLEAM, why: NO_GLEAM } = await realGleam();
+if (!GLEAM) console.warn(`gleam real-toolchain test skipped: ${NO_GLEAM}`);
 
 Deno.test({
   name: "gleam() with a real toolchain: compile a project and import it typed",

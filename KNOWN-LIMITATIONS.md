@@ -425,9 +425,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### TanStack Start
 
-- **`@denext/tanstack-start`:** a mocked import's runtime message (`denext dev`) lists no
-  import trace. With `generateRouteTree: false` `denext export` prerenders only the `pages`
-  listed and their links, refusing no route by kind, and the deploy manifest lists its server
+- **`@denext/tanstack-start`:** with `generateRouteTree: false` `denext export` prerenders only
+  the `pages` listed and their links, refusing no route by kind, and the deploy manifest lists its server
   functions alone. The server render and the client bundle are compiled onto denext's React, so
   an app's own `react` import must resolve to denext (`compatibilityMode`).
 

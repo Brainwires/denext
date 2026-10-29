@@ -47,6 +47,10 @@ and this project adheres to
   recorded it), across an `await` in an async component too. An element made with `h()` /
   `createElement` is owned by the component whose render returned it, as on the client.
   Production `start` installs nothing and still returns `null`.
+- **`@denext/tanstack-start`: a mocked import's runtime message lists the import trace.** In
+  `denext dev`, using a mock that stands in for a denied import (or a denied file) in the browser
+  reports, with Start's `[import-protection] Mocked import used in dev client` message, the app
+  modules from the entry to the importer, as Start's own dev server does.
 
 ### Fixed
 
@@ -124,6 +128,13 @@ and this project adheres to
   output pipe open for a moment; a caller that removed the project directory next could race it
   (Windows refuses to remove a directory a process still holds). Stopping it now resolves once
   the child has exited and its pipe is closed.
+- **A monorepo app a glob member names builds with its npm packages hoisted to the root.** In a
+  Deno workspace such as `{ "workspace": ["./apps/*"], "nodeModulesDir": "manual" }`, an app's
+  bare `import ms from "ms"` (a dependency in its package.json, installed in the root's
+  `node_modules`) failed the esbuild build with "not in import map": the config the loader builds
+  a glob member on now carries the app's and the root's package.json dependencies and the root's
+  `nodeModulesDir`, and npm packages resolve from the nearest `node_modules` when the app has
+  none of its own, as Deno resolves them.
 
 ### Documentation
 
