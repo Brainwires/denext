@@ -4901,24 +4901,24 @@
       "jsr:@denext/avif@0.2.0": {},
       "jsr:@denext/backend@0.8.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/content-collections@0.7.1": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/front-matter@1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1",
           "jsr:@std/yaml@1"
         ]
       },
-      "jsr:@denext/denext@4.10.0": {
+      "jsr:@denext/denext@4.10.1": {
         "dependencies": [
           "jsr:@astral/astral@~0.5.3",
           "jsr:@b-fuze/deno-dom@0.1.56",
-          "jsr:@denext/docs-corpus@4.10.0",
+          "jsr:@denext/docs-corpus@4.10.1",
           "jsr:@denext/lightningcss@^1.0.0-rc.72",
           "jsr:@denext/swc@76",
           "jsr:@luca/esbuild-deno-loader@0.11",
@@ -4944,16 +4944,16 @@
           "npm:ws@8"
         ]
       },
-      "jsr:@denext/docs-corpus@4.10.0": {},
+      "jsr:@denext/docs-corpus@4.10.1": {},
       "jsr:@denext/effect@0.2.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "npm:effect@^3.22.0"
         ]
       },
       "jsr:@denext/graphql@0.7.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@denext/openapi@0.7",
           "jsr:@std/path@1",
           "npm:graphql-yoga@^5.24.6",
@@ -4962,7 +4962,7 @@
       },
       "jsr:@denext/htmx@2.1.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/path@1"
         ]
       },
@@ -4970,20 +4970,20 @@
       "jsr:@denext/og@0.1.2": {},
       "jsr:@denext/openapi@0.7.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/pages-router@0.13.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/path@1"
         ]
       },
       "jsr:@denext/photon@0.3.6": {},
       "jsr:@denext/react-router@0.5.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/fs@1",
           "jsr:@std/path@1"
         ]
@@ -4991,7 +4991,7 @@
       "jsr:@denext/swc@76.0.1": {},
       "jsr:@denext/tanstack-start@0.2.0": {
         "dependencies": [
-          "jsr:@denext/denext@^4.10.0",
+          "jsr:@denext/denext@^4.10.1",
           "jsr:@std/path@1"
         ]
       }

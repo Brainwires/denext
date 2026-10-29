@@ -8,27 +8,7 @@ and this project adheres to
 
 ## [Unreleased]
 
-### Security
-
-- **`@denext/graphql` 0.7.0 requires `graphql-yoga@^5.24.6`**, the first Yoga 5 releases on a
-  `@graphql-tools/utils` that fixes
-  [GHSA-7mx3-vvmw-hjmv](https://github.com/advisories/GHSA-7mx3-vvmw-hjmv) and
-  [GHSA-c4qx-w738-7hr3](https://github.com/advisories/GHSA-c4qx-w738-7hr3) (prototype pollution in
-  `mergeDeep` and `mergeIncrementalResult`). The plugin's earlier `^5.10.0` range admitted the fixed
-  releases too; an app's lockfile that still holds Yoga 5.24.3 or older should be updated.
-- **Build tooling locked to fixed releases.** The repository's lockfiles now resolve `zod` 4.6.7
-  ([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)), `seroval` 1.7.2
-  ([GHSA-9wx9-5pv9-3349](https://github.com/advisories/GHSA-9wx9-5pv9-3349),
-  [GHSA-f86p-h4j2-7qgj](https://github.com/advisories/GHSA-f86p-h4j2-7qgj)) and `source-map-js`
-  1.2.2 ([GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q)), reached through
-  the opt-in `sass` and `spa.tanstackRouter` build steps, and no longer hold npm `esbuild` 0.24.2
-  ([GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99)), a stale optional peer;
-  denext runs its own pinned esbuild binary. The published version ranges already admitted the
-  fixed releases, so a fresh resolution in an app was not affected.
-- **`deno task audit:npm`** runs `deno audit` over the root `deno.lock` and fails on a high or
-  critical advisory. A fix still under Deno's minimum dependency age is held in
-  `security/npm-audit-allow.json` with the date it clears. CI's `cargo-audit` job and
-  `deno task precheck` (when `deno.lock`, a `deno.json` or the allowlist changes) run it.
+## [4.10.1] - 2026-10-29
 
 ### Added
 
@@ -236,6 +216,28 @@ and this project adheres to
   output pipe open for a moment; a caller that removed the project directory next could race it
   (Windows refuses to remove a directory a process still holds). Stopping it now resolves once
   the child has exited and its pipe is closed.
+
+### Security
+
+- **`@denext/graphql` 0.7.0 requires `graphql-yoga@^5.24.6`**, the first Yoga 5 releases on a
+  `@graphql-tools/utils` that fixes
+  [GHSA-7mx3-vvmw-hjmv](https://github.com/advisories/GHSA-7mx3-vvmw-hjmv) and
+  [GHSA-c4qx-w738-7hr3](https://github.com/advisories/GHSA-c4qx-w738-7hr3) (prototype pollution in
+  `mergeDeep` and `mergeIncrementalResult`). The plugin's earlier `^5.10.0` range admitted the fixed
+  releases too; an app's lockfile that still holds Yoga 5.24.3 or older should be updated.
+- **Build tooling locked to fixed releases.** The repository's lockfiles now resolve `zod` 4.6.7
+  ([GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5)), `seroval` 1.7.2
+  ([GHSA-9wx9-5pv9-3349](https://github.com/advisories/GHSA-9wx9-5pv9-3349),
+  [GHSA-f86p-h4j2-7qgj](https://github.com/advisories/GHSA-f86p-h4j2-7qgj)) and `source-map-js`
+  1.2.2 ([GHSA-68fv-2mgg-jv7q](https://github.com/advisories/GHSA-68fv-2mgg-jv7q)), reached through
+  the opt-in `sass` and `spa.tanstackRouter` build steps, and no longer hold npm `esbuild` 0.24.2
+  ([GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99)), a stale optional peer;
+  denext runs its own pinned esbuild binary. The published version ranges already admitted the
+  fixed releases, so a fresh resolution in an app was not affected.
+- **`deno task audit:npm`** runs `deno audit` over the root `deno.lock` and fails on a high or
+  critical advisory. A fix still under Deno's minimum dependency age is held in
+  `security/npm-audit-allow.json` with the date it clears. CI's `cargo-audit` job and
+  `deno task precheck` (when `deno.lock`, a `deno.json` or the allowlist changes) run it.
 
 ### Documentation
 
@@ -19347,7 +19349,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.1...development
+[4.10.1]: https://jsr.io/@denext/denext@4.10.1
 [4.10.0]: https://jsr.io/@denext/denext@4.10.0
 [4.9.0]: https://jsr.io/@denext/denext@4.9.0
 [4.8.0]: https://jsr.io/@denext/denext@4.8.0
