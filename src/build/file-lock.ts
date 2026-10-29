@@ -9,9 +9,19 @@
 //   process; Ctrl-C to abort` — and then block until it is free (or, with
 //   `DENEXT_LOCK_TIMEOUT=<seconds>`, fail once that long has passed);
 // - shared locks coexist, an exclusive lock excludes everything;
-// - a lock this process already holds is re-entrant (a nested acquire of the same file is a
-//   reference count, never a self-deadlock — two `open`s of one file in one process are
-//   separate `flock` owners on macOS/Linux and would otherwise wait on each other forever);
+// - a lock this process already holds is re-entrant for the logical TASK holding it (see
+//   `lockTask`) and the work that task started: a nested acquire of the same file is a reference
+//   count, never a self-deadlock — two `open`s of one file in one process are separate `flock`
+//   owners on macOS/Linux and would otherwise wait on each other forever;
+// - the OS lock keeps other processes out, so tasks of one process take turns in-process, by the
+//   same rule: another task's request waits for this task's hold when either is exclusive (shared
+//   holds of several tasks coexist), first come first served. Two `denext dev` rebuilds started
+//   from separate tasks (the startup's prepare steps, a request's typed-module emit, a watcher
+//   batch) so never write `.denext/` at once. An in-process wait prints no Blocking line and has
+//   no time limit. The rule that keeps it from waiting on itself: while a task holds a lock, it
+//   must not await work started OUTSIDE it (by a sibling task, or a memoized promise another task
+//   created) that takes the same lock — that work waits for the holder, the holder for it. Work
+//   the holder started itself re-enters, so awaiting it is fine;
 // - a shared lock is never upgraded in place (Cargo refuses the same: release, then acquire);
 // - locks carry a RANK and must be taken in increasing rank order, the fixed order that keeps
 //   two processes from each holding what the other waits for (Cargo PR #15698 fixed exactly
@@ -111,7 +121,9 @@ function currentTask(): LockTaskFrame {
  * counts against the task, even after `fn` has settled. Code outside every task belongs to the
  * process's root task, which every task sees. What the check can't see is a task holding a lock
  * while it awaits a promise another task started (a shared, memoized one): keep such waits out of
- * locked sections.
+ * locked sections. The same task boundary decides who waits for a lock file this process already
+ * holds: the holding task and the work it started re-enter it, any other task waits its turn
+ * (see {@linkcode acquireFileLock}).
  *
  * @param fn The task's work.
  * @returns What `fn` returns.
@@ -121,6 +133,7 @@ export function lockTask<T>(fn: () => T): T {
 }
 
 interface Held {
+  /** The mode of the holds (several tasks' shared holds, or one task's exclusive hold). */
   readonly mode: LockMode;
   readonly rank: number;
   refs: number;
@@ -134,6 +147,16 @@ interface Held {
 
 /** Every lock file this process holds (or is acquiring), by absolute path. */
 const held = new Map<string, Held>();
+
+/** A task waiting for other tasks' holds on a lock file to end. */
+interface Waiter {
+  readonly mode: LockMode;
+  /** Takes the lock for the waiter, synchronously, once it is its turn. */
+  readonly admit: () => void;
+}
+
+/** Each lock file's in-process queue, first come first served, by absolute path. */
+const waiting = new Map<string, Waiter[]>();
 
 /**
  * The Blocking line, in Cargo's wording (`Blocking` right-aligned in a 12-column status), plus the
@@ -249,6 +272,83 @@ function highestHeldRank(task: LockTaskFrame): number {
   return max;
 }
 
+/** Whether `task`, or a task it was started in, holds a reference to `entry` (a re-entry). */
+function heldByTask(entry: Held, task: LockTaskFrame): boolean {
+  for (let t: LockTaskFrame | undefined = task; t; t = t.parent) {
+    if (entry.owners.has(t)) return true;
+  }
+  return false;
+}
+
+/** Whether holds in `a` and `b` exclude each other (anything but two shared ones). */
+function conflicts(a: LockMode, b: LockMode): boolean {
+  return a === "exclusive" || b === "exclusive";
+}
+
+/** Whether a new holder (not a re-entry) of `key` in `mode` must wait for its turn. */
+function mustWait(key: string, mode: LockMode): boolean {
+  if (waiting.has(key)) return true; // behind the tasks already waiting
+  const entry = held.get(key);
+  return entry !== undefined && conflicts(entry.mode, mode);
+}
+
+/** Give `key` to the waiters at the head of its queue that its holds now admit. */
+function admitWaiters(key: string): void {
+  const queue = waiting.get(key);
+  if (!queue) return;
+  while (queue.length > 0) {
+    const entry = held.get(key);
+    if (entry && conflicts(entry.mode, queue[0].mode)) break;
+    queue.shift()!.admit(); // synchronous: the next one sees the hold it took
+  }
+  if (queue.length === 0) waiting.delete(key);
+}
+
+/** Take a new reference to `key` for `task`: join the compatible hold, or start locking. */
+function claim(key: string, opts: FileLockOptions, task: LockTaskFrame): Held {
+  const existing = held.get(key);
+  if (existing) {
+    existing.refs++;
+    addOwner(existing, task);
+    return existing;
+  }
+  const entry: Held = {
+    mode: opts.mode,
+    rank: opts.rank,
+    refs: 1,
+    owners: new Map([[task, 1]]),
+    ready: lockFile(key, opts),
+  };
+  held.set(key, entry);
+  return entry;
+}
+
+/** Wait for `task`'s turn on `key` (other tasks' conflicting holds and earlier waiters first). */
+function turn(key: string, opts: FileLockOptions, task: LockTaskFrame): Promise<Held> {
+  const { promise, resolve } = Promise.withResolvers<Held>();
+  const queue = waiting.get(key) ?? [];
+  queue.push({ mode: opts.mode, admit: () => resolve(claim(key, opts, task)) });
+  waiting.set(key, queue);
+  return promise;
+}
+
+/** Wait for the OS lock behind `task`'s reference to `entry`; a failure drops the reference. */
+async function settle(key: string, entry: Held, task: LockTaskFrame): Promise<FileLock> {
+  try {
+    entry.file = await entry.ready;
+  } catch (err) {
+    entry.refs--;
+    dropOwner(entry, task);
+    // The lock never came: forget it (every reference fails with it) and let the next one try.
+    if (held.get(key) === entry) {
+      held.delete(key);
+      admitWaiters(key);
+    }
+    throw err;
+  }
+  return handle(key, entry, task);
+}
+
 function addOwner(entry: Held, task: LockTaskFrame): void {
   entry.owners.set(task, (entry.owners.get(task) ?? 0) + 1);
 }
@@ -266,15 +366,17 @@ function handle(path: string, entry: Held, task: LockTaskFrame): FileLock {
     released = true;
     dropOwner(entry, task);
     if (--entry.refs > 0) return;
-    held.delete(path);
+    if (held.get(path) === entry) held.delete(path);
     const file = entry.file;
-    if (!file) return;
-    try {
-      file.unlockSync();
-    } catch { /* closing releases it anyway */ }
-    try {
-      file.close();
-    } catch { /* already closed */ }
+    if (file) {
+      try {
+        file.unlockSync();
+      } catch { /* closing releases it anyway */ }
+      try {
+        file.close();
+      } catch { /* already closed */ }
+    }
+    admitWaiters(path);
   };
   return { path, mode: entry.mode, release, [Symbol.dispose]: release };
 }
@@ -285,34 +387,34 @@ function handle(path: string, entry: Held, task: LockTaskFrame): FileLock {
  * against the running {@linkcode lockTask} (the process's root task outside one) for the rank
  * order.
  *
+ * Inside the process, the hold belongs to that task. The task and the work it started (a
+ * subtask, a timer, a detached promise) re-enter it: a reference count, at once. Any other task
+ * waits its turn, first come first served, while either hold is exclusive (shared holds of
+ * several tasks coexist): the OS lock only keeps other processes out. So a task holding a lock
+ * must never await work started outside it (a sibling task, a memoized promise another task
+ * created) that takes the same lock: each would wait for the other, forever. Code outside every
+ * task is the root task, which every task was started in: a lock it holds is re-entered by all.
+ *
  * @param path The lock file.
  * @param opts Mode, description, rank.
  * @returns The held lock.
  * @throws When the acquisition would break the rank order (a lower rank than the running task
- *   holds), or upgrade a shared lock.
+ *   holds), or upgrade a shared lock the running task holds.
  */
 export async function acquireFileLock(path: string, opts: FileLockOptions): Promise<FileLock> {
   const key = resolve(path);
   const task = currentTask();
   const existing = held.get(key);
-  if (existing) {
+  if (existing && heldByTask(existing, task)) {
     if (existing.mode === "shared" && opts.mode === "exclusive") {
       throw new Error(
         `denext: this process holds a shared lock on ${opts.description} and asked for an ` +
           `exclusive one (release it first; locks are not upgraded in place)`,
       );
     }
-    existing.refs++;
-    addOwner(existing, task);
-    try {
-      await existing.ready;
-    } catch (err) {
-      existing.refs--;
-      dropOwner(existing, task);
-      throw err;
-    }
-    return handle(key, existing, task);
+    return await settle(key, claim(key, opts, task), task);
   }
+  // A new hold for this task (it may wait, even to join another task's shared hold): in order.
   const top = highestHeldRank(task);
   if (opts.rank < top) {
     throw new Error(
@@ -320,21 +422,8 @@ export async function acquireFileLock(path: string, opts: FileLockOptions): Prom
         `holding a rank-${top} lock`,
     );
   }
-  const entry: Held = {
-    mode: opts.mode,
-    rank: opts.rank,
-    refs: 1,
-    owners: new Map([[task, 1]]),
-    ready: lockFile(key, opts),
-  };
-  held.set(key, entry);
-  try {
-    entry.file = await entry.ready;
-  } catch (err) {
-    held.delete(key);
-    throw err;
-  }
-  return handle(key, entry, task);
+  const entry = mustWait(key, opts.mode) ? await turn(key, opts, task) : claim(key, opts, task);
+  return await settle(key, entry, task);
 }
 
 /** Several locks released as one (in reverse acquisition order). */

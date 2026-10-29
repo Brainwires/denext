@@ -107,6 +107,12 @@ and this project adheres to
   cache prune and each locked build step count their own locks and the locks of the work that
   started them, and a task that takes a lower-rank lock while it holds a higher one still fails as
   before.
+- **Two `denext dev` rebuilds no longer write `.denext/` at the same time.** The startup's plugin
+  prepare steps, a request's typed-module emit (`.denext/routes.ts`, `.denext/api.ts`), a watched
+  edit's re-run of the prepare steps and a SPA's regeneration each lock the build directory, but two
+  of them in one process shared the lock instead of waiting: the file lock only kept other
+  processes out. They now take turns, in the order they asked, and the same holds for
+  `createTestApp` calls on one project. Work a locked step starts itself still runs at once.
 - **A desktop app's sidecar log file has every line once `stopAll()` returns.** The lines a
   sidecar printed as it shut down were still being appended after the host reported it stopped.
 - **The report of a failed background CLI cache says when `deno cache` printed nothing.** It

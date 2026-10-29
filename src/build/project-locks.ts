@@ -189,6 +189,9 @@ export function withProjectLocks<T>(
 /**
  * Run `fn` holding the build directory exclusively — one `denext dev` rebuild's codegen (typed
  * modules, plugin prepare steps), the way Cargo locks per rebuild rather than per watch session.
+ * Each call is its own task, so two rebuilds of this process take turns, in call order; one
+ * started inside `fn` re-enters instead. `fn` must not await a rebuild started outside it (it
+ * would wait for `fn`).
  *
  * @param projectDir The project.
  * @param fn The rebuild work.

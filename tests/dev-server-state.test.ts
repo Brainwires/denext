@@ -10,6 +10,7 @@ import { compatBuildOf } from "../src/build/dev-server/compat.ts";
 import { createDevHandler } from "../src/build/dev-server/handler.ts";
 import { getManifest } from "../src/build/dev-server/manifest.ts";
 import { createDevState } from "../src/build/dev-server/state.ts";
+import { withBuildDirLock } from "../src/build/project-locks.ts";
 import { registerRouteSynthesizer } from "../src/router/manifest.ts";
 import { defaultLoader } from "../src/server/mod.ts";
 import { removeTempDir } from "./helpers/temp.ts";
@@ -63,6 +64,42 @@ Deno.test({
     await Deno.stat(join(dir, ".denext", "api.ts"));
   } finally {
     unregister();
+    await removeTempDir(dir);
+  }
+});
+
+Deno.test({
+  name: "dev typed-module emit waits for another rebuild's hold on the build directory",
+}, async () => {
+  // Dev starts its rebuilds from detached tasks: the startup's plugin prepare steps, a request's
+  // typed-module emit, a watcher batch. Each locks `.denext` as its own task; the emit must not
+  // write the directory while another rebuild of this process holds it.
+  const dir = await tempApp();
+  try {
+    const st = createDevState({ paths: await resolveProject(dir), unbundled: false });
+    st.load = defaultLoader;
+    const holding = Promise.withResolvers<void>();
+    const finish = Promise.withResolvers<void>();
+    const prepare = withBuildDirLock(dir, async () => {
+      holding.resolve();
+      await finish.promise;
+    });
+    await holding.promise;
+    await getManifest(st);
+    const emit = st.typedEmit;
+    assert(emit, "the scan started the typed-module emit");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const raced = await Promise.race([
+      emit.then(() => "emitted"),
+      new Promise((r) => timer = setTimeout(() => r("waiting"), 1_500)),
+    ]);
+    clearTimeout(timer);
+    assertEquals(raced, "waiting", "the emit waits for the other rebuild's lock");
+    finish.resolve();
+    await prepare;
+    await emit;
+    await Deno.stat(join(dir, ".denext", "api.ts"));
+  } finally {
     await removeTempDir(dir);
   }
 });
