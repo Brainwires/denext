@@ -827,6 +827,10 @@ Deno.test("startClerkBrowserSignIn: the redemption must succeed, load a client a
 // so every Frontend API request failed (each after another full timeout) and clerk-js never loaded.
 Deno.test("clerk bridge: a keychain that never answers falls back to memory for the launch, so Clerk loads", async () => {
   let spawned = 0;
+  // The fake store's own answer timers. The probe gives up at the same deadline and settles on
+  // its own timer, so the store's rejection can still be due once the test is done: cleared below
+  // (the real store's deadline lives in the runtime, not in a page timer).
+  const answers = new Set<ReturnType<typeof setTimeout>>();
   const timedOut = (_service: string, _account: string, options?: { timeout?: number }) => {
     spawned++;
     const err = new Error(
@@ -834,7 +838,13 @@ Deno.test("clerk bridge: a keychain that never answers falls back to memory for 
         "prompt nobody answered)",
     );
     err.name = "SecureStoreUnavailable";
-    return new Promise<never>((_, reject) => setTimeout(() => reject(err), options?.timeout));
+    return new Promise<never>((_, reject) => {
+      const id = setTimeout(() => {
+        answers.delete(id);
+        reject(err);
+      }, options?.timeout);
+      answers.add(id);
+    });
   };
   const cap = secureStoreCapability({
     service: "dev.denext.clerk-example",
@@ -876,6 +886,7 @@ Deno.test("clerk bridge: a keychain that never answers falls back to memory for 
     );
   } finally {
     console.warn = warn;
+    for (const id of answers) clearTimeout(id);
   }
   assertEquals(spawned, 1, "after the first deadline the launch stays in memory");
   assertEquals(warnings.length, 1);
