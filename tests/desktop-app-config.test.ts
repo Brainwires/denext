@@ -19,6 +19,7 @@ import {
   desktopLaunchConfig,
   desktopNavigationOrigins,
   desktopRequireSandbox,
+  desktopUiUpdateFloorProblem,
   laufeyLaunchEnv,
   laufeyLaunchPath,
   syncDesktopAppConfig,
@@ -27,6 +28,7 @@ import {
   writeLaufeyLaunchConfig,
 } from "../src/build/desktop-app-config.ts";
 import { strictLaunchRuntime } from "../src/build/desktop-launch-policy.ts";
+import { makeOtaManifest } from "../src/mobile/ota-manifest.ts";
 import { desktopOriginCheck } from "../src/cli/commands/doctor.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
@@ -589,4 +591,45 @@ Deno.test("config validation: desktop.linux", () => {
   check({})();
   assertThrows(check("strict"), Error, "desktop.linux");
   assertThrows(check({ requireSandbox: 1 }), Error, "desktop.linux.requireSandbox");
+});
+
+Deno.test("package: desktop.update.ui requires a sequenced OTA manifest in the export (the downgrade floor)", async () => {
+  const dir = await project("{}\n");
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      "export default { desktop: { app: { identifier: 'com.example.app' }, update: { ui: " +
+        "{ feedUrl: 'https://updates.example.com/ui', publicKey: 'KEY' } } } };\n",
+    );
+    const entry = toFileUrl(join(dir, "scripts", "package-macos.ts")).href;
+    const ui = { desktop: { update: { ui: { feedUrl: "https://u.example", publicKey: "K" } } } };
+    // No manifest in the export at all.
+    assertStringIncludes((await desktopUiUpdateFloorProblem(dir, ui))!, "has no OTA manifest");
+    const err = await assertRejects(() => syncDesktopAppConfig(entry));
+    assertStringIncludes((err as Error).message, "denext ota manifest out --sign");
+    // A manifest without a sequence (unsigned `spa.ota: true`).
+    const manifest = await makeOtaManifest([{
+      path: "index.html",
+      sha256: "0".repeat(64),
+      size: 1,
+    }]);
+    await Deno.mkdir(join(dir, "out", "_denext"), { recursive: true });
+    const write = (m: unknown) =>
+      Deno.writeTextFile(join(dir, "out", "_denext", "ota.json"), JSON.stringify(m));
+    await write(manifest);
+    assertStringIncludes((await desktopUiUpdateFloorProblem(dir, ui))!, "without a sequence");
+    await assertRejects(() => syncDesktopAppConfig(entry));
+    await write({ nope: true });
+    assertStringIncludes((await desktopUiUpdateFloorProblem(dir, ui))!, "an invalid OTA manifest");
+    // Sequenced: packaging goes on.
+    await write({ ...manifest, sequence: 1_800_000_000 });
+    assertEquals(await desktopUiUpdateFloorProblem(dir, ui), null);
+    assertEquals((await syncDesktopAppConfig(entry)).runtimeConfig, "none");
+    // Without the UI updater there is nothing to require.
+    await Deno.remove(join(dir, "out"), { recursive: true });
+    assertEquals(await desktopUiUpdateFloorProblem(dir, T3), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

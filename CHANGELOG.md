@@ -8,6 +8,40 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **A Deno Desktop UI overlay serves only the files its signed manifest lists, each verified when
+  it is served** (`denext/desktop/updater`, `runDesktop({ updater })`, `desktop.update.ui`).
+  Re-verification at launch hashed the manifest's files but never looked for others, and the
+  window then read each file from the overlay folder on every request. Another program running as
+  the user could therefore add a file to `ui-updates/versions/<version>/`, such as a
+  `_denext/desktop-preload.js` that the runtime injects into every top-level page with the native
+  bridge, or change a file after launch, and the window would serve it, outside the app's code
+  signature. Affected: 2.10.0 through 4.10.1 (the preload path from 3.1.0).
+  - At launch an overlay folder holding anything its manifest does not list, or a symbolic link
+    anywhere, fails re-verification.
+  - Each overlay file is checked against the manifest when it is served: hashed the first time,
+    and again whenever its inode, size, mtime or ctime moves. The bytes served are the bytes
+    checked.
+  - The preload is read only from a file the manifest lists.
+  - An overlay that fails either check is rolled back like a version that failed to boot: it is
+    reported as `rejected` in `desktopUpdateStatus()`, its folder is deleted, the runtime logs why,
+    and the bundled UI is served. A read error (a permission, I/O) skips the overlay for that
+    launch only.
+  - An updater `dataDir` outside the app-support folder is now out of reach of the `fs`, `shell`
+    and `window` capabilities too, like `ui-updates`.
+  - `openDesktopUi(bundledOut, config)` is the new entry point for serving the overlay yourself.
+    `resolveDesktopUiDir` still returns the folder, but a server reading from it does not get the
+    per-file checks.
+- **`applyDesktopUpdate` re-checks the downgrade floor and the expiry.** A staged version is
+  applied only while it is still newer than every accepted sequence (and the bundled export's) and
+  unexpired, and an apply deletes every other staging folder. Before, page script able to call apply
+  could re-activate an older UI left staged. `denext desktop package` now refuses an app with
+  `desktop.update.ui` whose export carries no sequenced `_denext/ota.json` (the bundled UI's
+  sequence is the floor before any overlay is accepted). Stamp one with `spa.ota: true` and
+  `DENEXT_OTA_SIGNING_KEY`, or `denext ota manifest out --sign ota.key`. Affected: 2.10.0 through
+  4.10.1.
+
 ## [4.10.1] - 2026-10-29
 
 ### Added

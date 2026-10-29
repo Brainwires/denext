@@ -4,15 +4,16 @@
 // a thin call to {@link runDesktop} — the serve + proxy + window plumbing lives here
 // so a fix reaches every app.
 //
-// Serving reuses denext's {@link serveStatic} (content-types, gzip negotiation,
-// path-traversal protection) over the export dir, with an SPA history fallback to
+// Serving reuses denext's `serveStatic` (content-types, gzip negotiation,
+// path-traversal protection) over the export dir (a UI overlay's files verified as they are
+// served: `desktop-ui-files.ts`), with an SPA history fallback to
 // `index.html` and `no-store` caching so a repackaged app never serves a stale
 // bundle from the WebView cache. The proxy is the same mechanism as `denext start`
 // in `mode:"spa"` (see {@link matchesProxyPrefix}/{@link proxyToBackend}).
 
 import { basename, fromFileUrl, join } from "@std/path";
 import type { SpaProxyConfig } from "../server/config.ts";
-import { serveStatic } from "../server/static.ts";
+import { bundledUiFiles, type DesktopUiFiles, desktopUiFiles } from "./desktop-ui-files.ts";
 import { isLoopbackHost } from "./dev-server/lan.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
 import { wantsShell } from "./spa/shared.ts";
@@ -43,12 +44,7 @@ import { devProxyTokenHeaders, hasDevSessionToken } from "./dev-server/dev-token
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
 import { appUpdateAutoConfirm, combineBootHooks } from "../desktop/app-update-confirm.ts";
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
-import {
-  DESKTOP_PRELOAD_ENV,
-  DESKTOP_PRELOAD_FILE,
-  inlineSafeScript,
-  readDesktopPreload,
-} from "../desktop/preload.ts";
+import { DESKTOP_PRELOAD_ENV, inlineSafeScript, readDesktopPreload } from "../desktop/preload.ts";
 import { DESKTOP_NOTIFICATION_SHIM_JS } from "../desktop/notification-shim.ts";
 import type { DesktopCapability } from "../desktop/extension.ts";
 import { createLaunchRouter, desktopAppApi } from "../desktop/launch-events.ts";
@@ -131,6 +127,10 @@ export {
   syncDesktopAppConfig,
   writeLaufeyLaunchConfig,
 } from "./desktop-app-config.ts";
+
+// The UI files a handler serves (the bundled export, or a verified UI overlay), for
+// `createDesktopHandler`.
+export type { DesktopUiFiles } from "./desktop-ui-files.ts";
 
 // The config→capabilities resolver the generated `desktop.ts` entry spreads into `runDesktop`.
 export {
@@ -595,14 +595,13 @@ export interface DesktopRuntime {
  * The HTML of the exported page a GET/HEAD navigation to `pathname` names (the shared
  * {@linkcode resolveExportPath} candidates, the mapping the Capacitor shells' routers mirror), or
  * `null` when the export has none (the caller then serves the root `index.html` shell, so a
- * single-page app's client routes keep working). Read through {@link serveStatic}, so its
- * path-traversal and symlink checks apply.
+ * single-page app's client routes keep working). Read through the UI's files: the bundled export
+ * through `serveStatic` (its path-traversal and symlink checks), a UI overlay verified.
  */
-async function readExportPage(outDir: string, pathname: string): Promise<string | null> {
+async function readExportPage(files: DesktopUiFiles, pathname: string): Promise<string | null> {
   for (const candidate of resolveExportPath(pathname).pages) {
-    const res = await serveStatic(outDir, candidate);
-    if (res?.status === 200) return await res.text();
-    await res?.body?.cancel();
+    const text = await files.text(candidate);
+    if (text !== null) return text;
   }
   return null;
 }
@@ -1005,7 +1004,7 @@ function refuseForeignWebSocket(
  */
 export function createDesktopHandler(
   options: RunDesktopOptions,
-  outDir: string,
+  outDir: string | DesktopUiFiles,
   proxy: ProxyModule | undefined,
   token: string = crypto.randomUUID(),
   onBooted?: () => void | Promise<void>,
@@ -1023,15 +1022,16 @@ export function createDesktopHandler(
   // iframe, and never into a loopback-world page.
   const memoryPreload = trust.kind === "memory" ? preload : undefined;
   const page = desktopPageGlobals(options, trust, wsUrl);
+  const files = typeof outDir === "string" ? bundledUiFiles(outDir) : outDir;
   const serveShell = desktopShellServer({
-    indexHtmlPath: join(outDir, "index.html"),
+    files,
     token,
     beacon: onBooted !== undefined,
     memoryPreload,
     preloadKey,
     page,
   });
-  const serveBackendOrExport = backendOrExportServer(options.proxy, proxy, outDir, serveShell);
+  const serveBackendOrExport = backendOrExportServer(options.proxy, proxy, files, serveShell);
 
   const serveLocal = localDesktopStage({ options, token, onBooted, bridge, onQuit, trust });
   const serveDev = devProxy
@@ -1164,7 +1164,7 @@ function desktopPageGlobals(
  * per-launch TOKEN: a subframe or a DNS-rebinding `Host` still learns it is desktop
  * (runtimePlatform()) but gets NO token, so it cannot reach the bridge. */
 function desktopShellServer(ctx: {
-  indexHtmlPath: string;
+  files: DesktopUiFiles;
   token: string;
   /** Inject the boot-confirm beacon (the updater is on). */
   beacon: boolean;
@@ -1173,7 +1173,7 @@ function desktopShellServer(ctx: {
   page: DesktopPageGlobals;
 }): DesktopShellServer {
   return async (isHead, injectToken, pageHtml) => {
-    const html = pageHtml ?? await Deno.readTextFile(ctx.indexHtmlPath).catch(() => null);
+    const html = pageHtml ?? await ctx.files.text("/index.html");
     if (html === null) return null;
     const injected = await injectDesktopGlobal(
       html,
@@ -1195,12 +1195,12 @@ function desktopShellServer(ctx: {
 async function serveExportPage(
   request: Request,
   url: URL,
-  outDir: string,
+  files: DesktopUiFiles,
   serveShell: DesktopShellServer,
   injectToken: boolean,
 ): Promise<Response | null> {
   if (request.method !== "GET" && request.method !== "HEAD") return null;
-  const pageHtml = await readExportPage(outDir, url.pathname);
+  const pageHtml = await readExportPage(files, url.pathname);
   if (pageHtml === null) return null;
   return await serveShell(request.method === "HEAD", injectToken, pageHtml);
 }
@@ -1210,7 +1210,7 @@ async function serveExportPage(
 function backendOrExportServer(
   proxyCfg: RunDesktopOptions["proxy"],
   proxy: ProxyModule | undefined,
-  outDir: string,
+  files: DesktopUiFiles,
   serveShell: DesktopShellServer,
 ): (request: Request, url: URL, injectToken: boolean) => Promise<Response> {
   return async (request, url, injectToken) => {
@@ -1221,10 +1221,10 @@ function backendOrExportServer(
     // with the desktop global injected (read uncompressed, so the injection is not fighting
     // content-encoding on the static response). Without this every path got the ROOT shell, so
     // a multi-page export's `<a href="/protected">` reloaded the home page.
-    const page = await serveExportPage(request, url, outDir, serveShell, injectToken);
+    const page = await serveExportPage(request, url, files, serveShell, injectToken);
     if (page) return page;
     const accEnc = request.headers.get("accept-encoding") ?? undefined;
-    const asset = await serveStatic(outDir, url.pathname, accEnc, request);
+    const asset = await files.asset(url.pathname, accEnc, request);
     if (asset) return noStore(asset);
     if (wantsShell(request, url.pathname)) {
       const shell = await serveShell(request.method === "HEAD", injectToken);
@@ -1266,13 +1266,17 @@ function desktopAppEvents(
 }
 
 /**
- * The bundled `desktop.preload` to inline, or `undefined` without one: the export's copy, or — in
- * live-reload proxy mode only, where the export is not rebuilt — the dev build `denext desktop dev`
- * points {@link DESKTOP_PRELOAD_ENV} at. Read once at startup.
+ * The bundled `desktop.preload` to inline, or `undefined` without one: the UI's copy (a UI
+ * overlay's only when its signed manifest lists it, verified), or — in live-reload proxy mode only,
+ * where the export is not rebuilt — the dev build `denext desktop dev` points
+ * {@link DESKTOP_PRELOAD_ENV} at. Read once at startup.
  */
-async function loadDesktopPreload(outDir: string, devProxy: boolean): Promise<string | undefined> {
+async function loadDesktopPreload(
+  files: DesktopUiFiles,
+  devProxy: boolean,
+): Promise<string | undefined> {
   const devFile = devProxy ? Deno.env.get(DESKTOP_PRELOAD_ENV) : undefined;
-  return await readDesktopPreload(devFile || join(outDir, DESKTOP_PRELOAD_FILE));
+  return devFile ? await readDesktopPreload(devFile) : await files.preload();
 }
 
 /**
@@ -1311,10 +1315,11 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // With the updater on, prefer the verified overlay in the app-support dir (the boot watchdog
   // rolls back a version that failed to boot last launch); without it, serve the bundle as before.
   // Imported lazily so apps that don't use the updater never pull the module in.
+  // The overlay's files are verified as they are served, never read straight from its folder.
   const updaterMod = options.updater ? await import("../desktop/updater.ts") : undefined;
-  const outDir = updaterMod
-    ? await updaterMod.resolveDesktopUiDir(bundledOut, options.updater!)
-    : bundledOut;
+  const uiFiles = updaterMod
+    ? desktopUiFiles(await updaterMod.openDesktopUi(bundledOut, options.updater!))
+    : bundledUiFiles(bundledOut);
   const port = options.port ?? Number(Deno.env.get("PORT") ?? 8000);
   // Live-reload PROXY mode is decided at RUNTIME, never by trusting the env: a packaged app
   // ignores DENEXT_DESKTOP_DEV_URL, and a non-loopback target is refused without the `--lan`
@@ -1431,7 +1436,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   appCtl?.install();
   const handle = createDesktopHandler(
     backendProxy.options,
-    outDir,
+    uiFiles,
     backendProxy.proxy,
     token,
     onBooted,
@@ -1440,7 +1445,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     bridge,
     () => Deno.exit(0), // a page-initiated window.close() quits, like the native window close
     trust,
-    await loadDesktopPreload(outDir, devDecision.proxy),
+    await loadDesktopPreload(uiFiles, devDecision.proxy),
     preloadKey,
     // The relay the page's WebSockets dial (Live, `desktopWebSocketUrl`), per-launch token included:
     // published by the pinned runtime next to the app origin.
