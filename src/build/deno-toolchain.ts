@@ -1095,6 +1095,8 @@ export type DenoToolchainChoice =
     readonly kind: "stock";
     /** Why stock Deno runs. */
     readonly reason: string;
+    /** Set for the explicit `DENEXT_DENO=stock` opt-out (a deprecated path: 5.0 refuses it). */
+    readonly optedOut?: true;
     /** Say this once (a failure or a missing grant), or nothing (an opt-out, no pin yet). */
     readonly warning?: string;
     /**
@@ -1235,7 +1237,9 @@ export async function resolveDenoToolchain(
 ): Promise<DenoToolchainChoice> {
   const env = options.env ?? processEnv;
   const mode = toolchainMode(env);
-  if (mode.mode === "stock") return { kind: "stock", reason: `${TOOLCHAIN_ENV}=stock` };
+  if (mode.mode === "stock") {
+    return { kind: "stock", reason: `${TOOLCHAIN_ENV}=stock`, optedOut: true };
+  }
   if (mode.mode === "path") return await pathChoice(mode.path);
   let pin: DenoToolchainPin;
   try {

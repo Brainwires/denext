@@ -203,10 +203,10 @@ supported list on musl or an older glibc, rather than downloading a binary that 
 
 ## Opting out, and when it falls back
 
-| Setting              | Effect                                                                  |
-| -------------------- | ----------------------------------------------------------------------- |
-| `DENEXT_DENO=stock`  | Everything runs on the Deno that started the CLI, silently.             |
-| `DENEXT_DENO=<path>` | That binary is used as the toolchain, unverified (one warning per run). |
+| Setting              | Effect                                                                    |
+| -------------------- | ------------------------------------------------------------------------- |
+| `DENEXT_DENO=stock`  | Everything runs on the Deno that started the CLI (deprecated: see below). |
+| `DENEXT_DENO=<path>` | That binary is used as the toolchain, unverified (one warning per run).   |
 
 denext never falls back to another Deno on its own. On a platform with no pinned build, offline on
 first use, or behind a failed or mismatching download, a command that needs the toolchain stops
@@ -225,6 +225,28 @@ access to the cache) also works: it re-runs itself on the toolchain. `DENEXT_DEN
 command on the Deno that started it. `denext toolchain status` says which Deno a command runs on.
 
 `DENO_BIN`, when you set it, still decides which `deno` the CLI's own child processes run.
+
+### Stock Deno is deprecated
+
+denext 5.0 drops stock Deno support: project code runs on denext's own Deno. Until then a command
+that runs project code on stock Deno says so once, with the fix, on stderr:
+
+```
+denext: deprecated: DENEXT_DENO=stock runs this command on stock Deno. denext 5.0 drops stock Deno support.
+  Fix: unset DENEXT_DENO (`denext toolchain install` fetches denext's Deno ahead). DENEXT_NO_DEPRECATION_WARNINGS=1 hides this notice.
+```
+
+| What runs on stock Deno                                                 | The fix                                                          |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `DENEXT_DENO=stock`                                                     | unset it                                                         |
+| `DENEXT_DESKTOP_RUNTIME=stock`                                          | unset it (the pinned runtime downloads on first use)             |
+| `desktop run` / `dev` falling back to the stock Deno Desktop runtime    | `denext toolchain install`, and unset `DENEXT_DENO` / `DENO_BIN` |
+| the npm esbuild (the [esbuild](#esbuild) fallback)                      | `denext toolchain install`                                       |
+| `createTestApp()` under a plain `deno test` / `deno task` on stock Deno | run it with `denext test` or `denext task <name>`                |
+
+The notice is printed once per process tree: the first one sets `DENEXT_STOCK_DEPRECATION_SHOWN=1`
+in the command's environment, so the processes it starts stay quiet.
+`DENEXT_NO_DEPRECATION_WARNINGS=1` hides it.
 
 ## esbuild
 
@@ -245,6 +267,7 @@ there is no `npm:esbuild` import. The binary it starts is, in order:
    when a copy there hashes to the pin, and otherwise downloaded from the registry
    (`NPM_CONFIG_REGISTRY`, default `registry.npmjs.org`) with the tarball checked against its
    pinned npm integrity and the binary against its pinned SHA-256 before it is made executable.
+   This fallback is [deprecated](#stock-deno-is-deprecated) and goes away in denext 5.0.
 
 A toolchain esbuild that does not match its pin (or is missing from the zip) is never installed:
 builds use the npm one and print one warning saying why. `denext toolchain status` shows which
@@ -959,8 +982,9 @@ to V8 15.2, and builds the Linux binaries for glibc 2.27 and later. The
 The patches are carried forward from release to release. Each
 denext release pins exactly one build (a SHA-256 per target, checked on download), so a project
 always runs the build its denext version was tested with, and upgrading denext moves the build with
-it. `DENEXT_DENO=stock` always works: what needs the build (`Deno.SQL`, Vitest/Jest compatibility,
-the bundled esbuild) falls back or says why it can't.
+it. Until denext 5.0, `DENEXT_DENO=stock` works ([deprecated](#stock-deno-is-deprecated)): what
+needs the build (`Deno.SQL`, Vitest/Jest compatibility, the bundled esbuild) falls back or says why
+it can't.
 
 ### Bootstrapping
 

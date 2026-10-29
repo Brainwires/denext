@@ -751,6 +751,19 @@ Deno.test("resolveDesktopRuntimeEnv: DENEXT_DESKTOP_RUNTIME=stock → no env, a 
   });
   assertEquals(r, { mode: "stock", env: {} });
   assertStringIncludes(logs.join("\n"), "deep links");
+  // Deprecated: the notice names 5.0 and the fix.
+  assertStringIncludes(logs.join("\n"), "denext 5.0 drops stock Deno support");
+  assertStringIncludes(logs.join("\n"), "Fix: unset DENEXT_DESKTOP_RUNTIME");
+  // DENEXT_NO_DEPRECATION_WARNINGS=1 hides it (the stock line itself stays).
+  const hushed: string[] = [];
+  await resolveDesktopRuntimeEnv({
+    projectDir: ".",
+    target: TARGET,
+    env: envOf({ DENEXT_DESKTOP_RUNTIME: "stock", DENEXT_NO_DEPRECATION_WARNINGS: "1" }),
+    log: (l) => hushed.push(l),
+  });
+  assertStringIncludes(hushed.join("\n"), "STOCK Deno Desktop runtime");
+  assert(!hushed.join("\n").includes("deprecated"), hushed.join("\n"));
   await assertRejects(
     () =>
       resolveDesktopRuntimeEnv({
@@ -1060,6 +1073,9 @@ Deno.test("resolveDesktopRuntimeEnv: onDenoMismatch stock warns (naming DENO_BIN
     assertStringIncludes(text, "DENO_BIN");
     assertStringIncludes(text, "STOCK runtime");
     assertStringIncludes(text, "packaging still requires Deno 9.9.9");
+    // Deprecated, after the fallback's own warning.
+    assertStringIncludes(logs.at(-1)!, "denext 5.0 drops stock Deno support");
+    assertStringIncludes(logs.at(-1)!, "`denext toolchain install`, and unset DENEXT_DENO");
     assertEquals(f.hits(), 0);
   } finally {
     await f.close();

@@ -402,7 +402,11 @@ Deno.test("windows DENEXT_DENO=stock: any case, cmd's trailing space, never touc
       cacheRoot: "Z:\\nonexistent\\denext-deno",
       fetch: noNetwork,
     });
-    assertEquals(choice, { kind: "stock", reason: "DENEXT_DENO=stock" }, JSON.stringify(raw));
+    assertEquals(
+      choice,
+      { kind: "stock", reason: "DENEXT_DENO=stock", optedOut: true },
+      JSON.stringify(raw),
+    );
   }
   const status = await denoToolchainStatus({
     env: envFrom({ DENEXT_DENO: "stock " }),
