@@ -45,6 +45,12 @@ export interface CapacitorStep {
   line: string;
   /** Why migrate does not run it (the line is printed for the user instead). */
   skip?: string;
+  /**
+   * The project's own code the command runs (its build, its Capacitor config, its package
+   * manager's hooks). On an untrusted clone that is arbitrary code execution, so
+   * {@linkcode runCapacitorSteps} runs such a step only when the user opted in.
+   */
+  projectCode: string;
 }
 
 /** Where the app id came from. */
@@ -291,10 +297,19 @@ function commandLine(c: PlannedCommand): string {
   return [...env, ...[c.cmd, ...c.args].map(quote)].join(" ");
 }
 
-/** A step from a command. */
-function step(label: string, command: PlannedCommand, skip?: string): CapacitorStep {
-  return { label, command, line: commandLine(command), ...(skip ? { skip } : {}) };
+/** A step from a command that runs `projectCode` (see {@linkcode CapacitorStep.projectCode}). */
+function step(
+  label: string,
+  command: PlannedCommand,
+  projectCode: string,
+  skip?: string,
+): CapacitorStep {
+  return { label, command, line: commandLine(command), projectCode, ...(skip ? { skip } : {}) };
 }
+
+/** What the install runs of the project's own: its package manager's config and hooks. */
+const INSTALL_RUNS = "its package manager's configuration, such as a .pnpmfile.cjs or a " +
+  "Yarn yarnPath";
 
 /** The install, export and `cap add` steps. */
 async function capacitorSteps(
@@ -306,9 +321,10 @@ async function capacitorSteps(
   const steps: CapacitorStep[] = [];
   if (packages.length) {
     steps.push(
-      pm ? step("install", installCommand(pm, packages, dir)) : step(
+      pm ? step("install", installCommand(pm, packages, dir), INSTALL_RUNS) : step(
         "install",
         installCommand("npm", packages, dir),
+        INSTALL_RUNS,
         "no lockfile, so migrate does not pick a package manager: run this, or your " +
           "manager's equivalent",
       ),
@@ -321,12 +337,19 @@ async function capacitorSteps(
   steps.push(step(
     "export",
     { cmd: "deno", args: [...input.run.split(" ").slice(1), input.cli, "export", "."], cwd: dir },
+    "`denext export` builds and renders the app",
     notInstalled,
   ));
   for (const p of platforms) {
     const there = await exists(join(dir, p)) ? `${p}/ already exists` : undefined;
     steps.push(
-      step(`add ${p}`, { cmd: "npx", args: ["cap", "add", p], cwd: dir }, there ?? notInstalled),
+      step(
+        `add ${p}`,
+        { cmd: "npx", args: ["cap", "add", p], cwd: dir },
+        "`cap add` loads the app's capacitor.config and runs the Capacitor CLI from its " +
+          "node_modules",
+        there ?? notInstalled,
+      ),
     );
   }
   return steps;
@@ -548,16 +571,34 @@ export interface CapacitorStepsOutcome {
   pending: Array<{ line: string; reason: string }>;
 }
 
+/** Whether {@linkcode runCapacitorSteps} may run the steps that run the project's own code. */
+export interface CapacitorRunOptions {
+  /**
+   * The user opted in to running the project's own code (`--yes`, or a confirmed prompt).
+   * Without it those steps are left to the user, with the reason.
+   */
+  readonly allowProjectCode: boolean;
+}
+
+/** The pending reason of a step left out because the user did not opt in to running it. */
+function projectCodeReason(step: CapacitorStep): string {
+  return `runs the project's own code (${step.projectCode}); run it once you trust the ` +
+    "project, or re-run migrate with --yes";
+}
+
 /**
- * Run the planned steps in order. A skipped step is left to the user; a failed step stops the
+ * Run the planned steps in order. A skipped step is left to the user, and so is every step
+ * that runs the project's own code unless `options.allowProjectCode`; a failed step stops the
  * run, and the rest are left to the user too.
  *
  * @param steps The plan's steps.
  * @param run Runs one command and resolves its exit code.
+ * @param options Whether the user opted in to running the project's own code.
  */
 export async function runCapacitorSteps(
   steps: readonly CapacitorStep[],
   run: CommandRunner,
+  options: CapacitorRunOptions,
 ): Promise<CapacitorStepsOutcome> {
   const out: CapacitorStepsOutcome = { ran: [], pending: [] };
   for (const s of steps) {
@@ -567,6 +608,10 @@ export async function runCapacitorSteps(
     }
     if (s.skip) {
       out.pending.push({ line: s.line, reason: s.skip });
+      continue;
+    }
+    if (!options.allowProjectCode) {
+      out.pending.push({ line: s.line, reason: projectCodeReason(s) });
       continue;
     }
     const { code } = await run(s.command);
