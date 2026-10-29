@@ -95,6 +95,11 @@ and this project adheres to
 
 ### Fixed
 
+- **A live view parked as the server shuts down reaches the view store.** A closed socket parks its
+  live views and seals each snapshot into the view store in the background; `denext start`'s
+  shutdown ran the services' and plugins' teardowns without waiting for those writes, so one in
+  flight could be cut off (a shared store's client closed under it) and that view could not resume
+  on another instance. Shutdown now waits for them before anything is torn down.
 - **Two installs of one cache in a single process no longer fail the lock order.** While one
   install held a cache's download lock (the Deno Desktop runtime, the toolchain, esbuild, fastlane),
   a second one started in the same process asked for the cache's read lock and stopped with "lock

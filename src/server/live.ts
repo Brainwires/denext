@@ -345,6 +345,15 @@ export function sanitizeLimits(overrides?: LiveLimits): Required<LiveLimits> {
   return out;
 }
 
+/**
+ * Resolves once the live-view store writes in flight have landed: a socket that closes parks
+ * its views and seals each one's snapshot into the view store in the background, which can
+ * still be running when the hub is torn down. The server awaits it before its teardowns.
+ */
+export function liveViewStoreSettled(): Promise<void> {
+  return viewHub.settled();
+}
+
 /** Tear down the hub (tests / shutdown): clear the cache hook and drop connections. */
 export function uninstallLiveHub(): void {
   stopPresence();

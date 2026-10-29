@@ -9,6 +9,7 @@ import {
   handleLiveUpgrade,
   inspectLiveConnections,
   installLiveHub,
+  liveViewStoreSettled,
   uninstallLiveHub,
 } from "../src/server/live.ts";
 import { setClientAddr } from "../src/server/remote-addr.ts";
@@ -135,6 +136,9 @@ Deno.test("live views over the socket: patches, the frame-size cap, connection c
   } finally {
     uninstallLiveHub();
     await server.shutdown();
+    // A closed socket parks its views and seals their snapshots into the view store in the
+    // background: the writes end in this test.
+    await liveViewStoreSettled();
   }
 });
 
@@ -168,5 +172,6 @@ Deno.test("live socket: a frame type naming an Object.prototype key is ignored, 
     console.error = realError;
     await server.shutdown();
     uninstallLiveHub();
+    await liveViewStoreSettled(); // the parked view's snapshot write ends in this test
   }
 });

@@ -641,8 +641,39 @@ Deno.test("live views: a shared store resumes a dropped view on another instance
   const fresh = next(c, isType("view-render"));
   await instanceA.hub.mount(c, await mountFrame("test-counter", { start: 9 }, { resume: r.iid }));
   assertEquals(shown((await fresh).flight), "n=9");
+  await Promise.all([instanceA.hub.settled(), instanceB.hub.settled()]);
   instanceA.hub.dispose();
   instanceB.hub.dispose();
+});
+
+Deno.test("live views: settled() waits for a parked view's snapshot write to land", async () => {
+  let release = () => {};
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  const landed: string[] = [];
+  const store = memoryLiveViewStore();
+  const slow: LiveViewStore = {
+    set: async (id, sealed, ttl) => {
+      await gate;
+      await store.set(id, sealed, ttl);
+      landed.push(id);
+    },
+    take: (id) => store.take(id),
+    delete: (id) => store.delete(id),
+  };
+  const { hub, conn } = fakeHub({}, slow);
+  await hub.settled(); // nothing queued: settles at once
+  const a = conn("ok");
+  const first = await mounted(hub, a, 1);
+  a.closed = true;
+  hub.drop(a); // parks the view and queues its sealed write
+  let settled = false;
+  const done = hub.settled().then(() => void (settled = true));
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals([settled, landed], [false, []], "still writing");
+  release();
+  await done;
+  assertEquals(landed, [first.iid]);
+  hub.dispose();
 });
 
 Deno.test("live view snapshots: sealed, bound to their instance id, models must serialize", async () => {
