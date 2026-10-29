@@ -369,7 +369,9 @@ set as fastlane's `IPA_OUTPUT_PATH` / `GRADLE_AAB_OUTPUT_PATH`, so plugin action
 
 Every lane takes `flavor:<name>`, `build_number:<n>`, `version_name:<x.y.z>`, `bump:true`,
 `skip_export:true` and `app:<dir>` (the denext app, when it is not the Capacitor project), passed
-to `denext mobile build` as the flags of the same name. Versions stay denext's: the lanes never
+to `denext mobile build` as the flags of the same name. The iOS `build` lane also takes
+`unsigned:true` (`--unsigned`: an unsigned `.ipa`, with no match, certificate or Apple account,
+for a CI check); `beta` and `release` refuse it. Versions stay denext's: the lanes never
 call `increment_build_number` or `agvtool`. `beta` and `release` take the store's latest build
 number plus one (`latest_testflight_build_number`, the Play tracks' version codes) when it is
 higher than the sources', for that build only (`--build-number`), unless `build_number:` or

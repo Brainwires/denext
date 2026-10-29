@@ -512,8 +512,8 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   build C extensions. It runs denext's pinned gems, so plugins in `fastlane/Pluginfile` need the
   project's Gemfile and `bundle exec`. The Ruby comes from denext's own mirror (the `toolchain-assets`
   GitHub release), with Homebrew's `ghcr.io` registry as the fallback, both pinned by SHA-256. It has been run on
-  macOS x64, Linux x64 (Ubuntu) and Linux arm64 (Fedora, SELinux enforcing); on macOS arm64 the
-  Ruby is pinned and its hash checked, but the install has not been run there yet.
+  macOS x64, Linux x64 (Ubuntu) and Linux arm64 (Fedora, SELinux enforcing); on macOS arm64,
+  release CI installs it and runs the iOS `build` lane (unsigned) on a GitHub-hosted macOS 15 runner.
 - **Won't:** native UIs for watches, cars and App Clips; hosted services (an Expo Go-style
   client, push relay, build/submit, OTA CDN); install attribution; MDM configuration wrappers;
   code obfuscation (keep secrets on the server).

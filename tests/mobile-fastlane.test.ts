@@ -11,6 +11,7 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { join } from "@std/path";
+import { parse as parseYaml } from "@std/yaml";
 import {
   addMobileCapabilities,
   type CommandRunner,
@@ -146,6 +147,7 @@ Deno.test("add fastlane: the Fastfile's lanes build with `denext mobile build` a
       ["skip_export", "--skip-export"],
       ["export_options", "--export-options"],
       ["apk", "--apk"],
+      ["unsigned", "--unsigned"],
     ]
   ) {
     assertStringIncludes(fastfile, `options[:${option}]`);
@@ -166,6 +168,59 @@ Deno.test("add fastlane: the Fastfile's lanes build with `denext mobile build` a
   assertStringIncludes(fastfile, "google_play_track_version_codes(");
   // An unset CI secret is an empty string: every lookup goes through env_value.
   assert(!/ENV\["(MATCH_GIT_URL|SUPPLY_JSON_KEY|DENEXT_IOS_TEAM)"\]/.test(fastfile));
+});
+
+Deno.test("add fastlane: an unsigned iOS build lane (no match, no CI keychain); the store lanes refuse it", () => {
+  const fastfile = fastfileTemplate();
+  assertStringIncludes(
+    fastfile,
+    'args << "--unsigned" if platform.to_s == "ios" && truthy(options[:unsigned])',
+  );
+  assertStringIncludes(fastfile, 'setup_ci if env_value("CI") && !unsigned');
+  assertStringIncludes(fastfile, '["appId"], options) unless unsigned');
+  assertStringIncludes(fastfile, "if unsigned && store");
+  assertStringIncludes(fastfile, "unsigned:true (build only");
+});
+
+Deno.test("native-plugins.yml: the iOS job (macos-15, arm64) installs the managed fastlane and runs the unsigned build lane", async () => {
+  const workflow = await Deno.readTextFile(
+    new URL("../.github/workflows/native-plugins.yml", import.meta.url),
+  );
+  const parsed = parseYaml(workflow) as {
+    jobs: Record<
+      string,
+      {
+        "runs-on": string;
+        steps: { name?: string; run?: string; with?: { path?: string; key?: string } }[];
+      }
+    >;
+  };
+  const ios = parsed.jobs.ios;
+  assertEquals(ios["runs-on"], "macos-15");
+  const runs = ios.steps.map((s) => s.run ?? "").join("\n");
+  // Apple silicon asserted, not assumed; the install ahead of time; the lane; its own artifact.
+  assertStringIncludes(runs, 'test "$(uname -m)" = arm64');
+  assertStringIncludes(runs, "$DENEXT toolchain install --with fastlane");
+  assertStringIncludes(runs, "darwin-aarch64/ruby/bin/ruby");
+  assertStringIncludes(runs, "$DENEXT mobile add fastlane");
+  assertStringIncludes(runs, "$DENEXT fastlane ios build unsigned:true");
+  assertStringIncludes(runs, "rm -rf dist/mobile/ios");
+  assertStringIncludes(runs, "dist/mobile/ios/*-release-unsigned.ipa");
+  // The lane runs inside fastlane/, so the CLI it calls is an absolute path.
+  assertStringIncludes(
+    workflow,
+    "DENEXT_CLI: deno run -A --node-modules-dir=none ${{ github.workspace }}/cli.ts",
+  );
+  // Cached apart from the Deno cache, keyed on the pin.
+  const cache = ios.steps.find((s) => s.name === "Cache the managed fastlane");
+  assertEquals(cache?.with?.path, "~/Library/Caches/deno/denext-deno/fastlane");
+  assertStringIncludes(
+    cache?.with?.key ?? "",
+    "hashFiles('src/build/fastlane-toolchain-pin.json')",
+  );
+  assertStringIncludes(workflow, "!~/Library/Caches/deno/denext-deno/fastlane");
+  // No schedule: trains dispatch it.
+  assert(!/^\s*schedule:/m.test(workflow));
 });
 
 Deno.test("add fastlane: Ruby string escaping and a missing appId", async () => {
