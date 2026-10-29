@@ -13,6 +13,7 @@ import {
   type FileTransferProgress,
   fileTransfers,
   forgetFileTransfer,
+  listDir,
   onFileTransfer,
   pauseFileTransfer,
   readFile,
@@ -25,6 +26,7 @@ import {
   resetFileTransfersForTesting,
   trackedDownload,
 } from "../src/mobile/file-transfer.ts";
+import { registerWebHandle } from "../src/mobile/picked-web.ts";
 import {
   type Any,
   fakePlugin,
@@ -52,6 +54,10 @@ let writeLatency: () => Promise<void> = macrotask;
 let landed = 0;
 /** The names the fake OPFS has removed since `withOpfs` began. */
 let removed: string[] = [];
+/** The renames (`from>to`) the fake OPFS's `move` has made since `withOpfs` began. */
+let moved: string[] = [];
+/** How the fake OPFS's files `move`: renaming (as Chromium, Firefox and Safari do), refusing, or not at all. */
+let moves: "rename" | "refuse" | "absent" = "rename";
 
 /** Wait until the fake OPFS has written `bytes` in all (a chunk let through is not yet written). */
 const written = (bytes: number) => until(() => landed >= bytes, `${bytes} bytes written`);
@@ -85,7 +91,25 @@ class FakeFile {
   bytes = new Uint8Array(0);
   /** Its writable streams not yet closed or aborted (a real OPFS refuses to remove it then). */
   writers = 0;
-  constructor(public name: string) {}
+  constructor(public name: string, readonly parent?: FakeDir) {}
+  /** `FileSystemHandle.move(newName)`: a rename in its folder, replacing a file of that name. */
+  get move(): ((name: string) => Promise<void>) | undefined {
+    if (moves === "absent") return undefined;
+    return (name: string) => {
+      const target = this.parent?.children.get(name);
+      if (moves === "refuse" || !this.parent || this.writers > 0) {
+        return Promise.reject(new DOMException(name, "NoModificationAllowedError"));
+      }
+      if (target instanceof FakeDir || (target && target.writers > 0)) {
+        return Promise.reject(new DOMException(name, "InvalidModificationError"));
+      }
+      this.parent.children.delete(this.name);
+      moved.push(`${this.name}>${name}`);
+      this.name = name;
+      this.parent.children.set(name, this);
+      return Promise.resolve();
+    };
+  }
   getFile(): Promise<File> {
     return Promise.resolve(new File([this.bytes.slice()], this.name));
   }
@@ -95,8 +119,12 @@ class FakeFile {
     this.writers++;
     return Promise.resolve({
       seek: (n: number) => void (at = n),
-      write: async (chunk: string | Uint8Array) => {
-        const bytes = typeof chunk === "string" ? new TextEncoder().encode(chunk) : chunk;
+      write: async (chunk: string | Uint8Array | Blob) => {
+        const bytes = typeof chunk === "string"
+          ? new TextEncoder().encode(chunk)
+          : chunk instanceof Blob
+          ? new Uint8Array(await chunk.arrayBuffer())
+          : chunk;
         const from = at;
         at += bytes.length;
         await writeLatency();
@@ -133,9 +161,12 @@ class FakeDir {
   }
   getFileHandle(name: string, opts?: { create?: boolean }): Promise<Any> {
     let child = this.children.get(name);
-    if (!child && opts?.create) this.children.set(name, child = new FakeFile(name));
+    if (!child && opts?.create) this.children.set(name, child = new FakeFile(name, this));
     if (!child) return Promise.reject(new DOMException(name, "NotFoundError"));
     return Promise.resolve(child);
+  }
+  async *entries(): AsyncGenerator<[string, FakeFile | FakeDir]> {
+    yield* [...this.children];
   }
   removeEntry(name: string): Promise<void> {
     const child = this.children.get(name);
@@ -159,9 +190,22 @@ function withOpfs(fn: () => Promise<void>, extra: Record<string, unknown> = {}):
       writeLatency = macrotask;
       landed = 0;
       removed = [];
+      moved = [];
+      moves = "rename";
       resetFileTransfersForTesting();
     }
   });
+}
+
+/** The bytes of OPFS file `path` (in `directory`, default `data`). */
+async function bytesAt(path: string, directory?: "cache"): Promise<Uint8Array> {
+  const text = atob(await readFile(path, { encoding: "base64", directory }));
+  return Uint8Array.from(text, (c) => c.charCodeAt(0));
+}
+
+/** The names in OPFS folder `path` (in `directory`, default `data`), sorted. */
+async function namesIn(path: string, directory?: "cache"): Promise<string[]> {
+  return (await listDir(path, { directory })).map((e) => e.name);
 }
 
 /** Transfer `id`'s next `type` event (listen before acting). */
@@ -188,7 +232,12 @@ function pattern(size: number, from = 0): Uint8Array<ArrayBuffer> {
  */
 function streamingFetch(
   size: number,
-  opts: { ignoreRange?: boolean; validators?: Record<string, string> } = {},
+  opts: {
+    ignoreRange?: boolean;
+    validators?: Record<string, string>;
+    /** Error the body (a network failure) when a chunk would start at or past this byte. */
+    failAt?: number;
+  } = {},
 ) {
   const requests: Array<{ url: string; headers: Headers }> = [];
   let release: (() => void) | null = null;
@@ -209,6 +258,9 @@ function streamingFetch(
         await gate();
         pending--;
         if (init.signal?.aborted) return controller.error(init.signal.reason);
+        if (opts.failAt !== undefined && at >= opts.failAt) {
+          return controller.error(new TypeError("network connection lost"));
+        }
         const end = Math.min(size, at + 1024);
         controller.enqueue(pattern(end, at));
         at = end;
@@ -601,7 +653,7 @@ Deno.test("downloadToFile (web): during the last write a cancel still cancels; a
         assertEquals(await cancelFileTransfer("l1"), true);
         writes.release();
         assertEquals((await assertRejects(() => done, FileTransferError)).code, "CANCELLED");
-        assertEquals(removed, ["l.bin"]);
+        assertEquals(removed, [".l.bin.denext-part"]);
       } else {
         const pausing = pauseFileTransfer("l1");
         writes.release();
@@ -626,35 +678,35 @@ Deno.test("downloadToFile (web): a cancel during the closing commit still cancel
     writes.release();
     assertEquals((await assertRejects(() => done, FileTransferError)).code, "CANCELLED");
     assertEquals((await fileTransfers())[0].state, "cancelled");
-    assertEquals(removed, ["m.bin"]);
+    assertEquals(removed, [".m.bin.denext-part"]);
     await assertRejects(() => readFile("m.bin"));
   }, { fetch: server.fetch });
 });
 
-Deno.test("downloadToFile (web): a cancel deletes the file it was writing; a pause keeps it", async () => {
+Deno.test("downloadToFile (web): a cancel deletes the part file it was writing; a pause keeps it", async () => {
   const server = streamingFetch(4 * 1024);
   await withOpfs(async () => {
     const bytesOf = async (path: string) =>
       Uint8Array.from(atob(await readFile(path, { encoding: "base64" })), (c) => c.charCodeAt(0));
-    // Cancelled while running: the bytes written are let go and the file removed.
+    // Cancelled while running: the bytes written are let go and the part file removed.
     const running = downloadToFile("https://x.test/a", "dl/a.bin", { id: "r1" });
     await server.step(1);
     await written(1024);
     assertEquals(await cancelFileTransfer("r1"), true);
     await assertRejects(() => running, FileTransferError);
-    assertEquals(removed, ["a.bin"]);
+    assertEquals(removed, [".a.bin.denext-part"]);
     await assertRejects(() => readFile("dl/a.bin"));
-    // Paused, the partial file stays (a resume continues it); cancelled then, it goes.
+    // Paused, the part file stays (a resume continues it); cancelled then, it goes.
     const paused = downloadToFile("https://x.test/b", "dl/b.bin", { id: "r2" });
     await server.step(1);
     await written(2048);
     assertEquals(await pauseFileTransfer("r2"), true);
-    assertEquals(await bytesOf("dl/b.bin"), pattern(1024));
-    assertEquals(removed, ["a.bin"]);
+    assertEquals(await bytesOf("dl/.b.bin.denext-part"), pattern(1024));
+    assertEquals(removed, [".a.bin.denext-part"]);
     assertEquals(await cancelFileTransfer("r2"), true);
     await assertRejects(() => paused, FileTransferError);
-    assertEquals(removed, ["a.bin", "b.bin"]);
-    await assertRejects(() => readFile("dl/b.bin"));
+    assertEquals(removed, [".a.bin.denext-part", ".b.bin.denext-part"]);
+    assertEquals(await listDir("dl"), []);
     // The caller's signal does the same.
     const controller = new AbortController();
     const signalled = downloadToFile("https://x.test/c", "dl/c.bin", {
@@ -665,7 +717,7 @@ Deno.test("downloadToFile (web): a cancel deletes the file it was writing; a pau
     await written(3072);
     controller.abort(new Error("gone"));
     await assertRejects(() => signalled, Error, "gone");
-    assertEquals(removed, ["a.bin", "b.bin", "c.bin"]);
+    assertEquals(removed, [".a.bin.denext-part", ".b.bin.denext-part", ".c.bin.denext-part"]);
   }, { fetch: server.fetch });
   // A cancel before the download opened its file leaves the file already there alone.
   const hanging = (_url: string, init: { signal?: AbortSignal } = {}) =>
@@ -680,6 +732,138 @@ Deno.test("downloadToFile (web): a cancel deletes the file it was writing; a pau
     await assertRejects(() => done, FileTransferError);
     assertEquals([removed, await readFile("kept.bin")], [[], "earlier"]);
   }, { fetch: hanging });
+});
+
+Deno.test("downloadToFile (web): a file it replaces keeps its contents through a cancel and a pause; done replaces it", async () => {
+  const server = streamingFetch(3 * 1024);
+  await withOpfs(async () => {
+    await writeFile("dl/f.bin", "earlier", { recursive: true });
+    // Cancelled while running.
+    const running = downloadToFile("https://x.test/f", "dl/f.bin", { id: "e1" });
+    await server.step(1);
+    await written(1024);
+    assertEquals(await cancelFileTransfer("e1"), true);
+    await assertRejects(() => running, FileTransferError);
+    assertEquals(await readFile("dl/f.bin"), "earlier");
+    assertEquals(await namesIn("dl"), ["f.bin"]);
+    // Paused: the bytes so far are in the part file beside it. Cancelled then, only that goes.
+    const paused = downloadToFile("https://x.test/f", "dl/f.bin", { id: "e2" });
+    await server.step(1);
+    await written(2048);
+    assertEquals(await pauseFileTransfer("e2"), true);
+    assertEquals(await namesIn("dl"), [".f.bin.denext-part", "f.bin"]);
+    assertEquals(await readFile("dl/f.bin"), "earlier");
+    assertEquals(await cancelFileTransfer("e2"), true);
+    await assertRejects(() => paused, FileTransferError);
+    assertEquals(await readFile("dl/f.bin"), "earlier");
+    assertEquals(await namesIn("dl"), ["f.bin"]);
+    // Done: the part file is renamed over it.
+    const done = downloadToFile("https://x.test/f", "dl/f.bin", { id: "e3" });
+    await server.drain();
+    assertEquals(await done, { path: "data/dl/f.bin" });
+    assertEquals(await bytesAt("dl/f.bin"), pattern(3 * 1024));
+    assertEquals(moved, [".f.bin.denext-part>f.bin"]);
+    assertEquals(await namesIn("dl"), ["f.bin"]);
+  }, { fetch: server.fetch });
+});
+
+Deno.test("downloadToFile (web): a resume continues the part file, the file it replaces untouched until done", async () => {
+  const server = streamingFetch(3 * 1024);
+  await withOpfs(async () => {
+    await writeFile("r.bin", "earlier");
+    const done = downloadToFile("https://x.test/r", "r.bin", { id: "p1" });
+    await server.step(1);
+    await written(1024);
+    assertEquals(await pauseFileTransfer("p1"), true);
+    assertEquals(await bytesAt(".r.bin.denext-part"), pattern(1024));
+    assertEquals(await readFile("r.bin"), "earlier");
+    assertEquals(await resumeFileTransfer("p1"), true);
+    await server.drain();
+    assertEquals(await done, { path: "data/r.bin" });
+    assertEquals(server.requests[1].headers.get("range"), "bytes=1024-");
+    assertEquals(await bytesAt("r.bin"), pattern(3 * 1024));
+    assertEquals(await namesIn(""), ["r.bin"]);
+  }, { fetch: server.fetch });
+});
+
+Deno.test("downloadToFile (web): a failure keeps the file it replaces and drops the part file", async () => {
+  const server = streamingFetch(3 * 1024, { failAt: 2048 });
+  await withOpfs(async () => {
+    await writeFile("g.bin", "earlier");
+    const done = downloadToFile("https://x.test/g", "g.bin", { id: "g1" });
+    const failed = assertRejects(() => done, FileTransferError);
+    await server.drain();
+    const err = await failed;
+    assertEquals([err.code, err.resumable], ["NETWORK", false]);
+    assertEquals((await fileTransfers())[0].resumable, false);
+    assertEquals(await readFile("g.bin"), "earlier");
+    assertEquals(await namesIn(""), ["g.bin"]);
+  }, { fetch: server.fetch });
+  // An HTTP error answering the resume drops what the pause kept.
+  const first = streamingFetch(3 * 1024);
+  let calls = 0;
+  const gone = (url: string, init?: Any) =>
+    ++calls === 1 ? first.fetch(url, init) : Promise.resolve(new Response("gone", { status: 410 }));
+  await withOpfs(async () => {
+    await writeFile("h.bin", "earlier");
+    const done = downloadToFile("https://x.test/h", "h.bin", { id: "g2" });
+    await first.step(1);
+    await written(1024);
+    assertEquals(await pauseFileTransfer("g2"), true);
+    assertEquals(await resumeFileTransfer("g2"), true);
+    assertEquals((await assertRejects(() => done, FileTransferError)).code, "HTTP");
+    assertEquals(await readFile("h.bin"), "earlier");
+    assertEquals(await namesIn(""), ["h.bin"]);
+  }, { fetch: gone });
+});
+
+Deno.test("downloadToFile (web): without a working move the part file is copied in, then removed", async () => {
+  for (const how of ["absent", "refuse"] as const) {
+    const server = streamingFetch(2048);
+    await withOpfs(async () => {
+      moves = how;
+      await writeFile("c.bin", "earlier");
+      const done = downloadToFile("https://x.test/c", "c.bin", { id: `c-${how}` });
+      await server.drain();
+      assertEquals(await done, { path: "data/c.bin" });
+      assertEquals(await bytesAt("c.bin"), pattern(2048));
+      assertEquals([moved, removed], [[], [".c.bin.denext-part"]]);
+      assertEquals(await namesIn(""), ["c.bin"]);
+    }, { fetch: server.fetch });
+  }
+});
+
+Deno.test("downloadToFile (web): a picked file keeps its contents until done; its part file is in OPFS", async () => {
+  const server = streamingFetch(2048);
+  await withOpfs(async () => {
+    const picked = new FakeFile("picked.bin");
+    picked.bytes = new TextEncoder().encode("earlier");
+    const directory = { picked: registerWebHandle(picked as Any) };
+    const text = () => new TextDecoder().decode(picked.bytes);
+    // Cancelled while running, then paused and cancelled: the picked file is never touched.
+    const running = downloadToFile("https://x.test/p", "", { id: "k0", directory });
+    await server.step(1);
+    await written(1024);
+    assertEquals(await cancelFileTransfer("k0"), true);
+    await assertRejects(() => running, FileTransferError);
+    assertEquals(text(), "earlier");
+    const paused = downloadToFile("https://x.test/p", "", { id: "k1", directory });
+    await server.step(1);
+    await written(2048);
+    assertEquals(await pauseFileTransfer("k1"), true);
+    assertEquals(text(), "earlier");
+    assertEquals((await namesIn(".denext-part", "cache")).length, 1);
+    assertEquals(await cancelFileTransfer("k1"), true);
+    await assertRejects(() => paused, FileTransferError);
+    assertEquals(text(), "earlier");
+    assertEquals(await namesIn(".denext-part", "cache"), []);
+    // Done: the bytes are copied into the picked file and the part file removed.
+    const done = downloadToFile("https://x.test/p", "", { id: "k2", directory });
+    await server.drain();
+    assertEquals(await done, { path: "" });
+    assertEquals(picked.bytes, pattern(2048));
+    assertEquals(await namesIn(".denext-part", "cache"), []);
+  }, { fetch: server.fetch });
 });
 
 Deno.test("trackedDownload: a cancel while its engine's pause is settling cancels, and drops the kept bytes", async () => {

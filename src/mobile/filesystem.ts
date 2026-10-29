@@ -534,17 +534,32 @@ export async function listDir(
 }
 
 /**
- * The OPFS (or picked) file a page download writes, opened anew or to append. Writes land in the
- * stream's own copy until `close()` commits them; a cancel `abort()`s that copy (the file keeps
- * what an earlier pause committed) and then removes the file, which a browser refuses while a
- * writable on it is still open.
+ * Where a page download to `rel` keeps its bytes until it is done, so the file already there keeps
+ * its contents through a pause, a cancel or a failure: a hidden sibling `.<name>.denext-part` in
+ * OPFS, or, for a picked file or folder (which may have no reachable parent, and where a sibling
+ * would show in the user's folder), a file under OPFS's `cache/.denext-part/`. The next download to
+ * the same file starts that entry over, so one a reload left behind is reused.
+ */
+function webPart(directory: FileDirectory, rel: string): [FileDirectory, string] {
+  return isPicked(directory)
+    ? ["cache", `.denext-part/${encodeURIComponent(`${directory.picked}/${rel}`)}`]
+    : [directory, rel.replace(/[^/]*$/, ".$&.denext-part")];
+}
+
+/**
+ * The file a page download writes: its part file ({@linkcode webPart}), opened anew or to append,
+ * then moved into place. Writes land in the stream's own copy until `close()` commits them; a
+ * cancel `abort()`s that copy and removes the part file, which a browser refuses while a writable
+ * on it is still open. Done, an OPFS part file is renamed over the file (`move`, which replaces
+ * it); a picked file, or a browser without `move` or that refuses it, gets the bytes copied in
+ * through a writable whose `close()` swaps them in, and the part file is removed.
  */
 function webSink(directory: FileDirectory, rel: string): DownloadSink {
-  let file: WebFile | undefined;
+  let part: WebFile | undefined;
   return {
     async open(at) {
-      file = await webFile("downloadToFile", directory, rel, true, true, true);
-      const { handle } = file;
+      part = await webFile("downloadToFile", ...webPart(directory, rel), true, true, true);
+      const { handle } = part;
       const writable = at > 0
         ? await handle.createWritable({ keepExistingData: true })
         : await handle.createWritable();
@@ -555,7 +570,28 @@ function webSink(directory: FileDirectory, rel: string): DownloadSink {
         abort: () => writable.abort(),
       };
     },
-    remove: () => file?.remove() ?? Promise.resolve(),
+    async commit() {
+      const from = part!;
+      const move = (from.handle as { move?: (name: string) => Promise<void> }).move;
+      if (!isPicked(directory) && move) {
+        try {
+          return await move.call(from.handle, rel.replace(/^.*\//, ""));
+        } catch {
+          // Copied in below.
+        }
+      }
+      const to = await webFile("downloadToFile", directory, rel, true, true, true);
+      const writable = await to.handle.createWritable();
+      try {
+        await writable.write(await from.handle.getFile());
+        await writable.close();
+      } catch (err) {
+        await writable.abort().catch(() => {});
+        throw err;
+      }
+      await from.remove().catch(() => {});
+    },
+    remove: () => part?.remove() ?? Promise.resolve(),
   };
 }
 
@@ -619,8 +655,12 @@ function urlOf(fn: string, url: string): string {
  *   downloaded to the same file again.
  * - Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System
  *   with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range
- *   request (a server that answers 200 starts it over). {@linkcode cancelFileTransfer} or
- *   aborting `signal` cancels it and deletes the file it was writing.
+ *   request (a server that answers 200 starts it over). The bytes go to a part file (a hidden
+ *   sibling `.<name>.denext-part`; for a picked file or folder, one under OPFS's `cache` folder)
+ *   that replaces the file only once the download is done, so a file already at `path` keeps its
+ *   contents until then. {@linkcode cancelFileTransfer}, aborting `signal` or a failure ends it
+ *   and deletes the part file, never the file it would have replaced. A reload forgets the
+ *   transfer: downloading to the same file again starts over in the same part file.
  *
  * @param url The `http(s)` URL to fetch.
  * @param path The file's path inside `directory`; no `..` segments.

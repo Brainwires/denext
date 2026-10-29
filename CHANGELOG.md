@@ -244,6 +244,14 @@ and this project adheres to
   aborted rather than committed and the file is removed, including one a pause kept; a pause still
   keeps it for the resume, and a cancel before the download opened its file leaves the file
   already at that path alone.
+- **A page download replaces a file only once it is done.** On the web, `downloadToFile` wrote
+  straight into the file at its path, so a pause overwrote a file already there with the bytes so
+  far, and a cancel or a failure left it partial or removed it. The bytes now go to a part file (a
+  hidden sibling `.<name>.denext-part`; for a picked file or folder, a file under OPFS's `cache`
+  folder) that is renamed over the file when the download is done (copied in where the browser
+  has no `move` or refuses it, and always for a picked item), as the iOS background download
+  does. A pause keeps the part file for the resume; a cancel or a failure (a network error, an
+  HTTP error answering a resume) deletes only it, and its `failed` event is no longer `resumable`.
 - **A tracked download cancelled while its pause settled stays cancelled.** A download another
   engine runs (a Deno Desktop window's) that was cancelled after its engine accepted a pause but
   before the run stopped ended paused, its promise pending. It now cancels and the engine drops
