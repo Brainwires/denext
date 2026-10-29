@@ -5,6 +5,11 @@
  * on that fixed port (a provider that only accepts its registered `http://localhost:1455/…`) —
  * then answers the caller with the captured callback URL.
  *
+ * The authorization URL must carry PKCE S256 (RFC 7636), as on every `openAuthSession` path, unless
+ * the caller waives it with `pkce: "not-applicable"` and a `reason`: another local process can
+ * hold or race the loopback port and take the redirect (RFC 8252 §8.1), and only the verifier the
+ * page kept makes the `code` it carries redeemable.
+ *
  * This is AUTH-CRITICAL. Every check fails closed, the token compare is constant-time, and the
  * code/state carried in the auth and callback URLs are NEVER logged.
  *
@@ -47,6 +52,11 @@ let openSessionKey: string | undefined;
 const SESSION_KEY = /^[A-Za-z0-9-]{16,128}$/;
 /** What the open session's wait resolves with when the page cancels it. */
 const CANCELLED = Symbol("cancelled");
+
+/** A PKCE S256 `code_challenge`: base64url(SHA-256), 43 characters, no padding (RFC 7636 §4.2). */
+const S256_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+/** The longest `reason` kept for a `pkce: "not-applicable"` session. */
+const MAX_PKCE_REASON = 500;
 
 /** A structured JSON error envelope the client half maps back to an `AuthSessionError`. */
 function fail(status: number, code: AuthSessionErrorCode, message: string): Response {
@@ -141,8 +151,9 @@ export async function defaultOpenBrowser(url: string): Promise<void> {
 /**
  * Validate a desktop auth-session request, failing closed in order: POST (405), constant-time
  * token (403), loopback `Origin` (403), JSON content-type (415), and a JSON body whose `authUrl`
- * is an absolute `https:` URL with a loopback, fragment-less `redirect_uri` and an optional
- * positive `timeoutMs` (400 `invalid`). Returns the parsed inputs, or the error {@link Response}.
+ * is an absolute `https:` URL with a loopback, fragment-less `redirect_uri`, PKCE S256 (400
+ * `pkce_required`) and an optional positive `timeoutMs` (400 `invalid`). Returns the parsed
+ * inputs, or the error {@link Response}.
  */
 /**
  * Where the request came from (403 when refused). Memory world: the in-process memory transport
@@ -246,6 +257,8 @@ interface AuthPayload {
   cancel?: unknown;
   loopbackPort?: unknown;
   session?: unknown;
+  pkce?: unknown;
+  reason?: unknown;
 }
 
 /** The `authUrl` as an absolute https URL with a loopback `redirect_uri`, or the 400. */
@@ -266,10 +279,52 @@ function parseAuthUrl(authUrl: unknown): { authUrl: URL; redirectUri: URL } | Re
   return { authUrl: parsed, redirectUri: new URL(redirect) };
 }
 
+/** The single value of a query parameter, or `null` when it is absent or repeated. */
+function singleParam(url: URL, name: string): string | null {
+  const all = url.searchParams.getAll(name);
+  return all.length === 1 ? all[0] : null;
+}
+
+/**
+ * PKCE S256 in the authorization URL (RFC 7636; RFC 8252 §8.1 makes it the loopback flow's defence
+ * against another local process taking the redirect): one `code_challenge` (a SHA-256's base64url)
+ * and one `code_challenge_method=S256`, unless `pkce: "not-applicable"` with a `reason` — the same
+ * rule as every other `openAuthSession` path. `null` when it holds, else the 400.
+ */
+function pkceRefusal(authUrl: URL, payload: AuthPayload): Response | null {
+  if (payload.pkce !== undefined) return pkceWaiverRefusal(payload);
+  if (
+    S256_CHALLENGE.test(singleParam(authUrl, "code_challenge") ?? "") &&
+    singleParam(authUrl, "code_challenge_method") === "S256"
+  ) return null;
+  return fail(
+    400,
+    "pkce_required",
+    "the URL must carry PKCE: one code_challenge (a 43-character base64url SHA-256) and " +
+      'code_challenge_method=S256 (or pass pkce: "not-applicable" with a reason)',
+  );
+}
+
+/** A `pkce` waiver: `"not-applicable"` with a non-empty, bounded `reason`, else the 400 `invalid`. */
+function pkceWaiverRefusal({ pkce, reason }: AuthPayload): Response | null {
+  if (pkce !== "not-applicable") {
+    return fail(400, "invalid", 'pkce must be "not-applicable" when given');
+  }
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (text !== "" && text.length <= MAX_PKCE_REASON) return null;
+  return fail(
+    400,
+    "invalid",
+    'pkce: "not-applicable" needs a reason (how the provider binds the callback)',
+  );
+}
+
 /** A start request's inputs (everything but the session key), or the 400. */
 function parseAuthStart(payload: AuthPayload): AuthStart | Response {
   const urls = parseAuthUrl(payload.authUrl);
   if (urls instanceof Response) return urls;
+  const pkce = pkceRefusal(urls.authUrl, payload);
+  if (pkce) return pkce;
   const { timeoutMs } = payload;
   if (
     timeoutMs !== undefined &&
@@ -306,10 +361,13 @@ async function validateAuthRequest(
  *    origin; in the memory world the memory transport and an `Origin` absent or equal to the app
  *    origin ({@link DesktopRequestAccess});
  * 4. `content-type` starts with `application/json`, else 415;
- * 5. body `{ authUrl, timeoutMs?, loopbackPort? }`: `authUrl` parses and is `https:` with a
- *    loopback, fragment-less `redirect_uri`, `timeoutMs` (if present) is a positive finite number,
- *    and `loopbackPort` (if present) is a port the `redirect_uri` does not contradict, else 400
- *    `{code:"invalid"}`.
+ * 5. body `{ authUrl, timeoutMs?, loopbackPort?, pkce?, reason? }`: `authUrl` parses and is
+ *    `https:` with a loopback, fragment-less `redirect_uri`, `timeoutMs` (if present) is a positive
+ *    finite number, and `loopbackPort` (if present) is a port the `redirect_uri` does not
+ *    contradict, else 400 `{code:"invalid"}`;
+ * 6. PKCE S256: `authUrl` carries one `code_challenge` (43 base64url characters) and one
+ *    `code_challenge_method=S256`, else 400 `{code:"pkce_required"}` — unless `pkce` is
+ *    `"not-applicable"` with a non-empty `reason` (any other `pkce`, or no reason: 400 `invalid`).
  *
  * Then a single-session guard (409 `{code:"busy"}`), the loopback listener (a fixed
  * `loopbackPort` already in use: 409 `{code:"port_in_use"}`), and a timeout

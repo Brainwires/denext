@@ -14,8 +14,11 @@ import { until } from "./helpers/desktop-fake-runtime.ts";
 
 const TOKEN = "per-launch-token-abcdef";
 const ENDPOINT = "http://127.0.0.1:8000/_denext/desktop/auth-session";
+/** RFC 7636 Appendix B's S256 challenge: a well-formed PKCE pair for the URLs below. */
+const PKCE =
+  "&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256";
 const VALID_AUTH_URL = "https://auth.example.com/authorize?client_id=x&state=s1&redirect_uri=" +
-  encodeURIComponent("http://127.0.0.1/callback");
+  encodeURIComponent("http://127.0.0.1/callback") + PKCE;
 
 /** SHA-256 → base64, matching the CSP hash form the runtime emits. */
 async function sha256Base64(text: string): Promise<string> {
@@ -355,4 +358,65 @@ Deno.test("injectDesktopGlobal: no CSP meta ⇒ script injected, nothing to patc
     `<script>globalThis.__denext={"desktop":true,"token":"t","os":"${Deno.build.os}"}`,
   );
   assert(!out.includes("sha256-"));
+});
+
+Deno.test("desktop auth-session: an authUrl without PKCE → 400 pkce_required, browser never opened", async () => {
+  resetDesktopAuthSessionForTesting();
+  let opened = false;
+  const open = () => void (opened = true);
+  const bare = "https://auth.example.com/authorize?client_id=x&state=s1&redirect_uri=" +
+    encodeURIComponent("http://127.0.0.1/callback");
+  const cases = [
+    bare,
+    // A plain challenge, a short one, and a repeated one are not S256.
+    bare + PKCE.replace("S256", "plain"),
+    bare + "&code_challenge=short&code_challenge_method=S256",
+    bare + PKCE + PKCE,
+  ];
+  for (const authUrl of cases) {
+    const res = await handleDesktopAuthSession(req({ authUrl }), TOKEN, open);
+    assertEquals(res.status, 400, authUrl);
+    assertEquals((await res.json()).code, "pkce_required", authUrl);
+  }
+  assertEquals(opened, false);
+});
+
+Deno.test('desktop auth-session: pkce "not-applicable" with a reason opens the loopback flow', async () => {
+  resetDesktopAuthSessionForTesting();
+  const bare = "https://auth.example.com/authorize?client_id=x&state=s1&redirect_uri=" +
+    encodeURIComponent("http://127.0.0.1/callback");
+  const browser = trackedBrowser();
+  const res = await handleDesktopAuthSession(
+    req({
+      authUrl: bare,
+      pkce: "not-applicable",
+      reason: "the provider binds the code to a client secret",
+      timeoutMs: 50,
+    }),
+    TOKEN,
+    browser.open,
+  );
+  // It got past validation: the browser opened and the session waited until its timeout.
+  assertEquals(res.status, 408);
+  assert(browser.opened());
+});
+
+Deno.test("desktop auth-session: a PKCE waiver without a reason, or another pkce value → 400 invalid", async () => {
+  resetDesktopAuthSessionForTesting();
+  const bare = "https://auth.example.com/authorize?client_id=x&redirect_uri=" +
+    encodeURIComponent("http://127.0.0.1/callback");
+  for (
+    const extra of [{ pkce: "not-applicable" }, { pkce: "not-applicable", reason: "  " }, {
+      pkce: "plain",
+      reason: "x",
+    }]
+  ) {
+    const res = await handleDesktopAuthSession(
+      req({ authUrl: bare, ...extra }),
+      TOKEN,
+      noopBrowser,
+    );
+    assertEquals(res.status, 400);
+    assertEquals((await res.json()).code, "invalid");
+  }
 });

@@ -18,7 +18,8 @@ const ENDPOINT = "http://127.0.0.1:8000/_denext/desktop/auth-session";
 /** An authorization URL with `redirect` as its `redirect_uri`. */
 const authUrl = (redirect: string) =>
   "https://auth.openai.example/oauth/authorize?client_id=x&state=s1&redirect_uri=" +
-  encodeURIComponent(redirect);
+  encodeURIComponent(redirect) +
+  "&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256";
 
 /** A token-gated, same-origin start request. */
 function req(body: unknown): Request {

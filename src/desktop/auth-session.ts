@@ -75,12 +75,14 @@ function authSessionError(
  * URL. Only works inside a `denext/desktop` window (it reads the per-launch token the runtime
  * injects); elsewhere it rejects `unsupported`.
  *
- * PKCE and `state` stay your job: build the authorization URL (with a `redirect_uri` whose host
- * the runtime rewrites to its ephemeral loopback port, or that keeps its host and gets the fixed
- * `loopbackPort`), pass it here, then verify `state` and
- * exchange the `code` from the returned URL. They are also what defeats a local-process race:
- * another process that discovered the random callback port could hit it with a forged redirect
- * before the real browser does, so a `state` you generated and re-check (and PKCE) are required.
+ * Build the authorization URL with PKCE S256 (a `code_challenge` and `code_challenge_method=S256`;
+ * the runtime refuses one without it with `pkce_required` unless `pkce: "not-applicable"` with a
+ * `reason`) and a `redirect_uri` whose host the runtime rewrites to its ephemeral loopback port, or
+ * that keeps its host and gets the fixed `loopbackPort`; pass it here, then verify `state` and
+ * exchange the `code` (with the verifier) from the returned URL. They are what defeats a
+ * local-process race (RFC 8252 §8.1): another process that discovered or holds the callback port
+ * could take the redirect, or forge one before the real browser does, so a `code` it intercepts
+ * is useless without the verifier, and a `state` you generated and re-check refuses a forgery.
  *
  * The system browser reports no cancellation, so while the session waits a cancel overlay (see
  * {@linkcode showAuthCancelOverlay}) offers the user a Cancel button, unless `cancelOverlay` is
@@ -89,7 +91,8 @@ function authSessionError(
  * @param url The provider's authorization URL (absolute `https:`, with a loopback `redirect_uri`).
  * @param opts `timeoutMs` — give up after this many ms (the runtime's default is 5 minutes);
  * `signal` — abort to cancel; `cancelOverlay` — `false` to hide the overlay, or its text;
- * `loopbackPort` — a fixed port for the redirect listener (`port_in_use` when taken).
+ * `loopbackPort` — a fixed port for the redirect listener (`port_in_use` when taken); `pkce` +
+ * `reason` — the PKCE waiver, checked by the runtime as in {@linkcode AuthSessionOptions.pkce}.
  * @returns The full callback URL (`code`, `state` and all). Rejects with an
  * {@linkcode AuthSessionError} whose `code` is one of {@linkcode AuthSessionErrorCode}.
  */
@@ -100,6 +103,8 @@ export async function startDesktopAuthSession(
     signal?: AbortSignal;
     cancelOverlay?: false | AuthCancelOverlayText;
     loopbackPort?: number;
+    pkce?: "not-applicable";
+    reason?: string;
   },
 ): Promise<{ url: string }> {
   const token = desktopGlobals()?.token;
@@ -127,6 +132,7 @@ export async function startDesktopAuthSession(
       session,
       timeoutMs: opts?.timeoutMs,
       ...(opts?.loopbackPort !== undefined ? { loopbackPort: opts.loopbackPort } : {}),
+      ...(opts?.pkce !== undefined ? { pkce: opts.pkce, reason: opts.reason } : {}),
     });
   } catch {
     // Network failure — treat as unsupported (no runtime answered).

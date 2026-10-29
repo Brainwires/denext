@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **Deno Desktop's loopback `openAuthSession` requires PKCE S256**, as every other platform has
+  since 4.9.0. An authorization URL without one `code_challenge` (a 43-character base64url SHA-256)
+  and one `code_challenge_method=S256` is refused with `pkce_required` before the system browser
+  opens, by `openAuthSession` in the page and again by the runtime's auth-session endpoint, unless
+  the call passes `pkce: "not-applicable"` with a `reason` (now forwarded to the runtime). Any
+  local process can connect to the loopback redirect port, so PKCE is what keeps an intercepted
+  `code` unredeemable (RFC 8252 §8.1, RFC 7636). The custom-scheme flow already required it; the
+  page now checks it there too, before the runtime does. An app whose loopback sign-in builds its
+  URL without PKCE must add it (or the documented waiver). Affected: the loopback flow since 2.10.0.
+
 ## [4.10.1] - 2026-10-29
 
 ### Added

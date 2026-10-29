@@ -1006,7 +1006,11 @@ denext desktop package --target-os windows --format msi,zip`}
 import { openAuthSession, runtimePlatform } from "denext/mobile";
 
 export async function signIn() {
-  const state = crypto.randomUUID(); // and a PKCE verifier + code_challenge
+  const state = crypto.randomUUID();
+  const verifier = crypto.randomUUID() + crypto.randomUUID();
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
   const desktop = runtimePlatform() === "desktop";
   const authorize = new URL("https://auth.example.com/authorize");
   authorize.searchParams.set(
@@ -1014,6 +1018,8 @@ export async function signIn() {
     desktop ? "http://127.0.0.1/auth/callback" : "myapp://auth/callback",
   );
   authorize.searchParams.set("state", state);
+  authorize.searchParams.set("code_challenge", challenge); // required: pkce_required otherwise
+  authorize.searchParams.set("code_challenge_method", "S256");
   // callbackScheme is required by the type, and ignored with a loopback redirect_uri.
   const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
   const params = new URL(url).searchParams;
@@ -1036,13 +1042,17 @@ export async function signIn() {
         </li>
         <li>
           <strong>
-            PKCE and <code>state</code> are your job,
+            PKCE S256 is required, and <code>state</code> is your job,
           </strong>{" "}
           here more than anywhere. Any process on the machine can connect to the loopback port, and
-          the first request to the callback path wins, so a local program that finds the port can
-          race a forged redirect in before the real browser. Generate <code>state</code>{" "}
-          and re-check it on the callback, and use PKCE so an intercepted <code>code</code>{" "}
-          is useless without your verifier.
+          the first request to the callback path wins, so a local program that finds or holds the
+          port can take the redirect, or race a forged one in before the real browser (RFC 8252
+          §8.1). The authorization URL must carry a <code>code_challenge</code> and{" "}
+          <code>code_challenge_method=S256</code>, so an intercepted <code>code</code>{" "}
+          is useless without your verifier; without them the runtime refuses the session with{" "}
+          <code>pkce_required</code>, as on every other platform. A provider that binds the code to
+          the client another way takes <code>pkce: "not-applicable"</code> with a{" "}
+          <code>reason</code>. Generate <code>state</code> and re-check it on the callback.
         </li>
         <li>
           <strong>The browser reports no cancel, so denext shows one.</strong>{" "}
