@@ -51,6 +51,13 @@ and this project adheres to
   `denext dev`, using a mock that stands in for a denied import (or a denied file) in the browser
   reports, with Start's `[import-protection] Mocked import used in dev client` message, the app
   modules from the entry to the importer, as Start's own dev server does.
+- **A Lustre server component adopts its first paint.** When a `defineLustreView` mounts, the
+  server-rendered markup is kept instead of being replaced by Lustre's render: the nodes stay the
+  same nodes, Lustre's reconciler attaches the view's event handlers and properties to them, and a
+  field focused or typed into before the mount keeps its focus, caret and text (its `input` and
+  `change` are sent once the view is live, so the server's model learns what was typed). Markup
+  that does not fit the view, and a later whole view (a reconnect, a resync), are rendered anew.
+  The next Gleam build rewrites `.denext/lustre-view.ts` to pass Lustre's `insertMetadataChild`.
 
 ### Fixed
 

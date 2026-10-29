@@ -1,5 +1,7 @@
 // The browser half of Lustre views (`src/lustre/view-client.ts`) over a fake WebSocket: the mount
-// frame, Lustre's reconciler mounting the server's whole view (root emptied first) and applying
+// frame, the server-rendered first paint adopted (its nodes, focus and typed text kept; a later
+// mount, or a paint that does not fit, re-renders), Lustre's reconciler mounting the server's whole
+// view (root emptied first) and applying
 // its patches, the reconciler's events going out as Lustre's `EventFired` with the event's data
 // picked as Lustre's own client does, a patch that fails asking for the whole view again, `emit`
 // becoming a DOM event, `gone` re-rendering the route once, a refusal ending the view, and a
@@ -8,6 +10,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeWebSocket, LIVE_TEST_LOCATION } from "./helpers/fake-websocket.ts";
+import {
+  el,
+  insertMetadataChild,
+  MiniDocument,
+  miniReconciler,
+  type ReconcilerLog,
+} from "./helpers/lustre-adopt-dom.ts";
 
 const latest = () => FakeWebSocket.all.at(-1)!;
 
@@ -239,5 +248,119 @@ describe("Lustre view client", () => {
       vi.useRealTimers();
       warn.mockRestore();
     }
+  });
+});
+
+describe("Lustre view client: the first paint", () => {
+  // The server's view and its HTML: `<div class="counter"><button class="inc">+</button>
+  // <span class="count">7</span><input class="note"></div>`.
+  const view = (count: number) => ({
+    kind: 1,
+    tag: "div",
+    attributes: [{ kind: 0, name: "class", value: "counter" }],
+    children: [
+      {
+        kind: 1,
+        tag: "button",
+        attributes: [{ kind: 0, name: "class", value: "inc" }, { kind: 2, name: "click" }],
+        children: [{ kind: 2, content: "+" }],
+      },
+      {
+        kind: 1,
+        tag: "span",
+        attributes: [{ kind: 0, name: "class", value: "count" }],
+        children: [{ kind: 2, content: String(count) }],
+      },
+      {
+        kind: 1,
+        tag: "input",
+        attributes: [{ kind: 0, name: "class", value: "note" }, { kind: 2, name: "input" }],
+      },
+    ],
+  });
+  function paint(doc: MiniDocument) {
+    const inc = el(doc, "button", { class: "inc" }, "+");
+    const count = el(doc, "span", { class: "count" }, "7");
+    const note = el(doc, "input", { class: "note" });
+    const counter = el(doc, "div", { class: "counter" }, inc, count, note);
+    return { root: el(doc, "div", {}, counter), counter, inc, count, note };
+  }
+
+  function mount(doc: MiniDocument, logs: ReconcilerLog[]) {
+    const page = paint(doc);
+    const mounts: string[] = [];
+    page.root.addEventListener("lustre:mount", () => mounts.push("mount"));
+    lustre.mountLustreView(
+      spec,
+      page.root as unknown as Element,
+      miniReconciler(logs) as unknown as Parameters<typeof lustre.mountLustreView>[2],
+      insertMetadataChild as unknown as Parameters<typeof lustre.mountLustreView>[3],
+    );
+    const ws = latest();
+    ws.open();
+    return { ...page, ws, mounts };
+  }
+
+  it("is adopted: the same nodes, focus and typed text kept, Lustre's handlers attached", () => {
+    const doc = new MiniDocument();
+    const logs: ReconcilerLog[] = [];
+    const page = mount(doc, logs);
+    const countText = page.count.firstChild;
+    // The visitor focused the note and typed before the view mounted.
+    page.note.focus();
+    page.note.value = "early";
+    page.ws.server(mountMsg(view(7)));
+
+    expect(page.root.firstChild).toBe(page.counter);
+    expect(page.counter.childNodes).toEqual([page.inc, page.count, page.note]);
+    expect(page.count.firstChild).toBe(countText);
+    expect(doc.activeElement).toBe(page.note);
+    expect(page.note.value).toBe("early");
+    expect(logs).toHaveLength(1);
+    expect(logs[0].mounted).toEqual([]); // nothing rendered anew
+    expect(logs[0].pushed).toHaveLength(1); // the handlers, as one patch
+    expect(page.mounts).toEqual(["mount"]);
+
+    // The typed text went to the server as the field's input event.
+    const events = () =>
+      page.ws.frames().filter((f) => (f as { type: string }).type === "lustre-event");
+    expect(events()).toEqual([{
+      type: "lustre-event",
+      vid: "l1",
+      msg: { kind: 1, path: "", name: "input", event: { target: { value: "early" } } },
+    }]);
+    // The adopted button's handler sends the click.
+    page.inc.dispatchEvent(new Event("click"));
+    expect(events().at(-1)).toEqual({
+      type: "lustre-event",
+      vid: "l1",
+      msg: { kind: 1, path: "", name: "click", event: {} },
+    });
+  });
+
+  it("a later mount (a resync or a reconnect) re-renders the view", () => {
+    const doc = new MiniDocument();
+    const logs: ReconcilerLog[] = [];
+    const page = mount(doc, logs);
+    page.ws.server(mountMsg(view(7)));
+    page.ws.server(mountMsg(view(8)));
+    expect(logs).toHaveLength(2);
+    expect(logs[1].mounted).toEqual([view(8)]);
+    expect(page.root.firstChild).not.toBe(page.counter);
+    expect(page.root.textContent).toBe("+8");
+  });
+
+  it("a first paint that does not fit the view is re-rendered", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const doc = new MiniDocument();
+    const logs: ReconcilerLog[] = [];
+    const page = mount(doc, logs);
+    const other = { ...view(7), tag: "section" };
+    page.ws.server(mountMsg(other));
+    expect(logs[0].mounted).toEqual([other]);
+    expect(page.root.childNodes).toHaveLength(1);
+    expect(page.root.firstChild).not.toBe(page.counter);
+    expect(warn).toHaveBeenCalledOnce();
+    warn.mockRestore();
   });
 });

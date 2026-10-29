@@ -79,11 +79,12 @@ function viewIsland(version: string): string {
   return `${HEADER}
 "use client";
 // Rewritten by every Gleam build. The browser island of this app's defineLustreView views.
-import { Reconciler } from "@gleam/lustre/lustre/vdom/reconciler.ffi.mjs";
+import { insertMetadataChild, Reconciler } from "@gleam/lustre/lustre/vdom/reconciler.ffi.mjs";
 import { lustreViewIsland } from "denext/gleam";
 
-/** Lustre ${version}'s reconciler, applying a server component's patches over denext Live. */
-export const LustreView = lustreViewIsland(Reconciler);
+/** Lustre ${version}'s reconciler, adopting the first paint and applying a server component's
+ * patches over denext Live. */
+export const LustreView = lustreViewIsland(Reconciler, insertMetadataChild);
 `;
 }
 
