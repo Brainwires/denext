@@ -8,6 +8,31 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **The `next.config.*` evaluator can no longer read outside the project through a symlink.**
+  `denext migrate`, `migrate --check` and `denext ui`'s next.config panel evaluate the config in
+  a subprocess granted read access to the project directory, but Deno checks a read against the
+  path as written, not a symlink's target. A project that committed a link out of itself
+  (`home -> /Users`, `p -> /proc`) let its config read any file the user could, and place the
+  contents in a field migrate copies into `denext.config.ts` or prints in `migrate --check
+  --json`. The read grant now leaves out every symlink that resolves outside the project (or
+  nowhere), and every link into a directory that holds one: a directory with no such link is
+  granted whole, one with a link is granted entry by entry, so any other spelling of the path is
+  refused. The evaluator's `--allow-sys` is narrowed to `cpus`, `osRelease` and
+  `systemMemoryInfo` (what `os.cpus()`, `os.totalmem()` and `os.release()` read); the hostname,
+  user and home directory are no longer readable. Affects 2.0.0 through 4.10.1.
+
+### Changed
+
+- **`migrate --enable-capacitor` runs the project's own code only on an opt-in.** The Capacitor
+  install (the package manager loads the project's configuration, such as a `.pnpmfile.cjs` or a
+  Yarn `yarnPath`), `denext export` (builds and renders the app) and `npx cap add` (loads
+  `capacitor.config.*` and runs the Capacitor CLI from the project's `node_modules`) now run only
+  with `--yes`, or after an interactive prompt that lists them. A non-interactive or `--json` run
+  without `--yes` prints each command with the reason instead, for you to run once you trust the
+  project.
+
 ## [4.10.1] - 2026-10-29
 
 ### Added
