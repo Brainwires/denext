@@ -1209,8 +1209,9 @@ writes `<>…</>` with React's fragment brand. What the app adds is Skia's web s
    ([Under a Content-Security-Policy](#under-a-content-security-policy)).
 
 Contexts and class components work inside a `react-reconciler` renderer's tree as they do on
-React. A provider inside the tree reaches `useContext`, `use` and `<Context.Consumer>` there (each
-denext context has a React-shaped twin the renderer provides and reads), and a class component
+React. A provider inside the tree reaches `useContext`, `use` and `<Context.Consumer>` there (a
+context made with `react`'s `createContext` has a React-shaped twin the renderer provides and
+reads), and a class component
 mounts, updates through `setState` / `forceUpdate` and unmounts with its lifecycles. A provider
 _above_ the renderer's root reaches it when the renderer bridges contexts, as
 react-three-fiber's `<Canvas>` and react-konva's `<Stage>` do with its-fine's
@@ -1218,8 +1219,9 @@ react-three-fiber's `<Canvas>` and react-konva's `<Stage>` do with its-fine's
 `this._reactInternals`, and a denext class answers with a read-only, React-shaped view of its
 fiber. Skia's `<Canvas>` does not bridge, on React or on denext: a component inside it reads a
 context's default value unless the app forwards it, with its-fine's `useContextBridge()` as on
-React or by passing the values as props. One gap remains: a class's `static contextType` inside
-such a tree reads nothing (see [Known limitations](/docs/limitations)). Animating with Reanimated
+React or by passing the values as props. Two gaps remain: a class's `static contextType` inside
+such a tree reads nothing, and a context made with `denext`'s own `createContext` is not provided
+inside it (see [Known limitations](/docs/limitations)). Animating with Reanimated
 (`useDerivedValue`, `useFrameCallback`) and the Capacitor shell's WebViews are not yet covered
 by a test; [`tests/e2e/react-native-skia.e2e.test.ts`](https://github.com/Brainwires/denext/blob/development/tests/e2e/react-native-skia.e2e.test.ts)
 draws shapes, a stateful component and a fragment inside the Canvas, re-renders it on a press,

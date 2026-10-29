@@ -38,7 +38,9 @@ and this project adheres to
   (they went to denext's own scheduler and threw), and the development build of
   `react-reconciler` that `denext dev` loads no longer fails on its first render: denext's `react`
   carries React's development fields (`actQueue` and the rest). Remaining: a class's
-  `static contextType` inside such a tree reads nothing.
+  `static contextType` inside such a tree reads nothing, and a provider inside it reaches it only
+  for a context made with `react`'s `createContext` (not `denext`'s own, which stays as it was, so
+  an app that never loads `react` ships none of this).
 - **`install.ps1` with the GitHub CLI installed no longer stops on `gh`'s own error output.**
   The installer runs under `$ErrorActionPreference = 'Stop'`, and Windows PowerShell 5.1 turns
   anything a native program writes to stderr into a terminating `NativeCommandError`, even

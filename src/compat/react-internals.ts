@@ -19,8 +19,9 @@
  * reads a context's value from that object's `_currentValue2` (its `isPrimaryRenderer: false`
  * slot), which it sets while a provider renders. denext's context is a function (it is its own
  * provider component), so each one gets a React-shaped twin (`reactContextOf`): a hook
- * the foreign renderer handles gets the twin, and a denext provider a foreign renderer calls
- * returns an element of the twin. Contexts from the denext tree around the renderer's root cross
+ * the foreign renderer handles gets the twin, and the provider or `.Consumer` of a context
+ * made with the `react` entry's `createContext`, called by a foreign renderer, returns an
+ * element of the twin (or of its consumer). Contexts from the denext tree around the renderer's root cross
  * the way React apps carry them: react-three-fiber's `<Canvas>`, react-konva's `<Stage>` and
  * its-fine's `useContextBridge()` walk React's fiber tree from a class component's
  * `this._reactInternals` for the providers above them, and re-provide their values inside the
@@ -33,7 +34,8 @@
 // Side-effect: the un-bundled default for the bare `__DENEXT_CLASS_COMPONENTS__` read below.
 import "../runtime/class-flag.ts";
 import { type Context, rendering } from "../runtime/hooks.ts";
-import { FOREIGN_PROVIDER } from "../runtime/context.ts";
+import { CONSUMER_BRAND, createContext as ownCreateContext } from "../runtime/context.ts";
+import type { VNode } from "../jsx/types.ts";
 import { REACT_ELEMENT_TYPE } from "../runtime/react-brands.ts";
 import { Component, internals } from "./class-base.ts";
 // Type only: the view reads the client fiber's fields, and imports nothing of the reconciler.
@@ -259,16 +261,43 @@ function viewOf(fiber: Fiber | null | undefined): FiberView | null {
   return view;
 }
 
-// A denext provider (or `.Consumer`) a foreign renderer calls renders an element of its twin (or
-// of the twin's consumer), which the renderer provides (reads) as a React context (context.ts).
-(globalThis as { [FOREIGN_PROVIDER]?: unknown })[FOREIGN_PROVIDER] = (
-  context: Context<unknown>,
-  props: unknown,
-  consumer: boolean,
-) => {
+/** An element of the context's twin (or of the twin's consumer) for a foreign renderer. */
+function foreignElement(context: unknown, props: unknown, consumer: boolean): unknown {
   const twin = reactContextOf(context) as ReactContext;
   return { $$typeof: REACT_ELEMENT_TYPE, type: consumer ? twin.Consumer : twin, props, key: null };
-};
+}
+
+/**
+ * React's `createContext`: denext's context, whose provider and `.Consumer` a `react-reconciler`
+ * renderer may also call. denext renders every component with its dispatcher installed, so a call
+ * without one is the foreign renderer's: it gets an element of the context's twin (or of the twin's
+ * consumer), which it provides (reads) as a React context. Only the `react` entry wraps: denext's
+ * own `createContext` stays as it is, so an app that never loads `react` ships none of this.
+ *
+ * @param defaultValue The value read with no provider above.
+ * @returns The context.
+ */
+export function createReactContext<T>(defaultValue: T): Context<T> {
+  const own = ownCreateContext(defaultValue);
+  const ownConsumer = own.Consumer as unknown as (props: unknown) => VNode;
+  const context =
+    ((props: { value: T; children?: unknown }) =>
+      rendering()
+        ? (own as unknown as (p: unknown) => VNode)(props)
+        : foreignElement(context, props, false)) as unknown as Context<T>;
+  // denext's fields (the id its renderers key the provided value on) and React's.
+  const fields = own as unknown as Record<string, unknown>;
+  for (const key of ["_id", "_defaultValue", "_currentValue", "_currentValue2"]) {
+    (context as unknown as Record<string, unknown>)[key] = fields[key];
+  }
+  context.Provider = context as unknown as Context<T>["Provider"];
+  const Consumer = (props: unknown) =>
+    rendering() ? ownConsumer(props) : foreignElement(context, props, true);
+  Object.defineProperty(Consumer, CONSUMER_BRAND, { value: true, enumerable: false });
+  (Consumer as unknown as { _context: Context<T> })._context = context;
+  context.Consumer = Consumer as unknown as Context<T>["Consumer"];
+  return context;
+}
 
 if (__DENEXT_CLASS_COMPONENTS__) {
   // `this._reactInternals`: the instance's fiber, as React's view of it (undefined during a

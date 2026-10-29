@@ -14,7 +14,8 @@
 //     value re-renders the consumer there (its-fine walks denext's fiber tree from
 //     `this._reactInternals` and re-provides each context's value in the foreign root);
 //   - a provider inside the foreign tree, `use(context)` and `<Context.Consumer>` work there (a
-//     denext context gets a React-shaped twin the foreign renderer provides and reads);
+//     context from `react`'s createContext gets a React-shaped twin the foreign renderer provides
+//     and reads);
 //   - its-fine's own fiber context is not carried into the root (`useFiber()` inside it finds the
 //     foreign fiber, as on React);
 //   - a class component inside mounts, updates through `setState` / `forceUpdate` and unmounts

@@ -2,33 +2,11 @@
 // The actual value lookup lives in each dispatcher's `useContext`, which walks
 // the provider stack maintained during rendering.
 
-import { activeDispatcher, type Context, rendering } from "./hooks.ts";
+import { type Context, useContext } from "./hooks.ts";
 import { FRAGMENT, type VNode, type VNodeChild } from "../jsx/types.ts";
 
 /** Marks a VNode as a context provider so the renderer can push/pop its value. */
 export const PROVIDER: symbol = Symbol.for("denext.provider");
-
-/**
- * Where the `react` entry (src/compat/react-internals.ts) installs what a `react-reconciler`
- * renderer gets from a context's provider or `.Consumer`: called outside denext's own render, each
- * returns an element of the context's React twin (or of the twin's consumer), which that renderer
- * provides and reads as it does a React context.
- */
-export const FOREIGN_PROVIDER: unique symbol = Symbol.for("denext.foreignProvider");
-
-/** Builds the element a foreign renderer gets (see {@linkcode FOREIGN_PROVIDER}). */
-type ForeignElement = (context: unknown, props: unknown, consumer: boolean) => VNode;
-
-/**
- * The foreign renderer's element builder while one calls a context component, else undefined:
- * denext renders every component with its dispatcher installed, so a call without one is a
- * `react-reconciler` renderer's.
- */
-function foreignElement(): ForeignElement | undefined {
-  return rendering()
-    ? undefined
-    : (globalThis as { [FOREIGN_PROVIDER]?: ForeignElement })[FOREIGN_PROVIDER];
-}
 
 /** Non-enumerable brand stamped on a context `.Consumer` (for `react-is`). */
 export const CONSUMER_BRAND: symbol = Symbol.for("denext.context.consumer");
@@ -43,18 +21,14 @@ export function createContext<T>(defaultValue: T): Context<T> {
   const id = Symbol("denext.context");
   // The provider function: a fragment carrying the provider marker the renderer
   // pushes onto the context scope stack.
-  const provider = (props: { value: T; children?: unknown }): VNode => {
-    const foreign = foreignElement();
-    if (foreign) return foreign(context, props, false);
-    return {
-      type: FRAGMENT,
-      key: null,
-      props: {
-        children: props.children as never,
-        [PROVIDER as unknown as string]: { id, value: props.value },
-      },
-    };
-  };
+  const provider = (props: { value: T; children?: unknown }): VNode => ({
+    type: FRAGMENT,
+    key: null,
+    props: {
+      children: props.children as never,
+      [PROVIDER as unknown as string]: { id, value: props.value },
+    },
+  });
   // The context object IS the provider, with metadata attached, so both
   // `<MyContext value>` and `<MyContext.Provider value>` work.
   const context = provider as unknown as Context<T>;
@@ -72,14 +46,11 @@ export function createContext<T>(defaultValue: T): Context<T> {
   // Wrap the render-prop result in a Fragment: render props idiomatically return a
   // bare string/number/array, and on the client a component's raw return goes
   // straight to mount() — a fragment routes it through child normalization instead.
-  // A foreign renderer reads the context itself; denext reads it from its dispatcher (what
-  // `useContext` does).
-  const Consumer = (props: { children: (value: T) => VNodeChild }): VNode =>
-    foreignElement()?.(context, props, true) ?? {
-      type: FRAGMENT,
-      key: null,
-      props: { children: props.children(activeDispatcher().useContext(context)) as never },
-    };
+  const Consumer = (props: { children: (value: T) => VNodeChild }): VNode => ({
+    type: FRAGMENT,
+    key: null,
+    props: { children: props.children(useContext(context)) as never },
+  });
   // Brand it (non-enumerably, so it never leaks into props/serialization) and
   // back-reference its context, matching React's `Consumer._context` so
   // `react-is.isContextConsumer` and libraries reading `_context` both work.
