@@ -8,6 +8,36 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **`cors: { origins: ["*"] }` no longer lets any site call Server Actions or the API batch.** A
+  cookieless cross-origin call skipped the same-origin (CSRF) check whenever the app's `cors`
+  allowed its origin, and `["*"]` allows every origin, so any page could run an action (or a
+  batch) from the visitor's network position and read the reply: an intranet or VPN app,
+  `clientIp()` and per-address rate limits all saw the visitor. Only an origin the policy lists
+  exactly qualifies now, as the Live handshake already required, and a cross-origin Server Action
+  call must also carry the `x-denext-action: 1` marker denext's client sends (a custom header, so
+  the browser preflights it and a plain cross-site `<form>` post never qualifies). Same-origin
+  calls and exactly listed origins work as before.
+- **A live view resumes only for the viewer that parked it.** After a socket drop, a reconnect
+  from the same page resumed the parked model, here or from the shared view store, whoever the
+  socket now belonged to: a viewer who signed out or switched account without reloading got the
+  previous viewer's model. A parked view (and its sealed snapshot) now records the viewer — the
+  `denextAuth` user, or a digest of the `Cookie` header without `denextAuth` — and a different
+  viewer's resume runs `init`. The signed props a page carries now expire:
+  `live.limits.viewTokenMaxAgeSeconds` (default a day; an older token is `gone` and the browser
+  re-renders the route once). `DENEXT_LIVE_VIEW_SECRET` must be at least 16 characters, as
+  `DENEXT_ACTION_ID_SECRET` is, and `denext dev` warns once for a view with no `authorize`.
+- **Userinfo must name the id_token's subject.** An OIDC provider that also reads userinfo (the
+  Salesforce and Vipps `next-auth/providers/*` modules, or any `oidc()` provider with
+  `userinfoUrl`) signed in with the userinfo's `sub` and `email_verified` over the verified
+  id_token's. The sign-in now fails when the userinfo `sub` is not the id_token's (OIDC Core
+  §5.3.2), and the id_token's `email_verified` wins for the same address.
+- **`deno task gen:auth-providers` validates what it writes.** Upstream provider ids, export names,
+  display names and option names outside a safe shape fail the run instead of landing unescaped in
+  generated source or `deno.json`, and the task runs with read, repository write and `deno`
+  permissions instead of `-A`.
+
 ## [4.10.1] - 2026-10-29
 
 ### Added
