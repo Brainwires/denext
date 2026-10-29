@@ -293,8 +293,6 @@ async function suite(t: Deno.TestContext, backend: Backend): Promise<void> {
 
 Deno.test({
   name: "next-auth adapters: @auth/drizzle-adapter on SQLite (node:sqlite) backs the shim",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn(t) {
     const backend = await sqliteBackend();
     try {
@@ -309,8 +307,6 @@ Deno.test({
   name: "next-auth adapters: @auth/drizzle-adapter on Postgres backs the shim" +
     (PG_URL ? "" : " (skipped: set DENEXT_TEST_POSTGRES_URL)"),
   ignore: !PG_URL,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn(t) {
     const backend = await postgresBackend(PG_URL!);
     try {

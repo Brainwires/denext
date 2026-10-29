@@ -29,7 +29,9 @@ import {
 
 const code = async (p: Promise<unknown>) => {
   try {
-    await p;
+    // A download's body is a file stream: close it.
+    const got = await p as { body?: unknown } | null;
+    if (got?.body instanceof ReadableStream) await got.body.cancel();
     return "ok";
   } catch (err) {
     return err instanceof StorageError ? err.code : String(err);
@@ -131,8 +133,6 @@ Deno.test({
 
 Deno.test({
   name: "server API inside a request: identity, the fallback rule, the resolver hook",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   try {
@@ -374,8 +374,6 @@ Deno.test({
 
 Deno.test({
   name: "TUS: version, routes, metadata, offsets, owner binding, expiry, empty uploads",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   const base = `${ORIGIN}/storage/v1/upload/resumable`;
@@ -541,8 +539,6 @@ async function filesUnder(dir: string, prefix = ""): Promise<string[]> {
 
 Deno.test({
   name: "TUS: a PATCH that outlives its lease saves nothing and leaves no chunk behind",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   const base = `${ORIGIN}/storage/v1/upload/resumable`;

@@ -115,6 +115,15 @@ and this project adheres to
 - **`desktop dev --inspect-renderer` picks the renderer's port right before the window opens.**
   The free port was picked before the build, so another process had the whole build to take it;
   it is now picked after the build, and a picked port that is already held is picked again.
+- **esbuild's `stop()` resolves once its child has exited.** `stop()` from denext's esbuild API
+  (and `stopNextCompat()` / `withEsbuild()`, which call it) signalled the long-lived esbuild
+  process and returned at once, so a Deno test that awaited it still ended with the process and
+  its exit wait open, which the op and resource sanitizers report. It now waits for the exit.
+- **Stopping the `denext_ui_*` MCP tools' `denext ui` child waits for it to exit.** The bridge
+  behind those tools signalled the child and returned, leaving the process, its exit wait and its
+  output pipe open for a moment; a caller that removed the project directory next could race it
+  (Windows refuses to remove a directory a process still holds). Stopping it now resolves once
+  the child has exited and its pipe is closed.
 
 ### Documentation
 

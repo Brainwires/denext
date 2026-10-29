@@ -85,8 +85,6 @@ Deno.test({
   name:
     `boot DDL on a real Postgres: a first run sends no notice and prints one line a store${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const notices: unknown[] = [];
     const sql = new SQL!(URL_!, { onnotice: (notice) => void notices.push(notice) });
@@ -129,8 +127,6 @@ Deno.test({
   name:
     `boot DDL on a real Postgres: DENEXT_BOOT_DDL=off refuses a missing schema, creates nothing${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const sql = new SQL!(URL_!);
     const schema = `dnx_boot_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
@@ -196,8 +192,6 @@ async function stopBackend(): Promise<void> {
 Deno.test({
   name: `boot DDL on a real Postgres: DENEXT_BOOT_DDL=off stops @denext/backend's start${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     try {
@@ -262,8 +256,6 @@ Deno.test({
   name:
     `boot DDL on a real Postgres: DENEXT_BOOT_DDL=off → \`migration up\` → the server starts${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     const root = await Deno.makeTempDir({ prefix: "dnx-boot-push-" });

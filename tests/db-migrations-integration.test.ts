@@ -88,8 +88,6 @@ Deno.test({
   name:
     `a Supabase project's migrations and history: list, up, down, force-reset, repair, fetch${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await environment();
     const root = await Deno.makeTempDir({ prefix: "dnx-supa-mig-" });
@@ -208,8 +206,6 @@ Deno.test({
   name:
     `denext's _migrations history on Postgres: up, down, reset, and a migration's own BEGIN${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await environment();
     const root = await Deno.makeTempDir({ prefix: "dnx-pg-mig-" });
@@ -252,8 +248,6 @@ Deno.test({
 Deno.test({
   name: `@denext/backend's db tooling on Postgres: lint, inspect, types, pull, test${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await environment();
     const role = decodeURIComponent(new URL(env.url).username);
@@ -330,8 +324,6 @@ rollback;
 Deno.test({
   name: `migration squash rewrites a Postgres history, both formats${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await environment();
     const supa = await Deno.makeTempDir({ prefix: "dnx-squash-supa-" });
@@ -386,8 +378,6 @@ Deno.test({
     s3Reason ? ` (skipped: ${s3Reason})` : ""
   }`,
   ignore: s3Reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const { s3 } = await import("../packages/backend/mod.ts");
     const { storage } = await import("../packages/backend/server.ts");
@@ -467,8 +457,6 @@ Deno.test({
   name:
     `migration up on a fresh database: the backend's roles and schemas before the app's${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const { fs, realtime } = await import("../packages/backend/mod.ts");
     const { installRuntime } = await import("../packages/backend/src/runtime.ts");

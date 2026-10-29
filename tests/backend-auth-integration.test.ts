@@ -72,8 +72,6 @@ Deno.test({
   name:
     `backendAuthAdapter on a real Postgres: password, one-time-code sign-up and a native bearer act as themselves${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await environment();
     const root = await Deno.makeTempDir({ prefix: "dnx-auth-pg-" });

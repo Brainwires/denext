@@ -79,7 +79,8 @@ for (const streaming of [true, false]) {
 
 Deno.test({
   name: "runDeno: an onLine that throws rejects the run, as it did before",
-  // The rejection is immediate; the other stream's read ends with the child, after the test.
+  // sanitizer: the rejection is immediate; the other stream's read ends with the child, after
+  // the test.
   sanitizeOps: false,
   sanitizeResources: false,
 }, async () => {

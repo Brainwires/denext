@@ -69,6 +69,7 @@ export const DRIFT_TESTS: readonly string[] = [
   "tests/native-templates-packed.test.ts",
   "tests/plugin-catalog.test.ts",
   "tests/react-native-aliases-manifest.test.ts",
+  "tests/sanitizer-ratchet.test.ts",
   "tests/serial-tests.test.ts",
   "tests/ui-form-widgets.test.ts",
   "tests/workflow-path-filters.test.ts",
