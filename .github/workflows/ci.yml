@@ -235,6 +235,11 @@ jobs:
       - name: cargo audit (packages/*/Cargo.lock)
         run: CARGO_AUDIT="$HOME/.cargo-audit-bin/cargo-audit" deno task audit:cargo
 
+      # The same gate for npm: `deno audit` over the root deno.lock; a high or critical advisory
+      # fails unless security/npm-audit-allow.json holds it (a fix still under the age hold).
+      - name: deno audit (deno.lock)
+        run: deno task audit:npm
+
   # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).
   # Split out so it runs in parallel with `check` instead of extending it.

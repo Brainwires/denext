@@ -16,7 +16,7 @@
     "jsr:@std/path@^1.1.5": "1.1.6",
     "npm:@mdx-js/mdx@3": "3.1.1",
     "npm:@supabase/supabase-js@2.117.2": "2.117.2",
-    "npm:sass@^1.80.0": "1.105.0"
+    "npm:sass@^1.80.0": "1.106.1"
   },
   "jsr": {
     "@luca/esbuild-deno-loader@0.11.1": {
@@ -1001,8 +1001,8 @@
         "vfile"
       ]
     },
-    "sass@1.105.0": {
-      "integrity": "sha512-4EjSuRTyG8M4yRXXY1PT9OUV5zz23xBxJkbIAprohKHqf6HOU4MCpE3U3vAC+iO1gxobBjESNbcj8rYAQZWnyA==",
+    "sass@1.106.1": {
+      "integrity": "sha512-kD+Gi66vycZcbJt+42NC4z4PXNMcCajVrJPhqoKKXy5cOBMmJQt052CxIBcRjwYXeImHYOpu/ydWWGZQIenl7A==",
       "dependencies": [
         "chokidar",
         "immutable",
@@ -1013,8 +1013,8 @@
       ],
       "bin": true
     },
-    "source-map-js@1.2.1": {
-      "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA=="
+    "source-map-js@1.2.2": {
+      "integrity": "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw=="
     },
     "source-map@0.7.6": {
       "integrity": "sha512-i5uvt8C3ikiWeNZSVZNWcfZPItFQOsYTUAOkcUPGd8DqDy1uOUikjt5dG+uRlwyvR108Fb9DOd4GvXfT0N2/uQ=="
@@ -1178,12 +1178,12 @@
           "npm:effect@^3.22.0"
         ]
       },
-      "jsr:@denext/graphql@0.6.0": {
+      "jsr:@denext/graphql@0.7.0": {
         "dependencies": [
           "jsr:@denext/denext@^4.10.0",
           "jsr:@denext/openapi@0.7",
           "jsr:@std/path@1",
-          "npm:graphql-yoga@^5.10.0",
+          "npm:graphql-yoga@^5.24.6",
           "npm:graphql@^16.9.0"
         ]
       },

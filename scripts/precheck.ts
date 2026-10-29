@@ -21,6 +21,8 @@
 //   8. bundle budget   when a module that can reach the client bundle changed (`deno task budget`)
 //   9. cargo audit     when a wasm package's Cargo.lock / Cargo.toml / .cargo/audit.toml changed
 //                      (`deno task audit:cargo`; skipped, with a note, without cargo-audit)
+//  10. npm audit       when deno.lock, a deno.json or security/npm-audit-allow.json changed
+//                      (`deno task audit:npm`: high / critical advisories fail)
 //
 // The fallow badge has no check mode (its score moves with unrelated churn): the release
 // regenerates it.
@@ -30,6 +32,7 @@
 import { fromFileUrl } from "@std/path";
 import { regen } from "./regen.ts";
 import { cargoAuditAvailable, isCargoAuditInput } from "./cargo-audit.ts";
+import { isNpmAuditInput } from "./npm-audit.ts";
 import { affectedTests } from "./affected-tests.ts";
 import { parallelSuiteFiles } from "./lib/serial-scan.ts";
 
@@ -285,6 +288,18 @@ if (import.meta.main) {
         return "cargo-audit not installed (cargo install cargo-audit --locked); CI's cargo-audit job runs it";
       }
       return deno(["task", "audit:cargo"]);
+    },
+  );
+
+  await step(
+    outcomes,
+    "npm audit (deno.lock)",
+    "deno task audit:npm; lock a fixed version, or allowlist one still under the age hold in security/npm-audit-allow.json",
+    () => {
+      if (!changed.some(isNpmAuditInput)) {
+        return Promise.resolve("no deno.lock / deno.json / npm-audit-allow.json changed");
+      }
+      return deno(["task", "audit:npm"]);
     },
   );
 
