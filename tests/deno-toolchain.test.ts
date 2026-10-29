@@ -488,6 +488,7 @@ Deno.test("resolveDenoToolchain: opt-outs and a missing pin are silent; every fa
     assertEquals(await resolveDenoToolchain({ ...base, env: envOf({ DENEXT_DENO: "stock" }) }), {
       kind: "stock",
       reason: "DENEXT_DENO=stock",
+      optedOut: true,
     });
     const unpinned = await resolveDenoToolchain({
       ...base,
@@ -591,6 +592,7 @@ Deno.test("DENEXT_DENO: one pair of matching surrounding quotes is stripped (Win
       assertEquals(await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: stock }) }), {
         kind: "stock",
         reason: "DENEXT_DENO=stock",
+        optedOut: true,
       });
     }
     // Mismatched quotes stay part of the value: a path that is not a file.
