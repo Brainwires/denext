@@ -117,6 +117,11 @@ async function call(
   return await cronPanel(new Request(url, { method: ctx.method }), ctx);
 }
 
+/** The reason a refused write names in its page (`refuse()`), or the page's start without one. */
+function refusalOf(markup: string): string {
+  return /could not be cleared: [^<]*/.exec(markup)?.[0] ?? markup.slice(0, 2000);
+}
+
 /** The `_base` stamp the editor rendered, which a write has to post back. */
 function stampIn(markup: string): string {
   return /name="_base" value="([0-9a-f]{64})"/.exec(markup)?.[1] ?? "";
@@ -1002,7 +1007,9 @@ export default {
     await first.body?.cancel();
     assertEquals(readJobHistory({ path }).recent.length, 2, "step one deletes nothing");
     const second = await call(dir, { form: { intent: "clear-history", confirm: "1" } });
-    assertEquals(second.status, 303);
+    // A refusal names its reason in the page: put it in the failure, not just the status.
+    const refusal = second.status === 303 ? "" : refusalOf(await second.text());
+    assertEquals(second.status, 303, refusal);
     await second.body?.cancel();
     assertEquals(readJobHistory({ path }).recent, [], "cleared through the store");
     let defaultDb = true;
