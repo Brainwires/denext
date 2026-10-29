@@ -51,6 +51,7 @@ const DEFAULT_HEADERS = [
   "x-denext-flight",
   "x-denext-slot-state",
   "x-denext-defer",
+  "x-denext-signal",
   "x-denext-iso",
 ];
 /** The preflight cache lifetime (seconds) when the config says nothing. */

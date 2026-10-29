@@ -125,6 +125,8 @@ entry = [
   "**/app/**/loading.tsx",
   "**/app/**/error.tsx",
   "**/app/**/not-found.tsx",
+  "**/app/**/forbidden.tsx",
+  "**/app/**/unauthorized.tsx",
   "**/app/**/template.tsx",
   "**/app/**/default.tsx",
   "**/app/**/global-error.tsx",

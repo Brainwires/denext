@@ -36,6 +36,21 @@ and this project adheres to
 - **A `denext job --history` child that hits its deadline says where it stopped.** `denext ui`'s
   Cron page reported only "did not finish within N s"; it now adds the child's last meaningful
   output line, or "(it printed nothing)", so a hang shows what the child was doing.
+- **`notFound()` / `forbidden()` / `unauthorized()` in a Server Action the browser calls render
+  the nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx`, as in Next.js.** The call
+  rejected with a plain `Error("notFound")`, so `error.tsx` rendered instead. The browser now
+  re-raises the reply's signal as the error `notFound()` throws (Next's
+  `NEXT_HTTP_ERROR_FALLBACK;<status>` digest; `isNotFound()` and `unstable_rethrow` recognise
+  it), and a Server Action's signal that reaches the client tree (an event handler's rejection, a
+  form action, `useActionState`) re-renders the current route on the server with the signal
+  raised at the page: the page level's nearest file renders in place under the
+  layouts, the URL stays, and nothing reloads. `redirect()` keeps working as before.
+- **`useActionState` rethrows an action's error into the nearest error boundary.** It threw from a
+  state updater, which the setter runs at once, so the error escaped as an unhandled rejection
+  and no boundary rendered.
+- **The Fragment-ref runtime chunk is loaded again after a failed load.** A failure left a no-op
+  for the page's life; the next `<Fragment ref>` now retries it once a backoff has passed (1 s,
+  doubling), up to five loads in a row.
 
 ### Security
 
@@ -65,6 +80,12 @@ and this project adheres to
   hold (2026-10-30); `expo-app`'s `zod` 3.25.76 (GHSA-mrhx-c7xc-m3w5, through `@expo/cli`, which
   requires zod 3 throughout Expo SDK 57); and `decode-uri-component` 0.2.2 (moderate, through
   `expo-router` 57's `query-string` 7).
+
+### Documentation
+
+- **The Deno Desktop runtime guide's releases table gains its `3.0.0-rc.6` row**, the runtime
+  reference no longer says upstream Deno releases a `3.0.0`, and the `.deno/npm-compat`
+  limitation names the runtimes that still leave it (through the pinned `3.0.0-denext.2`).
 
 ## [4.10.1] - 2026-10-29
 

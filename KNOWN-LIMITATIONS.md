@@ -42,6 +42,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   segment). npm packages are not scanned, so a package that renders either of the first two by
   itself, with props the app never names, or builds a route pattern itself, needs the app to name
   it once. A next-compat (npm React) build keeps all three.
+- **A Server Action's `notFound()` / `forbidden()` / `unauthorized()` reaching the client tree**
+  renders the page level's nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx`, which
+  the server renders for the current URL. Next picks the file nearest the calling component
+  (for a client component in a layout, the parent segment's). On a route that renders as one
+  client bundle (a page or layout that calls a hook itself, the compatibility path) the bundle
+  re-renders the page, so the page stays as it was; an async `startTransition` callback that
+  rejects with one leaves it unhandled, as any rejection.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`) and Next's `taint` config
   (React's `experimental_taint*` are enforced).
 
@@ -103,11 +110,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   keeps TypeScript 6 whatever the setting says, and a `deno.unstable` list in
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
-- **Runtime 3.0.0-rc.5's type-check leaves `.deno/npm-compat` in the project root.** It holds
+- **The runtime's type-check leaves `.deno/npm-compat` in the project root** (3.0.0-rc.5 through
+  the pinned 3.0.0-denext.2). It holds
   an npm-shaped copy of the `@jsr/*` packages, their `_test.ts` files included, and a later
   `deno test` with default discovery would run those. A `denext create` project's `deno.json`
   excludes `.deno/` (top-level `exclude`), as denext's own does; an older project adds
-  `"exclude": [".deno/"]` itself. A runtime issue, to be fixed in rc.6 or later by keeping the
+  `"exclude": [".deno/"]` itself. A runtime issue, to be fixed in a later runtime by keeping the
   copy out of the project.
 - **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
   `denext start` begins its graceful shutdown on those events too, but Windows ends a console

@@ -144,14 +144,3 @@ seeded fallback. No Deno has the hook below yet.
   but runs several times slower on every compat build and dev session.
 - **Maintenance:** track each vendored codec's upstream CVEs, rebuild SHA-256-pinned and
   regenerate its `THIRD-PARTY-LICENSES.md` before re-publishing.
-
-## Client runtime and Server Actions (AU5 audit, low severity)
-
-From the 4.8 client-runtime and Server Actions audit; the High and Medium findings shipped.
-
-- **`notFound()` / `forbidden()` / `unauthorized()` in a Server Action called from the browser**
-  reaches the client as a plain `Error("notFound")` (src/client/action-dispatch.ts), so the error
-  boundary renders, not `not-found.tsx`; the client has no not-found boundary for an event-path
-  signal yet. Add one, then re-raise the reply's `signal` as the branded error.
-- **The Fragment-ref runtime chunk**, once it fails to load, leaves a no-op for the page's life
-  (src/client/fiber/fragment-ref-support.ts); retry it on the next Fragment ref.

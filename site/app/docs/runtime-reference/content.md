@@ -18,8 +18,8 @@ patches carried ahead of upstream, test and CI changes) are described in the for
 
 ## Which runtime am I on?
 
-From runtime `3.0.0-rc.3` the runtime says whose it is. Upstream Deno releases a `3.0.0` too, so
-the version number alone doesn't tell them apart:
+From runtime `3.0.0-rc.3` the runtime says whose it is, so code needn't infer it from the version
+number (there is no upstream Deno 3.0; denext checks the marker too):
 
 ```ts
 if (Deno.build.denext) {

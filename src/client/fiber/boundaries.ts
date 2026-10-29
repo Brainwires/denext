@@ -24,6 +24,44 @@ import {
 } from "./fiber.ts";
 import { currentFiber } from "./hooks-dispatcher.ts";
 
+/**
+ * What renders a Server Action's access signal (`notFound()` / `forbidden()` / `unauthorized()`,
+ * re-raised by the browser dispatch) that reached the client tree — from an event handler, a form
+ * action or `useActionState`: the client runtime registers a re-render of the current route by the
+ * server with that signal raised at the page (navigation.ts's `startClient`), so the nearest
+ * `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx` renders, as Next's client boundaries do.
+ * Given the signal's status (`404` / `403` / `401`). One thrown by a client render itself still
+ * terminates that render (a server-side signal; KNOWN-DIFFERENCES.md).
+ */
+let accessSignalHandler: ((status: string) => void) | null = null;
+
+/** The mark the browser dispatch (action-dispatch.ts) sets on a Server Action's signal. */
+const ACTION_SIGNAL: unique symbol = Symbol.for("denext.actionSignal") as never;
+
+/** Register the {@linkcode accessSignalHandler} (`null` clears it). */
+export function setAccessSignalHandler(fn: ((status: string) => void) | null): void {
+  accessSignalHandler = fn;
+}
+
+/**
+ * Hand a control signal to the {@linkcode accessSignalHandler}: true when it took it (a Server
+ * Action's access signal, its status read from its `NEXT_HTTP_ERROR_FALLBACK;<status>` digest,
+ * with a handler registered), false otherwise (`redirect()`, a client render's own signal, no
+ * handler) — the caller then rethrows, as before.
+ */
+export function raiseAccessSignal(signal: unknown): boolean {
+  const s = signal as { digest?: unknown; [ACTION_SIGNAL]?: unknown };
+  const status = s[ACTION_SIGNAL] === true && /;(40[134])$/.exec(String(s.digest))?.[1];
+  if (!status || !accessSignalHandler) return false;
+  accessSignalHandler(status);
+  return true;
+}
+
+/** Rethrow a control signal unless the {@linkcode accessSignalHandler} renders it. */
+function throwSignal(signal: unknown): void {
+  if (!raiseAccessSignal(signal)) throw signal;
+}
+
 export function onErrorFor(fiber: Fiber): (err: unknown) => void {
   return (err) => handleEventError(fiber, err);
 }
@@ -82,7 +120,7 @@ export function resetBoundary(inst: Fiber): void {
 }
 
 function triggerBoundary(inst: Fiber, error: unknown): void {
-  if (isControlSignal(error)) throw error;
+  if (isControlSignal(error)) return throwSignal(error);
   if (__DENEXT_CLASS_COMPONENTS__ && isClassBoundary(inst)) {
     const cs = getClassSupport();
     if (!cs || !cs.handleClassError(inst as never, error, componentErrorInfo(inst))) {
@@ -123,7 +161,7 @@ export function handleEventError(inst: Fiber, error: unknown): void {
     if (typeof location !== "undefined") location.href = error.url;
     return;
   }
-  if (isControlSignal(error)) throw error;
+  if (isControlSignal(error)) return throwSignal(error);
   routeToBoundary(inst, error);
 }
 
@@ -145,7 +183,7 @@ function makeBoundaryController(inst: Fiber | null): ErrorBoundaryController {
     },
     captureError(error: unknown) {
       if (boundary) triggerBoundary(boundary, error);
-      else if (isControlSignal(error)) throw error;
+      else if (isControlSignal(error)) throwSignal(error);
     },
   };
 }
