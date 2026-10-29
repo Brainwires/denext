@@ -8,6 +8,23 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **Contexts and class components inside `react-reconciler` renderers** (react-three-fiber,
+  react-konva, React Native Skia). A provider placed inside such a renderer's tree now reaches
+  `useContext`, `use` and `<Context.Consumer>` there: a context made with `react`'s
+  `createContext` has a React-shaped twin the renderer provides and reads. Providers above a react-three-fiber `<Canvas>` or a
+  react-konva `<Stage>` reach the components inside it, and a new value re-renders them: its-fine's
+  `useContextBridge()`, which both use, walks the fiber tree from a class component's
+  `this._reactInternals`, and a denext class now answers with a read-only, React-shaped view of
+  its fiber. A class component inside such a tree updates through `setState` / `forceUpdate`
+  (they went to denext's own scheduler and threw), and the development build of
+  `react-reconciler` that `denext dev` loads no longer fails on its first render: denext's `react`
+  carries React's development fields (`actQueue` and the rest). Remaining: a class's
+  `static contextType` inside such a tree reads nothing, and a provider inside it reaches it only
+  for a context made with `react`'s `createContext` (not `denext`'s own, which stays as it was, so
+  an app that never loads `react` ships none of this).
+
 ## [4.10.0] - 2026-10-29
 
 ### Added
@@ -27,20 +44,6 @@ and this project adheres to
 
 ### Fixed
 
-- **Contexts and class components inside `react-reconciler` renderers** (react-three-fiber,
-  react-konva, React Native Skia). A provider placed inside such a renderer's tree now reaches
-  `useContext`, `use` and `<Context.Consumer>` there: each denext context has a React-shaped
-  twin the renderer provides and reads. Providers above a react-three-fiber `<Canvas>` or a
-  react-konva `<Stage>` reach the components inside it, and a new value re-renders them: its-fine's
-  `useContextBridge()`, which both use, walks the fiber tree from a class component's
-  `this._reactInternals`, and a denext class now answers with a read-only, React-shaped view of
-  its fiber. A class component inside such a tree updates through `setState` / `forceUpdate`
-  (they went to denext's own scheduler and threw), and the development build of
-  `react-reconciler` that `denext dev` loads no longer fails on its first render: denext's `react`
-  carries React's development fields (`actQueue` and the rest). Remaining: a class's
-  `static contextType` inside such a tree reads nothing, and a provider inside it reaches it only
-  for a context made with `react`'s `createContext` (not `denext`'s own, which stays as it was, so
-  an app that never loads `react` ships none of this).
 - **`install.ps1` with the GitHub CLI installed no longer stops on `gh`'s own error output.**
   The installer runs under `$ErrorActionPreference = 'Stop'`, and Windows PowerShell 5.1 turns
   anything a native program writes to stderr into a terminating `NativeCommandError`, even
