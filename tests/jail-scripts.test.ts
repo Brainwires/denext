@@ -792,6 +792,40 @@ Deno.test("migrate: detects the dependencies and writes the exceptions, listed f
   }
 });
 
+Deno.test("migrate: an npm workspace member's root settings are left for the user, not refused", async () => {
+  const { migrateProject } = await import("../src/build/migrate.ts");
+  // The member migrated alone (a monorepo's example app): the runtime reads the jail settings
+  // from the npm workspace root, a file outside the directory migrate was pointed at.
+  const rootPackage = JSON.stringify({ private: true, workspaces: ["apps/*"] });
+  const root = await project({
+    "package.json": rootPackage,
+    ".npmrc": "jail-scripts=true\n",
+    "apps/web/package.json": {
+      name: "jail-member",
+      dependencies: { next: "15.3.0", react: "19.1.0", "react-dom": "19.1.0", puppeteer: "24.1.0" },
+    },
+    "apps/web/app/layout.tsx": "export default function L({ children }) { return children; }\n",
+    "apps/web/app/page.tsx": "export default function P() { return null; }\n",
+  });
+  const prior = Deno.env.get("npm_config_jail_scripts");
+  Deno.env.delete("npm_config_jail_scripts");
+  try {
+    const r = await migrateProject(join(root, "apps/web"), {
+      denextLocalPath: REPO_ROOT,
+      from: "next",
+    });
+    assertEquals(r.jailScripts?.action, "manual");
+    const said = r.jailScripts!.lines.join("\n");
+    assertStringIncludes(said, "puppeteer needs a lifecycle-script jail exception");
+    assertStringIncludes(said, join(root, "package.json"), "names the file to edit");
+    assertStringIncludes(r.jailScripts!.snippet!, '"puppeteer"');
+    assertEquals(await Deno.readTextFile(join(root, "package.json")), rootPackage, "untouched");
+  } finally {
+    if (prior !== undefined) Deno.env.set("npm_config_jail_scripts", prior);
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test(
   "add: the added packages' exceptions are written before `deno add`, with a hint on failure",
   {

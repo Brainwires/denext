@@ -409,6 +409,12 @@ function confinedFs(root: string): JailFs {
   };
 }
 
+/** Whether `path` is `dir` or lies under it. */
+function isUnder(path: string, dir: string): boolean {
+  const rel = relative(resolve(dir), resolve(path));
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
 /** A file's text, or null. */
 async function readOr(fs: JailFs, path: string): Promise<string | null> {
   return await fs.readTextFile(path).catch(() => null);
@@ -1004,6 +1010,13 @@ export interface JailReport {
 export interface ApplyJailOptions extends ReadJailProjectOptions {
   /** Whether the settings file may be edited (false: report the snippet instead). Default true. */
   readonly edit?: boolean;
+  /**
+   * The directory the command may write in (`denext migrate`'s: the app it was pointed at). A
+   * settings file outside it (the root package.json or deno.json of the workspace the app is a
+   * member of) is reported with the snippet to add, naming that file, instead of written.
+   * Default: the project root the settings belong to.
+   */
+  readonly confine?: string;
 }
 
 /** `a, b and c`. */
@@ -1185,6 +1198,19 @@ function unwrittenReport(
   };
 }
 
+/** Whether the settings file lies outside `confine`, the directory the command may write in. */
+function settingsOutside(project: JailProject, confine: string | undefined): boolean {
+  return project.settingsPath !== null && confine !== undefined &&
+    !isUnder(project.settingsPath, confine);
+}
+
+/** Whether the settings file can take the exceptions (it exists, and its home is an object). */
+function settingsEditable(project: JailProject, allowed: boolean): boolean {
+  if (!allowed || project.settingsPath === null) return false;
+  return project.home === "deno.json" || project.packageJson?.deno === undefined ||
+    objectOf(project.packageJson.deno) !== undefined;
+}
+
 /**
  * Find the project's dependencies that need a lifecycle-script jail exception and, when the jail
  * is on for the project, write the missing ones into its deno.json (comments and key order
@@ -1218,9 +1244,8 @@ export async function applyJailExceptions(
   const early = unwrittenReport(base, project.setting, refused);
   if (early) return early;
   const prefix = home === "package.json" ? ["deno"] : [];
-  const editable = options.edit !== false && project.settingsPath !== null &&
-    (home === "deno.json" || project.packageJson?.deno === undefined ||
-      objectOf(project.packageJson.deno) !== undefined);
+  const outside = settingsOutside(project, options.confine);
+  const editable = settingsEditable(project, options.edit !== false && !outside);
   const before = editable ? await fs.readTextFile(project.settingsPath!) : "";
   const written = !editable ? null : await editedConfig(
     before,
@@ -1236,7 +1261,8 @@ export async function applyJailExceptions(
       snippet,
       lines: [
         `${names(missing)} need${missing.length === 1 ? "s" : ""} a lifecycle-script jail ` +
-        `exception; add this to ${home} (` + JAIL_DOCS_URL + "):",
+        `exception; add this to ${outside ? `${home} at ${project.settingsPath}` : home} (` +
+        JAIL_DOCS_URL + "):",
         ...snippet.split("\n").map((l) => `  ${l}`),
         ...requirementLines(missing),
         ...refused,

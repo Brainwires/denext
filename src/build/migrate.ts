@@ -1556,7 +1556,12 @@ export async function migrateProject(
 /** {@link migrateProject} inside the project's write confinement. */
 async function migrateConfined(dir: string, options: MigrateOptions): Promise<MigrateResult> {
   const migrated = await migrateAnyProject(dir, options);
-  const jail = await applyJailExceptions(dir, { fs: mfs, edit: !migrated.denoJsonExists });
+  // Only the app is written: a workspace root's settings above it are left to the user.
+  const jail = await applyJailExceptions(dir, {
+    fs: mfs,
+    edit: !migrated.denoJsonExists,
+    confine: dir,
+  });
   const r = jail.action === "none" ? migrated : { ...migrated, jailScripts: jail };
   if (!options.capacitor || r.capacitor) return r;
   return { ...r, capacitorSkipped: capacitorSkipReason(r) };
