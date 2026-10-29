@@ -7,7 +7,8 @@
 // failing is `gone` — the client re-renders the route for fresh ones, and an attacker learns
 // nothing); the props decode; the view's `authorize` in the viewer's session (a throw is a
 // deny); a post-await connected + cap re-check. Then a parked instance named by `resume` is
-// adopted (same view, same signed props), or `init` runs.
+// adopted (same view, same signed props, same viewer — `viewerIdentity`), or `init` runs. The
+// props token carries its issue time and is refused past `viewTokenMaxAgeSeconds`.
 //
 // Every `view-event`: frame shape; a bounded per-view inbox (events are processed one at a time,
 // in order — a flood past it is refused with `limit`, the inbound back-pressure); the handler
@@ -49,7 +50,12 @@ import {
 import { prepareWire } from "../runtime/wire-encode.ts";
 import { tapChannelAuthorized } from "./channel-subscriber.ts";
 import { inRootContext } from "./root-context.ts";
-import { type LiveViewStore, openViewSnapshot, sealViewSnapshot } from "./live-view-store.ts";
+import {
+  type LiveViewStore,
+  openViewSnapshot,
+  sealViewSnapshot,
+  type ViewSnapshot,
+} from "./live-view-store.ts";
 import { recordViewMessages, type RedactedValue, redactValue } from "./live-devtools.ts";
 import {
   authorizeView,
@@ -59,6 +65,7 @@ import {
   mountView,
   str,
   takeParked as takeParkedFrom,
+  viewerIdentity,
   type ViewHubBaseDeps,
   type ViewHubFrames,
 } from "./view-hub-common.ts";
@@ -103,6 +110,8 @@ export interface ViewInstance {
   readonly props: unknown;
   /** `view + "\0" + token`: a resume must present the same signed props. */
   readonly signed: string;
+  /** The viewer it was mounted for: a resume (here or from the store) must be the same viewer. */
+  readonly identity: string;
 }
 
 interface Instance<C> extends ViewInstance {
@@ -244,6 +253,17 @@ function checkForm(v: unknown): Record<string, string> | null {
   return out;
 }
 
+/** Whether a stored snapshot is this view, with these signed props, parked by this viewer. */
+function snapshotFits(
+  snapshot: ViewSnapshot | null,
+  view: string,
+  signed: string,
+  identity: string,
+): snapshot is ViewSnapshot {
+  return !!snapshot && snapshot.view === view && snapshot.signed === signed &&
+    snapshot.identity === identity;
+}
+
 /** The JSON size of a model (wire-codec shaped); `Infinity` when it can't be encoded. */
 function modelSize(model: unknown): number {
   try {
@@ -296,7 +316,12 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
   /** Write a parked instance's snapshot to the shared store. */
   const persist = (inst: Instance<C>): void => {
     const ttl = deps.limits().viewResumeSeconds;
-    const snapshot = { view: inst.def.id, signed: inst.signed, model: inst.engine.model };
+    const snapshot = {
+      view: inst.def.id,
+      signed: inst.signed,
+      identity: inst.identity,
+      model: inst.engine.model,
+    };
     storeOp(inst, async (store) => {
       await store.set(inst.iid, await sealViewSnapshot(inst.iid, snapshot), ttl);
     });
@@ -486,6 +511,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     def: LiveViewDef,
     props: unknown,
     signed: string,
+    identity: string,
     restored?: { model: unknown },
   ): Instance<C> | null => {
     let init;
@@ -529,6 +555,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
       def,
       props,
       signed,
+      identity,
       owner: conn,
       attached: true,
       stopped: false,
@@ -640,24 +667,29 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     authorize: (def: LiveViewDef, props: unknown) => authorize({ def, props }, conn),
   });
 
-  /** The parked instance `resume` names, when it is this view with these signed props. */
+  /** The parked instance `resume` names, when it is this view with these signed props and viewer. */
   const takeParked = (
     resume: string | undefined,
     view: string,
     signed: string,
+    identity: string,
   ): Instance<C> | undefined => {
-    const parked = takeParkedFrom(parkedViews, resume, view, signed);
+    const parked = takeParkedFrom(parkedViews, resume, view, signed, identity);
     if (!parked) return undefined;
     parked.authExpires = Date.now() + ttlMs();
     storeOp(parked, (store) => store.delete(parked.iid));
     return parked;
   };
 
-  /** The model a stored snapshot of `resume` holds, when it is this view with these props. */
+  /**
+   * The model a stored snapshot of `resume` holds, when it is this view with these props, parked
+   * by the same viewer. Another viewer's take still consumes the snapshot (it runs `init`).
+   */
   const takeStored = async (
     resume: string | undefined,
     view: string,
     signed: string,
+    identity: string,
   ): Promise<{ model: unknown } | undefined> => {
     const store = resume === undefined ? null : deps.store?.();
     if (!store) return undefined;
@@ -669,10 +701,18 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
       return undefined;
     }
     const snapshot = sealed === null ? null : await openViewSnapshot(resume!, sealed);
-    if (!snapshot || snapshot.view !== view || snapshot.signed !== signed) return undefined;
+    if (!snapshotFits(snapshot, view, signed, identity)) return undefined;
     // The instance that parked it may still run its copy: it stops it on hearing this.
     announceResumed(resume!);
     return { model: snapshot.model };
+  };
+
+  /** What a mount resumes: the instance parked here, else the model a stored snapshot holds. */
+  const resumeOf = async (shape: MountShape, signed: string, identity: string) => {
+    const parked = takeParked(shape.resume, shape.view, signed, identity);
+    // Not parked here: another instance (or this one, before an eviction) may have stored it.
+    if (parked) return { parked, restored: undefined };
+    return { parked, restored: await takeStored(shape.resume, shape.view, signed, identity) };
   };
 
   /**
@@ -686,9 +726,9 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
   ): Promise<void> => {
     const { vid } = shape;
     const signed = `${shape.view}\0${shape.token}`;
-    const parked = takeParked(shape.resume, shape.view, signed);
-    // Not parked here: another instance (or this one, before an eviction) may have stored it.
-    const restored = parked ? undefined : await takeStored(shape.resume, shape.view, signed);
+    const identity = await viewerIdentity(deps, conn);
+    if (!deps.isConnected(conn)) return;
+    const { parked, restored } = await resumeOf(shape, signed, identity);
     if (restored && !deps.isConnected(conn)) return;
     if (restored && atCap(conn, vid)) {
       return deps.sendError(conn, "limit", "too many views", { subId: vid });
@@ -696,7 +736,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     const replaced = own(conn, vid);
     if (replaced) stop(replaced);
     if (parked) return attach(conn, vid, parked);
-    const inst = create(conn, vid, admitted.def, admitted.props, signed, restored);
+    const inst = create(conn, vid, admitted.def, admitted.props, signed, identity, restored);
     if (!inst) return;
     attach(conn, vid, inst);
     inst.engine.start();

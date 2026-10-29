@@ -2476,6 +2476,13 @@ export interface LiveLimits {
   viewResumeSeconds?: number;
   /** Max live views waiting to be resumed across the server (default 1000; the oldest go first). */
   maxParkedViews?: number;
+  /**
+   * Seconds a live view's signed props token (rendered into the page) is accepted for a mount or
+   * a resume (default 86400, a day). An older one is refused as `gone`, and the browser re-renders
+   * the route once for a fresh token. A page cached longer than this (`force-static`, or ISR with a
+   * longer `revalidate`) needs a larger value.
+   */
+  viewTokenMaxAgeSeconds?: number;
 }
 
 /**
