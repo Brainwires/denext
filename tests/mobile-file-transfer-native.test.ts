@@ -331,7 +331,8 @@ Deno.test({
       ]);
       assertHarness(out);
       assert(out.includes("ok the cancel landed after the move"), out);
-      assert(out.includes("ok a cancel after the move leaves no file"), out);
+      assert(out.includes("ok a cancel after the move answers false"), out);
+      assert(out.includes("ok a cancel after the move keeps the new download"), out);
       assert(out.includes("ok a cancel after done answers false"), out);
       assert(out.includes("ok a pause after the move answers false"), out);
       assert(
@@ -353,6 +354,7 @@ Deno.test({
         out,
       );
       assert(out.includes("ok a start deletes the dead attempts' partial files"), out);
+      assert(out.includes("ok a start keeps a non-hex lookalike of a partial file"), out);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

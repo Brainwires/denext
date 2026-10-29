@@ -245,10 +245,14 @@ public final class TransferWorkerHarness {
         check("a cancel during the download leaves no file", !early.exists() && !partLeft(early),
             "target " + early.exists() + ", part " + partLeft(early));
 
-        // The window: a cancel after the worker moved the file into place, before it recorded done.
+        // The window: a cancel after the worker moved the file into place (replacing the file
+        // that was there), before it recorded done. Too late, as for a pause: the download is
+        // complete and the file it replaced gone, so deleting the target would lose both.
         File late = dataFile("dir/late.bin");
+        late.getParentFile().mkdirs();
+        Files.write(late.toPath(), "the user's original".getBytes(StandardCharsets.UTF_8));
         start("late", "download", "dir/late.bin");
-        boolean[] lateCancelled = {false};
+        boolean[] lateCancelled = {true};
         boolean[] inWindow = {false};
         DenextTransferHttp.onMoved = () -> {
             inWindow[0] = late.isFile() && !partLeft(late);
@@ -256,9 +260,11 @@ public final class TransferWorkerHarness {
         };
         result = work("late");
         check("the cancel landed after the move", inWindow[0], "the target was not in place yet");
-        check("a cancel after the move answers true", lateCancelled[0], "not cancelled");
-        check("a cancel after the move stays cancelled", state("late").equals("cancelled"), state("late"));
-        check("a cancel after the move leaves no file", !late.exists(), "the complete download is still there");
+        check("a cancel after the move answers false", !lateCancelled[0], "cancelled a finished download");
+        check("a cancel after the move ends done", state("late").equals("done"), state("late"));
+        check("a cancel after the move keeps the new download", late.isFile()
+            && java.util.Arrays.equals(Files.readAllBytes(late.toPath()), DenextTransferHttp.BODY),
+            late.isFile() ? "the target is not the download" : "the original and the download are both gone");
         check("a cancel after the move leaves no partial file", !partLeft(late), "part left");
 
         // A pause after the move is too late: the download is complete, so it ends done and the
@@ -336,12 +342,13 @@ public final class TransferWorkerHarness {
             && state("rr").equals("paused"), rrPaused[0] + " / " + state("rr"));
         check("a rerun paused before the move does not write the target", !rerun.exists(), "target written");
 
-        // The id reused: cancelled, forgotten and started again while the old worker is between
-        // the move and its done update. The old worker leaves the new transfer alone.
+        // The id reused: cancelled, forgotten and started again while the old worker has its bytes
+        // and is about to move them into place (after the move a cancel is refused, so nothing
+        // can restart the id there). The old worker leaves the new transfer alone.
         File reused = dataFile("reused.bin");
         start("re", "download", "reused.bin");
         boolean[] restarted = {false};
-        DenextTransferHttp.onMoved = () -> {
+        DenextTransferHttp.onDownloaded = () -> {
             boolean c = cancel("re");
             boolean f = forget("re");
             start("re", "download", "reused.bin");
@@ -364,12 +371,12 @@ public final class TransferWorkerHarness {
             "target " + reused.isFile() + ", part " + partLeft(reused));
 
         // A long-stopped old worker: the id is cancelled, forgotten, started again, finished and
-        // forgotten again while the first worker is still between its move and its done update.
+        // forgotten again while the first worker still holds its bytes, not yet moved into place.
         // Nothing then names that worker's transfer, and the file at the path is the later one's.
         File longStopped = dataFile("long-stopped.bin");
         start("ls", "download", "long-stopped.bin");
         boolean[] lsRestarted = {false};
-        DenextTransferHttp.onMoved = () -> {
+        DenextTransferHttp.onDownloaded = () -> {
             boolean c = cancel("ls");
             boolean f = forget("ls");
             start("ls", "download", "long-stopped.bin");
@@ -476,13 +483,21 @@ public final class TransferWorkerHarness {
         File deadMeta = new File(dead.getPath() + ".meta");
         File oldPart = new File(shared.getPath() + ".denext-part");
         File other = new File(shared.getPath() + ".notes.txt");
-        for (File f : new File[] {dead, deadMeta, oldPart, other}) Files.write(f.toPath(), DenextTransferHttp.BODY);
+        // Files of the user's that only look like partial files: 8 characters, but not the hex an
+        // attempt is named with.
+        File lookalike = new File(shared.getPath() + ".draft-v2.denext-part");
+        File lookalikeMeta = new File(shared.getPath() + ".DEADBEEF.denext-part.meta");
+        for (File f : new File[] {dead, deadMeta, oldPart, other, lookalike, lookalikeMeta}) {
+            Files.write(f.toPath(), DenextTransferHttp.BODY);
+        }
         start("sb", "download", "shared.bin");
         check("a start deletes the dead attempts' partial files", !dead.exists() && !deadMeta.exists()
             && !oldPart.exists(), "left: " + String.join(", ", parts(shared)));
         check("a start keeps a live transfer's partial file at the same path", live.length == 1
             && new File(shared.getParentFile(), live[0]).isFile(), "live " + String.join(", ", live));
         check("a start keeps other files beside the target", other.isFile(), "deleted " + other.getName());
+        check("a start keeps a non-hex lookalike of a partial file", lookalike.isFile() && lookalikeMeta.isFile(),
+            "deleted " + (lookalike.isFile() ? lookalikeMeta.getName() : lookalike.getName()));
 
         // An upload cancelled after it was sent: its source file is the app's, never deleted.
         File source = dataFile("source.txt");

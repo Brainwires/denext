@@ -248,12 +248,13 @@ and this project adheres to
   engine runs (a Deno Desktop window's) that was cancelled after its engine accepted a pause but
   before the run stopped ended paused, its promise pending. It now cancels and the engine drops
   the bytes it kept.
-- **An Android download cancelled as it finished deletes its file.** A `cancelFileTransfer` that
-  landed after the transfer worker moved the downloaded file into place, but before it recorded
-  the transfer as done, answered `true` and left the transfer cancelled with the complete file
-  still at its path. The worker now deletes the file when it finds the transfer cancelled there.
-  A cancel that comes once the transfer is done still answers `false` and keeps the file, and an
-  upload's file is never touched. File-transfer template generation 5: run
+- **An Android download cancelled as it finished ends done.** A `cancelFileTransfer` that landed
+  after the transfer worker moved the downloaded file into place, but before it recorded the
+  transfer as done, answered `true` and left the transfer cancelled with the complete file still
+  at its path. The download is complete there and the file it replaced already gone (deleting it
+  would lose both), so that cancel now answers `false` and the transfer ends done with the new
+  file, as a pause then does. A cancel before the move still cancels and deletes only the partial
+  file, and an upload's file is never touched. File-transfer template generation 5: run
   `denext mobile add file-transfer` again to upgrade an unedited copy, then ship a new binary.
 - **An Android download paused as it finished ends done, and a reused transfer id is left alone
   by the old worker.** A `pauseFileTransfer` that landed after the worker moved the download into
@@ -267,10 +268,12 @@ and this project adheres to
   An Android download's partial file is now named for its attempt (a resume renames it to the
   new one, so a pause still resumes after the process is gone): an old worker that had not opened
   its partial file yet writes into its own, never into the bytes of the transfer started again
-  under its id, and drops it once it stops. A cancel deletes the partial file, or a download
-  already moved into place, under the same lock as its state change, and a worker never deletes
-  the downloaded file itself, so one stopped long ago no longer removes a later transfer's file
-  at the same path. A start deletes the partial files that no live transfer to that path owns.
+  under its id, and drops it once it stops. A cancel deletes the partial file under the same lock
+  as its state change, and a worker never deletes the downloaded file itself, so one stopped long
+  ago no longer removes a later transfer's file at the same path. A start deletes the partial
+  files that no live transfer to that path owns, matching only the `<name>.<8 hex>.denext-part`
+  form an attempt is named with, so a file of the user's that merely looks like one (in the
+  shared Documents folder, say) is kept.
   Records and work from before attempts keep the old name and still finish. On iOS, a cancelled
   upload's late response bytes no longer reach the body of a new transfer started under the same
   id, and a cancelled pause's late resume data no longer lands in a new transfer's pause (or

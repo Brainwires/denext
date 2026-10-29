@@ -1191,6 +1191,20 @@ public class DenextTransferPlugin extends Plugin {
     }
 
     /**
+     * Whether {@code tag} is {@code <8 hex>.}: the first 8 characters of an attempt (a lowercase
+     * {@link java.util.UUID} string) and the dot after them, as {@link DenextTransferHttp#partFile}
+     * names a partial file.
+     */
+    static boolean attemptTag(String tag) {
+        if (tag.length() != 9 || tag.charAt(8) != '.') return false;
+        for (int i = 0; i < 8; i++) {
+            char c = tag.charAt(i);
+            if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+        }
+        return true;
+    }
+
+    /**
      * Delete the partial files (and their validators) beside {@code target} that no live download
      * owns: those of dead attempts (an old worker's, the transfer {@code id} starts over from) and
      * one from before attempts. A live transfer of another id to the same path keeps its own.
@@ -1211,9 +1225,11 @@ public class DenextTransferPlugin extends Plugin {
             for (String name : names) {
                 String part = name.endsWith(".meta") ? name.substring(0, name.length() - 5) : name;
                 if (!part.startsWith(prefix) || !part.endsWith(suffix)) continue;
-                int tag = part.length() - prefix.length() - suffix.length();
-                // <target>.denext-part (before attempts) or <target>.<8>.denext-part.
-                if (tag != 0 && !(tag == 9 && part.charAt(part.length() - suffix.length() - 1) == '.')) continue;
+                String tag = part.substring(prefix.length(), part.length() - suffix.length());
+                // <target>.denext-part (before attempts) or <target>.<8 hex>.denext-part, the hex
+                // form partFile names an attempt with, so a file of the user's that only looks
+                // like one (in a shared folder such as Documents) is never deleted.
+                if (!tag.isEmpty() && !attemptTag(tag)) continue;
                 File file = new File(dir, part);
                 if (!keep.contains(file.getAbsolutePath())) new File(dir, name).delete();
             }
@@ -1319,8 +1335,11 @@ public class DenextTransferPlugin extends Plugin {
         String attempt = newAttempt();
         boolean resumed = (state.equals("paused") || state.equals("failed"))
             && store.update(id, state, r -> {
-                // The partial file passes to the new attempt (under the lock, so a worker of the
-                // old one that has not opened it yet writes into its own name, never into this).
+                // The partial file passes to the new attempt, under the lock, so a worker of the
+                // old one that has not opened it yet opens its own name, never this one. A worker
+                // that already has it open is not stopped by the rename: its stream follows the
+                // file, and a read() it is blocked in can still land one buffer in it before the
+                // worker sees the pause (DenextTransferHttp's report() check).
                 File file = store.file(r.optString("directory"), r.optString("path"));
                 if (file != null && "download".equals(r.optString("kind"))) {
                     File from = DenextTransferHttp.partFile(file, r.optString("attempt"));
@@ -1344,25 +1363,29 @@ public class DenextTransferPlugin extends Plugin {
     public void cancel(PluginCall call) {
         String id = id(call);
         if (id == null) return;
-        JSONObject record = store.record(id);
-        String state = record == null ? "" : record.optString("state");
-        boolean cancelled = (state.equals("running") || state.equals("paused"))
-            && store.update(id, state, r -> {
-                // Under the lock, with the state: the worker moves the download into place under
-                // it too, and marks the record finishing as it does, so the file found here is
-                // this attempt's own (its partial file, or the moved download).
-                File file = store.file(r.optString("directory"), r.optString("path"));
-                if (file != null && "download".equals(r.optString("kind"))) {
-                    File part = DenextTransferHttp.partFile(file, r.optString("attempt"));
-                    part.delete();
-                    DenextTransferHttp.metaFile(part).delete();
-                    if (r.optBoolean("finishing")) file.delete();
-                }
-                r.remove("finishing");
-                r.put("state", "cancelled");
-                r.put("resumable", false);
-                return "cancelled";
-            });
+        boolean cancelled;
+        synchronized (store) {
+            // A download whose worker has moved it into place (finishing) is complete, and the
+            // file it replaced is gone: too late to cancel, as to pause, it ends done and keeps
+            // the new file. Under the lock, with the state: the worker moves the download and
+            // marks the record finishing under it too, so the partial file found here is this
+            // attempt's own.
+            JSONObject record = store.record(id);
+            String state = record == null ? "" : record.optString("state");
+            cancelled = (state.equals("running") || state.equals("paused"))
+                && !record.optBoolean("finishing")
+                && store.update(id, state, r -> {
+                    File file = store.file(r.optString("directory"), r.optString("path"));
+                    if (file != null && "download".equals(r.optString("kind"))) {
+                        File part = DenextTransferHttp.partFile(file, r.optString("attempt"));
+                        part.delete();
+                        DenextTransferHttp.metaFile(part).delete();
+                    }
+                    r.put("state", "cancelled");
+                    r.put("resumable", false);
+                    return "cancelled";
+                });
+        }
         if (cancelled) WorkManager.getInstance(getContext()).cancelUniqueWork(workName(id));
         call.resolve(new JSObject().put("cancelled", cancelled));
     }
@@ -1659,9 +1682,9 @@ import org.json.JSONObject;
  * its target, named for its attempt (a resume renames it to the new one), so when the system
  * stops the work (its time limit, the network lost) the next run resumes with a range request; a
  * network error is retried with backoff, up to {@link #MAX_ATTEMPTS} runs. A pause or a cancel stops the work and sets the record's state
- * first, so this worker leaves the record alone; a cancel that lands after the download was moved
- * into place takes the file with it, and a pause that lands then is refused (the download is
- * complete and ends done). The worker acts only while the record carries its attempt, so one left
+ * first, so this worker leaves the record alone; a cancel or a pause that lands after the download
+ * was moved into place is refused (the download is complete, the file it replaced already gone,
+ * and it ends done). The worker acts only while the record carries its attempt, so one left
  * over from an earlier start of the same id changes nothing, and never deletes a target: a
  * restarted id's file is not its own.
  */
@@ -1770,10 +1793,10 @@ public class DenextTransferWorker extends Worker {
             if (download) {
                 result = DenextTransferHttp.download(record.optString("url"), headers, part, listener);
                 // The move and the finishing mark happen together under the store lock, as a
-                // cancel's deletes do: a cancel before them deletes the partial file, one after
-                // deletes the moved download (the record says finishing), and a pause after them is
-                // refused (the download is complete). A pause, a cancel or a restart that came
-                // first leaves the record no longer this attempt's running one.
+                // cancel's deletes do: a cancel before them deletes the partial file, and a cancel
+                // or a pause after them is refused (the download is complete, the file it replaced
+                // gone, so it ends done with the new one). A pause, a cancel or a restart that
+                // came first leaves the record no longer this attempt's running one.
                 synchronized (store) {
                     JSONObject now = store.record(id);
                     if (now == null || !"running".equals(now.optString("state"))
@@ -1818,7 +1841,6 @@ public class DenextTransferWorker extends Worker {
                 if (done.body != null) r.put("body", done.body);
                 return "done";
             });
-            // Not applied: a cancel since the move took the file with it (the record said finishing).
             return Result.success();
         } catch (DenextTransferHttp.Stopped stopped) {
             // A pause or a cancel set the state; a system stop runs the work again. A record that
