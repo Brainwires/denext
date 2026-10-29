@@ -707,11 +707,13 @@ Deno.test("shellPathArg: a path as the user's shell reads it back", () => {
 });
 
 Deno.test("migrate --check: a next.config that reads an unset machine path (HOME on Windows) is flagged", async () => {
-  // A well-known machine-specific variable this machine does NOT set (USERPROFILE off Windows,
-  // HOME on it): before, only variables that were set were masked, so the read passed unnoticed.
-  const unset = ["USERPROFILE", "HOME", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "TMPDIR"]
-    .find((k) => Deno.env.get(k) === undefined);
-  assert(unset, "this machine sets every machine-path variable");
+  // A well-known machine-specific variable that is NOT set (USERPROFILE off Windows, HOME on it):
+  // before, only variables that were set were masked, so the read passed unnoticed. A shell, an
+  // SSH session or a CI runner may set it anyway (Windows' OpenSSH sets HOME, and test-run sets
+  // TMPDIR everywhere), so the test unsets it for its own duration rather than trust the host.
+  const unset = Deno.build.os === "windows" ? "HOME" : "USERPROFILE";
+  const saved = Deno.env.get(unset);
+  Deno.env.delete(unset);
   const dir = await tempDir();
   try {
     await writeTree(dir, {
@@ -738,6 +740,7 @@ Deno.test("migrate --check: a next.config that reads an unset machine path (HOME
     assert(!config.includes("/fallback"), config);
     assertStringIncludes(config, `// redirects: a rule or value reads ${unset}`);
   } finally {
+    if (saved !== undefined) Deno.env.set(unset, saved);
     await Deno.remove(dir, { recursive: true });
   }
 });
