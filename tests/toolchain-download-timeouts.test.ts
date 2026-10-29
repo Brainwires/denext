@@ -172,20 +172,29 @@ Deno.test("downloadPinned: a server that stalls forever fails with a report of e
 });
 
 Deno.test("downloadPinned: a slow but steady download is never cut off, by the idle deadline or the overall budget", async () => {
-  // The first connection stalls; the retry sends a byte every 40 ms: far longer in all than the
-  // idle deadline and the overall budget, never a gap as long as the idle deadline.
-  const server = standIn(BODY, (n) => n === 0 ? "silent" : { slow: 40 });
+  // The first connection stalls; the retry sends a byte every 50 ms: far longer in all than the
+  // idle deadline and the overall budget, never a gap as long as the idle deadline. Every margin
+  // is wide enough for a loaded 2-CPU machine's timer and scheduling jitter (hundreds of ms): the
+  // retry starts by ~1.25 s (the connect deadline and at most 250 ms of back-off) against a 3 s
+  // budget, its headers have a whole second, and a 50 ms gap is 1/30 of the idle deadline.
+  const connectMs = 1_000, idleMs = 1_500, totalMs = 3_000;
+  const body = new Uint8Array(100).map((_, i) => i);
+  const server = standIn(body, (n) => n === 0 ? "silent" : { slow: 50 });
   try {
     await withVars({
-      DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS: "200",
-      DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS: "400",
-      DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS: "600",
+      DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS: String(connectMs),
+      DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS: String(idleMs),
+      DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS: String(totalMs),
     }, async (dest) => {
       const started = Date.now();
-      await downloadPinned(await pinFor(server.url, BODY), dest, fetch, () => {});
-      assertEquals(await Deno.readFile(dest), BODY);
+      await downloadPinned(await pinFor(server.url, body), dest, fetch, () => {});
+      assertEquals(await Deno.readFile(dest), body);
       assertEquals(server.connections(), 2);
-      assert(Date.now() - started > 1_000, "the transfer outlasted the idle and total budgets");
+      const took = Date.now() - started;
+      assert(
+        took > totalMs && took > idleMs,
+        `the transfer outlasted the idle and total budgets (${took} ms)`,
+      );
     });
   } finally {
     await server.close();
