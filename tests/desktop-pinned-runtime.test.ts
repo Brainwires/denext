@@ -58,6 +58,7 @@ import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
 import { canSymlink, sha256Hex, tarGz, zip } from "./_archive-fixtures.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
 import { minGlibcFor } from "../src/build/linux-libc.ts";
+import { acquireCacheLock, withProjectLocks } from "../src/build/project-locks.ts";
 
 const TARGET = "x86_64-unknown-linux-gnu";
 const LIB = "libdenort.so";
@@ -357,6 +358,42 @@ Deno.test("ensureDesktopRuntime: an install started while another downloads wait
     assertEquals(a.dir, b.dir);
     assertEquals(f.hits(), 1);
   } finally {
+    await f.close();
+  }
+});
+
+Deno.test("ensureDesktopRuntime: an unrelated task takes lower-rank locks while it downloads", async () => {
+  const f = await fixture(await fixtureArchive());
+  const other = await Deno.makeTempDir();
+  try {
+    // The install holds the runtime cache's download lock (rank 4) while its fetch is held open.
+    let downloading!: () => void;
+    const started = new Promise<void>((r) => downloading = r);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => release = r);
+    const held: typeof fetch = async (input, init) => {
+      downloading();
+      await gate;
+      return await fetch(input, init);
+    };
+    const install = ensure(f, { fetch: held });
+    await started;
+    // Meanwhile another task of this process reads a different cache (rank 3) and locks a
+    // project's build directory (rank 1). Neither holds anything the install waits for, so
+    // neither is a lock order violation (the check used to be process-wide and threw).
+    try {
+      (await acquireCacheLock(join(other, "cache"), "shared", "other cache")).release();
+      const built = await withProjectLocks(
+        { projectDir: other, buildDir: "exclusive" },
+        () => Promise.resolve("built"),
+      );
+      assertEquals(built, "built");
+    } finally {
+      release();
+    }
+    assertEquals((await install).cached, false);
+  } finally {
+    await Deno.remove(other, { recursive: true });
     await f.close();
   }
 });

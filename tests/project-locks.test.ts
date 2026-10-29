@@ -6,11 +6,15 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, relative, resolve } from "@std/path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import {
   acquireFileLock,
   blockingLine,
+  type FileLock,
   lockingUnsupported,
+  lockTask,
   lockTimeoutMs,
+  outsideLockTasks,
 } from "../src/build/file-lock.ts";
 import {
   acquireCacheLock,
@@ -21,6 +25,8 @@ import {
   LOCK_RANK,
   outputLockPath,
   planProjectLocks,
+  withBuildDirLock,
+  withProjectLocks,
 } from "../src/build/project-locks.ts";
 import { coverageDir } from "../src/cli/commands/toolchain.ts";
 import { mobileBuildLocks } from "../src/cli/commands/mobile-build.ts";
@@ -368,6 +374,482 @@ Deno.test("re-entrant in one process; never upgraded; never out of rank order", 
   }
 });
 
+/** A promise and the function that settles it. */
+function gate(): { opened: Promise<void>; open: () => void } {
+  let open!: () => void;
+  const opened = new Promise<void>((r) => open = r);
+  return { opened, open };
+}
+
+Deno.test("the rank order is per task: an unrelated concurrent task may take a lower rank", async () => {
+  // Two independent tasks of one process: one holds an output-dir lock (rank 2) across its work,
+  // the other locks another project's build directory (rank 1) meanwhile. Nothing either holds
+  // is something the other waits for, so it is no order violation (the process-wide check threw).
+  const [a, b] = [await Deno.makeTempDir(), await Deno.makeTempDir()];
+  try {
+    const holding = gate();
+    const done = gate();
+    const first = withProjectLocks({ projectDir: a, outputDirs: ["out"] }, async () => {
+      holding.open();
+      await done.opened;
+    });
+    await holding.opened;
+    try {
+      await withProjectLocks({ projectDir: b, buildDir: "exclusive" }, () => Promise.resolve());
+      // Outside every task (the process's root task) too: the holder is not this code's task.
+      (await acquireCacheLock(join(b, "cache"), "shared", "test cache")).release();
+      (await acquireFileLock(join(b, "low.lock"), {
+        mode: "exclusive",
+        description: "low",
+        rank: LOCK_RANK.packageOutput,
+      })).release();
+    } finally {
+      done.open();
+    }
+    await first;
+    // Explicit tasks: one holds a rank-4 lock, a sibling takes rank 3 and then rank 1.
+    const high = gate();
+    const finish = gate();
+    const holder = lockTask(async () => {
+      using _l = await acquireFileLock(join(a, "high.lock"), {
+        mode: "exclusive",
+        description: "high",
+        rank: LOCK_RANK.cacheDownload,
+      });
+      high.open();
+      await finish.opened;
+    });
+    await high.opened;
+    try {
+      await lockTask(async () => {
+        using _mid = await acquireFileLock(join(b, "mid.lock"), {
+          mode: "shared",
+          description: "mid",
+          rank: LOCK_RANK.cacheMutate,
+        });
+        await assertRejects(
+          () =>
+            acquireFileLock(join(b, "lower.lock"), {
+              mode: "exclusive",
+              description: "lower",
+              rank: LOCK_RANK.buildDir,
+            }),
+          Error,
+          "requested while holding a rank-3 lock", // its own rank, not the sibling's 4
+        );
+      });
+    } finally {
+      finish.open();
+    }
+    await holder;
+  } finally {
+    await Deno.remove(a, { recursive: true });
+    await Deno.remove(b, { recursive: true });
+  }
+});
+
+Deno.test("one task out of rank order still throws: across awaits, nested calls, work it started", async () => {
+  const dir = await Deno.makeTempDir();
+  const low = (rank: number = LOCK_RANK.buildDir) =>
+    acquireFileLock(join(dir, `low-${rank}.lock`), { mode: "exclusive", description: "low", rank });
+  const violation = (
+    p: () => Promise<unknown>,
+    message = "lock order violation — low (rank 1) requested while holding a rank-3 lock",
+  ) => assertRejects(p, Error, message);
+  try {
+    await lockTask(async () => {
+      using high = await acquireFileLock(join(dir, "high.lock"), {
+        mode: "exclusive",
+        description: "high",
+        rank: LOCK_RANK.cacheMutate,
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      // Later in the task, and from a function it calls after more awaits.
+      await violation(() => low());
+      const nested = async () => {
+        await Promise.resolve();
+        await new Promise((r) => setTimeout(r, 1));
+        return await low();
+      };
+      await violation(nested);
+      // A subtask started inside it sees what its task holds (the task may be waiting on it).
+      await violation(() => lockTask(() => low()));
+      await violation(
+        () => withProjectLocks({ projectDir: dir, buildDir: "exclusive" }, () => Promise.resolve()),
+        "(rank 1) requested while holding a rank-3 lock",
+      );
+      // A timer and a detached promise started under the lock run in the task too.
+      const fromTimer = new Promise<FileLock>((res, rej) =>
+        setTimeout(() => low().then(res, rej), 1)
+      );
+      await violation(() => fromTimer);
+      const later = gate();
+      const detached = later.opened.then(() => low());
+      await violation(() => Promise.resolve().then(() => low()));
+      // Once the lock is released, the work the task started no longer holds it.
+      high.release();
+      later.open();
+      (await detached).release();
+      (await low(LOCK_RANK.packageOutput)).release();
+    });
+    // Outside every task the order is still the process's: a lock taken there counts everywhere.
+    using root = await acquireFileLock(join(dir, "root-high.lock"), {
+      mode: "exclusive",
+      description: "high",
+      rank: LOCK_RANK.cacheMutate,
+    });
+    await violation(() => lockTask(() => low()));
+    root.release();
+    // A lock two tasks share (re-entrant) counts against each until that task drops its reference.
+    const path = join(dir, "shared.lock");
+    const opts = { mode: "shared", description: "high", rank: LOCK_RANK.cacheMutate } as const;
+    const hold = gate();
+    const drop = gate();
+    const other = lockTask(async () => {
+      const lock = await acquireFileLock(path, opts);
+      hold.open();
+      await drop.opened;
+      await violation(() => low());
+      lock.release();
+    });
+    await hold.opened;
+    await lockTask(async () => {
+      const mine = await acquireFileLock(path, opts);
+      await violation(() => low());
+      mine.release();
+      (await low()).release(); // the other task still holds it, but this one no longer does
+    });
+    drop.open();
+    await other;
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** Whether `p` settles within `ms` (`"settled"`) or is still pending then (`"waiting"`). */
+function settlesWithin(p: Promise<unknown>, ms: number): Promise<"settled" | "waiting"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([
+    p.then(() => "settled" as const, () => "settled" as const),
+    new Promise<"waiting">((r) => timer = setTimeout(() => r("waiting"), ms)),
+  ]).finally(() => clearTimeout(timer));
+}
+
+Deno.test("two tasks of one process take turns on an exclusive lock, first come first served", async () => {
+  // Two `denext dev` rebuilds (the startup's prepare steps, a request's typed-module emit, a
+  // watcher batch) each lock the build directory as their own task. The OS lock only keeps other
+  // processes out: a second task of this process must wait for the first, not share its count.
+  const dir = await Deno.makeTempDir();
+  try {
+    const order: string[] = [];
+    const holding = gate();
+    const finish = gate();
+    const rebuild = (name: string, hold?: () => Promise<void>) =>
+      withBuildDirLock(dir, async () => {
+        order.push(`${name} in`);
+        await hold?.();
+        await new Promise((r) => setTimeout(r, 5));
+        order.push(`${name} out`);
+      });
+    const a = rebuild("a", () => {
+      holding.open();
+      return finish.opened;
+    });
+    await holding.opened;
+    const b = rebuild("b");
+    const c = rebuild("c");
+    assertEquals(await settlesWithin(b, 50), "waiting", "b waits while a holds the directory");
+    assertEquals(order, ["a in"]);
+    finish.open();
+    await Promise.all([a, b, c]);
+    assertEquals(order, ["a in", "a out", "b in", "b out", "c in", "c out"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("the holding task and the work it starts re-enter its lock; a sibling waits", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const path = join(dir, "x.lock");
+    const opts = { mode: "exclusive", description: "x", rank: LOCK_RANK.buildDir } as const;
+    const holding = gate();
+    const finish = gate();
+    let siblingIn = false;
+    const holder = lockTask(async () => {
+      using _held = await acquireFileLock(path, opts);
+      holding.open();
+      // A nested acquire, a subtask, a nested withProjectLocks, a timer and a detached promise
+      // started under the lock all belong to this task: a reference count, never a wait.
+      const nested = [
+        () => acquireFileLock(path, opts),
+        () => lockTask(() => acquireFileLock(path, { ...opts, mode: "shared" })),
+        () =>
+          new Promise<FileLock>((res, rej) =>
+            setTimeout(() => acquireFileLock(path, opts).then(res, rej), 1)
+          ),
+        () => Promise.resolve().then(() => acquireFileLock(path, opts)),
+      ];
+      for (const take of nested) {
+        const lock = take();
+        assertEquals(await settlesWithin(lock, 2_000), "settled");
+        (await lock).release();
+      }
+      await withBuildDirLock(dir, async () => {
+        const inner = withBuildDirLock(dir, () => Promise.resolve());
+        assertEquals(await settlesWithin(inner, 2_000), "settled");
+      });
+      assertEquals(siblingIn, false, "the sibling is still waiting");
+      await finish.opened;
+    });
+    await holding.opened;
+    const sibling = lockTask(async () => {
+      using _l = await acquireFileLock(path, opts);
+      siblingIn = true;
+    });
+    assertEquals(await settlesWithin(sibling, 50), "waiting");
+    finish.open();
+    await holder;
+    await sibling;
+    assert(siblingIn);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("across tasks: shared holds coexist, exclusive excludes, waiters go in arrival order", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const path = join(dir, "x.lock");
+    const shared = { mode: "shared", description: "x", rank: LOCK_RANK.buildDir } as const;
+    const exclusive = { ...shared, mode: "exclusive" } as const;
+    const order: string[] = [];
+    /** A task that takes `opts`, records it, and holds until `until` opens. */
+    const task = (name: string, opts: typeof shared | typeof exclusive, until: Promise<void>) => {
+      const taken = gate();
+      const done = lockTask(async () => {
+        using _l = await acquireFileLock(path, opts);
+        order.push(name);
+        taken.open();
+        await until;
+        order.push(`${name} done`);
+      });
+      return { taken: taken.opened, done };
+    };
+    const releaseReaders = gate();
+    const r1 = task("r1", shared, releaseReaders.opened);
+    await r1.taken;
+    const r2 = task("r2", shared, releaseReaders.opened);
+    await r2.taken; // a second reader joins at once
+    // A reader's own task can't upgrade (as before); another task's exclusive request waits.
+    const releaseWriter = gate();
+    const w = task("w", exclusive, releaseWriter.opened);
+    assertEquals(await settlesWithin(w.taken, 50), "waiting");
+    // A reader arriving after the waiting writer queues behind it (no writer starvation).
+    const r3 = task("r3", shared, Promise.resolve());
+    assertEquals(await settlesWithin(r3.taken, 50), "waiting");
+    releaseReaders.open();
+    await w.taken;
+    assertEquals(await settlesWithin(r3.taken, 50), "waiting", "r3 waits for the writer too");
+    releaseWriter.open();
+    await Promise.all([r1.done, r2.done, w.done, r3.done]);
+    assertEquals(order, ["r1", "r2", "r1 done", "r2 done", "w", "w done", "r3", "r3 done"]);
+    // A shared hold still can't be upgraded by its own task.
+    await lockTask(async () => {
+      using _s = await acquireFileLock(path, shared);
+      await assertRejects(() => acquireFileLock(path, exclusive), Error, "not upgraded in place");
+    });
+    // A request that may wait is rank-checked like a new lock, even to join another task's
+    // shared hold: waiting on rank 1 while holding rank 3 could deadlock.
+    const hold = gate();
+    const end = gate();
+    const reader = lockTask(async () => {
+      using _s = await acquireFileLock(path, shared);
+      hold.open();
+      await end.opened;
+    });
+    await hold.opened;
+    await lockTask(async () => {
+      using _high = await acquireFileLock(join(dir, "high.lock"), { ...exclusive, rank: 3 });
+      await assertRejects(() => acquireFileLock(path, shared), Error, "lock order violation");
+    });
+    end.open();
+    await reader;
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a waiter whose acquisition fails hands the turn to the next one", async () => {
+  const dir = await Deno.makeTempDir();
+  const tryLock = Deno.FsFile.prototype.tryLock;
+  try {
+    const path = join(dir, "x.lock");
+    const opts = { mode: "exclusive", description: "x", rank: LOCK_RANK.buildDir } as const;
+    const holding = gate();
+    const finish = gate();
+    const holder = lockTask(async () => {
+      using _l = await acquireFileLock(path, opts);
+      holding.open();
+      await finish.opened;
+    });
+    await holding.opened;
+    const first = lockTask(() => acquireFileLock(path, opts));
+    const second = lockTask(() => acquireFileLock(path, opts));
+    assertEquals(await settlesWithin(first, 50), "waiting");
+    let failures = 1;
+    await withFsFile("tryLock", function (this: Deno.FsFile, exclusive?: boolean) {
+      return failures-- > 0
+        ? Promise.reject(new Error("EIO: i/o error"))
+        : tryLock.call(this, exclusive);
+    }, async () => {
+      finish.open();
+      await holder;
+      await assertRejects(() => first, Error, "EIO");
+      (await second).release();
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("work the runtime starts in a lock task's leaked context waits outside every task", async () => {
+  // Stock Deno leaves the async context of a module's first `import()` active for the next task it
+  // starts on its own (a `Deno.serve` handler, a watcher batch). Simulated deterministically: a
+  // snapshot of the holder's context, which is what such a task would run in.
+  const dir = await Deno.makeTempDir();
+  try {
+    const holding = gate();
+    const finish = gate();
+    let leaked!: <R>(fn: () => R) => R;
+    const holder = withBuildDirLock(dir, async () => {
+      leaked = AsyncLocalStorage.snapshot();
+      holding.open();
+      await finish.opened;
+    });
+    await holding.opened;
+    // Without the seam the leaked context IS the holder's task: its lock is re-entered at once.
+    const inside = leaked(() => withBuildDirLock(dir, () => Promise.resolve()));
+    assertEquals(await settlesWithin(inside, 2_000), "settled", "the simulated leak re-enters");
+    await inside;
+    // Entered through outsideLockTasks, the same work is its own rebuild and waits its turn.
+    const outside = leaked(() =>
+      outsideLockTasks(() => withBuildDirLock(dir, () => Promise.resolve()))
+    );
+    assertEquals(await settlesWithin(outside, 100), "waiting", "waits for the holder");
+    finish.open();
+    await holder;
+    await outside;
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  // A lock the root task holds (a verb's, outside every task) is still re-entered from there.
+  const root = await Deno.makeTempDir();
+  try {
+    const opts = { mode: "exclusive", description: "x", rank: LOCK_RANK.buildDir } as const;
+    using _verb = await acquireFileLock(join(root, "x.lock"), opts);
+    const again = outsideLockTasks(() =>
+      lockTask(() => acquireFileLock(join(root, "x.lock"), opts))
+    );
+    assertEquals(await settlesWithin(again, 2_000), "settled");
+    (await again).release();
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("the rank check looks up the task chain only: a parent may go lower while a subtask holds", async () => {
+  // A subtask's locks count against it and the work it starts, not against the task that started
+  // it (counting them would be the process-wide check again: every task is the root's subtask).
+  const dir = await Deno.makeTempDir();
+  try {
+    const high = gate();
+    const finish = gate();
+    await lockTask(async () => {
+      const child = lockTask(async () => {
+        using _l = await acquireFileLock(join(dir, "high.lock"), {
+          mode: "exclusive",
+          description: "high",
+          rank: LOCK_RANK.cacheDownload,
+        });
+        high.open();
+        await finish.opened;
+      });
+      await high.opened;
+      // The parent, while the child still holds rank 4, takes rank 1: allowed.
+      (await acquireFileLock(join(dir, "low.lock"), {
+        mode: "exclusive",
+        description: "low",
+        rank: LOCK_RANK.buildDir,
+      })).release();
+      finish.open();
+      await child;
+    });
+    // The child itself, holding rank 4, still may not go lower.
+    await lockTask(async () => {
+      using _l = await acquireFileLock(join(dir, "high.lock"), {
+        mode: "exclusive",
+        description: "high",
+        rank: LOCK_RANK.cacheDownload,
+      });
+      await assertRejects(
+        () =>
+          lockTask(() =>
+            acquireFileLock(join(dir, "low.lock"), {
+              mode: "exclusive",
+              description: "low",
+              rank: LOCK_RANK.buildDir,
+            })
+          ),
+        Error,
+        "requested while holding a rank-4 lock",
+      );
+    });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a wait for another task names it once after a few seconds, and honours the timeout", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    const path = join(dir, "x.lock");
+    const opts = { mode: "exclusive", description: "build directory .denext", rank: 1 } as const;
+    const holding = gate();
+    const finish = gate();
+    const holder = lockTask(async () => {
+      using _l = await acquireFileLock(path, opts);
+      holding.open();
+      await finish.opened;
+    });
+    await holding.opened;
+    // A stuck holder: the waiter says so once, naming this process's task as the holder.
+    const lines: string[] = [];
+    const waiter = lockTask(() =>
+      acquireFileLock(path, { ...opts, onBlocking: (l) => lines.push(l), noticeAfterMs: 30 })
+    );
+    assertEquals(await settlesWithin(waiter, 300), "waiting");
+    assertEquals(lines, [blockingLine("build directory .denext", resolve(path), "task")]);
+    assertStringIncludes(lines[0], "held by another task of this denext process");
+    // With a limit, a wait behind it fails and leaves the queue; the one behind that one goes next.
+    const timed = lockTask(() =>
+      acquireFileLock(path, { ...opts, onBlocking: () => {}, timeoutMs: 100 })
+    );
+    const after = lockTask(() => acquireFileLock(path, { ...opts, onBlocking: () => {} }));
+    const err = await assertRejects(() => timed, Error);
+    assertStringIncludes(err.message, "gave up after 0.1s waiting for file lock");
+    assertStringIncludes(err.message, "another task of this denext process holds it");
+    assertStringIncludes(err.message, "DENEXT_LOCK_TIMEOUT");
+    finish.open();
+    await holder;
+    (await waiter).release();
+    (await after).release();
+    assertEquals(lines.length, 1, "one line per wait");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("cache locks: another task of this process waits its turn on the cache root", async () => {
   // Two installs in one process (two `ensure*` calls in flight): while one holds the download
   // lock (rank 4), the other's shared read (rank 3) waits for it instead of tripping the rank
@@ -467,6 +949,90 @@ Deno.test("more errnos mean a filesystem without locking; each lock file warns o
     assert(!lockingUnsupported("EINVAL as a string is not an error object"));
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a lock file is created 0600, and an older 0644 one is narrowed to 0600", async () => {
+  if (Deno.build.os === "windows") return; // POSIX modes
+  const dir = await Deno.makeTempDir();
+  try {
+    const opts = { mode: "exclusive", description: "x", rank: 1 } as const;
+    const fresh = join(dir, "fresh.lock");
+    (await acquireFileLock(fresh, opts)).release();
+    assertEquals((await Deno.stat(fresh)).mode! & 0o777, 0o600);
+    const loose = join(dir, "loose.lock");
+    await Deno.writeTextFile(loose, "");
+    await Deno.chmod(loose, 0o644);
+    (await acquireFileLock(loose, { ...opts, mode: "shared" })).release();
+    assertEquals((await Deno.stat(loose)).mode! & 0o777, 0o600);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a symlinked lock path is refused, naming the path and the fix", async () => {
+  if (Deno.build.os === "windows") return; // POSIX: symlinks need privileges there
+  const dir = await Deno.makeTempDir();
+  try {
+    const target = join(dir, "elsewhere");
+    await Deno.writeTextFile(target, "");
+    const link = join(dir, "link.lock");
+    await Deno.symlink(target, link);
+    for (const mode of ["shared", "exclusive"] as const) {
+      const err = await assertRejects(() =>
+        acquireFileLock(link, { mode, description: "x", rank: 1 })
+      );
+      assertStringIncludes(String(err), `refusing the lock file ${link}: it is a symbolic link`);
+      assertStringIncludes(String(err), "remove it");
+    }
+    // A dangling link is refused too, and nothing is created at its target.
+    const dangling = join(dir, "dangling.lock");
+    await Deno.symlink(join(dir, "nowhere"), dangling);
+    await assertRejects(() =>
+      acquireFileLock(dangling, { mode: "exclusive", description: "x", rank: 1 })
+    );
+    assertEquals(await Deno.lstat(join(dir, "nowhere")).then(() => true, () => false), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a lock file another user owns is refused (they could hold it forever)", async () => {
+  if (Deno.build.os === "windows") return; // POSIX owners
+  const dir = await Deno.makeTempDir();
+  const path = join(dir, "theirs.lock");
+  await Deno.writeTextFile(path, "");
+  const realLstat = Deno.lstat;
+  // No second uid on hand: the lock path's lstat answers as if another user owned it.
+  Deno.lstat = async (p: string | URL) => {
+    const info = await realLstat(p);
+    return String(p) === path ? { ...info, uid: (Deno.uid() ?? 0) + 1 } : info;
+  };
+  try {
+    const err = await assertRejects(() =>
+      acquireFileLock(path, { mode: "exclusive", description: "x", rank: 1 })
+    );
+    assertStringIncludes(String(err), `refusing the lock file ${path}: it is owned by uid`);
+    assertStringIncludes(String(err), "chown");
+  } finally {
+    Deno.lstat = realLstat;
+    await Deno.remove(dir, { recursive: true });
+  }
+  // A reader on such a file is refused too, not let through as "can't create".
+  const dir2 = await Deno.makeTempDir();
+  const path2 = join(dir2, "theirs.lock");
+  await Deno.writeTextFile(path2, "");
+  Deno.lstat = async (p: string | URL) => {
+    const info = await realLstat(p);
+    return String(p) === path2 ? { ...info, uid: (Deno.uid() ?? 0) + 1 } : info;
+  };
+  try {
+    await assertRejects(() =>
+      acquireFileLock(path2, { mode: "shared", description: "x", rank: 1 })
+    );
+  } finally {
+    Deno.lstat = realLstat;
+    await Deno.remove(dir2, { recursive: true });
   }
 });
 
@@ -611,29 +1177,32 @@ Deno.test("the plan: rank order, path order inside a rank, the build dir locked 
   assert((await outputLockPath(dir, resolve("/elsewhere/out"))).includes(`${BUILD_DIR_LOCK}-ext-`));
 });
 
-Deno.test("verbs declare their locks", () => {
+Deno.test("verbs declare their locks", async () => {
   const reg = buildRegistry();
-  const locksOf = (argv: string[]) => {
+  const locksOf = async (argv: string[]) => {
     const out = reg.parse(argv);
     assert(out.kind === "run");
-    return out.command.locks?.(out.ctx);
+    return await out.command.locks?.(out.ctx);
   };
   const p = resolve("/p");
-  assertEquals(locksOf(["build", "/p"]), { projectDir: p, buildDir: "exclusive" });
-  assertEquals(locksOf(["export", "/p"]), {
+  assertEquals(await locksOf(["build", "/p"]), { projectDir: p, buildDir: "exclusive" });
+  assertEquals(await locksOf(["export", "/p"]), {
     projectDir: p,
     buildDir: "exclusive",
     outputDirs: ["out"],
   });
-  assertEquals(locksOf(["analyze", "/p"])?.buildDir, "exclusive");
-  assertEquals(locksOf(["doctor", "/p"])?.buildDir, "shared");
-  assertEquals(locksOf(["desktop", "package", "/p"]), { projectDir: p, packageDirs: ["dist"] });
-  assertEquals(locksOf(["desktop", "package", "/p", "--regenerate-scripts"]), undefined);
-  assertEquals(locksOf(["start", "/p"]), undefined, "a server never blocks builds");
-  assertEquals(locksOf(["dev", "/p"]), undefined, "dev locks per rebuild, not per session");
-  assertEquals(locksOf(["test"]), undefined);
-  assertEquals(locksOf(["test", "--coverage=cov"])?.outputDirs, ["cov"]);
-  assertEquals(locksOf(["mobile", "build", "ios", "--dry-run"]), undefined);
+  assertEquals((await locksOf(["analyze", "/p"]))?.buildDir, "exclusive");
+  assertEquals((await locksOf(["doctor", "/p"]))?.buildDir, "shared");
+  assertEquals(await locksOf(["desktop", "package", "/p"]), {
+    projectDir: p,
+    packageDirs: ["dist"],
+  });
+  assertEquals(await locksOf(["desktop", "package", "/p", "--regenerate-scripts"]), undefined);
+  assertEquals(await locksOf(["start", "/p"]), undefined, "a server never blocks builds");
+  assertEquals(await locksOf(["dev", "/p"]), undefined, "dev locks per rebuild, not per session");
+  assertEquals(await locksOf(["test"]), undefined);
+  assertEquals((await locksOf(["test", "--coverage=cov"]))?.outputDirs, ["cov"]);
+  assertEquals(await locksOf(["mobile", "build", "ios", "--dry-run"]), undefined);
 });
 
 Deno.test("coverageDir reads deno test's --coverage[=<dir>]", () => {

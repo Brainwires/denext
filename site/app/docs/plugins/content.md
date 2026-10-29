@@ -287,7 +287,7 @@ extend the CLI — not just the request/route/build seams. `spec` is a `CommandS
 always wins (core can't be shadowed). See [Project commands](#project-commands) below for
 how the verb is discovered and listed.
 
-A verb that writes build output declares it with `locks: (ctx) => CommandLocks | undefined`, and
+A verb that writes build output declares it with `locks: (ctx) => CommandLocks | undefined` (or a Promise of one), and
 denext holds those OS file locks for the whole run, as its own `build` and `export` do (a second
 invocation prints `Blocking waiting for file lock on build directory .denext` and waits; the OS
 releases a lock when its holder exits). `CommandLocks` is `{ projectDir, buildDir?, outputDirs?,

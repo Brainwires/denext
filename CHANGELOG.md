@@ -51,6 +51,38 @@ and this project adheres to
 - **The Fragment-ref runtime chunk is loaded again after a failed load.** A failure left a no-op
   for the page's life; the next `<Fragment ref>` now retries it once a backoff has passed (1 s,
   doubling), up to five loads in a row.
+- **Unrelated work in one process no longer trips the lock order.** The order check counted every
+  lock the process held, so a task reading one cache, or locking a project's build directory, while
+  another task downloaded into a different cache stopped with "lock order violation". Neither
+  waits on the other, so nothing could deadlock. The check now follows each task: an install, a
+  cache prune and each locked build step count their own locks and the locks of the work that
+  started them, and a task that takes a lower-rank lock while it holds a higher one still fails as
+  before.
+- **Two `denext dev` rebuilds no longer write `.denext/` at the same time.** The startup's plugin
+  prepare steps, a request's typed-module emit (`.denext/routes.ts`, `.denext/api.ts`), a watched
+  edit's re-run of the prepare steps and a SPA's regeneration each lock the build directory, but two
+  of them in one process shared the lock instead of waiting: the file lock only kept other
+  processes out. They now take turns, in the order they asked, and the same holds for
+  `createTestApp` calls on one project. Work a locked step starts itself still runs at once.
+- **`denext doctor` probes a project with plugins again.** Doctor holds the build directory's lock
+  shared while it reads the last build, but its route probe runs the plugins' prepare steps, which
+  write `.denext/` under the lock exclusive. The route-conformance check failed with "this process
+  holds a shared lock on build directory .denext and asked for an exclusive one". Doctor now takes
+  the lock exclusive when the project has plugins (outside SPA mode), and shared otherwise.
+- **A `denext dev` request on stock Deno waits for a rebuild in progress.** Stock Deno leaves the
+  async context of a module's first `import()` active for the next task it starts, so a request
+  served while a plugin prepare step was importing could join that rebuild's hold on `.denext/`
+  and write the typed modules beside it. Requests, watched-edit batches and MCP tool calls now start
+  outside every rebuild and wait their turn. denext's own Deno toolchain was not affected.
+- **A dev rebuild stuck behind another says so.** A wait for another task of the same process
+  printed nothing and had no limit, so a hung prepare step queued every later rebuild in silence.
+  After a few seconds it now prints `Blocking waiting for file lock on build directory .denext (…)
+  — held by another task of this denext process`, and `DENEXT_LOCK_TIMEOUT` bounds it as it does a
+  wait for another process.
+- **`denext doctor` on a config that fails to load once takes the build directory exclusive.** It
+  chose the lock before loading the config for its checks; when only that first load failed, the
+  route probe later ran the plugins' prepare steps under a shared lock and failed with "not upgraded
+  in place".
 
 ### Security
 
@@ -80,6 +112,14 @@ and this project adheres to
   hold (2026-10-30); `expo-app`'s `zod` 3.25.76 (GHSA-mrhx-c7xc-m3w5, through `@expo/cli`, which
   requires zod 3 throughout Expo SDK 57); and `decode-uri-component` 0.2.2 (moderate, through
   `expo-router` 57's `query-string` 7).
+- **Build-lock files are the user's alone.** A lock file under `.denext/`, an output directory or
+  the toolchain caches was created with the umask's mode (usually `0644`) and opened through a
+  symbolic link, so any local user who could reach the project or a shared `DENO_DIR` could open
+  it read-only and hold `flock(LOCK_EX)`, keeping every `denext build` / `dev` waiting forever
+  (`DENEXT_LOCK_TIMEOUT` is unset by default). Lock files are now created `0600`, an existing one
+  this user owns is narrowed to `0600`, and on macOS and Linux a lock path that is a symbolic link
+  or another user's file is refused with an error naming the path and the fix. On Windows the
+  directory's ACLs decide who can open it, unchanged.
 
 ### Documentation
 

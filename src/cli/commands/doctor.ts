@@ -11,7 +11,7 @@ import type { DenextConfig } from "../../server/config.ts";
 import { join, resolve } from "@std/path";
 import { denoVersionOk, MIN_DENO_VERSION } from "../../build/deno-version.ts";
 import { VERSION } from "../../../mod.ts";
-import type { CommandContext, CommandSpec } from "../command.ts";
+import type { CommandContext, CommandLocks, CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs, projectDir } from "../shared.ts";
 import { runDenoPassthrough } from "./deno-toolchain.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
@@ -1141,14 +1141,43 @@ async function installLogOption(ctx: CommandContext): Promise<{ installLog?: str
   }
 }
 
+/**
+ * The build-directory lock `doctor` runs under. It reads the last build in `.denext/` (and probes
+ * the routes in-process): SHARED, so it runs beside other readers and waits out a build rather
+ * than reading it half-done. But a project with plugins has the probe run their prepare steps,
+ * which write `.denext/` under the lock EXCLUSIVE — and a held shared lock is never upgraded in
+ * place — so for such a project doctor takes it exclusive from the start. So does a config that
+ * doesn't load here: doctor loads it again for its checks, and should that load succeed (a config
+ * whose failure was transient), its probe runs the plugins' prepare steps under the lock it holds.
+ *
+ * @param ctx The invocation.
+ * @returns The locks.
+ */
+export async function doctorLocks(ctx: CommandContext): Promise<CommandLocks> {
+  const dir = projectDir(ctx);
+  return { projectDir: dir, buildDir: await probeWritesBuildDir(dir) ? "exclusive" : "shared" };
+}
+
+/**
+ * Whether doctor's route probe on `dir` may run plugin prepare steps (which write `.denext/`):
+ * true for a project with plugins, and when the config can't be loaded to tell (exclusive is what
+ * every later outcome can run under).
+ */
+async function probeWritesBuildDir(dir: string): Promise<boolean> {
+  try {
+    const { config } = await resolveProject(dir);
+    return config?.mode !== "spa" && (config?.plugins?.length ?? 0) > 0;
+  } catch {
+    return true;
+  }
+}
+
 export const doctorCommand: CommandSpec = {
   name: "doctor",
   summary: "Diagnose the project (supersedes probe)",
   aliases: ["probe"],
   loadsModules: true,
-  // Reads the last build in `.denext/` (and probes the routes in-process): a SHARED build-dir
-  // lock, so it runs beside other readers and waits out a build rather than reading it half-done.
-  locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "shared" }),
+  locks: doctorLocks,
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [{
     name: "report",

@@ -291,9 +291,23 @@ export default function Cli() {
       <p>
         A wait has no limit unless <code>DENEXT_LOCK_TIMEOUT=&lt;seconds&gt;</code>{" "}
         is set: then the command fails once that long has passed, naming the lock file (useful in
-        CI). A filesystem that cannot lock at all (some network mounts) proceeds unlocked with one
-        warning, as Cargo does; so does a shared lock — <code>doctor</code>{" "}
-        on a read-only checkout — whose lock file cannot be created.
+        CI). Within one process, <code>denext dev</code>
+        {"'"}s rebuilds take turns on the build directory the same way: one that waits more than a
+        few seconds for another prints the same line, naming another task of this process as the
+        holder, and the timeout bounds that wait too. A filesystem that cannot lock at all (some
+        network mounts) proceeds unlocked with one warning, as Cargo does; so does a shared lock —
+        {" "}
+        <code>doctor</code> on a read-only checkout — whose lock file cannot be created.
+      </p>
+      <p>
+        A lock file is its user's alone: denext creates it with mode <code>0600</code>{" "}
+        and narrows an existing one it owns to{" "}
+        <code>0600</code>, since anyone who can open the file can hold it and keep every build
+        waiting. On macOS and Linux a lock path that is a symbolic link, or a file another user
+        owns, is refused with an error naming the path; remove it (denext recreates it) or{" "}
+        <code>chown</code>{" "}
+        it back. On Windows the directory{"'"}s ACLs decide who can open the file; denext does not
+        change them, so keep a project and <code>DENO_DIR</code> in a directory only you can write.
       </p>
 
       <div class="mcp-tools">

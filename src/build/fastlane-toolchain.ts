@@ -41,6 +41,7 @@ import {
   toolchainEnvValue,
 } from "./deno-toolchain.ts";
 import { acquireCacheLock } from "./project-locks.ts";
+import { lockTask } from "./file-lock.ts";
 import { renameRetrying } from "./desktop-runtime.ts";
 import { extractArchive } from "./safe-extract.ts";
 import {
@@ -478,8 +479,14 @@ async function install(slot: Slot, options: FastlaneToolchainOptions): Promise<v
  * @param options Seams; all default to the process.
  * @returns The installed fastlane.
  */
-export async function ensureFastlaneToolchain(
+export function ensureFastlaneToolchain(
   options: FastlaneToolchainOptions = {},
+): Promise<ManagedFastlane> {
+  return lockTask(() => ensureFastlaneToolchainInTask(options));
+}
+
+async function ensureFastlaneToolchainInTask(
+  options: FastlaneToolchainOptions,
 ): Promise<ManagedFastlane> {
   const slot = fastlaneSlot(options);
   const done = (cached: boolean): ManagedFastlane => ({

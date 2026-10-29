@@ -28,6 +28,7 @@
 
 import { denoCacheDir } from "./deno-cache-dir.ts";
 import { acquireCacheLock } from "./project-locks.ts";
+import { lockTask } from "./file-lock.ts";
 import { basename, dirname, fromFileUrl, join } from "@std/path";
 import { extractArchive, type ExtractedFile } from "./safe-extract.ts";
 import {
@@ -726,7 +727,13 @@ async function installRuntime(plan: InstallPlan): Promise<void> {
  * @param options What to fetch and how.
  * @returns The runtime's paths.
  */
-export async function ensureDesktopRuntime(
+export function ensureDesktopRuntime(
+  options: EnsureDesktopRuntimeOptions,
+): Promise<ResolvedDesktopRuntime> {
+  return lockTask(() => ensureDesktopRuntimeInTask(options));
+}
+
+async function ensureDesktopRuntimeInTask(
   options: EnsureDesktopRuntimeOptions,
 ): Promise<ResolvedDesktopRuntime> {
   const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
@@ -1155,7 +1162,16 @@ async function mirrorBackendDir(
  * {@linkcode crossHostBackendRename}). Built once per runtime archive and reused; installed with
  * the same atomic rename as the runtime itself.
  */
-async function crossHostLaufeyDir(
+function crossHostLaufeyDir(
+  rt: ResolvedDesktopRuntime,
+  rename: CrossHostRename,
+  log: (line: string) => void,
+  full: boolean,
+): Promise<string> {
+  return lockTask(() => crossHostLaufeyDirInTask(rt, rename, log, full));
+}
+
+async function crossHostLaufeyDirInTask(
   rt: ResolvedDesktopRuntime,
   rename: CrossHostRename,
   log: (line: string) => void,
