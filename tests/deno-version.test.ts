@@ -164,3 +164,65 @@ Deno.test("pinnedDenoReleaseVersion: the stock Deno a pinned release is built fr
   assertEquals(pinnedDenoReleaseVersion("3.0.0-rc.3", "2.9.8"), "2.9.8");
   assertEquals(pinnedDenoReleaseVersion("2.9.6"), "2.9.6");
 });
+
+Deno.test("compareDenoVersions: the fork's 3.0.0-denext.N line outranks every 3.0.0-rc.N", () => {
+  // The fork stopped cutting release candidates: after 3.0.0-rc.6 come 3.0.0-denext.1, .2, ….
+  // Semver alone would sort `denext` below `rc` (ASCII), so on the fork's own-version line a
+  // `denext` prerelease outranks any `rc` one; everything else keeps semver.
+  const ordered = [
+    "2.9.7-denext.9",
+    "2.9.7-denext.22",
+    "2.9.7",
+    "3.0.0-rc",
+    "3.0.0-rc.1",
+    "3.0.0-rc.6",
+    "3.0.0-rc.10",
+    "3.0.0-denext.1",
+    "3.0.0-denext.2",
+    "3.0.0-denext.10",
+    "3.0.0",
+    "3.0.1",
+  ];
+  for (let i = 0; i < ordered.length; i++) {
+    for (let j = 0; j < ordered.length; j++) {
+      assertEquals(
+        Math.sign(compareDenoVersions(ordered[i], ordered[j])),
+        Math.sign(i - j),
+        `${ordered[i]} vs ${ordered[j]}`,
+      );
+    }
+  }
+  assertEquals(compareDenoVersions("3.0.0-denext.1+ci.7", "3.0.0-denext.1"), 0);
+  assertEquals(compareDenoVersions("v3.0.0-denext.2", "3.0.0-denext.2"), 0);
+  assertEquals(
+    ["3.0.0-denext.2", "3.0.0-rc.6", "3.0.0-denext.10", "2.9.7-denext.22", "3.0.0-denext.1"]
+      .sort(compareDenoVersions),
+    ["2.9.7-denext.22", "3.0.0-rc.6", "3.0.0-denext.1", "3.0.0-denext.2", "3.0.0-denext.10"],
+  );
+  // Off the 3.0.0 core plain semver stands: the old scheme against an upstream release
+  // candidate of its core, and any other core.
+  assert(compareDenoVersions("2.10.0-denext.1", "2.10.0-rc.1") < 0);
+  assert(compareDenoVersions("3.1.0-denext.1", "3.1.0-rc.1") < 0);
+  // Other prerelease names on the 3.0.0 core keep semver too.
+  assert(compareDenoVersions("3.0.0-alpha.1", "3.0.0-denext.1") < 0);
+});
+
+Deno.test("3.0.0-denext.N: denext's release, built from the pin's Deno (not the old scheme)", () => {
+  for (const v of ["3.0.0-denext.1", "3.0.0-denext.10"]) {
+    assert(isDenextReleaseVersion(v), v);
+    // The old `<stock>-denext.N` scheme ended at 2.9.7: 3.0.0 names no stock release.
+    assertEquals(pinnedDenoReleaseVersion(v, "2.9.8"), "2.9.8", v);
+    assertEquals(denoReleaseVersion({ deno: v, denext: v }, "2.9.8"), "2.9.8", v);
+    assertEquals(denoReleaseVersion({ deno: `${v}+ci.3`, denext: `${v}+ci.3` }, "2.9.8"), "2.9.8");
+    // It carries the identity marker; the version alone is no pre-marker build.
+    assertFalse(isPreMarkerDenextVersion(v, v), v);
+    assert(isDenextDenoVersion({ deno: v, denext: v }, v), v);
+    assert(isPinnedDenextDeno({ deno: v, denext: v }, v), v);
+    assert(compareDenoVersions(v, FIRST_MARKER_RUNTIME) > 0, v);
+    assert(compareDenoVersions(v, FIRST_OWN_VERSION_RUNTIME) > 0, v);
+  }
+  // The old scheme is unchanged (any other core: `<stock>-denext.N`).
+  assertEquals(pinnedDenoReleaseVersion("2.9.7-denext.22", "2.9.8"), "2.9.7");
+  assertEquals(pinnedDenoReleaseVersion("9.9.9-denext.1", "2.9.8"), "9.9.9");
+  assert(isPreMarkerDenextVersion("2.9.7-denext.22"));
+});

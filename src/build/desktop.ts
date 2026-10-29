@@ -127,6 +127,7 @@ export {
   DESKTOP_APP_CONFIG_FILE,
   type DesktopAppSyncReport,
   LAUFEY_LAUNCH_FILE,
+  type LaufeyLaunchWriteOptions,
   syncDesktopAppConfig,
   writeLaufeyLaunchConfig,
 } from "./desktop-app-config.ts";
@@ -197,6 +198,10 @@ export {
   type MacosCodesignOptions,
   type NotaryCredentials,
   notarytoolSubmitArgs,
+  type SigntoolCertificateDeps,
+  type StoreCommandResult,
+  type StoreCommandRunner,
+  type StoreCommandRunnerSync,
 } from "./code-signing.ts";
 // The scaffolded package scripts' shared command line, tool probe and run setup.
 export {

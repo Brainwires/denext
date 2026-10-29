@@ -599,7 +599,10 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   (libwebauthn; no platform authenticator, the browser otherwise); macOS needs the
   associated-domains entitlement
   and its provisioning profile (`desktop.macos`);
-  the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back).
+  the window's WebAuthn can't serve a web relying party (`denext/desktop/clerk` falls back). They
+  work only for the RP IDs listed in `desktop.capabilities.passkeys.rpIds`, which the packaged
+  launch file pins natively (`passkeyRpIds`); from runtime `3.0.0-denext.1` (`strictPolicy`) a
+  missing or empty list refuses every ceremony with `invalid_rp`.
 - **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted
   while the app is closed need a `.deb` / `.rpm` install, xdg-desktop-portal 1.19+ and a systemd
   user manager; macOS shows them only from a signed bundle. A click's tag, action and `data` are
@@ -668,7 +671,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   provider (GNOME Keyring, or KWallet with its Secret Service enabled) whose keyring can be
   unlocked, reached through libsecret inside denext's pinned runtime (the stock runtime has no
   Linux secure store, and there is no `secret-tool` path) — else every call rejects
-  `backend_unavailable` with the reason (never a plaintext fallback).
+  `backend_unavailable` with the reason (never a plaintext fallback). From runtime
+  `3.0.0-denext.1` Linux items are namespaced per app id; an item an older build stored under the
+  shared attributes moves over only when the app looks it up during its first run of the updated
+  build (as on macOS, a key first read later stays behind, no longer visible to the app), and an
+  app without `desktop.app.identifier` sees none of them.
 - **Linux file dialogs need denext's pinned runtime:** without it they answer `unavailable` (the
   page keeps `<input type="file">`). With it, a desktop whose portal has no FileChooser (wlroots
   with `xdg-desktop-portal-wlr` alone) gets GTK's chooser rather than the desktop's own; a CEF

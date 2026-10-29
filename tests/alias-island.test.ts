@@ -7,7 +7,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { buildInChild } from "./helpers/bounded-build.ts";
-import { onFreePort } from "./helpers/port.ts";
+import { boundPort, listenedPort } from "./helpers/port.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
@@ -116,23 +116,33 @@ Deno.test("denext export <dir> (CLI) from another folder: an aliased island hydr
   }
 });
 
-/** `denext dev <dir>` from `cwd` on `port`, once it answers `/` (its stderr kept for a failure). */
-async function startDev(dir: string, cwd: string, unbundled: boolean, port: number) {
+/**
+ * `denext dev <dir>` from `cwd` on `--port 0`, once it answers `/` on the port it says it bound
+ * (its output kept for a failure).
+ */
+async function startDev(dir: string, cwd: string, unbundled: boolean) {
   const child = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", abs("cli.ts"), "dev", dir, "--port", String(port)],
+    args: ["run", "-A", abs("cli.ts"), "dev", dir, "--port", "0"],
     cwd,
     env: { DENEXT_DEV_UNBUNDLED: unbundled ? "1" : "0" },
-    stdout: "null",
+    stdout: "piped",
     stderr: "piped",
   }).spawn();
-  // Keep the server's stderr: a cold CI cache can take a while, and a real failure should say why.
+  // Keep the server's output: a cold CI cache can take a while, and a real failure should say why.
   let errText = "";
-  const errDone = (async () => {
+  let port: number | undefined; // read before the tail is cut
+  const read = async (stream: ReadableStream<Uint8Array>) => {
     const dec = new TextDecoder();
-    for await (const c of child.stderr) errText = (errText + dec.decode(c)).slice(-4000);
-  })();
+    for await (const c of stream) {
+      errText += dec.decode(c, { stream: true });
+      port ??= listenedPort(errText);
+      errText = errText.slice(-4000);
+    }
+  };
+  const errDone = Promise.all([read(child.stdout), read(child.stderr)]);
   let exited = false;
   child.status.then(() => exited = true);
+  await boundPort(() => port, () => exited);
   const text = async (path: string) =>
     await (await fetch(`http://localhost:${port}${path}`)).text();
   const stop = async () => {
@@ -143,14 +153,13 @@ async function startDev(dir: string, cwd: string, unbundled: boolean, port: numb
     await errDone;
   };
   let html = "";
-  for (let i = 0; i < 720 && !html && !exited; i++) { // ~3 min to come up (cold cache)
+  for (let i = 0; i < 720 && port !== undefined && !html && !exited; i++) { // ~3 min (cold cache)
     html = await text("/").catch(() => "");
     if (!html) await new Promise((r) => setTimeout(r, 250));
   }
   if (!html) {
     await stop();
-    // A port taken since it was picked shows here, and onFreePort retries on another.
-    throw new Error(`the dev server never answered; its stderr ended with:\n${errText}`);
+    throw new Error(`the dev server never answered; its output ended with:\n${errText}`);
   }
   return { html, text, stop };
 }
@@ -164,7 +173,7 @@ for (const unbundled of [true, false]) {
     const elsewhere = await Deno.makeTempDir({ prefix: "denext_alias_cwd_" });
     let server: Awaited<ReturnType<typeof startDev>> | undefined;
     try {
-      server = await onFreePort((port) => startDev(dir, elsewhere, unbundled, port));
+      server = await startDev(dir, elsewhere, unbundled);
       const { html, text } = server;
       assertStringIncludes(html, "COUNT_MARK");
       assertStringIncludes(html, "/_denext/flight.js", "the page boots the Flight islands");

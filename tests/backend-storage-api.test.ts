@@ -55,8 +55,6 @@ async function harness() {
 
 Deno.test({
   name: "server API: runtime buckets, info, exists, copy, move, folders, batch signing",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   try {
@@ -192,8 +190,6 @@ Deno.test({
 
 Deno.test({
   name: "Storage API: error envelope, unknown routes, methods, bodies, CSRF, batches",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   const service = { authorization: `Bearer ${SECRET_KEY}` };
@@ -335,8 +331,6 @@ Deno.test({
 
 Deno.test({
   name: "image transforms take AVIF sources: render/image and signed transform URLs",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   const service = { authorization: `Bearer ${SECRET_KEY}` };
@@ -530,6 +524,105 @@ Deno.test({
   }
 });
 
+/** Every file under `dir` (relative paths), or none when it does not exist. */
+async function filesUnder(dir: string, prefix = ""): Promise<string[]> {
+  const out: string[] = [];
+  try {
+    for await (const e of Deno.readDir(dir)) {
+      const rel = prefix ? `${prefix}/${e.name}` : e.name;
+      if (e.isDirectory) out.push(...await filesUnder(`${dir}/${e.name}`, rel));
+      else out.push(rel);
+    }
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  return out;
+}
+
+Deno.test({
+  name: "TUS: a PATCH that outlives its lease saves nothing and leaves no chunk behind",
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, async () => {
+  const h = await harness();
+  const base = `${ORIGIN}/storage/v1/upload/resumable`;
+  const headers = { "tus-resumable": "1.0.0", authorization: `Bearer ${SECRET_KEY}` };
+  const realNow = Date.now;
+  try {
+    const created = await h.fetch(base, {
+      method: "POST",
+      headers: {
+        ...headers,
+        "upload-length": "4",
+        "upload-metadata": `bucketName ${btoa("own")},objectName ${btoa("lease.txt")}`,
+      },
+    });
+    assertEquals(created.status, 201);
+    const url = new URL(created.headers.get("location")!, ORIGIN).toString();
+    const patch = (offset: number, body: BodyInit) =>
+      h.handler(
+        new Request(url, {
+          method: "PATCH",
+          headers: {
+            ...headers,
+            host: new URL(ORIGIN).host,
+            "upload-offset": String(offset),
+            "content-type": "application/offset+octet-stream",
+          },
+          body,
+        }),
+      );
+    // PATCH A takes the lease, sends two bytes, then stalls.
+    const stall = Promise.withResolvers<void>();
+    const reading = Promise.withResolvers<void>();
+    let sent = false;
+    const stalled = patch(
+      0,
+      new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          if (!sent) {
+            sent = true;
+            controller.enqueue(new TextEncoder().encode("zz"));
+            reading.resolve();
+            return;
+          }
+          await stall.promise;
+          controller.close();
+        },
+      }),
+    );
+    await reading.promise;
+    const id = url.split("/").pop()!;
+    while ((await runtime().meta.getResumable(id))?.lease == null) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    // Its lease runs out (the clock moves past it) and PATCH B takes the upload over.
+    Date.now = () => realNow() + 6 * 60_000;
+    const taken = await patch(0, "ab");
+    Date.now = realNow;
+    assertEquals(taken.status, 204, await taken.clone().text());
+    assertEquals(taken.headers.get("upload-offset"), "2");
+    // A wakes up: its progress is refused, not saved over B's.
+    stall.resolve();
+    assertEquals((await stalled).status, 409);
+    const head = await h.fetch(url, { method: "HEAD", headers });
+    assertEquals(head.headers.get("upload-offset"), "2");
+    // A's chunk was dropped: only B's bytes are waiting.
+    const tus = (await filesUnder(h.root)).filter((f) => f.startsWith(".storage/.denext-tus/"));
+    assertEquals(tus.length, 1, tus.join("\n"));
+    assertEquals((await patch(2, "cd")).status, 204);
+    const done = await storage.bucket("own", { service: true }).download("lease.txt");
+    assertEquals(await new Response(done!.body).text(), "abcd");
+    assertEquals(
+      (await filesUnder(h.root)).filter((f) => f.startsWith(".storage/.denext-tus/")),
+      [],
+    );
+  } finally {
+    Date.now = realNow;
+    await h.close();
+  }
+});
+
 Deno.test("validators: sizes, mime lists, multipart, paths, transforms, listings", async () => {
   assertEquals(
     [
@@ -645,8 +738,6 @@ Deno.test("storage helpers reject outside their runtime", async () => {
 
 Deno.test({
   name: "client helpers over the Storage API: list, info, move, copy, remove, sign, resumable",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   const cookie = await cookieFor(USER_A);
@@ -717,8 +808,6 @@ Deno.test({
 
 Deno.test({
   name: "versions on the server API; the admin hooks; lifecycle validation",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   try {
@@ -937,8 +1026,6 @@ Deno.test("sqlite metadata: a key prefix matches case-sensitively, wildcards lit
 
 Deno.test({
   name: "client: listFilesV2, version-aware info and remove, signed resumable uploads",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const h = await harness();
   const original = globalThis.fetch;
@@ -998,8 +1085,6 @@ Deno.test({
 
 Deno.test({
   name: "authorize({ session }): a supabase-js caller's access token is a session",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   // The documented `authorize: ({ session }) => !!session` refused every supabase-js upload:
   // a JWT identity reached `authorize` with no session. It now carries the token's session.

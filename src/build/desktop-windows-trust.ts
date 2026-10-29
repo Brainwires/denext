@@ -9,6 +9,10 @@
 // status through WinVerifyTrust, and an X509Chain build (revocation not checked) says whether a
 // certificate chains to a trusted root. The certificate's password reaches PowerShell through the
 // child's environment, never its command line.
+//
+// Each probe first points `PSModulePath` at Windows PowerShell's own modules: started from
+// PowerShell 7, `powershell.exe` inherits 7's module path, and then cannot load
+// `Microsoft.PowerShell.Security` (`Get-AuthenticodeSignature`) or `Microsoft.PowerShell.Utility`.
 
 /** Runs a PowerShell script with extra environment; `null` when PowerShell did not run. */
 export type PowerShellRunner = (
@@ -70,10 +74,15 @@ export interface WindowsTrustDeps {
   readonly warn?: (message: string) => void;
 }
 
-const SIGNATURE_SCRIPT = `$s = Get-AuthenticodeSignature -LiteralPath $env:DENEXT_TRUST_FILE
+/** Windows PowerShell's own module directory first, whatever module path it inherited. */
+const OWN_MODULE_PATH = '$env:PSModulePath = "$PSHOME\\Modules"';
+
+const SIGNATURE_SCRIPT = `${OWN_MODULE_PATH}
+$s = Get-AuthenticodeSignature -LiteralPath $env:DENEXT_TRUST_FILE
 @{ status = $s.Status.ToString(); message = [string]$s.StatusMessage } | ConvertTo-Json -Compress`;
 
-const CERTIFICATE_SCRIPT = `$ErrorActionPreference = 'Stop'
+const CERTIFICATE_SCRIPT = `${OWN_MODULE_PATH}
+$ErrorActionPreference = 'Stop'
 $X = 'System.Security.Cryptography.X509Certificates'
 $flags = [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
 $c = New-Object "$X.X509Certificate2" -ArgumentList $env:DENEXT_TRUST_CERT, ([string]$env:DENEXT_TRUST_PASSWORD), $flags

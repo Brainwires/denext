@@ -159,6 +159,29 @@ Deno.test("workspaceApps / workspaceRootHint: name the apps of a workspace root"
   }
 });
 
+Deno.test("a member listed outside the root (../x) is skipped: Deno refuses it", async () => {
+  const dir = await tree({
+    "root/deno.json": { workspace: ["./apps/web", "../outside"] },
+    "root/apps/web/deno.json": {},
+    "root/apps/web/app/page.tsx": "export default () => null;\n",
+    "outside/deno.json": { name: "@out/pkg", exports: "./mod.ts" },
+    "outside/mod.ts": "export const x = 1;\n",
+    "outside/app/page.tsx": "export default () => null;\n",
+  });
+  const root = join(dir, "root");
+  try {
+    assertEquals(await workspaceApps(root), ["apps/web"]);
+    assertEquals(await workspaceMemberDirs(join(root, "apps/web")), []);
+    const ws = await workspaceImports(join(root, "apps/web/deno.json"));
+    assertEquals(ws.imports["@out/pkg"], undefined);
+    const hint = await workspaceRootHint(root);
+    assertStringIncludes(hint!, "its denext app is apps/web.");
+    assert(!hint!.includes("outside"), hint!);
+  } finally {
+    await removeTempDir(dir);
+  }
+});
+
 Deno.test("workspaceVerbTarget: a monorepo root stands for its one app; several are named", async () => {
   const dir = await tree({
     "deno.json": { workspace: ["./apps/*", "./packages/ui"] },

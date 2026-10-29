@@ -204,6 +204,15 @@ Deno.test("carryNpmrc: copies the app's .npmrc, drops a stale copy; never embedd
     await carryNpmrc(dir, compile);
     assert(!await exists(join(compile, ".npmrc")));
     await carryNpmrc(dir, compile); // nothing to remove either
+    if (Deno.build.os !== "windows") {
+      // An older, world-readable copy (registry tokens) is made owner-only on the next compile:
+      // Deno applies `mode` to an existing file too.
+      await Deno.writeTextFile(join(dir, ".npmrc"), "//registry.example/:_authToken=t\n");
+      await Deno.writeTextFile(join(compile, ".npmrc"), "old\n", { mode: 0o644 });
+      await Deno.chmod(join(compile, ".npmrc"), 0o644);
+      await carryNpmrc(dir, compile);
+      assertEquals((await Deno.stat(join(compile, ".npmrc"))).mode! & 0o777, 0o600);
+    }
   });
   assert(neverEmbedded(".npmrc"));
 });
@@ -306,7 +315,6 @@ async function withRegistry(
 
 Deno.test({
   name: "compileApp resolves the app's locked version, not the newest in its range",
-  sanitizeResources: false,
   fn: () =>
     withRegistry(async (dir, registry, denoDir) => {
       const project = await lockedProject(dir, registry);
@@ -319,7 +327,6 @@ Deno.test({
 
 Deno.test({
   name: "compileApp refuses a package that fails the app's lockfile integrity",
-  sanitizeResources: false,
   fn: () =>
     withRegistry(async (dir, registry, denoDir) => {
       const project = await lockedProject(dir, registry, { integrity: "0".repeat(64) });
@@ -334,7 +341,6 @@ Deno.test({
 
 Deno.test({
   name: "compileApp: a frozen lock refuses what it does not lock, an unfrozen one records it",
-  sanitizeResources: false,
   fn: () =>
     withRegistry(async (dir, registry, denoDir) => {
       const project = await lockedProject(dir, registry, { lock: { frozen: true } });
@@ -367,7 +373,6 @@ await Deno.writeTextFile(new URL("./probe.out", import.meta.url), VERSION + " " 
 
 Deno.test({
   name: "compileApp keeps the app's .npmrc min-release-age hold",
-  sanitizeResources: false,
   fn: () =>
     withRegistry(async (dir, registry, denoDir) => {
       // No lock, so only the hold decides: 100 years holds back every version.

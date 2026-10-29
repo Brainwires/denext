@@ -23,9 +23,11 @@ import {
   narrowWriteTarget,
   npmPackageName,
   npmrcValue,
+  readJailProject,
   readJailSetting,
   UPSTREAM_BY_NAME_RELEASE,
   upstreamByNameAdvice,
+  userNpmrcPath,
 } from "../src/build/jail-scripts.ts";
 import { compareDenoVersions } from "../src/build/deno-version.ts";
 import toolchainPin from "../src/build/deno-toolchain-pin.json" with { type: "json" };
@@ -113,6 +115,32 @@ Deno.test("jail: on by default from runtime 3.0.0-rc.5, never on stock or older 
     compareDenoVersions(toolchainPin.version, RC5) >= 0,
   );
   assertEquals(jailOnByDefault(undefined), jailOnByDefault(toolchainPin.version));
+});
+
+Deno.test("jail: the user-level ~/.npmrc counts too (npm's userconfig, else HOME)", async () => {
+  assertEquals(readJailSetting({ userNpmrc: "jail-scripts=false\n" }).state, "off");
+  const para = readJailSetting({ userNpmrc: "paranoid=true\n" });
+  assertEquals([para.state, para.paranoid], ["on", "~/.npmrc paranoid"]);
+  // The project's file asking for the jail still wins over the user's turning it off.
+  assertEquals(
+    readJailSetting({ npmrc: "jail-scripts=true", userNpmrc: "jail-scripts=false" }).state,
+    "on",
+  );
+  const env = (vars: Record<string, string>) => (n: string) => vars[n];
+  assertEquals(userNpmrcPath(env({ HOME: "/h" })), join("/h", ".npmrc"));
+  assertEquals(userNpmrcPath(env({ USERPROFILE: "C:/u" })), join("C:/u", ".npmrc"));
+  assertEquals(userNpmrcPath(env({ HOME: "/h", npm_config_userconfig: "/etc/x" })), "/etc/x");
+  assertEquals(userNpmrcPath(env({})), null);
+  // readJailProject reads it from the home directory the environment names.
+  const home = await project({ ".npmrc": "jail-scripts=false\n" });
+  const dir = await project({ "deno.json": "{}\n" });
+  try {
+    const read = await readJailProject(dir, { env: env({ HOME: home }) });
+    assertEquals([read.setting.state, read.setting.source], ["off", "~/.npmrc jail-scripts"]);
+  } finally {
+    await Deno.remove(home, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("jail: settings merge as the runtime merges them, the stricter one winning", () => {
@@ -728,12 +756,14 @@ Deno.test(
         assertEquals((e as Error).message, "__exit__3");
       }
       assertEquals(exit.calls, [3]);
-      assertEquals(await jailConfig(dir), { packages: { sharp: plain(listed("sharp")) } });
+      // Written before `deno add`, then taken out again when it failed.
+      assertEquals(await Deno.readTextFile(join(dir, "deno.json")), "{}\n");
       const errs = out.errs.join("\n");
       assertStringIncludes(
         errs,
         "denext add: deno.json: supplyChain.jailScripts exception for sharp",
       );
+      assertStringIncludes(errs, "jail exceptions were taken out");
       assertStringIncludes(errs, JAIL_FAILURE_HINT);
     } finally {
       exit.restore();
@@ -744,6 +774,49 @@ Deno.test(
     }
   },
 );
+
+Deno.test("add: a failed add takes its jail exceptions out; a good one keeps them; a config deno add changed is left", async () => {
+  const { addWithJail } = await import("../src/cli/commands/deps.ts");
+  const ctx = (dir: string) => makeCtx({ rest: ["npm:sharp@^0.34"], global: { cwd: dir } });
+  const config = '{\n  // mine\n  "imports": {}\n}\n';
+  const out = capture();
+  const dirs: string[] = [];
+  try {
+    // A failed add: the file is exactly what it was.
+    const failed = await project({ "deno.json": config, ".npmrc": "jail-scripts=true\n" });
+    dirs.push(failed);
+    let seen: unknown;
+    assertEquals(
+      await addWithJail(ctx(failed), async (args, cwd) => {
+        assertEquals(args[0], "add");
+        seen = await jailConfig(cwd); // the exception is in place while deno add runs
+        return 1;
+      }),
+      1,
+    );
+    assertEquals(seen, { packages: { sharp: plain(listed("sharp")) } });
+    assertEquals(await Deno.readTextFile(join(failed, "deno.json")), config);
+    // A good add keeps them.
+    const good = await project({ "deno.json": config, ".npmrc": "jail-scripts=true\n" });
+    dirs.push(good);
+    assertEquals(await addWithJail(ctx(good), () => Promise.resolve(0)), 0);
+    assertEquals(await jailConfig(good), { packages: { sharp: plain(listed("sharp")) } });
+    // A failed add that changed deno.json itself: left as it is, and said so.
+    const changed = await project({ "deno.json": config, ".npmrc": "jail-scripts=true\n" });
+    dirs.push(changed);
+    const code = await addWithJail(ctx(changed), async (_args, cwd) => {
+      const path = join(cwd, "deno.json");
+      await Deno.writeTextFile(path, (await Deno.readTextFile(path)) + "\n");
+      return 2;
+    });
+    assertEquals(code, 2);
+    assertEquals(await jailConfig(changed), { packages: { sharp: plain(listed("sharp")) } });
+    assertStringIncludes(out.errs.join("\n"), "were left in place");
+  } finally {
+    out.restore();
+    for (const dir of dirs) await Deno.remove(dir, { recursive: true });
+  }
+});
 
 Deno.test("create/init: an existing package.json's dependencies get their exceptions", async () => {
   const { initCommand } = await import("../src/cli/commands/create.ts");

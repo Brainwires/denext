@@ -313,11 +313,13 @@ for (const define of PATHS) {
       const unscanned = await bundle({});
       for (const kept of define ? [on, unscanned] : [off, on, unscanned]) {
         assertStringIncludes(kept.code, 'tagName==="IMG"');
+        assertStringIncludes(kept.code, 'backgroundImage=""');
         assert(kept.names.some((n) => n.startsWith("form-action-")), kept.names.join(", "));
       }
       if (define) {
         assert(!off.code.includes('tagName==="IMG"'), "blur clearing in an app with no blur");
-        assert(!off.code.includes("data-dnx-blur"), "image-blur.ts in an app with no blur");
+        // The attribute name stays (the error-9 check reads it); clearBlur's body does not.
+        assert(!off.code.includes('backgroundImage=""'), "image-blur.ts in an app with no blur");
         assert(!off.names.some((n) => n.startsWith("form-action-")), off.names.join(", "));
         assert(!off.code.includes("__DENEXT_FORM_ACTIONS__"), "the gate folded");
       }

@@ -1,7 +1,8 @@
 // A per-file coverage ratchet over an lcov report: every module under RATCHETED keeps at least the
 // line / branch / function coverage scripts/coverage-baseline.json records for it, so a file's
 // coverage can only go up. coverage-floor.ts holds a few surfaces to a fixed 85%; this holds the
-// rest of the CLI, the server, the compat layer and the plugin packages to where they are.
+// rest of the CLI, the server, the compat layer, the DevTools panel's panes and the plugin
+// packages to where they are.
 //
 //   deno run --allow-read scripts/coverage-ratchet.ts coverage/lcov.info            # check
 //   deno run --allow-read --allow-write scripts/coverage-ratchet.ts coverage/lcov.info --update
@@ -17,7 +18,13 @@ import { join, relative, resolve } from "@std/path";
 import { type FileCoverage, parseLcov, pct } from "./coverage-floor.ts";
 
 /** The trees the ratchet covers (relative to the project root): `.ts` / `.tsx` modules in them. */
-export const RATCHETED: readonly string[] = ["src/cli", "src/server", "src/compat", "packages"];
+export const RATCHETED: readonly string[] = [
+  "src/cli",
+  "src/server",
+  "src/compat",
+  "src/client/devtools-panel",
+  "packages",
+];
 
 /** Paths under {@linkcode RATCHETED} that are not source: generated wasm-bindgen glue, npm trees. */
 const SKIPPED = /(^|\/)(lib|node_modules)\/|\.d\.ts$/;

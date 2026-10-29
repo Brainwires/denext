@@ -47,8 +47,6 @@ const ABOUT_TEXT = "turns a Vite + TanStack Router app into exactly this shape";
 
 Deno.test({
   name: "tanstack autoCodeSplitting: route components move to their own chunks; the entry shrinks",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await fixture();
   try {
@@ -76,8 +74,6 @@ Deno.test({
 
 Deno.test({
   name: "tanstack autoCodeSplitting: a rewritten route still gets denext's source transforms",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await fixture();
   try {
@@ -132,8 +128,6 @@ async function generate(dir: string): Promise<void> {
 
 Deno.test({
   name: "tanstack route tree: a committed tree with the same routes stays byte-identical",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await fixture();
   const tree = join(dir, "src", "routeTree.gen.ts");
@@ -150,8 +144,6 @@ Deno.test({
 
 Deno.test({
   name: "tanstack route tree: a real route change is still written",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await fixture();
   const tree = join(dir, "src", "routeTree.gen.ts");

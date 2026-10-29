@@ -9,6 +9,7 @@
 import { denoExecutable, frameworkFileUrl } from "../build/bundle.ts";
 import { isStandaloneBinary, nearestConfig, pinnedDenextCli } from "../cli/self-exec.ts";
 import { cliNpmModeArgs } from "../build/pnpm-workspace.ts";
+import { drainUntilExit } from "../build/exited-output.ts";
 import { VERSION } from "../../mod.ts";
 
 /**
@@ -171,6 +172,11 @@ export interface ProcResult {
  * `opts.signal` is handed to the child, so aborting it — a client that disconnected, or the UI
  * server shutting down — kills the process rather than orphaning it.
  *
+ * The output is read until the child EXITS (plus a short grace for what is still in the pipes),
+ * not until every copy of its pipes closes: a process spawned elsewhere in this process at the
+ * same moment inherits them on Windows, and a grandchild the child leaves running holds them on
+ * every OS, and either would otherwise keep this call waiting for its whole life.
+ *
  * @param args The `deno` argv (e.g. `["task", "test"]`), never shell-interpreted.
  * @param opts Working directory, streaming sink, abort signal, extra env.
  * @returns The exit code and captured output.
@@ -189,11 +195,11 @@ export async function runDeno(args: string[], opts: RunDenoOptions): Promise<Pro
   const streaming = opts.onLine !== undefined;
   const stdout = sinkOf(streaming);
   const stderr = sinkOf(streaming);
-  await Promise.all([
-    pump(child.stdout, stdout, opts.onLine),
-    pump(child.stderr, stderr, opts.onLine),
+  const [{ code }] = await Promise.all([
+    child.status,
+    pump(child.stdout, child.status, stdout, opts.onLine),
+    pump(child.stderr, child.status, stderr, opts.onLine),
   ]);
-  const { code } = await child.status;
   return result(code, stdout.text(), stderr.text());
 }
 
@@ -251,21 +257,25 @@ function result(code: number, stdout: string, stderr: string): ProcResult {
   };
 }
 
-/** Decode one child stream into `sink`, emitting complete lines to `onLine` as they arrive. */
 /** Longest partial line {@link pump} holds for `onLine` before delivering it as is. */
 const MAX_PENDING_LINE = 64 * 1024;
 
+/**
+ * Decode one child stream into `sink`, emitting complete lines to `onLine` as they arrive, until
+ * the stream ends or the child has exited (see {@linkcode drainUntilExit}).
+ */
 async function pump(
   stream: ReadableStream<Uint8Array>,
+  exited: Promise<unknown>,
   sink: Sink,
   onLine?: (line: string) => void,
 ): Promise<void> {
   const decoder = new TextDecoder();
   let pending = "";
-  for await (const chunk of stream) {
+  await drainUntilExit(stream, exited, (chunk) => {
     const text = decoder.decode(chunk, { stream: true });
     sink.push(text);
-    if (!onLine) continue;
+    if (!onLine) return;
     pending += text;
     const lines = pending.split("\n");
     pending = lines.pop() ?? "";
@@ -276,6 +286,6 @@ async function pump(
       onLine(pending);
       pending = "";
     }
-  }
+  });
   if (onLine && pending.length > 0) onLine(pending);
 }

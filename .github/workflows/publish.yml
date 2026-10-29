@@ -414,6 +414,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the release and attach the assets
+      id-token: write # sign the build-provenance attestation (Sigstore, keyless)
+      attestations: write # store it with the repository's attestations
     steps:
       # The checkout + Deno are for scripts/gen-package-manifests.ts (below) only.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -442,6 +444,15 @@ jobs:
           for f in denext-*.tar.gz denext-*.zip; do grep -F " $f" SHA256SUMS >/dev/null; done
           sha256sum -c SHA256SUMS
           ls -l
+
+      # A build-provenance attestation for every archive SHA256SUMS lists, signed through
+      # Sigstore for this workflow on this repository. The checksum only proves an archive is the
+      # one the release lists; the attestation proves the release's files were built here, and
+      # install.sh / install.ps1 verify it (`gh attestation verify --signer-workflow …`).
+      - name: Attest the archives' build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
 
       # The package-manager manifests, from the SHA256SUMS just verified: a Homebrew formula
       # (denext.rb), a Scoop manifest (denext.json) and the winget set (Brainwires.denext*.yaml).

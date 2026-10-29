@@ -166,8 +166,6 @@ const until = async (done: () => boolean, ms = 15_000, what = "condition") => {
 
 Deno.test({
   name: "native client: shared channels, ack'd broadcasts, echoes, binary payloads, release",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const { hub: h } = hub();
     const one = client(h);
@@ -219,8 +217,6 @@ Deno.test({
 
 Deno.test({
   name: "native client: presence with supabase-shaped state; diffs before the state are buffered",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const { hub: h } = hub();
     const one = client(h);
@@ -384,8 +380,6 @@ Deno.test("realtimeClient(): one per page, replaceable", () => {
 
 Deno.test({
   name: "useBroadcast / useRealtimePresence: status, messages, send, peers, untrack, unmount",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const { hub: h } = hub();
     const page = client(h);

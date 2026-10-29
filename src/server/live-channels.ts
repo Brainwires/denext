@@ -23,6 +23,7 @@ import {
   channelLog,
   channelLogShared,
   getChannel,
+  ORDERED_HOLD_LIMIT,
 } from "../runtime/channel.ts";
 import { type ChannelLogEntry, compareCursors, isCursor } from "../runtime/channel-log.ts";
 import { inRootContext } from "./root-context.ts";
@@ -38,6 +39,8 @@ export interface ChannelSub {
   authExpires: number;
   /** An unlogged frame held back (back-pressure or pending re-auth); latest wins. */
   pending?: string;
+  /** An `ordered` channel's held frames, oldest first (bounded; see `ORDERED_HOLD_LIMIT`). */
+  held?: string[];
   /**
    * A logged frame was held back: once it can go, the log is replayed after this cursor (every
    * held publish, not just the latest).
@@ -222,6 +225,13 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
    * cursor to replay the log from (the first held one's predecessor), so none is lost.
    */
   const hold = (sub: ChannelSub, text: string, cursor?: string): void => {
+    if (!cursor && getChannel(sub.channelId)?.ordered) {
+      // Every frame, in order: dropping one would lose the changes it carried.
+      const held = sub.held ??= [];
+      held.push(text);
+      if (held.length > ORDERED_HOLD_LIMIT) held.splice(0, held.length - ORDERED_HOLD_LIMIT);
+      return;
+    }
     if (!cursor) {
       sub.pending = text;
       return;
@@ -232,9 +242,14 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
   /** Send what a sub held back: its unlogged frame, then the log after its resume cursor. */
   const flushHeld = (conn: C, subId: string, sub: ChannelSub): void => {
     const text = sub.pending;
+    const held = sub.held ?? [];
     const from = sub.resumeFrom;
-    sub.pending = sub.resumeFrom = undefined;
+    sub.pending = sub.resumeFrom = sub.held = undefined;
     if (text) sendTo(conn, subId, sub, text, { type: "channel", subId, seq: 0, value: null });
+    // In order; one deferred again is held again, after any held before it.
+    for (const frame of held) {
+      sendTo(conn, subId, sub, frame, { type: "channel", subId, seq: 0, value: null });
+    }
     if (from !== undefined && conn.channelSubs.get(subId) === sub) {
       void replay(conn, subId, sub, from);
     }
@@ -453,9 +468,14 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
         recordChannelPush(ev, index.get(ev.channelId)?.get(ev.key)?.size ?? 0);
       }
       if (ev.kind === "revoke") return revokeAll(ev);
-      // Latest publish wins in the window — except a logged one, which is delivered whole.
-      const logged = isCursor(ev.cursor) ? `\0${ev.cursor}` : "";
-      pendingEvents.set(`${ev.channelId}\0${ev.key}${logged}`, ev);
+      // Latest publish wins in the window — except a logged one, and every publish of an
+      // `ordered` channel, which are delivered whole, in order.
+      const whole = isCursor(ev.cursor)
+        ? `\0${ev.cursor}`
+        : ev.kind === "publish" && getChannel(ev.channelId)?.ordered
+        ? `\0${ev.instance}\0${ev.seq}`
+        : "";
+      pendingEvents.set(`${ev.channelId}\0${ev.key}${whole}`, ev);
       // The flush serves every subscriber, not the publisher: start its timer outside the
       // publishing request's context.
       if (flushTimer === null) flushTimer = inRootContext(() => setTimeout(flush, COALESCE_MS));

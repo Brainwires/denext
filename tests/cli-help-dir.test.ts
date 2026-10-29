@@ -253,3 +253,25 @@ Deno.test("a cached verb whose name is not a verb name is no listing at all", as
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("with no per-user cache directory no listing is written or trusted", async () => {
+  // denoCacheDir() refuses (no DENO_DIR, no absolute LOCALAPPDATA / XDG_CACHE_HOME / home): the
+  // listing key is then unavailable, so the verb writes nothing and help trusts nothing.
+  const dir = await Deno.makeTempDir({ prefix: "denext_help_nocache_" });
+  const names = ["DENO_DIR", "LOCALAPPDATA", "XDG_CACHE_HOME", "HOME", "USERPROFILE"];
+  const saved = names.map((n) => [n, Deno.env.get(n)] as const);
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    for (const n of names) Deno.env.delete(n);
+    await writeCommandCache(dir, [{ name: "seed", summary: "ok" }]);
+    assertEquals(await readCommandCache(dir), null);
+    const written = await Deno.stat(join(dir, ".denext", "commands.json")).then(
+      () => true,
+      () => false,
+    );
+    assertEquals(written, false);
+  } finally {
+    for (const [n, v] of saved) v === undefined ? Deno.env.delete(n) : Deno.env.set(n, v);
+    await Deno.remove(dir, { recursive: true });
+  }
+});

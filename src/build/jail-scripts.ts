@@ -18,15 +18,25 @@
 import { parse as parseJsonc } from "@std/jsonc";
 import { dirname, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
 import toolchainPin from "./deno-toolchain-pin.json" with { type: "json" };
-import { compareDenoVersions, isDenextReleaseVersion } from "./deno-version.ts";
+import {
+  compareDenoVersions,
+  currentDenoIdentity,
+  type DenoIdentity,
+  isDenextDenoVersion,
+  isDenextReleaseVersion,
+  parseDenoVersionOutput,
+} from "./deno-version.ts";
 import { stripAnsi } from "./explain/parse.ts";
-import { workspaceOf } from "./workspace-imports.ts";
+import { npmWorkspaceOf, workspaceOf } from "./workspace-imports.ts";
+import { npmrcValue } from "./npmrc-supply-chain.ts";
 import {
   JAIL_SCRIPT_EXCEPTIONS,
   type JailExceptionEntry,
   type JailPackageException,
   type JailWriteTarget,
 } from "./jail-exceptions.ts";
+
+export { npmrcValue };
 
 /** The first release of denext's Deno that jails dependencies' lifecycle scripts by default. */
 export const JAIL_DEFAULT_RELEASE = "3.0.0-rc.5";
@@ -45,9 +55,9 @@ const JAIL_HOSTS_RELEASE = "3.0.0-rc.6";
  * @returns Whether {@linkcode JAIL_HOSTS_RELEASE} or later.
  */
 export function jailHostListsSupported(
-  version: string | undefined = toolchainPin.version,
+  version: string | null | undefined = toolchainPin.version,
 ): boolean {
-  return version !== undefined && isDenextReleaseVersion(version) &&
+  return version != null && isDenextReleaseVersion(version) &&
     compareDenoVersions(version, JAIL_HOSTS_RELEASE) >= 0;
 }
 
@@ -62,8 +72,10 @@ export const JAIL_DOCS_URL = "https://denext.dev/docs/toolchain#supply-chain-lif
  * @param version The runtime version (default: the checked-in toolchain pin's).
  * @returns Whether the jail is on unless the project opts out.
  */
-export function jailOnByDefault(version: string | undefined = toolchainPin.version): boolean {
-  return version !== undefined && isDenextReleaseVersion(version) &&
+export function jailOnByDefault(
+  version: string | null | undefined = toolchainPin.version,
+): boolean {
+  return version != null && isDenextReleaseVersion(version) &&
     compareDenoVersions(version, JAIL_DEFAULT_RELEASE) >= 0;
 }
 
@@ -88,6 +100,8 @@ export interface JailInputs {
   readonly denoJson?: Record<string, unknown> | null;
   /** The project's `.npmrc` text (or null). */
   readonly npmrc?: string | null;
+  /** The user-level `.npmrc` text (`~/.npmrc`, or npm's `userconfig`), or null. */
+  readonly userNpmrc?: string | null;
   /** The environment (default: none). */
   readonly env?: (name: string) => string | undefined;
 }
@@ -96,18 +110,6 @@ export interface JailInputs {
 function boolValue(v: string | undefined): boolean | undefined {
   const s = v?.trim().toLowerCase();
   return s === "true" ? true : s === "false" ? false : undefined;
-}
-
-/** A key of `.npmrc` text (`key=value`, `;` / `#` comments), or undefined. */
-export function npmrcValue(text: string, key: string): string | undefined {
-  let found: string | undefined;
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (line === "" || line.startsWith("#") || line.startsWith(";")) continue;
-    const eq = line.indexOf("=");
-    if (eq > 0 && line.slice(0, eq).trim() === key) found = line.slice(eq + 1).trim();
-  }
-  return found;
 }
 
 /** An environment variable in npm's two spellings. */
@@ -143,6 +145,12 @@ export function readJailSetting(inputs: JailInputs): JailSetting {
     ],
     [".npmrc paranoid", boolValue(npmrcValue(npmrc, "paranoid")) === true ? true : undefined],
     [".npmrc jail-scripts", boolValue(npmrcValue(npmrc, "jail-scripts"))],
+    // The user-level file: the runtime reads it too (after the project's).
+    [
+      "~/.npmrc paranoid",
+      boolValue(npmrcValue(inputs.userNpmrc ?? "", "paranoid")) === true ? true : undefined,
+    ],
+    ["~/.npmrc jail-scripts", boolValue(npmrcValue(inputs.userNpmrc ?? "", "jail-scripts"))],
     [
       "npm_config_paranoid",
       boolValue(npmEnv(inputs.env, "paranoid")) === true ? true : undefined,
@@ -166,8 +174,92 @@ export function readJailSetting(inputs: JailInputs): JailSetting {
  * @param version The runtime version (default: the toolchain pin's).
  * @returns Whether the jail is on.
  */
-export function jailEffective(setting: JailSetting, version?: string): boolean {
+export function jailEffective(setting: JailSetting, version?: string | null): boolean {
+  if (version === null) return false; // a Deno with no jail (stock) runs every script unconfined
   return setting.state === "on" || (setting.state === "default" && jailOnByDefault(version));
+}
+
+/** The runtime a project's installs run on, as the jail planning reads it. */
+export interface JailRuntime {
+  /**
+   * Its version for the planning: the pin's, another release of denext's Deno, or `null` for a
+   * Deno with no lifecycle-script jail at all (stock Deno).
+   */
+  readonly version: string | null;
+  /** Which runtime it is, for messages. */
+  readonly label: string;
+  /** Whether it is not the pinned toolchain (`DENEXT_DENO=stock` / `<path>`, a `DENO_BIN`). */
+  readonly overridden: boolean;
+}
+
+/** Seams for {@linkcode jailRuntime}; each defaults to this process. */
+export interface JailRuntimeSeams {
+  /** The `deno` that installs run on (default: `denoExecutable()`). */
+  readonly executable?: () => string | Promise<string>;
+  /** This process's binary and identity (default: `Deno.execPath()`, its `Deno.build`). */
+  readonly current?: { readonly path: string; readonly identity: DenoIdentity };
+  /** `<bin> --version`'s output, or null when it can't be run. */
+  readonly versionOutput?: (bin: string) => Promise<string | null>;
+  /** The pinned toolchain version (default: the checked-in pin's). */
+  readonly pinned?: string | null;
+}
+
+/** `<bin> --version`'s output, or null (not runnable, or no answer within 10 s). */
+async function denoVersionOutput(bin: string): Promise<string | null> {
+  try {
+    const out = await new Deno.Command(bin, {
+      args: ["--version"],
+      stdin: "null",
+      stdout: "piped",
+      stderr: "null",
+      signal: AbortSignal.timeout(10_000),
+    }).output();
+    return out.success ? new TextDecoder().decode(out.stdout) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The runtime the project's installs run on (the `deno` denext spawns for them: denext's
+ * toolchain, or what `DENEXT_DENO=stock` / `<path>` or `DENO_BIN` chose), so the jail is
+ * planned for it rather than for the pin: a stock Deno has no jail, and another release of
+ * denext's Deno may jail by default, or take host lists, where the pin does not. A binary whose
+ * version can't be read is planned for as the pin.
+ *
+ * @param seams The executable, this process and the version probe (tests).
+ * @returns The runtime.
+ */
+export async function jailRuntime(seams: JailRuntimeSeams = {}): Promise<JailRuntime> {
+  const pinned = seams.pinned !== undefined ? seams.pinned : toolchainPin.version;
+  const bin = await (seams.executable ??
+    (async () => (await import("./deno-executable.ts")).denoExecutable()))();
+  const current = seams.current ?? { path: Deno.execPath(), identity: currentDenoIdentity() };
+  const identity = bin === current.path
+    ? current.identity
+    : parseDenoVersionOutput(await (seams.versionOutput ?? denoVersionOutput)(bin) ?? "");
+  if (identity === null) {
+    return {
+      version: pinned,
+      label: `the Deno at ${bin} (its version could not be read; planned for the pin ${pinned})`,
+      overridden: true,
+    };
+  }
+  if (!isDenextDenoVersion(identity, pinned)) {
+    return {
+      version: null,
+      label: `stock Deno ${identity.deno} at ${bin}, which has no lifecycle-script jail`,
+      overridden: true,
+    };
+  }
+  const version = identity.denext ?? identity.deno;
+  return version === pinned
+    ? { version, label: `denext's runtime ${version} (the pin)`, overridden: false }
+    : {
+      version,
+      label: `denext's runtime ${version} at ${bin} (the pin is ${pinned})`,
+      overridden: true,
+    };
 }
 
 /** The file operations the jail planning uses (`mfs` in `denext migrate`, so `--check` writes nothing). */
@@ -297,6 +389,20 @@ function processEnv(name: string): string | undefined {
 }
 
 /**
+ * Where the user-level `.npmrc` is: npm's `userconfig` setting from the environment, else
+ * `.npmrc` in the home directory (`HOME`, or `USERPROFILE` on Windows); null with neither.
+ *
+ * @param env The environment.
+ * @returns The path, or null.
+ */
+export function userNpmrcPath(env: (name: string) => string | undefined): string | null {
+  const configured = npmEnv(env, "userconfig");
+  if (configured) return configured;
+  const home = env("HOME") ?? env("USERPROFILE");
+  return home ? join(home, ".npmrc") : null;
+}
+
+/**
  * Read what the jail planning needs from a project: its config, package.json, dependencies and
  * jail settings.
  *
@@ -310,7 +416,10 @@ export async function readJailProject(
 ): Promise<JailProject> {
   const fs = options.fs ?? DENO_FS;
   const appDir = resolve(dir);
-  const ws = await workspaceOf(appDir).catch(() => null);
+  // A deno.json `workspace`, else an npm one (package.json `workspaces`): Deno installs for every
+  // member of either, so each member's dependencies can bring in a listed package.
+  const ws = await workspaceOf(appDir).catch(() => null) ??
+    await npmWorkspaceOf(appDir).catch(() => null);
   const root = ws?.root ?? appDir;
   const { configPath, denoJson } = await configIn(fs, root);
   const packageDirs = [root, ...(ws?.members ?? []).filter((m) => m !== root)];
@@ -324,10 +433,13 @@ export async function readJailProject(
   }
   const own = appDir === root ? null : await configIn(fs, appDir);
   const ignoredMemberConfig = own?.denoJson?.supplyChain !== undefined ? own.configPath : null;
+  const env = options.env ?? processEnv;
+  const userNpmrc = userNpmrcPath(env);
   const setting = readJailSetting({
     denoJson,
     npmrc: await readOr(fs, join(root, ".npmrc")),
-    env: options.env ?? processEnv,
+    userNpmrc: userNpmrc === null ? null : await readOr(fs, userNpmrc),
+    env,
   });
   return {
     dir: root,
@@ -493,7 +605,7 @@ async function writeTargetDirs(
  */
 export function entryException(
   entry: JailExceptionEntry,
-  version?: string,
+  version?: string | null,
 ): JailPackageException {
   const hostLists = jailHostListsSupported(version);
   const cache = hostLists ? entry.cache : undefined;
@@ -536,7 +648,7 @@ async function resolvedException(
   fs: JailFs,
   project: JailProject,
   entry: JailExceptionEntry,
-  version: string | undefined,
+  version: string | null | undefined,
 ): Promise<{ exception: JailPackageException | null; refused: string[] }> {
   const { granted, refused } = await entryWriteDirs(fs, project, entry);
   const base = entryException(entry, version);
@@ -559,7 +671,7 @@ async function resolvedException(
 export async function requiredJailExceptions(
   project: JailProject,
   fs: JailFs = DENO_FS,
-  version?: string,
+  version?: string | null,
 ): Promise<JailRequirement[]> {
   const out: JailRequirement[] = [];
   for (const entry of JAIL_SCRIPT_EXCEPTIONS) {
@@ -613,6 +725,8 @@ export interface JailReport {
   readonly missing: readonly JailRequirement[];
   /** The config file written (action `written`). */
   readonly configPath?: string;
+  /** That file's text before the write (action `written`), to put back when the install fails. */
+  readonly before?: string;
   /** The `supplyChain` JSON to add by hand (action `manual`). */
   readonly snippet?: string;
   /** What to tell the user, one line each. */
@@ -624,7 +738,7 @@ export interface ApplyJailOptions extends ReadJailProjectOptions {
   /** Whether deno.json may be edited (false: report the snippet instead). Default true. */
   readonly edit?: boolean;
   /** The runtime version the project installs with (default: the toolchain pin's). */
-  readonly version?: string;
+  readonly version?: string | null;
 }
 
 /** `a, b and c`. */
@@ -767,11 +881,10 @@ export async function applyJailExceptions(
   const base = { effective, required, missing };
   const early = unwrittenReport(base, project.setting, refused);
   if (early) return early;
-  const written = options.edit === false || project.configPath === null ? null : await editedConfig(
-    await fs.readTextFile(project.configPath),
-    project.denoJson,
-    missing,
-  );
+  const before = project.configPath === null ? "" : await fs.readTextFile(project.configPath);
+  const written = options.edit === false || project.configPath === null
+    ? null
+    : await editedConfig(before, project.denoJson, missing);
   if (written === null) {
     const snippet = jailSnippet(missing);
     return {
@@ -793,6 +906,7 @@ export async function applyJailExceptions(
     ...base,
     action: "written",
     configPath: project.configPath!,
+    before,
     lines: [
       `deno.json: supplyChain.jailScripts exception${missing.length === 1 ? "" : "s"} for ` +
       `${names(missing)} (their install scripts need more than the lifecycle-script jail allows; ` +
@@ -820,6 +934,11 @@ export interface JailFailure {
   readonly signs: readonly JailSign[];
   /** The built-in entry for the package, when it has one. */
   readonly entry?: JailExceptionEntry;
+  /**
+   * The host names the script's output shows it failing to reach (sorted, each a plain
+   * `name.tld`, lower-cased, no port); empty when it shows none.
+   */
+  readonly hosts: readonly string[];
 }
 
 /** Deno's line for a dependency's failed lifecycle script. */
@@ -849,6 +968,35 @@ const OS_SIGNS: readonly [JailSign, RegExp][] = [
     /EACCES|EPERM|EROFS|Operation not permitted|permission denied|read-only file system/i,
   ],
 ];
+
+/** Where the jail's clamp names the host a script asked for (every OS). */
+const CLAMP_HOSTS: readonly RegExp[] = [
+  /Requires net access to "([^"\s]+)"/g,
+  /jail-scripts: (\S+) is not in this lifecycle script's network allow-list/g,
+];
+
+/** Where a confined program's resolver failure names the host (not on Windows: see OS_SIGNS). */
+const OS_HOSTS: readonly RegExp[] = [/\b(?:ENOTFOUND|EAI_AGAIN)\s+(\S+)/g];
+
+/**
+ * A host as the runtime's `net` list takes it, and nothing else: the names come from the
+ * script's own output, so only a plain lower-case DNS name with a dot is ever quoted back.
+ */
+const PLAIN_HOST =
+  /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,63}$/;
+
+/** The host names `block` shows a script failing to reach, sorted, each once. */
+function hostsIn(block: string, os: typeof Deno.build.os): string[] {
+  const patterns = os === "windows" ? CLAMP_HOSTS : [...CLAMP_HOSTS, ...OS_HOSTS];
+  const found = new Set<string>();
+  for (const re of patterns) {
+    for (const m of block.matchAll(re)) {
+      const host = hostOf(m[1].replace(/[.,;:'")]+$/, ""));
+      if (PLAIN_HOST.test(host) && host.length <= 253) found.add(host);
+    }
+  }
+  return [...found].sort();
+}
 
 /** The signs `block` shows, in a stable order, each once. */
 function signsIn(block: string, os: typeof Deno.build.os): JailSign[] {
@@ -883,6 +1031,7 @@ export function jailFailures(
       exitCode: Number(m[4]),
       signs: signsIn(block, os),
       ...(entry ? { entry } : {}),
+      hosts: hostsIn(block, os),
     };
   });
 }
@@ -894,7 +1043,7 @@ export function jailFailures(
  */
 function suggestedException(
   f: JailFailure,
-  version: string | undefined,
+  version: string | null | undefined,
   existing: JailPackageException | undefined,
 ): JailPackageException | null {
   if (!f.entry) return null;
@@ -917,14 +1066,26 @@ function stoppedText(sign: JailSign): string {
 }
 
 /** The advice for a package outside denext's reviewed list: no grant to paste. */
-function unreviewedAdvice(f: JailFailure, name: string): string[] {
+function unreviewedAdvice(
+  f: JailFailure,
+  name: string,
+  version: string | null | undefined,
+): string[] {
   if (f.signs.includes("net")) {
+    const hosts = f.hosts.length ? JSON.stringify(f.hosts).replaceAll(",", ", ") : '["<host>"]';
+    const seen = f.hosts.length ? ` (the log shows it reaching ${f.hosts.join(", ")})` : "";
     return [
       `  warning: ${name} is not in denext's reviewed list, and its script tried to reach the ` +
-      "network. An unreviewed install script that phones home is a common sign of malware.",
+      `network${seen}. An unreviewed install script that phones home is a common sign of malware.`,
       "  review the package and what its script fetches before granting anything; then grant " +
       `only the hosts it needs ("supplyChain.jailScripts.packages" → ${name} → "net": ` +
-      '["<host>"], runtime 3.0.0-rc.6 and later), never the whole network',
+      `${hosts}, runtime ${JAIL_HOSTS_RELEASE} and later), never the whole network` +
+      (version !== undefined && !jailHostListsSupported(version)
+        ? `; ${
+          version === null ? "this Deno" : `runtime ${version}`
+        } takes no host list, so install it on ${JAIL_HOSTS_RELEASE} or later rather than ` +
+          'grant "net": true'
+        : ""),
     ];
   }
   if (f.signs.includes("write")) {
@@ -954,7 +1115,7 @@ function unreviewedAdvice(f: JailFailure, name: string): string[] {
  */
 export function explainJailFailures(
   failures: readonly JailFailure[],
-  version?: string,
+  version?: string | null,
   existing: Readonly<Record<string, JailPackageException>> = {},
 ): string[] {
   const out: string[] = [];
@@ -978,7 +1139,7 @@ export function explainJailFailures(
         } } } }`,
       );
     } else {
-      out.push(...unreviewedAdvice(f, name));
+      out.push(...unreviewedAdvice(f, name, version));
     }
     if (f.entry?.caveat) out.push(`  ${f.entry.caveat}`);
   }
@@ -1023,8 +1184,8 @@ function hostOf(target: string): string {
 }
 
 /** Whether the environment names an `http://` proxy, on a runtime that has `upstreamByName`. */
-function proxyInEnv(env: UpstreamByNameInputs["env"], version: string): boolean {
-  if (!isDenextReleaseVersion(version)) return false;
+function proxyInEnv(env: UpstreamByNameInputs["env"], version: string | null): boolean {
+  if (version === null || !isDenextReleaseVersion(version)) return false;
   if (compareDenoVersions(version, UPSTREAM_BY_NAME_RELEASE) < 0) return false;
   return PROXY_ENV.some((name) => /^http:\/\//i.test(env?.(name)?.trim() ?? ""));
 }
@@ -1061,7 +1222,7 @@ export interface UpstreamByNameInputs {
   /** The environment (default: none). */
   readonly env?: (name: string) => string | undefined;
   /** The runtime version the project installs with (default: the toolchain pin's). */
-  readonly version?: string;
+  readonly version?: string | null;
 }
 
 /**
@@ -1082,7 +1243,10 @@ export function upstreamByNameAdvice(inputs: UpstreamByNameInputs): string[] {
   const packages = objectOf(jail?.packages) ?? {};
   const text = stripAnsi(inputs.output);
   const refused = [...text.matchAll(REFUSED_BY_ADDRESS)].map((m) => hostOf(m[1]));
-  const proxyEnv = proxyInEnv(inputs.env, inputs.version ?? toolchainPin.version);
+  const proxyEnv = proxyInEnv(
+    inputs.env,
+    inputs.version === undefined ? toolchainPin.version : inputs.version,
+  );
   if (!proxyEnv && refused.length === 0) return [];
   const matches = [...text.matchAll(FAILED_SCRIPT)];
   const hits = matches.flatMap((m, i) => {

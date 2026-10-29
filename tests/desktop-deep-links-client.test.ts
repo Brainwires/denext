@@ -76,7 +76,7 @@ Deno.test("desktop onDeepLink: a cold-start link reaches the first subscriber, o
 Deno.test("desktop onDeepLink: the accept filter applies; routing happens once per link", async () => {
   const { queue, cap } = linkQueue();
   queue.push({ url: "myapp://a/1", launch: false }, { url: "otherapp://b", launch: false });
-  await inDesktop(cap, async () => {
+  await inDesktop(cap, async (rt) => {
     const routed: string[] = [];
     const a: string[] = [];
     const b: string[] = [];
@@ -84,7 +84,7 @@ Deno.test("desktop onDeepLink: the accept filter applies; routing happens once p
     const s1 = onDeepLink((e) => a.push(e.url), { accept: { schemes: ["myapp"] }, route });
     const s2 = onDeepLink((e) => b.push(e.url), { accept: { schemes: ["myapp"] }, route });
     await until(() => a.length === 1);
-    await new Promise((r) => setTimeout(r, 10));
+    await rt.settled();
     assertEquals(a, ["myapp://a/1"]);
     assertEquals(routed, ["/a/1"]);
     s1();
@@ -97,7 +97,7 @@ Deno.test("desktop onDeepLink: no deepLinks capability (stock runtime) → nothi
     const seen: unknown[] = [];
     const stop = onDeepLink((e) => seen.push(e));
     await until(() => rt.requests.some((r) => r.path === "/_denext/desktop/rpc"));
-    await new Promise((r) => setTimeout(r, 10));
+    await rt.settled();
     assertEquals(seen, []);
     stop();
   });
@@ -126,13 +126,13 @@ Deno.test("desktop onOpenFile: a file taken as the last subscriber leaves goes t
     takes++;
     return new Promise<unknown[]>((r) => (answer = r));
   };
-  await inDesktop({ openFiles: { take } }, async () => {
+  await inDesktop({ openFiles: { take } }, async (rt) => {
     const first: unknown[] = [];
     const stop = onOpenFile((f) => first.push(f));
     await until(() => takes === 1);
     stop();
     answer([{ handle: "h1", name: "a.txt", path: "/x/a.txt", launch: true }]);
-    await new Promise((r) => setTimeout(r, 10));
+    await rt.settled();
     assertEquals(first, []);
     const next: unknown[] = [];
     const stop2 = onOpenFile((f) => next.push(f));
@@ -146,7 +146,8 @@ Deno.test("desktop onOpenFile: a file taken as the last subscriber leaves goes t
 Deno.test("onOpenFile off Deno Desktop (the web, a phone): subscribing is a no-op", async () => {
   const seen: unknown[] = [];
   const stop = onOpenFile((f) => seen.push(f));
-  await new Promise((r) => setTimeout(r, 10));
+  // Off desktop nothing is scheduled beyond a microtask: one timer turn runs them all.
+  await new Promise((r) => setTimeout(r, 0));
   assertEquals(seen, []);
   stop();
   resetOpenFilesForTesting();
@@ -157,9 +158,10 @@ Deno.test("desktop onOpenFile: unsubscribing at once never takes the queue", asy
   await inDesktop({ openFiles: { take: () => (takes++, []) } }, async (rt) => {
     const stop = onOpenFile(() => {});
     stop(); // before the runtime client module has loaded: nothing attaches
-    await new Promise((r) => setTimeout(r, 20));
+    await import("../src/desktop/native.ts"); // the module the subscription was waiting for
+    await rt.settled();
     rt.emit("openFiles", "available", null);
-    await new Promise((r) => setTimeout(r, 20));
+    await rt.settled();
     assertEquals(takes, 0);
   });
 });
@@ -194,7 +196,7 @@ Deno.test("desktop useOpenFile: subscribes on mount, calls the latest callback, 
     flushSync();
     queue.push({ handle: "h3", name: "c.txt", path: "/x/c.txt", launch: false });
     rt.emit("openFiles", "available", null);
-    await new Promise((r) => setTimeout(r, 20));
+    await rt.settled();
     assertEquals(got.length, 2);
   });
 });
@@ -290,13 +292,13 @@ Deno.test("desktop openAuthSession (custom scheme): aborting the signal cancels 
         return { cancelled: true };
       },
     },
-  }, async () => {
+  }, async (rt) => {
     const abort = new AbortController();
     const run = openAuthSession("https://idp.example/a?redirect_uri=myapp%3A%2F%2Fcb", {
       callbackScheme: "myapp",
       signal: abort.signal,
     });
-    await new Promise((r) => setTimeout(r, 10));
+    await until(() => rt.calls.some((c) => c.cap === "authSession" && c.method === "start"));
     abort.abort();
     const err = await assertRejects(() => run) as { code: string };
     assertEquals(err.code, "cancelled");

@@ -8,6 +8,212 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.10.0] - 2026-10-29
+
+### Added
+
+- **`denext doctor` and `denext desktop doctor` check the launch policy.** A desktop project whose
+  packaged `laufey-launch.json` would lack `bridgeOrigins` (an unwritable
+  `desktop.app.bridgeOrigins`) or, with passkeys enabled, an RP list (`rpIds` empty), or whose
+  `scripts/package-*.ts` never write denext's launch file, is flagged with the fix
+  (`desktop doctor`: the `launch-policy` check, a warning per gap).
+
+### Changed
+
+- **Symlinks in the lifecycle-script jail (runtime `3.0.0-denext.1`).** On macOS and Linux, where
+  Seatbelt / Landlock confine the script, a link whose path and target both lie in the script's
+  write roots is allowed, so electron-style postinstalls (the macOS bundle's `Versions/Current`
+  links) install under the jail. Windows still refuses them. See the toolchain guide.
+
+### Fixed
+
+- **`install.ps1` with the GitHub CLI installed no longer stops on `gh`'s own error output.**
+  The installer runs under `$ErrorActionPreference = 'Stop'`, and Windows PowerShell 5.1 turns
+  anything a native program writes to stderr into a terminating `NativeCommandError`, even
+  redirected. So when `gh attestation verify` (or `gh auth status`) refused, the script stopped
+  with that error instead of deciding by the exit code: `DENEXT_INSECURE=1` could not install a
+  release without an attestation, and the clear "verification FAILED" message never showed. The
+  attestation check now reads only the exit codes.
+- **Windows signing with a password-protected `.pfx` works when started from PowerShell 7.**
+  signtool signing imports the `.pfx` into the user's certificate store through Windows
+  PowerShell, which, started from a PowerShell 7 session (a pwsh terminal, a CI runner's default
+  shell), inherits 7's module path and cannot load its own `Microsoft.PowerShell.Security` and
+  `PKI` modules: the import stopped at `ConvertTo-SecureString` and nothing was signed. The import
+  and the removal afterwards now call .NET directly and need no PowerShell module, and the CEF
+  signature and certificate-trust checks put Windows PowerShell's own modules first.
+- **`denext ui` and `denext mcp` no longer wait on a child's pipes after it has exited.** The
+  UI's runner for its `deno` children (tasks, verbs, `denext job --history`, the panels' other
+  CLI children) and the MCP bridge's wait for `denext ui`'s launch line read until every copy of
+  the child's stdout and stderr closed. On Windows a process started elsewhere in the same process
+  at that moment inherits those pipes, and on every OS a grandchild the child leaves running holds
+  them, so a call could hang for that process's whole life. They now end with the child's exit,
+  after a short grace for what is still in the pipes; streamed lines still arrive as they are
+  written.
+- **A command that read a quick child's output no longer waits up to 5 s to exit.** The reader
+  that collects a child's output until it exits (`deno info`, `deno bundle`, the type check and
+  the other children denext runs) started its 5 s drain timer when the exit was reported after
+  the pipes had already closed, the usual order for a short-lived child, and nothing cleared it:
+  the process stayed alive until it fired.
+- **The runtime's `3.0.0-denext.N` releases order after `3.0.0-rc.N`.** The runtime fork follows
+  `3.0.0-rc.6` with `3.0.0-denext.1`, `3.0.0-denext.2`, …, which plain semver sorts below every
+  release candidate. denext's runtime version comparison now puts a `denext.N` prerelease above
+  every `rc.N` one on the `3.0.0` line, so each "from runtime 3.0.0-rc.N" feature (the direction-split
+  network grant, the idle trim, the lifecycle-script jail, no `--unstable-no-legacy-abort`) applies
+  to them, `denext toolchain prune` lists them as the newest, and pinning one maps it to the stock
+  Deno its manifest names instead of reading it as an old `2.9.7-denext.N` build.
+- **A route-pattern href or a blur placeholder the build's scan missed says so.** A library's
+  `<Link href={{ pathname: "/blog/[slug]", params }}>` in an app whose own sources write none
+  navigated to the literal pattern, and a library's server-rendered `placeholder="blur"` stayed
+  painted; they now report `denext: error 8` / `error 9`, as the form-action and hook-boundary
+  gates do (errors 6 and 7).
+- **Live handshakes waiting on `live.authorize` count against the connection caps.** A slow hook
+  let one address hold any number of pending handshakes past `live.limits.maxConnectionsPerIp`
+  (each was re-checked only after the hook); a pending handshake now holds its slot, in the total
+  too.
+- **A workspace member outside the root is skipped.** A `"../x"` member, which Deno refuses, was
+  still read for its imports and named oddly in the workspace-root hints.
+- **A cached Deno Desktop runtime is re-hashed once a week.** Without `--verify-runtime` only file
+  sizes were checked, so a same-size change by another local process went unnoticed; the first use
+  seven days after the last full check now re-hashes every file (and re-downloads on a mismatch).
+- **A wildcard `desktop.app.bridgeOrigins` entry warns.** `"*"` and `"<scheme>://*"` open the
+  native bridge past the app's own origin; config validation now says so (once per process), and
+  the desktop guide documents both forms.
+- **`denext add` takes its jail exceptions out when the add fails.** They go into deno.json before
+  `deno add` runs the install scripts; a failed add left them behind. The file is now put back
+  (unless `deno add` changed it too, which is said).
+- **Function form actions: the submitting button decides, and a held submit keeps its moment.**
+  `form.requestSubmit(button)` (or Enter) with no click ran the form's own action, not the
+  button's `formAction`; a submit that beat the on-demand form-action chunk built its `FormData`
+  and started `useFormStatus`'s pending state only when the chunk arrived; and `useFormStatus`
+  under a form whose only function action is a button's `formAction` never went pending. The
+  submit is now handled at the form for both, and taken when it happens.
+- **Builds keep the project's `.npmrc` supply-chain gates.** A build child runs with a config in
+  `.denext/` (`module-config.json`, `css-config.json`, the compile config), where Deno finds no
+  project `.npmrc`, so `paranoid=true` or `advisory-check=required` set there did not hold for it.
+  Its `supplyChain` now carries the six supply-chain keys of the root's `.npmrc`, merged with
+  deno.json's (the stricter wins); nothing else of the file, which may hold credentials, is copied.
+- **An npm workspace's members are read for jail exceptions.** Only a deno.json `workspace` was;
+  a package.json `workspaces` (array, or Yarn's `{ packages }`) now brings in each member's
+  dependencies too.
+- **The jail is planned for the runtime installs run on.** `denext add` and `denext doctor`
+  assumed the pinned toolchain; under `DENEXT_DENO=stock`, `DENEXT_DENO=<path>` or a `DENO_BIN`
+  they now read that Deno's version (stock Deno has no jail, another release of denext's Deno has
+  its own defaults) and say which one they planned for.
+- **An unreviewed package's network failure names the hosts.** `denext doctor --install-log`
+  advice for a package outside the reviewed list showed `"net": ["<host>"]`; it now lists the
+  hosts the log shows the script failing to reach (plain DNS names only, since the script prints
+  that log), and on a runtime without host lists says to install on one rather than grant
+  `"net": true`. On a runtime with host lists, a built-in package still configured with
+  `"net": true` is flagged with its narrower exception.
+- **The user-level `~/.npmrc` counts for the lifecycle-script jail.** The runtime reads
+  `jail-scripts` / `paranoid` from it, but denext's exception planning and `denext doctor` read
+  only the project's `.npmrc` and the environment, so a jail turned off (or `paranoid` turned on)
+  there was misreported. npm's `userconfig` setting names another file.
+- **An unsupported Linux host stops before the download, not after it.** denext's Linux binaries
+  need glibc 2.35 or later; on musl (Alpine) or an older glibc (RHEL 9, Amazon Linux 2023, Debian
+  11, Ubuntu 20.04) the toolchain and the Deno Desktop runtime downloaded, verified and then failed
+  to exec with `GLIBC_2.35 not found`. denext now probes the host's C library first and stops with
+  the supported distributions named; `denext doctor` reports it as `linux libc`.
+- **Realtime table changes are no longer lost while a subscription re-authorizes.** The Live
+  hub re-authorizes a channel subscription once its TTL has run out and holds its frames until
+  the answer, keeping only the latest one; it also kept only the latest publish to a key within
+  its 16 ms coalescing window. A realtime subscription's frames are batches of changes, so a
+  burst delivered during a slow re-authorization (a loaded server) lost whole frames: the rows in
+  them never reached `useTableChanges` (which saw a gap and went stale at best). The Supabase
+  socket was not affected. The realtime channel now asks for every frame, in order (`ordered:
+  true`, a new `createChannel` option): the hub delivers each publish and keeps up to 256 held
+  frames in order instead of the last one.
+- **`denext stack` no longer hangs on an unresponsive Docker engine.** The questions it asks
+  Docker (`docker compose ps` for `status`, `health` and the backup actions, `docker compose
+  config` and `docker volume inspect` before `up` writes a `.env`) waited forever on a wedged
+  engine. Each now has a 30 s deadline, after which the `docker` process and its children are
+  killed and the command stops naming Docker as unresponsive. The work you asked for (`up`,
+  `logs --follow`, a backup or restore) is not bounded.
+- **`denext test --ignore=…` no longer runs the tests under `.deno/`.** A `--ignore` on the
+  command line replaces `deno.json`'s `exclude` instead of adding to it, so the `.deno/` entry a
+  scaffold writes stopped applying and `deno test` ran the `_test.ts` files of the packages the
+  type check copies there. `denext test` now adds `.deno/` to a `--ignore` that doesn't name it.
+- **Deleting an absent key from the secure store on Windows exits cleanly.** The PasswordVault
+  script ended a `delete` of a key that wasn't stored with exit code 1 (the caught lookup failure
+  left PowerShell's last status false); it now exits 0, so a delete is idempotent at the process
+  level too.
+
+### Security
+
+- **`install.ps1` no longer accepts a Windows system file as `denext.exe`.** Authenticode's hash
+  leaves the embedded signature out, so any Windows binary, re-signed by anyone or not at all,
+  still matched its system catalog and was reported as "Authenticode signature verified". The
+  installer now refuses a signature that comes from a catalog rather than from the file itself; an
+  unsigned `denext.exe` is installed as before.
+- **The packaged app's launch file fails closed (runtime `3.0.0-denext.1`).** The desktop
+  package scripts' `laufey-launch.json` now always carries `bridgeOrigins` (the app origin plus
+  `desktop.app.bridgeOrigins`), carries `passkeyRpIds` (`desktop.capabilities.passkeys.rpIds`)
+  whenever passkeys are on, and, on denext's pinned runtime from `3.0.0-denext.1`
+  (`FIRST_STRICT_LAUNCH_RUNTIME`; not under `DENEXT_DESKTOP_RUNTIME=stock` or a local runtime
+  build), sets `"strictPolicy": true`: a policy the file leaves out then refuses instead of
+  allowing (no bridge pin gives the bridge to no document, no RP list refuses every passkey
+  ceremony). The RP list is enforced natively by the window's backend before the OS sees a
+  ceremony. Packaging warns when passkeys list no relying party. `writeLaufeyLaunchConfig` takes
+  `{ strict }` to override the gate.
+- **The Linux secure store is per app (runtime `3.0.0-denext.1`).** Items are keyed by the app id
+  too, so two apps using the same service and account no longer share a secret; an item an older
+  build stored under the shared attributes moves into the app's namespace on its first lookup
+  during the app's first run of the updated build, only when that app had run here before.
+- **`denext ui`'s `/config/next` panel no longer offers to translate a value that reads this
+  machine's paths.** A `next.config` value or rule built from `HOME`, `TMPDIR`, `USERPROFILE` and
+  the like was shown and translated with the evaluating machine's path in it; it is now held back
+  and listed for a hand port, as `denext migrate` does.
+- **signtool never gets a `.pfx` password on its command line.** `denext build --compile --sign`
+  and the desktop package scripts passed `DENEXT_WINDOWS_CERT_PASSWORD` to `signtool` as `/p`,
+  where a process listing or process auditing records it. A password-protected `.pfx` is now
+  imported into the user's certificate store (`CurrentUser\My`, its key not exportable) by
+  PowerShell reading the password from stdin, signed with by thumbprint, and removed again, key
+  included, when signing ends, fails or is interrupted; a certificate the store already held is
+  left in place. (`osslsigncode` already read it from a 0600 file.) `denext/desktop` exports the
+  types of the import's test seams (`SigntoolCertificateDeps`, `StoreCommandRunner`,
+  `StoreCommandRunnerSync`, `StoreCommandResult`).
+- **The installers verify a release's origin, not only its checksum.** `SHA256SUMS` comes from
+  the same release as the archive, so whoever can replace one can replace the other. Every
+  release archive now carries a build-provenance attestation (Sigstore, signed for
+  `publish.yml` on Brainwires/denext); with the GitHub CLI installed and signed in, `install.sh`
+  and `install.ps1` refuse an archive that fails `gh attestation verify --signer-workflow …`
+  (`DENEXT_REQUIRE_ATTESTATION=1` refuses an install that can't check it; `DENEXT_INSECURE=1`
+  installs a release from before attestations on its checksum). `install.ps1` also refuses a
+  `denext.exe` whose Authenticode signature is present but not valid.
+- **No cache directory in the working directory.** With neither `HOME` nor `USERPROFILE` set (or
+  a relative one), Deno's cache directory, the `command-cache` key and the Tailwind binary's
+  cache fell back to `.`, so a checked-out repository could ship a toolchain binary with a stamp
+  vouching for it, or the key that signs the verb listing. denext now uses only absolute per-user
+  directories (a relative `XDG_CACHE_HOME` / `LOCALAPPDATA` is ignored) and otherwise stops,
+  naming `DENO_DIR`. A relative `DENO_BIN` is resolved when read, not against a child's working
+  directory, and a relative `HOME` no longer makes `.deno/bin/deno` a project file.
+- **`denext patch` never follows a link out of the package.** A patch's targets were confined to
+  `node_modules/<pkg>` by name only, so a link inside the package (a file or a folder) carried a
+  write anywhere, and the package folder could resolve anywhere through `node_modules` links.
+  Each target is now resolved by real path and must stay inside the package's real directory (a
+  dangling link is refused), and the package itself must resolve inside the project or its
+  workspace root.
+- **A TUS `PATCH` that outlives its lease saves nothing.** A `PATCH` stalled past its five-minute
+  lease saved its progress over the newer `PATCH` that took the upload over, and its chunk object
+  (written under the same key as the newer one's) stayed in `.denext-tus`. Progress is now saved
+  only while the lease is still the request's; a request that lost it is refused (`409`) and
+  removes what it wrote, which now lives under keys of its own (its chunk and tail). The last
+  byte holds the lease through the completion.
+- **A store that ignores `Range` no longer makes a `206` carry the whole object.** The S3 driver
+  reports the range the store answered (its `Content-Range`), and the server slices a `200`
+  answer to the range it promised. An object overwritten between the `HEAD` and the `GET` (another
+  size or entity tag) is refused instead of served under the old headers.
+- **`denext migrate` no longer freezes this machine's paths into `denext.config.ts`.** The
+  `next.config` evaluator kept `HOME`, `TMPDIR`, `DENO_DIR` and the Windows profile variables for
+  Deno's own use, so a `redirects()` / `headers()` that interpolated one was inlined with the
+  migrating machine's value. The evaluated config now reads placeholders for them, and a rule or
+  field that carries one is left out with a note to port it by hand.
+- **Toolchain hardening:** `toolchain link` / `unlink` compare a link's target with the cache
+  root up to a separator (`…/denext-deno-other/…` is not denext's); the Windows `deno.cmd` shim
+  doubles a `%` in the toolchain's path so cmd can't expand it; and `build --compile` excludes env files,
+  databases and the other never-embedded files behind a link in an included directory, and a
+  linked file by its target's name too.
+
 ## [4.9.0] - 2026-10-27
 
 ### Breaking
@@ -18890,7 +19096,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.9.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.0...development
+[4.10.0]: https://jsr.io/@denext/denext@4.10.0
 [4.9.0]: https://jsr.io/@denext/denext@4.9.0
 [4.8.0]: https://jsr.io/@denext/denext@4.8.0
 [4.7.1]: https://jsr.io/@denext/denext@4.7.1

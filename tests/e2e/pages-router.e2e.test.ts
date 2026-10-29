@@ -17,6 +17,7 @@ import {
   collectConsoleErrors,
   launchBrowser,
   type RunningServer,
+  spawnOnBoundPort,
 } from "./harness.ts";
 import { fromFileUrl } from "@std/path";
 
@@ -41,18 +42,10 @@ async function buildAndServeViaCli(dir: string): Promise<RunningServer> {
       "denext build failed:\n" + new TextDecoder().decode(build.stderr),
     );
   }
-  // Grab a free port, then start the prod server on it.
-  const probe = Deno.listen({ port: 0 });
-  const port = (probe.addr as Deno.NetAddr).port;
-  probe.close();
-  const child = new Deno.Command(deno, {
-    args: ["run", "-A", CLI, "start", ".", "--port", String(port)],
-    cwd: dir,
-    stdout: "null",
-    stderr: "null",
-  }).spawn();
-  const origin = `http://localhost:${port}`;
-  for (let i = 0; i < 80; i++) {
+  // `--port 0`, then the port the server says it bound: nothing picked for it can be taken.
+  const server = await spawnOnBoundPort(["run", "-A", CLI, "start", ".", "--port", "0"], dir);
+  const origin = `http://localhost:${server.port}`;
+  for (let i = 0; i < 80 && !server.exited(); i++) {
     try {
       const r = await fetch(origin + "/_denext/health");
       await r.body?.cancel();
@@ -62,10 +55,7 @@ async function buildAndServeViaCli(dir: string): Promise<RunningServer> {
   }
   return {
     origin,
-    close: async () => {
-      child.kill();
-      await child.status;
-    },
+    close: server.close,
   };
 }
 

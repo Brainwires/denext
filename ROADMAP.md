@@ -5,59 +5,24 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.9.0**; 4.x patch and minor releases are cut from
+> The current release is denext **4.10.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 
 ## Deno toolchain
 
 - **Deno's next minor:** rebase denext's patches onto it and cut the next `3.0.0-rc.N`. That release
   replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
-- **Toolchain audit (4.8) low-severity follow-ups:**
-  - The Windows `toolchain link` shim writes `"<deno>" %*`: a `%` in the toolchain's path is
-    expanded by cmd. Double each `%` when writing it (and when reading it back).
-  - `toolchain link` / `unlink` on macOS and Linux take a link as denext's when its target merely
-    starts with the cache root's path (`…/denext-deno-other/…` counts). Compare up to a separator.
-  - `build --compile --sign` with signtool passes the `.pfx` password as `/p <password>` on the
-    command line, where an administrator's process listing can read it. Sign by thumbprint after
-    importing the `.pfx` into the user's store instead.
-  - With neither `HOME` nor `USERPROFILE` set, `DENO_DIR` falls back to the working directory, so a
-    checked-out repository could ship a toolchain binary and a stamp that vouches for it. Refuse,
-    or use a per-user directory under the system temp directory.
-  - The installers check the archive against `SHA256SUMS` from the same release: integrity, not
-    authenticity. Verify the release's build attestation (or a signature) too.
-  - A relative `DENO_BIN` resolves against the child's working directory (`build --compile` runs
-    in the project), unlike `DENEXT_DENO`, which is made absolute. Resolve it when read.
-  - The compile directory's `.npmrc` copy gets mode 0600 only when it is created; rewrite an older
-    copy's mode too.
-  - The never-embedded walk of `build --compile` does not follow symlinks, while `deno compile
-    --include` may embed what a symlinked directory holds: check what it embeds, and exclude
-    `.env` files and databases behind a link too.
 
 ## Supply chain (lifecycle-script jail)
 
 Low findings from the 4.8 supply-chain audit:
 
-- **`denext add` leaves an exception behind when `deno add` fails.** The exceptions go into
-  deno.json before `deno add` runs its scripts; put the file back when the add exits non-zero.
 - **Other `@denext` exemptions from the dependency-age hold go unnoticed.** `doctor` and `upgrade`
   look for the literal `"jsr:@denext/*"` denext once wrote; flag `"jsr:@denext/denext"` and other
   `@denext` entries too (denext never writes them).
-- **The user-level `~/.npmrc`.** The runtime reads `jail-scripts` / `paranoid` from it too;
-  `readJailSetting` reads only the project's `.npmrc` and the environment.
 - **From runtime `3.0.0-rc.6` a packages-only `jailScripts` object no longer asks for the jail.**
   `readJailSetting` still counts it as on, so next to `jail-scripts=false`
   denext writes exceptions and `doctor` flags missing ones for a jail that is off.
-- **Narrow existing exceptions on the move to rc.6.** A built-in entry already configured as
-  `net: true` stays so; `doctor` (or `upgrade`) could offer the host list and the `~` cache.
-- **npm (`package.json` `workspaces`) members** are not read for dependencies; only a deno.json
-  `workspace` is.
-- **An unknown package's network failure** is pointed at `net: true`; on rc.6 suggest listing
-  the hosts from the log instead.
-- **The runtime in use, not the pin.** The jail planning assumes the pinned runtime; under
-  `DENEXT_DENO=stock` or another binary it should read that runtime's version.
-- **`.npmrc` next to a generated build config.** `module-config.json` / `css-config.json` now
-  carry `supplyChain`; check whether a build child still finds the project's `.npmrc` (`paranoid`
-  set there) from a config in `.denext/`, without copying a file that may hold credentials.
 
 ## Deno Desktop
 
@@ -75,29 +40,28 @@ Low findings from the 4.8 supply-chain audit:
   forks.
 
 - **Desktop hardening leftovers from the 4.8 packaging audit (all Low):**
-  - `desktop.app.bridgeOrigins` takes `"*"` and `"<scheme>://*"` with no warning, and the desktop
-    page never mentions them: warn at config validation (each binding's own `bind(…, { origins })`
-    still has to list the origin) and document the two forms.
   - The `shell` capability's printed note names only `open` / `explorer` / `xdg-open`, while it
     also bakes `osascript`, `powershell.exe`, `rundll32.exe`, `gio` and `dbus-send` (the docs
     table lists them all). Make the note match.
   - The runtime's build provenance (`gh attestation verify`) is opt-in (`--attest-runtime`); the
     SHA-256 pin shipped in the denext package is the default trust root. Attest by default when
     `gh` is signed in, and say so when it is not.
-  - A cached runtime is checked by file size unless `--verify-runtime` is given; a same-size
-    change by another local process goes unnoticed until then. Re-hash in the background after
-    a launch, or on a schedule.
   - A sidecar's child under the Deno CLI (`spawnSelf` from an app run with `deno run`) gets the
     parent's unscoped `--allow-*` but not `desktop.denoFlags` or `--unstable-*` flags given on the
     command line.
   - A sidecar whose `run.exec` is one of the project's files bakes an unscoped `--allow-run` (its
     copy's path in the cache folder is only known at launch). Scope it once the runtime can take
     a launch-time path.
-- **Monorepo leftovers (Low):** a workspace member listed outside the root (`../x`, which Deno
-  refuses) is still read for its imports and named oddly in hints; skip it. The loader stand-in
-  for a glob member carries the workspace's imports but none of the root's other fields
-  (`nodeModulesDir`): cover a glob-member app whose npm packages live in the root's
-  `node_modules` with a test.
+- **Monorepo leftover (Low): a glob-member app's npm packages through the esbuild loader.** The
+  stand-in config a glob member builds on (`.deno.denext-loader-<pid>.json`) loses the app's
+  package.json dependencies: `@luca/esbuild-deno-loader` reads them only beside a config named
+  `deno.json`, so a bare `import ms from "ms"` fails with "not in import map", and it looks for
+  npm packages only in `<absWorkingDir>/node_modules`, never the workspace root's hoisted one.
+  Carrying the root's `nodeModulesDir` is not enough. Map the app's (and the root's) package.json
+  dependencies into the stand-in's imports and let esbuild's own resolution walk up to the root
+  `node_modules`; the failing case is a root `deno.json` `{ "workspace": ["./apps/*"],
+  "nodeModulesDir": "manual" }`, `ms` in the root's `node_modules`, `apps/web/package.json`
+  depending on it.
 
 ## Mobile and React Native
 
@@ -143,14 +107,6 @@ Low findings from the 4.8 supply-chain audit:
 
 Low findings of the 4.8 backend audit (realtime and storage):
 
-- **TUS: a PATCH that outlives its lease.** A PATCH stalled past the 5-minute lease still saves
-  its progress, unconditionally, over a newer PATCH's (`saveResumable` does not check the lease).
-  The completion's size check fails such an upload closed, but its orphaned chunk objects stay in
-  `.denext-tus`. Save only while holding the lease, and refuse a PATCH that lost it.
-- **Ranged reads from a store that ignores `Range`.** `serve` answers `206` with the requested
-  range even when the S3-compatible store answered `200` with the whole object; use the range the
-  driver reports (and fall back to a `200`). The object's size is also read by a `HEAD` before
-  the `GET`, so a concurrent overwrite can change it in between.
 - **Realtime: a frame in the Live hub's flush window at a drop.** A frame published just before a
   subscriber's connection dropped is fanned out on the hub's next flush, so a reconnect
   re-authorized within those milliseconds under other claims can still receive it (same user).
@@ -182,17 +138,6 @@ print confinement, `baseUrl` credentials, the bridge's origin guard, PKCE on mob
   option (ThisDeviceOnly for tokens) is new API and changing the default changes documented
   behaviour, so it needs a decision.
 
-## Migrators and auth providers (audit 4.8, low findings)
-
-- **`migrate` freezes the migrating machine's paths into inlined rules.** The next.config
-  evaluator keeps `HOME`, `TMPDIR`, `DENO_DIR` and the Windows profile variables; a
-  `redirects()` / `headers()` that interpolates one of them is written into `denext.config.ts`
-  with that machine's value. Pass placeholders for them, or flag such a rule for review.
-- **`denext patch` follows links inside `node_modules`.** A patch's targets are confined
-  lexically to the package folder, and the package folder is resolved through pnpm's links (which
-  may lead to a workspace package outside the app). Confine the resolved targets to the project
-  or workspace root, by real path.
-
 ## Build toolchain: waiting on `deno bundle`
 
 esbuild's plugin API (vendored, running the toolchain's esbuild binary — no longer `npm:esbuild`)
@@ -222,17 +167,5 @@ From the 4.8 client-runtime and Server Actions audit; the High and Medium findin
   reaches the client as a plain `Error("notFound")` (src/client/action-dispatch.ts), so the error
   boundary renders, not `not-found.tsx`; the client has no not-found boundary for an event-path
   signal yet. Add one, then re-raise the reply's `signal` as the branded error.
-- **A held form-action submit** (one that beat the on-demand form-action chunk) builds its
-  `FormData` and starts `useFormStatus`'s pending flag when the chunk arrives, not at the submit;
-  `form.requestSubmit(button)` with no click does not run that button's function `formAction`; and
-  `useFormStatus` under a form with no function `action` of its own (only a button's
-  `formAction`) has no pending signal (src/client/form-action.ts, begin-work.ts `beginElement`).
-- **The route-pattern href and blur-placeholder gates** (`__DENEXT_HREF_PARAMS__`,
-  `__DENEXT_IMAGE_BLUR__`) still fail quietly when only a library uses the feature: a pattern href
-  navigates to the literal `/blog/[slug]`, a placeholder stays painted. Report them as the
-  form-action and hook-boundary gates do (errors 6 and 7).
 - **The Fragment-ref runtime chunk**, once it fails to load, leaves a no-op for the page's life
   (src/client/fiber/fragment-ref-support.ts); retry it on the next Fragment ref.
-- **Live handshakes waiting on `live.authorize`** are not counted against
-  `live.limits.maxConnectionsPerIp` until they attach (re-checked after `authorize`, so no excess
-  socket opens, but a slow hook can hold many pending handshakes). Count them while pending.

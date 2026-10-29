@@ -193,8 +193,6 @@ Deno.test({
 
 Deno.test({
   name: "requestTimeout cooperatively aborts the render (component never runs)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   setCacheStore(inMemoryCacheStore());
   let componentRan = false;

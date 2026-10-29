@@ -137,6 +137,44 @@ Deno.test("jail workspace: a member's dependencies are configured in the root de
   }
 });
 
+Deno.test("jail workspace: an npm workspace's members (package.json workspaces) are read too", async () => {
+  const root = await project({
+    "deno.json": "{}\n",
+    "package.json": { private: true, workspaces: ["apps/web", "packages/*"] },
+    "apps/web/package.json": { dependencies: { keytar: "7" } },
+    "packages/ui/package.json": {
+      dependencies: { msw: "2" },
+      msw: { workerDirectory: ["public"] },
+    },
+    // Not a member: never read.
+    "tools/x/package.json": { dependencies: { sharp: "0.34" } },
+  });
+  try {
+    // From the root, and from a member (the root's deno.json is the one written).
+    const r = await applyJailExceptions(root, { version: RC5, env: NO_ENV });
+    assertEquals(r.action, "written");
+    assertEquals(Object.keys(await packagesIn(root)).sort(), ["keytar", "msw"]);
+    assertEquals((await packagesIn(root)).msw, { write: ["packages/ui/public"] });
+    await Deno.writeTextFile(join(root, "deno.json"), "{}\n");
+    const fromMember = await applyJailExceptions(join(root, "apps/web"), {
+      version: RC5,
+      env: NO_ENV,
+    });
+    assertEquals(fromMember.configPath, join(root, "deno.json"));
+    assertEquals(Object.keys(await packagesIn(root)).sort(), ["keytar", "msw"]);
+    // Yarn's object form.
+    await Deno.writeTextFile(
+      join(root, "package.json"),
+      JSON.stringify({ workspaces: { packages: ["apps/*"] } }),
+    );
+    await Deno.writeTextFile(join(root, "deno.json"), "{}\n");
+    await applyJailExceptions(root, { version: RC5, env: NO_ENV });
+    assertEquals(Object.keys(await packagesIn(root)), ["keytar"]);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("jail workspace: doctor says a member's own supplyChain is ignored", async () => {
   const { jailScriptsCheck } = await import("../src/cli/commands/doctor.ts");
   const root = await project({

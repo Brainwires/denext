@@ -173,8 +173,6 @@ Deno.test("tanstack-start import protection: behavior resolves per command, as S
 
 Deno.test({
   name: 'tanstack-start import protection: a dev "mock" ships Start\'s mocks and warns',
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await app();
   try {
@@ -206,8 +204,6 @@ Deno.test({
 
 Deno.test({
   name: 'tanstack-start import protection: log "always" warns on every dev build',
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await app();
   try {
@@ -239,8 +235,6 @@ Deno.test({
 Deno.test({
   name:
     "tanstack-start import protection: a dev violation mocks with behavior unset (Start's default)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await app();
   try {
@@ -262,8 +256,6 @@ for (
     name: `tanstack-start import protection: a build's ${
       JSON.stringify(behavior)
     } ships Start's build mocks and warns`,
-    sanitizeOps: false,
-    sanitizeResources: false,
   }, async () => {
     const dir = await app();
     try {

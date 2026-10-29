@@ -3,8 +3,9 @@
 // prints — the publishable key always, the secret key and passwords only with --show-secrets.
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
-import { fillEnv, runStack, stackStatus } from "../src/cli/commands/stack.ts";
+import { dockerProbe, fillEnv, runStack, stackStatus } from "../src/cli/commands/stack.ts";
 import { parsePs, type StackIo } from "../src/cli/commands/stack-io.ts";
+import { inChild } from "./helpers/isolated.ts";
 
 const PS = JSON.stringify([
   {
@@ -247,6 +248,115 @@ catch (error) { console.log(error.message); }`;
     const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
     assertStringIncludes(text, "docker is not on PATH");
   } finally {
+    await Deno.remove(empty, { recursive: true });
+  }
+});
+
+Deno.test("dockerProbe: questions to Docker are probes; the work a person asked for is not", () => {
+  const compose = ["compose", "-f", "docker-compose.yml", "-f", "compose.dev.yml"];
+  for (
+    const args of [
+      [...compose, "ps", "--all", "--format", "json"],
+      [...compose, "config", "--no-interpolate", "--format", "json"],
+      ["compose", "version"],
+      ["info", "--format", "{{.OSType}}"],
+      ["version"],
+      ["volume", "inspect", "app_db-data"],
+    ]
+  ) assert(dockerProbe(args), args.join(" "));
+  for (
+    const args of [
+      [...compose, "up", "-d", "--wait"],
+      [...compose, "logs", "--follow"],
+      [...compose, "down", "-v"],
+      [...compose, "cp", "db:/tmp/x", "/tmp/x"],
+      [...compose, "stop", "web"],
+      [...compose, "exec", "-T", "db", "pg_dump"],
+      ["volume", "rm", "app_db-data"],
+      [],
+    ]
+  ) assert(!dockerProbe(args), args.join(" "));
+});
+
+Deno.test({
+  name:
+    "dockerCli: a hung Docker fails a probe at its deadline, its tree killed; `up` is not bounded",
+  ignore: Deno.build.os === "windows", // the fake `docker` is a shell script
+}, async () => {
+  const bin = await Deno.makeTempDir({ prefix: "dnx-hung-docker-" });
+  try {
+    const pidFile = `${bin}/child.pid`;
+    // `up` finishes after a second; anything else hangs, its pipes held by a child of its own.
+    await Deno.writeTextFile(
+      `${bin}/docker`,
+      `#!/bin/sh\ncase " $* " in *" up "*) sleep 1; exit 0;; esac\n` +
+        `sleep 600 &\necho $! > "${pidFile}"\nwait\n`,
+    );
+    await Deno.chmod(`${bin}/docker`, 0o755);
+    // In a child (its PATH is the fake's), whose coverage joins the run's under the coverage tasks.
+    const { value } = await inChild<{ probe: string; probeMs: number; up: number }>({
+      imports: `import { dockerCli } from "@repo/src/cli/commands/stack.ts";`,
+      body: `const t = Date.now();
+let probe = "answered";
+try { await dockerCli(["compose", "-f", "docker-compose.yml", "ps", "--format", "json"], ".", true, 500); }
+catch (error) { probe = error.message; }
+const probeMs = Date.now() - t;
+const up = await dockerCli(["compose", "-f", "docker-compose.yml", "up", "-d"], ".", true, 200);
+return { probe, probeMs, up: up.code };`,
+      env: { PATH: `${bin}:/usr/bin:/bin` },
+      timeoutMs: 120_000,
+    });
+    assertStringIncludes(
+      value.probe,
+      "Docker did not answer `docker compose -f docker-compose.yml ps",
+    );
+    assertStringIncludes(value.probe, "the Docker engine looks unresponsive");
+    assert(value.probeMs < 60_000, `the probe took ${value.probeMs} ms`);
+    assertEquals(value.up, 0, "a long `up` ran to its end past the probe deadline");
+    // The hung docker's own child (holding its pipes) was killed with it.
+    const child = Number((await Deno.readTextFile(pidFile)).trim());
+    let alive = true;
+    for (let i = 0; i < 100 && alive; i++) {
+      const ps = await new Deno.Command("ps", { args: ["-p", String(child)], stdout: "null" })
+        .output();
+      alive = ps.success;
+      if (alive) await new Promise((r) => setTimeout(r, 50));
+    }
+    assert(!alive, `the hung docker's child ${child} is still running`);
+  } finally {
+    await Deno.remove(bin, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "dockerCli: a probe Docker answers returns its output; with no docker it says so",
+  ignore: Deno.build.os === "windows", // the fake `docker` is a shell script
+}, async () => {
+  const bin = await Deno.makeTempDir({ prefix: "dnx-answering-docker-" });
+  const empty = await Deno.makeTempDir({ prefix: "dnx-no-docker-probe-" });
+  try {
+    await Deno.writeTextFile(
+      `${bin}/docker`,
+      `#!/bin/sh\nprintf '{"ServerVersion":"27.0.0"}'\nprintf 'warned' >&2\nexit 4\n`,
+    );
+    await Deno.chmod(`${bin}/docker`, 0o755);
+    const imports = `import { dockerCli } from "@repo/src/cli/commands/stack.ts";`;
+    const { value: answered } = await inChild<{ code: number; stdout: string; stderr: string }>({
+      imports,
+      body: `return await dockerCli(["info", "--format", "{{json .}}"], ".", true);`,
+      env: { PATH: `${bin}:/usr/bin:/bin` },
+    });
+    assertEquals(answered, { code: 4, stdout: '{"ServerVersion":"27.0.0"}', stderr: "warned" });
+    // A probe spawns rather than calling output(); a missing binary still gets the install hint.
+    const { value: missing } = await inChild<string>({
+      imports,
+      body: `try { await dockerCli(["version"], ".", true); return "ran"; }
+catch (error) { return error.message; }`,
+      env: { PATH: empty },
+    });
+    assertStringIncludes(missing, "docker is not on PATH");
+  } finally {
+    await Deno.remove(bin, { recursive: true });
     await Deno.remove(empty, { recursive: true });
   }
 });

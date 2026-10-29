@@ -12,18 +12,11 @@ import { build } from "../../src/build/build.ts";
 import { stopNextCompat } from "../../src/build/next-compat.ts";
 import { startProdServer } from "../../src/build/prod-server.ts";
 import { writeNextAuthPasskeyFixture } from "../helpers/next-auth-passkey-fixture.ts";
+import { onFreePort } from "../helpers/port.ts";
 import { assertNoConsoleErrors, collectConsoleErrors, launchBrowser, pollFor } from "./harness.ts";
 
 /** The text of `#id`, as a page expression. */
 const text = (id: string) => `document.getElementById(${JSON.stringify(id)})?.textContent`;
-
-/** A free loopback port (WebAuthn needs `localhost`, and the relying party its exact origin). */
-function freePort(): number {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const { port } = listener.addr as Deno.NetAddr;
-  listener.close();
-  return port;
-}
 
 Deno.test({
   name: "e2e: next-auth's Passkey provider registers and signs in on denext's passkeys",
@@ -32,24 +25,29 @@ Deno.test({
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nextauth_passkey_e2e_" });
   await writeNextAuthPasskeyFixture(dir);
-  const port = freePort();
-  const origin = `http://localhost:${port}`;
-  // The relying party is AUTH_URL's origin: denext never takes it from the Host header.
   const previous = Deno.env.get("AUTH_URL");
-  Deno.env.set("AUTH_URL", `${origin}/api/auth`);
   const controller = new AbortController();
   const browser = await launchBrowser();
   try {
-    await build(dir);
-    const listening = Promise.withResolvers<void>();
-    const server = await startProdServer({
-      projectDir: dir,
-      port,
-      hostname: "127.0.0.1",
-      signal: controller.signal,
-      onListen: () => listening.resolve(),
+    // The relying party is AUTH_URL's origin (WebAuthn needs `localhost` and the exact port), and
+    // denext never takes it from the Host header: the port is known before the server starts, so
+    // it is picked, and a start that loses the port to another process runs again on a fresh one.
+    let origin = "";
+    const server = await onFreePort(async (port) => {
+      origin = `http://localhost:${port}`;
+      Deno.env.set("AUTH_URL", `${origin}/api/auth`);
+      await build(dir);
+      const listening = Promise.withResolvers<void>();
+      const started = await startProdServer({
+        projectDir: dir,
+        port,
+        hostname: "127.0.0.1",
+        signal: controller.signal,
+        onListen: () => listening.resolve(),
+      });
+      await listening.promise;
+      return started;
     });
-    await listening.promise;
     try {
       const page = await browser.newPage();
       const errors = collectConsoleErrors(page);

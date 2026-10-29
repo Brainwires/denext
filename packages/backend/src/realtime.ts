@@ -2205,6 +2205,10 @@ export function createRealtimeChannel(): {
       return current ? current.authorize(key, subscriberAddress() ?? ctx.peerId) : false;
     },
     authTtlSeconds: 60,
+    // Each frame is a batch of changes, numbered: the hub must deliver every one, in order, not
+    // the latest in its coalescing window or while a re-authorization holds the subscriber's
+    // frames (that dropped whole frames on a loaded machine).
+    ordered: true,
     onActive: (key) => {
       const current: RealtimeEngine | undefined = engine();
       if (current) current.activate(key);

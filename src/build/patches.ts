@@ -367,13 +367,108 @@ function npmPatchTarget(projectDir: string, entry: PatchEntry, newPath: string):
   return containedPath(root, relative(root, join(projectDir, newPath)), entry.name);
 }
 
+/** Whether `path` is `root` or below it (both real paths). */
+function isWithin(root: string, path: string): boolean {
+  const inside = relative(root, path);
+  return inside === "" || (!inside.startsWith("..") && !isAbsolute(inside));
+}
+
+/** Whether `dir` declares a workspace (deno.json `workspace`, npm `workspaces`, pnpm's file). */
+async function declaresWorkspace(dir: string): Promise<boolean> {
+  if (await exists(join(dir, "pnpm-workspace.yaml"))) return true;
+  for (
+    const [file, key] of [["deno.json", "workspace"], ["deno.jsonc", "workspace"], [
+      "package.json",
+      "workspaces",
+    ]] as const
+  ) {
+    const text = await readMaybe(join(dir, file));
+    // A key test, not a parse: deno.jsonc may hold comments, and a false positive only widens
+    // the root to a directory that declares itself one.
+    if (text !== null && new RegExp(`"${key}"\\s*:`).test(text)) return true;
+  }
+  return false;
+}
+
+/**
+ * The real directories a patched package may live in: the project's, and the workspace root's
+ * when the project is a member of one (pnpm links a workspace package from there).
+ */
+async function patchRoots(projectDir: string): Promise<string[]> {
+  const project = await Deno.realPath(projectDir);
+  const roots = [project];
+  for (let dir = dirname(project); dir !== dirname(dir); dir = dirname(dir)) {
+    if (await declaresWorkspace(dir)) {
+      roots.push(dir);
+      break;
+    }
+  }
+  return roots;
+}
+
+/**
+ * The real path a patch writes for `target` (a path inside `node_modules/<pkg>`), once every link
+ * on the way is resolved, refused unless it stays inside the package's real directory `pkgReal`:
+ * a link inside the package (a file, or a folder) must never carry a write to `~/.bashrc`. A
+ * dangling link is refused too (writing it would create its target, wherever that is).
+ */
+async function confinedRealTarget(pkgReal: string, target: string, what: string): Promise<string> {
+  const rest: string[] = [];
+  let probe = target;
+  let real = await realIfPresent(probe, what);
+  while (real === undefined) {
+    const parent = dirname(probe);
+    if (parent === probe) throw new Error(`denext patch: ${what}: ${target} does not exist`);
+    rest.unshift(probe.slice(parent.length).replace(/^[\\/]+/, ""));
+    probe = parent;
+    real = await realIfPresent(probe, what);
+  }
+  const resolved = rest.length ? join(real, ...rest) : real;
+  if (!isWithin(pkgReal, resolved) || resolved === pkgReal) {
+    throw new Error(
+      `denext patch: ${what} names ${JSON.stringify(target)}, which a link resolves to ` +
+        `${resolved}, outside the package (${pkgReal})`,
+    );
+  }
+  return resolved;
+}
+
+/** `path`'s real path, `undefined` when nothing is there; a dangling link is refused. */
+async function realIfPresent(path: string, what: string): Promise<string | undefined> {
+  try {
+    return await Deno.realPath(path);
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  if (await Deno.lstat(path).then(() => true, () => false)) {
+    throw new Error(`denext patch: ${what} reaches a dangling link (${path}); not following it`);
+  }
+  return undefined;
+}
+
+/**
+ * The installed package's real directory, refused when it resolves outside the project and its
+ * workspace (a `node_modules` link to anywhere else on the machine).
+ */
+async function confinedPackageDir(projectDir: string, entry: PatchEntry): Promise<string> {
+  const installed = await npmPackageDir(projectDir, entry.name);
+  const roots = await patchRoots(projectDir);
+  if (!roots.some((root) => isWithin(root, installed))) {
+    throw new Error(
+      `denext patch: node_modules/${entry.name} resolves to ${installed}, outside the project ` +
+        `and its workspace (${roots.join(", ")}); not patching it`,
+    );
+  }
+  return installed;
+}
+
 export async function applyNpmPatch(
   projectDir: string,
   entry: PatchEntry,
   opts: PatchOptions = {},
 ): Promise<ApplyOutcome> {
   const log = opts.log ?? console.warn;
-  const installed = await npmPackageDir(projectDir, entry.name);
+  const installed = await confinedPackageDir(projectDir, entry);
   const version = await packageVersion(installed);
   if (version !== entry.version) {
     log(
@@ -382,7 +477,8 @@ export async function applyNpmPatch(
   }
   let outcome: ApplyOutcome = "already-applied";
   for (const diff of await readPatch(entry)) {
-    const path = npmPatchTarget(projectDir, entry, diff.newPath);
+    const lexical = npmPatchTarget(projectDir, entry, diff.newPath);
+    const path = await confinedRealTarget(installed, lexical, entry.name);
     if (diff.deleted) {
       if (await removeIfPresent(path)) outcome = "applied";
       continue;
@@ -399,8 +495,13 @@ export async function applyNpmPatch(
 /** Undo an npm patch in `node_modules` (best effort: a file the reverse doesn't fit is left). */
 export async function revertNpmPatch(projectDir: string, entry: PatchEntry): Promise<string[]> {
   const left: string[] = [];
+  const installed = await confinedPackageDir(projectDir, entry);
   for (const diff of await readPatch(entry)) {
-    const path = npmPatchTarget(projectDir, entry, diff.newPath);
+    const path = await confinedRealTarget(
+      installed,
+      npmPatchTarget(projectDir, entry, diff.newPath),
+      entry.name,
+    );
     const reverse = reverseFileDiff(diff);
     if (reverse.deleted) { // the patch CREATED this file: undoing it removes it
       await removeIfPresent(path);

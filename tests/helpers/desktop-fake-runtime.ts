@@ -40,6 +40,14 @@ export interface FakeRuntime {
   emit(cap: string, event: string, data: unknown): void;
   /** How many event streams are open. */
   openStreams(): number;
+  /**
+   * Resolve once the page has caught up: every RPC answered and its body read, every emitted
+   * frame read off the open streams, and that holding across a few timer turns (the microtasks a
+   * read starts run first, and a follow-up call they make counts again). For a test asserting
+   * that something did NOT happen: it waits for the page to finish, not for a guessed delay.
+   * Throws after `ms`.
+   */
+  settled(ms?: number): Promise<void>;
   /** Close every open event stream from the runtime side (a dropped connection). */
   dropStreams(): void;
   /** Install `__denext` + `fetch`; returns the restore function. */
@@ -70,6 +78,7 @@ export function createFakeDesktopRuntime(
   const streams = new Set<ReadableStreamDefaultController<Uint8Array>>();
   const enc = new TextEncoder();
   let nextId = 1;
+  let inFlight = 0;
 
   const frameOf = (id: number, payload: unknown) =>
     `id: ${id}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -104,6 +113,36 @@ export function createFakeDesktopRuntime(
     }
   }
 
+  /**
+   * `res` with a body that marks its RPC finished once read to the end (or cancelled): the bytes
+   * go out on the first pull, and the next pull, which a reader makes only after taking them,
+   * closes the stream.
+   */
+  function tracked(res: Response): Promise<Response> {
+    inFlight++;
+    let done = false;
+    const finish = () => {
+      if (!done) inFlight--;
+      done = true;
+    };
+    return res.arrayBuffer().then((bytes) => {
+      let sent = false;
+      const body = new ReadableStream<Uint8Array>({
+        pull(c) {
+          if (sent) {
+            c.close();
+            finish();
+            return;
+          }
+          sent = true;
+          c.enqueue(new Uint8Array(bytes));
+        },
+        cancel: finish,
+      });
+      return new Response(body, { status: res.status, headers: res.headers });
+    });
+  }
+
   async function rpc(req: Request): Promise<Response> {
     const refused = rpcGate(req);
     if (refused) return refused;
@@ -120,7 +159,12 @@ export function createFakeDesktopRuntime(
     const { cap, method, impl } = methodOf(body);
     if (!impl) return fail(404, "unavailable", `${cap}.${method} is not enabled`);
     calls.push({ cap, method, args: body.args });
-    return await invoke(impl, body.args);
+    inFlight++; // until the answer is read (the tracked body below takes over)
+    try {
+      return await tracked(await invoke(impl, body.args));
+    } finally {
+      inFlight--;
+    }
   }
 
   function events(req: Request): Response {
@@ -174,6 +218,16 @@ export function createFakeDesktopRuntime(
       for (const c of streams) c.enqueue(enc.encode(frame));
     },
     openStreams: () => streams.size,
+    async settled(ms = 2000) {
+      const end = Date.now() + ms;
+      const caughtUp = () =>
+        inFlight === 0 && [...streams].every((c) => c.desiredSize === null || c.desiredSize > 0);
+      for (let quiet = 0; quiet < 3;) {
+        if (Date.now() > end) throw new Error("settled: the page never caught up");
+        await new Promise((r) => setTimeout(r, 0));
+        quiet = caughtUp() ? quiet + 1 : 0;
+      }
+    },
     dropStreams() {
       for (const c of streams) {
         try {

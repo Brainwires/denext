@@ -33,8 +33,9 @@ import { peVersionWords, stampPeResources } from "./pe-resources.ts";
 import {
   DEFAULT_TIMESTAMP_URL,
   signtoolArgs,
+  type SigntoolCertificateDeps,
   windowsCertificate,
-  windowsCertificateSecrets,
+  withSigntoolCertificate,
 } from "./code-signing.ts";
 import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
 
@@ -784,6 +785,8 @@ export interface DesktopSignWindowsDeps {
   readonly env?: (name: string) => string | undefined;
   /** Prints a warning (default `console.warn`). */
   readonly warn?: (message: string) => void;
+  /** The certificate-store import a password-protected `.pfx` goes through. */
+  readonly store?: SigntoolCertificateDeps;
 }
 
 /**
@@ -793,7 +796,8 @@ export interface DesktopSignWindowsDeps {
  * Without a certificate nothing is signed and a warning says so. With one but without `signtool`
  * (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the
  * script's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as
- * `/p`, is redacted from a failure message.
+ * `/p`, never reaches its command line: a password-protected `.pfx` is imported into the user's
+ * certificate store for the run and signed with by thumbprint ({@linkcode withSigntoolCertificate}).
  *
  * @param files The files to sign (a bundle's PE files from {@linkcode desktopPeFiles}, or an .msi).
  * @param deps The command runner, tool probe, environment and warning sink.
@@ -824,10 +828,10 @@ export async function desktopSignWindows(
   }
   const timestamp = env("DENEXT_SIGN_TIMESTAMP_URL") ?? DEFAULT_TIMESTAMP_URL;
   const run = deps.run ?? desktopRun;
-  for (let i = 0; i < files.length; i += SIGN_BATCH) {
-    await run(signtoolArgs(files.slice(i, i + SIGN_BATCH), cert, timestamp), undefined, {
-      secrets: windowsCertificateSecrets(cert),
-    });
-  }
+  await withSigntoolCertificate(cert, async (signer) => {
+    for (let i = 0; i < files.length; i += SIGN_BATCH) {
+      await run(signtoolArgs(files.slice(i, i + SIGN_BATCH), signer, timestamp));
+    }
+  }, deps.store);
   return true;
 }

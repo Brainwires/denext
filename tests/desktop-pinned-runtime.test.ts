@@ -24,6 +24,8 @@ import {
   renameRetrying,
   resolveDesktopRuntimeEnv,
   RUNTIME_MARKER,
+  RUNTIME_VERIFIED_AT,
+  runtimeRehashDue,
   verifiedRuntime,
 } from "../src/build/desktop-runtime.ts";
 import {
@@ -344,6 +346,34 @@ Deno.test("ensureDesktopRuntime re-downloads a damaged cache (cheap size check, 
     await Deno.writeTextFile(join(rt.dir, RUNTIME_MARKER), JSON.stringify(marker));
     assertEquals((await ensure(f)).cached, false);
     assertEquals(f.hits(), 4);
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test("ensureDesktopRuntime re-hashes a cached runtime once a week without --verify", async () => {
+  const f = await fixture(await fixtureArchive());
+  try {
+    const day = 24 * 60 * 60 * 1000;
+    const t0 = Date.UTC(2026, 9, 1);
+    const rt = await ensure(f, { now: () => t0 });
+    assertEquals(await runtimeRehashDue(rt.dir, t0 + day), false);
+    // Same size, different bytes: within the week the size check is all that runs…
+    await Deno.writeTextFile(rt.runtimeLib, "RUNTIME");
+    assertEquals((await ensure(f, { now: () => t0 + day })).cached, true);
+    // …and past it the scheduled re-hash catches the change and re-downloads.
+    assert(await runtimeRehashDue(rt.dir, t0 + 8 * day));
+    const fixed = await ensure(f, { now: () => t0 + 8 * day });
+    assertEquals(fixed.cached, false);
+    assertEquals(await Deno.readTextFile(rt.runtimeLib), "runtime");
+    // A clean scheduled re-hash restarts the clock; a missing or garbled record is due at once.
+    assertEquals((await ensure(f, { now: () => t0 + 16 * day })).cached, true);
+    assertEquals(await runtimeRehashDue(rt.dir, t0 + 17 * day), false);
+    await Deno.writeTextFile(join(rt.dir, RUNTIME_VERIFIED_AT), "soon");
+    assert(await runtimeRehashDue(rt.dir, t0 + 17 * day));
+    await Deno.remove(join(rt.dir, RUNTIME_VERIFIED_AT));
+    assert(await runtimeRehashDue(rt.dir, t0 + 17 * day));
+    assertEquals(f.hits(), 2);
   } finally {
     await f.close();
   }
@@ -1110,6 +1140,28 @@ Deno.test("denoCacheDir / desktopRuntimeTarget follow Deno's own defaults", () =
   assertEquals(desktopRuntimeTarget("windows", "x86_64"), "x86_64-pc-windows-msvc");
 });
 
+Deno.test("denoCacheDir: never the working directory — no home, or a relative one, is refused", () => {
+  for (const os of ["linux", "darwin", "windows"]) {
+    const envs: Record<string, string>[] = [{}, { HOME: "." }, { HOME: "repo", USERPROFILE: "" }];
+    for (const env of envs) {
+      assertThrows(() => denoCacheDir(envOf(env), os), Error, "set DENO_DIR");
+    }
+  }
+  // A relative XDG_CACHE_HOME / LOCALAPPDATA is ignored (the XDG spec says so), not used.
+  assertEquals(
+    denoCacheDir(envOf({ HOME: "/h", XDG_CACHE_HOME: "cache" }), "linux"),
+    join("/h", ".cache", "deno"),
+  );
+  assertThrows(() => denoCacheDir(envOf({ XDG_CACHE_HOME: "cache" }), "linux"));
+  assertThrows(() => denoCacheDir(envOf({ LOCALAPPDATA: "AppData" }), "windows"));
+  // USERPROFILE is the fallback for a missing HOME; an explicit DENO_DIR always wins.
+  assertEquals(
+    denoCacheDir(envOf({ USERPROFILE: "/u" }), "linux"),
+    join("/u", ".cache", "deno"),
+  );
+  assertEquals(denoCacheDir(envOf({ DENO_DIR: "/d" }), "windows"), "/d");
+});
+
 // ---------------------------------------------------------------------------------------------
 // `denext doctor`.
 
@@ -1552,6 +1604,22 @@ Deno.test("pin generator: a 3.0.0-rc.3+ release must record the CLI's identity m
   );
   const old = ownVersionRelease("3.0.0-rc.2");
   assertEquals(toolchainPinFromRelease(old.tag, old.manifest, old.sums)!.version, "3.0.0-rc.2");
+});
+
+Deno.test("pin generator: a 3.0.0-denext.N release pins, built from the manifest's Deno", () => {
+  // After 3.0.0-rc.6 the fork releases 3.0.0-denext.N: its own version, not the old
+  // `<stock>-denext.N` scheme, so it goes with any stock `deno` and must carry the marker.
+  const r = ownVersionRelease("3.0.0-denext.1");
+  const runtime = pinFromRelease(r.tag, r.manifest, r.sums);
+  assertEquals([runtime.version, runtime.deno], ["3.0.0-denext.1", "2.9.7"]);
+  assertThrows(() => toolchainPinFromRelease(r.tag, r.manifest, r.sums), Error, "cli.identity");
+  r.manifest.cli.identity = {
+    buildDenext: "3.0.0-denext.1",
+    versionLine: denextVersionLine("3.0.0-denext.1"),
+  };
+  const toolchain = toolchainPinFromRelease(r.tag, r.manifest, r.sums)!;
+  assertEquals([toolchain.version, toolchain.deno], ["3.0.0-denext.1", "2.9.7"]);
+  assert(compareDenoVersions(runtime.version, "3.0.0-rc.6") > 0);
 });
 
 Deno.test("toolchainPinFromRelease refuses any inconsistency", () => {

@@ -523,9 +523,16 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
   const peerId = crypto.randomUUID();
   // Connection-level authorization: run the app's `authorize` hook (if any) under the
   // viewer's own session before consuming the request for the upgrade.
-  if (!(await connectionAuthorized({ origin, url: "", cookie, peerId }, { ip, limitIp }))) {
-    return new Response("forbidden", { status: 403 });
+  // A handshake waiting on the hook holds its slot (total and per address), so a slow hook can't
+  // let one address pile up pending handshakes past the caps.
+  const release = reserveConnection(limitIp);
+  let authorized: boolean;
+  try {
+    authorized = await connectionAuthorized({ origin, url: "", cookie, peerId }, { ip, limitIp });
+  } finally {
+    release();
   }
+  if (!authorized) return new Response("forbidden", { status: 403 });
   // Re-check the caps after the (async) authorization: concurrent handshakes all passed the
   // first check while none had attached yet.
   const stillFull = connectionsFull(limitIp);
@@ -545,7 +552,7 @@ export async function handleLiveUpgrade(request: Request): Promise<Response> {
  * when there is room. A connection with no address to limit on counts only against the total.
  */
 function connectionsFull(limitIp: string | undefined): Response | null {
-  if (connections.size >= limits.maxConnections) {
+  if (connections.size + pendingHandshakes >= limits.maxConnections) {
     return new Response("too many connections", { status: 503 });
   }
   if (limitIp === undefined) return null;
@@ -553,6 +560,29 @@ function connectionsFull(limitIp: string | undefined): Response | null {
   if ((connectionsPerIp.get(bucket) ?? 0) < limits.maxConnectionsPerIp) return null;
   warnPerIpRefusalOnce(bucket);
   return new Response("too many connections from this address", { status: 429 });
+}
+
+/** Handshakes holding a slot while the connection `authorize` hook runs. */
+let pendingHandshakes = 0;
+
+/**
+ * Count a handshake against the caps (the total and its address's) while it waits on the
+ * connection `authorize` hook; the returned function releases the slot (once).
+ */
+function reserveConnection(limitIp: string | undefined): () => void {
+  pendingHandshakes++;
+  const bucket = limitIp === undefined ? undefined : ipBucket(limitIp);
+  if (bucket !== undefined) connectionsPerIp.set(bucket, (connectionsPerIp.get(bucket) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    pendingHandshakes--;
+    if (bucket === undefined) return;
+    const left = (connectionsPerIp.get(bucket) ?? 1) - 1;
+    if (left > 0) connectionsPerIp.set(bucket, left);
+    else connectionsPerIp.delete(bucket);
+  };
 }
 
 /** Whether the proxy-peer / per-address refusal warnings have been logged (once per process). */

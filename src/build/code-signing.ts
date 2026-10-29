@@ -206,20 +206,29 @@ export function windowsCertificateSecrets(cert: WindowsCertificate): string[] {
 
 /**
  * The `signtool sign` argv for `files`: SHA-256 digests, an RFC-3161 timestamp, the certificate
- * (`/f <pfx>` [+ `/p <password>`], or `/sha1 <thumbprint>` from the store).
+ * (`/f <pfx>`, or `/sha1 <thumbprint>` from the user's store). A password never goes on the
+ * command line, where any process listing shows it: a password-protected `.pfx` is signed with
+ * through {@linkcode withSigntoolCertificate}, which imports it and hands this a thumbprint.
  *
  * @param files The PE files (or .msi) to sign.
  * @param cert The certificate.
  * @param timestamp The timestamp server.
  * @returns The argv, `signtool` first.
+ * @throws {Error} For a `.pfx` with a password (signtool would take it only as `/p`).
  */
 export function signtoolArgs(
   files: readonly string[],
   cert: WindowsCertificate,
   timestamp: string = DEFAULT_TIMESTAMP_URL,
 ): string[] {
+  if (cert.kind === "pfx" && cert.password) {
+    throw new Error(
+      "signtool takes a .pfx password only on its command line: sign through " +
+        "withSigntoolCertificate(), which imports the .pfx and signs by thumbprint",
+    );
+  }
   const certArgs = cert.kind === "pfx" ? ["/f", cert.path] : ["/sha1", cert.sha1];
-  const args = [
+  return [
     "signtool",
     "sign",
     ...certArgs,
@@ -229,9 +238,279 @@ export function signtoolArgs(
     timestamp,
     "/td",
     "sha256",
+    ...files,
   ];
-  if (cert.kind === "pfx" && cert.password) args.push("/p", cert.password);
-  return [...args, ...files];
+}
+
+/** What a {@linkcode StoreCommandRunner} saw a command do. */
+export interface StoreCommandResult {
+  /** The exit code. */
+  readonly code: number;
+  /** What it printed on stdout. */
+  readonly stdout: string;
+  /** What it printed on stderr. */
+  readonly stderr: string;
+}
+
+/** Runs `cmd` with `stdin` as its standard input (tests pass a fake). */
+export type StoreCommandRunner = (
+  cmd: readonly string[],
+  stdin: string,
+) => Promise<StoreCommandResult>;
+
+/** Runs `cmd` to its exit, synchronously (a signal handler's cleanup; tests pass a fake). */
+export type StoreCommandRunnerSync = (cmd: readonly string[]) => void;
+
+/** `powershell.exe -EncodedCommand` for `script` (UTF-16LE base64: no quoting to get wrong). */
+export function powershellArgs(script: string): string[] {
+  const utf16 = new Uint8Array(script.length * 2);
+  for (let i = 0; i < script.length; i++) {
+    const c = script.charCodeAt(i);
+    utf16[i * 2] = c & 0xff;
+    utf16[i * 2 + 1] = c >> 8;
+  }
+  let binary = "";
+  for (const b of utf16) binary += String.fromCharCode(b);
+  return [
+    "powershell.exe",
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-EncodedCommand",
+    btoa(binary),
+  ];
+}
+
+/** `value` as a single-quoted PowerShell string. */
+function psQuote(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+/**
+ * A PowerShell function that deletes the persisted private key of `$c` (a certificate the store
+ * import put there): a CNG key through `CngKey.Delete`, a CryptoAPI one by clearing it with
+ * `PersistKeyInCsp` off. .NET only, so it needs no PowerShell module.
+ */
+const DELETE_KEY_FUNCTION = [
+  "function Remove-DenextKey($c) {",
+  "  if (-not $c.HasPrivateKey) { return }",
+  "  $k = $null",
+  "  try { $k = [Security.Cryptography.X509Certificates.RSACertificateExtensions]::" +
+  "GetRSAPrivateKey($c) } catch { }",
+  "  if ($null -eq $k) { try { $k = [Security.Cryptography.X509Certificates." +
+  "ECDsaCertificateExtensions]::GetECDsaPrivateKey($c) } catch { } }",
+  "  if ($k -is [Security.Cryptography.RSACryptoServiceProvider]) " +
+  "{ $k.PersistKeyInCsp = $false; $k.Clear() }",
+  "  elseif ($null -ne $k -and $k.Key -is [Security.Cryptography.CngKey]) { $k.Key.Delete() }",
+  "}",
+].join("\n");
+
+/**
+ * The PowerShell that imports the `.pfx` at `path` into the user's `My` store (its key not
+ * exportable), the password read from stdin (base64 of its UTF-8 bytes), never from argv. It
+ * prints `{ "sha1": <the signing certificate's thumbprint>, "added": [<thumbprints it added>] }`:
+ * a certificate the store already held is left as it is and is not in `added`, so removing those
+ * never takes one the user had.
+ *
+ * The script calls .NET (`X509Certificate2Collection`, `X509Store`) and no cmdlet, so it needs no
+ * PowerShell module: Windows PowerShell started from PowerShell 7 inherits 7's `PSModulePath`,
+ * and then cannot load its own `Microsoft.PowerShell.Security` (`ConvertTo-SecureString`, the
+ * `Cert:` drive) or `PKI` (`Import-PfxCertificate`) modules.
+ */
+export function storeImportScript(path: string): string {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    DELETE_KEY_FUNCTION,
+    "$raw = [Console]::In.ReadToEnd().Trim()",
+    "$pw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($raw))",
+    `$path = ${psQuote(path)}`,
+    "$F = [Security.Cryptography.X509Certificates.X509KeyStorageFlags]",
+    "$certs = [Security.Cryptography.X509Certificates.X509Certificate2Collection]::new()",
+    "$certs.Import([IO.File]::ReadAllBytes($path), $pw, ($F::PersistKeySet -bor $F::UserKeySet))",
+    "$store = [Security.Cryptography.X509Certificates.X509Store]::new('My', 'CurrentUser')",
+    "$store.Open('ReadWrite')",
+    "$before = @{}",
+    "foreach ($s in $store.Certificates) { $before[$s.Thumbprint] = $true }",
+    "$added = @()",
+    "$signer = $null",
+    "try {",
+    "  foreach ($c in $certs) {",
+    "    if ($null -eq $signer -and $c.HasPrivateKey) { $signer = $c.Thumbprint }",
+    // A certificate the store already holds keeps its own entry and key; the key this import
+    // persisted for it (a fresh container) is deleted.
+    "    if ($before.ContainsKey($c.Thumbprint)) { Remove-DenextKey $c }",
+    "    else { $store.Add($c); $added += $c.Thumbprint }",
+    "  }",
+    "  if ($null -eq $signer) { throw 'the .pfx holds no certificate with a private key' }",
+    "} catch {",
+    "  foreach ($c in $certs) {",
+    "    if ($added -contains $c.Thumbprint) { try { $store.Remove($c) } catch { } }",
+    "    if (-not $before.ContainsKey($c.Thumbprint)) { try { Remove-DenextKey $c } catch { } }",
+    "  }",
+    "  throw",
+    "} finally { $store.Close() }",
+    "$quoted = @()",
+    "foreach ($t in $added) { $quoted += '\"' + $t + '\"' }",
+    '[Console]::Out.WriteLine(\'{"sha1":"\' + $signer + \'","added":[\' + ' +
+    "($quoted -join ',') + ']}')",
+  ].join("\n");
+}
+
+/**
+ * The PowerShell that removes the store certificates (and their keys) `thumbprints` names. .NET
+ * only, no cmdlet, like {@linkcode storeImportScript}.
+ */
+export function storeRemoveScript(thumbprints: readonly string[]): string {
+  const list = thumbprints.map(psQuote).join(", ");
+  return [
+    "$ErrorActionPreference = 'Continue'",
+    DELETE_KEY_FUNCTION,
+    "$store = [Security.Cryptography.X509Certificates.X509Store]::new('My', 'CurrentUser')",
+    "$store.Open('ReadWrite')",
+    "try {",
+    `  foreach ($t in @(${list})) {`,
+    "    foreach ($c in @($store.Certificates.Find('FindByThumbprint', $t, $false))) {",
+    "      try { Remove-DenextKey $c } catch { }",
+    "      $store.Remove($c)",
+    "    }",
+    "  }",
+    "} finally { $store.Close() }",
+  ].join("\n");
+}
+
+/** A certificate thumbprint as signtool and the store spell it (40 hex digits). */
+const THUMBPRINT = /^[0-9A-F]{40}$/;
+
+/** Read the import script's answer; throws on anything but thumbprints. */
+function parseImport(stdout: string): { sha1: string; added: string[] } {
+  const start = stdout.indexOf("{");
+  const json = JSON.parse(start < 0 ? stdout : stdout.slice(start)) as {
+    sha1?: unknown;
+    added?: unknown;
+  };
+  const sha1 = String(json.sha1 ?? "").toUpperCase();
+  const added = (Array.isArray(json.added) ? json.added : json.added ? [json.added] : [])
+    .map((t) => String(t).toUpperCase());
+  if (!THUMBPRINT.test(sha1) || !added.every((t) => THUMBPRINT.test(t))) {
+    throw new Error(`unexpected import result: ${stdout.trim()}`);
+  }
+  return { sha1, added };
+}
+
+/** The default store runner: the command, `stdin` piped in, its output captured. */
+const defaultStoreRun: StoreCommandRunner = async (cmd, stdin) => {
+  const child = new Deno.Command(cmd[0], {
+    args: cmd.slice(1),
+    stdin: "piped",
+    stdout: "piped",
+    stderr: "piped",
+  }).spawn();
+  const writer = child.stdin.getWriter();
+  await writer.write(new TextEncoder().encode(stdin));
+  await writer.close();
+  const out = await child.output();
+  const text = (b: Uint8Array) => new TextDecoder().decode(b);
+  return { code: out.code, stdout: text(out.stdout), stderr: text(out.stderr) };
+};
+
+/** The default synchronous runner (output discarded). */
+const defaultStoreRunSync: StoreCommandRunnerSync = (cmd) => {
+  try {
+    new Deno.Command(cmd[0], {
+      args: cmd.slice(1),
+      stdin: "null",
+      stdout: "null",
+      stderr: "null",
+    }).outputSync();
+  } catch { /* best effort */ }
+};
+
+/** The seams of {@linkcode withSigntoolCertificate} (tests pass fakes). */
+export interface SigntoolCertificateDeps {
+  /** Runs the import / removal (default: the process, stdin piped). */
+  readonly run?: StoreCommandRunner;
+  /** Runs the removal from a signal handler (default: the process, synchronously). */
+  readonly runSync?: StoreCommandRunnerSync;
+}
+
+/** The exit code a shell reports for a process ended by `signal`. */
+const SIGNAL_EXIT: Partial<Record<Deno.Signal, number>> = {
+  SIGHUP: 129,
+  SIGINT: 130,
+  SIGTERM: 143,
+  SIGBREAK: 149,
+};
+
+/**
+ * Run `cleanup` (synchronously) and exit when the process is interrupted or terminated, until the
+ * returned function removes the listeners: a `finally` does not run when a signal ends the
+ * process.
+ *
+ * @param cleanup What to undo.
+ * @returns Removes the listeners.
+ */
+export function cleanupOnSignal(cleanup: () => void): () => void {
+  const signals: Deno.Signal[] = Deno.build.os === "windows"
+    ? ["SIGINT", "SIGBREAK"]
+    : ["SIGINT", "SIGTERM", "SIGHUP"];
+  const added: [Deno.Signal, () => void][] = [];
+  for (const signal of signals) {
+    const listener = () => {
+      cleanup();
+      Deno.exit(SIGNAL_EXIT[signal] ?? 1);
+    };
+    try {
+      Deno.addSignalListener(signal, listener);
+      added.push([signal, listener]);
+    } catch { /* not a signal this platform delivers */ }
+  }
+  return () => {
+    for (const [signal, listener] of added) Deno.removeSignalListener(signal, listener);
+  };
+}
+
+/**
+ * Sign with `cert` through signtool without its password ever reaching a command line. A
+ * password-protected `.pfx` is imported into the user's certificate store (`CurrentUser\My`, key
+ * not exportable) by PowerShell (through .NET, no PowerShell module), which reads the password
+ * from stdin; `sign` then gets the
+ * certificate as a store thumbprint (`/sha1`), and every certificate the import added is removed
+ * again, with its key, when `sign` settles, fails, or the process is interrupted. Any other
+ * certificate (a `.pfx` with no password, a thumbprint) is handed to `sign` as it is.
+ *
+ * @param cert The certificate.
+ * @param sign Runs signtool with the certificate it is given.
+ * @param deps The PowerShell runners.
+ * @returns What `sign` returned.
+ * @throws {Error} When the import fails (the password is never in the message).
+ */
+export async function withSigntoolCertificate<T>(
+  cert: WindowsCertificate,
+  sign: (cert: WindowsCertificate) => Promise<T>,
+  deps: SigntoolCertificateDeps = {},
+): Promise<T> {
+  if (cert.kind !== "pfx" || !cert.password) return await sign(cert);
+  const run = deps.run ?? defaultStoreRun;
+  const runSync = deps.runSync ?? defaultStoreRunSync;
+  const password = btoa(String.fromCharCode(...new TextEncoder().encode(cert.password)));
+  const imported = await run(powershellArgs(storeImportScript(cert.path)), password);
+  if (imported.code !== 0) {
+    const said = (imported.stderr || imported.stdout).trim().split("\n").slice(-5).join("\n");
+    throw new Error(
+      `could not import ${cert.path} into the user's certificate store for signtool ` +
+        `(exit ${imported.code})${said ? `:\n${said.replaceAll(cert.password, "***")}` : ""}`,
+    );
+  }
+  const { sha1, added } = parseImport(imported.stdout);
+  const remove = powershellArgs(storeRemoveScript(added));
+  const stopCleanup = added.length > 0 ? cleanupOnSignal(() => runSync(remove)) : () => {};
+  try {
+    return await sign({ kind: "thumbprint", sha1 });
+  } finally {
+    stopCleanup();
+    if (added.length > 0) await run(remove, "");
+  }
 }
 
 /**

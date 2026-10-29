@@ -17,6 +17,7 @@
 import { join, resolve } from "@std/path";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { generateSupabaseKeys } from "../../server/auth/gotrue/keys.ts";
+import { exitedOutput } from "../../build/exited-output.ts";
 import { DOCKER_FLAGS, runDocker } from "./generate-docker.ts";
 import { backupAction, restoreAction } from "./stack-backup.ts";
 import { generatePassword } from "./stack-env.ts";
@@ -36,18 +37,105 @@ import {
 import { passwdAction, rollAction } from "./stack-ops.ts";
 
 /**
- * Run `docker` (the default {@linkcode StackIo.docker}): streamed through, or captured.
+ * How long a probe of Docker ({@linkcode dockerProbe}) may take: a healthy engine answers `ps` /
+ * `config` / `info` in well under a second, and a wedged one never does.
+ */
+const DOCKER_PROBE_DEADLINE_MS = 30_000;
+
+/**
+ * Whether `args` only ask Docker a question (`compose ps`, `compose config`, `compose version`,
+ * `info`, `version`, `volume inspect`, …): the calls a hung engine must not hang the CLI on. The
+ * work a person asked for (`up`, `logs --follow`, a backup's `cp`, `stop`) is never one: it takes
+ * as long as it takes.
+ *
+ * @param args The `docker` arguments.
+ * @returns Whether the call is a probe.
+ */
+export function dockerProbe(args: readonly string[]): boolean {
+  let i = 0;
+  if (args[0] === "compose") {
+    i = 1;
+    // The compose file / project flags before the subcommand (`-f docker-compose.yml`).
+    while (i < args.length && args[i].startsWith("-")) {
+      i += /^-[fp]$|^--(file|project-name|env-file)$/.test(args[i]) ? 2 : 1;
+    }
+    return ["ps", "config", "version", "ls", "images"].includes(args[i] ?? "");
+  }
+  if (["info", "version"].includes(args[i] ?? "")) return true;
+  return ["volume", "image", "container", "network"].includes(args[i] ?? "") &&
+    ["inspect", "ls"].includes(args[i + 1] ?? "");
+}
+
+/** The error for a Docker probe still running at its deadline. */
+function dockerUnresponsive(args: readonly string[], deadlineMs: number): string {
+  return `Docker did not answer \`docker ${args.join(" ")}\` within ${deadlineMs / 1000} s: ` +
+    "the Docker engine looks unresponsive. Restart Docker (Docker Desktop: Troubleshoot → " +
+    "Restart) and try again.";
+}
+
+/** Kill `pid` and its children, by that exact pid (`taskkill /T` on Windows, `pkill -P` elsewhere). */
+async function killDockerTree(pid: number): Promise<void> {
+  const [cmd, ...args] = Deno.build.os === "windows"
+    ? ["taskkill", "/PID", String(pid), "/T", "/F"]
+    : ["pkill", "-KILL", "-P", String(pid)];
+  await new Deno.Command(cmd, { args, stdout: "null", stderr: "null" }).output().catch(() => {});
+  try {
+    Deno.kill(pid, "SIGKILL");
+  } catch { /* already gone */ }
+}
+
+/**
+ * A captured {@linkcode dockerProbe} call with a deadline: past it the `docker` process and its
+ * children (the compose plugin) are killed and the call throws {@linkcode dockerUnresponsive}.
+ */
+async function boundedDocker(
+  args: string[],
+  cwd: string,
+  deadlineMs: number,
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  let child: Deno.ChildProcess;
+  try {
+    child = new Deno.Command("docker", {
+      args,
+      cwd,
+      stdin: "null",
+      stdout: "piped",
+      stderr: "piped",
+    }).spawn();
+  } catch (error) {
+    throw error instanceof Deno.errors.NotFound ? new Error(NO_DOCKER) : error;
+  }
+  const output = exitedOutput(child, { stdout: true, stderr: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"late">((r) => timer = setTimeout(() => r("late"), deadlineMs));
+  const done = await Promise.race([output, late]);
+  clearTimeout(timer);
+  if (done === "late") {
+    await killDockerTree(child.pid);
+    await output.catch(() => {});
+    throw new Error(dockerUnresponsive(args, deadlineMs));
+  }
+  const text = (b: Uint8Array) => new TextDecoder().decode(b);
+  return { code: done.code, stdout: text(done.stdout), stderr: text(done.stderr) };
+}
+
+/**
+ * Run `docker` (the default {@linkcode StackIo.docker}): streamed through, or captured. A captured
+ * probe ({@linkcode dockerProbe}) gets `probeDeadlineMs`.
  *
  * @param args The arguments.
  * @param cwd The project.
  * @param capture Capture stdout / stderr instead of streaming them.
+ * @param probeDeadlineMs The deadline of a probe.
  * @returns The exit code and the captured output.
  */
 export async function dockerCli(
   args: string[],
   cwd: string,
   capture: boolean,
+  probeDeadlineMs: number = DOCKER_PROBE_DEADLINE_MS,
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  if (capture && dockerProbe(args)) return await boundedDocker(args, cwd, probeDeadlineMs);
   const io = capture ? "piped" : "inherit";
   let out: Deno.CommandOutput;
   try {

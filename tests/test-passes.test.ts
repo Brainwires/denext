@@ -9,6 +9,7 @@ import {
   clearCoverageProfiles,
   coverageDir,
   findVitestFiles,
+  ignoringToolCaches,
   planTestRun,
   splitTestArgs,
 } from "../src/cli/commands/test-passes.ts";
@@ -35,6 +36,44 @@ Deno.test("planTestRun: one pass when a path is named, nothing is Vitest, or --h
   assertEquals(planTestRun(["a.test.ts"], ["v.vitest.ts"], true), one(["a.test.ts"]));
   assertEquals(planTestRun(["--coverage"], [], true), one(["--coverage"]));
   assertEquals(planTestRun(["--help"], ["v.vitest.ts"], true), one(["--help"]));
+});
+
+Deno.test("ignoringToolCaches: a command-line --ignore keeps .deno/ out (it replaces the config's exclude)", () => {
+  assertEquals(ignoringToolCaches(["--ignore=e2e/", "a.test.ts"]), [
+    "--ignore=e2e/,.deno/",
+    "a.test.ts",
+  ]);
+  assertEquals(ignoringToolCaches(["--ignore=./.deno,x"]), ["--ignore=./.deno,x"]);
+  assertEquals(ignoringToolCaches(["--ignore=.deno/"]), ["--ignore=.deno/"]);
+  // No --ignore: the config's exclude applies, nothing is added; after `--` is the tests' own.
+  assertEquals(ignoringToolCaches(["--parallel"]), ["--parallel"]);
+  assertEquals(ignoringToolCaches(["--", "--ignore=x"]), ["--", "--ignore=x"]);
+  const plan = planTestRun(["--ignore=e2e/"], ["v.vitest.ts"], true);
+  assertEquals(plan.passes.map((p) => p.find((a) => a.startsWith("--ignore="))), [
+    "--ignore=e2e/,.deno/",
+    "--ignore=e2e/,.deno/",
+  ]);
+});
+
+Deno.test("planTestRun: `denext test --ignore=…` never runs the tests under .deno/", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "dnx-test-ignore-" });
+  try {
+    await Deno.mkdir(join(dir, ".deno", "npm-compat"), { recursive: true });
+    await Deno.mkdir(join(dir, "e2e"));
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ exclude: [".deno/"] }));
+    await Deno.writeTextFile(join(dir, "a_test.ts"), `Deno.test("mine", () => {});\n`);
+    await Deno.writeTextFile(
+      join(dir, ".deno", "npm-compat", "pkg_test.ts"),
+      `Deno.test("a cached package's own test", () => { throw new Error("ran .deno/"); });\n`,
+    );
+    const [pass] = planTestRun(["--ignore=e2e/"], [], true).passes;
+    const out = await boundedOutput(Deno.execPath(), { args: pass, cwd: dir, timeoutMs: 120_000 });
+    const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
+    assert(out.success, text);
+    assert(!text.includes("ran .deno/"), text);
+  } finally {
+    removeTempDirSync(dir);
+  }
 });
 
 Deno.test("planTestRun: the Vitest pass after the Deno.test pass", () => {

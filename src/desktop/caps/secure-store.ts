@@ -90,7 +90,8 @@ const WINDOWS_VAULT_SCRIPT = [
   "switch($p.op){",
   "'get'{try{$c=$v.Retrieve($p.service,$p.key);$c.RetrievePassword();[Console]::Out.Write($c.Password)}catch{exit 1}}",
   "'set'{try{$old=$v.Retrieve($p.service,$p.key);$v.Remove($old)}catch{};$v.Add((New-Object Windows.Security.Credentials.PasswordCredential($p.service,$p.key,$p.value)))}",
-  "'delete'{try{$c=$v.Retrieve($p.service,$p.key);$v.Remove($c)}catch{}}",
+  // `exit 0`: the caught Retrieve of an absent key leaves `$?` false, which `-Command` exits 1 on.
+  "'delete'{try{$c=$v.Retrieve($p.service,$p.key);$v.Remove($c)}catch{};exit 0}",
   "}",
 ].join("\n");
 

@@ -323,6 +323,40 @@ Deno.test("realtime: a burst of 500 inserts is coalesced into one re-read per id
   }
 });
 
+Deno.test("realtime: frames sent while a re-authorization runs all arrive, in order", async () => {
+  // The Live hub re-authorizes a subscription when its TTL has run out and holds its frames
+  // meanwhile. It kept only the latest one, so a burst re-read during a slow re-authorization (a
+  // loaded server) lost whole frames of changes: 180 of 250 arrived, and the rest never came.
+  const env = await setUp();
+  try {
+    const ca = env.hub.conn(env.a);
+    await env.hub.subscribe(ca, "notes");
+    const engine = realtimeEngine();
+    const before = engine.stats.frames;
+    const release = env.hub.holdAuth();
+    ca.channelSubs.get("s1")!.authExpires = 0; // the TTL ran out
+    for (let i = 1; i <= 250; i++) {
+      env.sql.insert("notes", { id: i, owner: A, body: `note ${i} ${"x".repeat(60)}` });
+    }
+    await engine.flush();
+    // Every frame of the burst has gone to the hub while the re-authorization is still held.
+    await until(() => engine.stats.frames - before >= 4, 30_000, "the burst's frames sent");
+    await settle();
+    assertEquals(changesOf(ca).length, 0, "held until the re-authorization answers");
+    release();
+    await until(
+      () => changesOf(ca).length === 250,
+      30_000,
+      () => `250 changes, got ${changesOf(ca).length} in ${ca.frames.length} frames`,
+    );
+    assertEquals(changesOf(ca).map((c) => Number(c.key)), [...Array(250)].map((_, i) => i + 1));
+    assertEquals(ca.frames.map((f) => f.seq), ca.frames.map((_, i) => i + 1));
+    assertEquals(ca.errors, []);
+  } finally {
+    await env.done();
+  }
+});
+
 Deno.test("realtime: a subscription key is bound to one identity; malformed or unknown keys are refused", async () => {
   const env = await setUp();
   try {
@@ -837,16 +871,28 @@ Deno.test("realtime: subscribe-time seed queries are bounded — a few at once, 
     env.sql.delay.seed = 0;
 
     // A signed-out connection opening (and closing) subscriptions as fast as it can: a burst of
-    // 32, then about 8 a second.
+    // 32, then 8 a second. The clock is held still, so a slow host's loop refills nothing.
     const anon = env.hub.conn();
-    let admitted = 0;
-    for (let i = 0; i < 48; i++) {
-      if ((await env.hub.subscribe(anon, "notes")).ok) admitted++;
-      env.hub.unsubscribe(anon);
+    const realNow = Date.now;
+    let clock = realNow();
+    Date.now = () => clock;
+    try {
+      const burst = async (n: number) => {
+        let admitted = 0;
+        for (let i = 0; i < n; i++) {
+          if ((await env.hub.subscribe(anon, "notes")).ok) admitted++;
+          env.hub.unsubscribe(anon);
+        }
+        return admitted;
+      };
+      assertEquals(await burst(48), 32);
+      assertEquals((await env.hub.subscribe(anon, "notes")).ok, false);
+      clock += 1000;
+      assertEquals(await burst(12), 8, "a second refills eight");
+      assert((await env.hub.subscribe(env.hub.conn(), "notes")).ok, "another connection's budget");
+    } finally {
+      Date.now = realNow;
     }
-    assert(admitted >= 32 && admitted < 40, `admitted ${admitted}`);
-    assertEquals((await env.hub.subscribe(anon, "notes")).ok, false);
-    assert((await env.hub.subscribe(env.hub.conn(), "notes")).ok, "another connection's budget");
   } finally {
     await env.done();
   }
@@ -1478,8 +1524,6 @@ async function captureTick(fn: () => Promise<unknown>): Promise<() => void> {
 
 Deno.test({
   name: "realtime publication: its tables join the registry, with triggers, and leave it",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({
       notes: { policy: ownerOnly },
@@ -1566,8 +1610,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime: a key naming a publication table is admitted once the publication is read",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({
       notes: { policy: ownerOnly },
@@ -1595,8 +1637,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime: the notify source turns realtime triggers on; the logical one turns them off",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
     sql.catalog.triggers.set(
@@ -1640,8 +1680,6 @@ function assertUnderMigrationLock(sql: FakeRealtimeClient, match: RegExp): void 
 
 Deno.test({
   name: "realtime DDL at startup runs under the backend's migration lock",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
     sql.catalog.publication.push({
@@ -1703,8 +1741,6 @@ function fakeSlot(sql: FakeRealtimeClient, batches: Uint8Array[][]) {
 Deno.test({
   name:
     "realtime source logical: no trigger migrations, the denext_realtime publication, WAL events",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
     sql.catalog.triggers.set(

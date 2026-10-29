@@ -166,3 +166,31 @@ Deno.test({
     await removeTempDir(dir);
   }
 });
+
+Deno.test("the bridge gives up on a UI child that exits without its URL while its stdout is held", async () => {
+  // The child exits at once, but a grandchild it left running holds its stdout (as a process
+  // spawned elsewhere at the same moment does on Windows): the start fails with the exit, not
+  // when the 60 s holder lets go of the pipe.
+  const dir = await Deno.makeTempDir({ prefix: "denext-mcp-ui-held-" });
+  const pidFile = join(dir, "pid");
+  const program = `const g = new Deno.Command(Deno.execPath(), {
+  args: ["eval", "setTimeout(() => {}, 60000)"], stdin: "null", stdout: "inherit", stderr: "null",
+}).spawn();
+Deno.writeTextFileSync(${JSON.stringify(pidFile)}, String(g.pid));
+g.unref();
+Deno.exit(1);`;
+  const bridge = new UiBridge(dir, {}, () => [Deno.execPath(), "eval", program]);
+  try {
+    const t0 = Date.now();
+    const error = await bridge.start().then(() => null, (e: Error) => e);
+    const took = Date.now() - t0;
+    assertEquals(error?.message, "denext ui exited before it printed its URL");
+    assert(took < 30_000, `took ${took} ms: read until the 60 s holder let go`);
+  } finally {
+    bridge.stop();
+    try {
+      Deno.kill(Number((await Deno.readTextFile(pidFile)).trim()), "SIGKILL");
+    } catch { /* gone, or never started */ }
+    await removeTempDir(dir);
+  }
+});

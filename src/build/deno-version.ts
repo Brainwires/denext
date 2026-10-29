@@ -4,9 +4,11 @@
 // And the two version schemes of denext's own Deno (the Brainwires/deno fork, which is both the
 // Deno toolchain and the Deno Desktop runtime): up to `2.9.7-denext.22` each release was the stock
 // Deno release it was built from plus `-denext.N`; from `3.0.0-rc.1` the fork has its own version
-// (`3.0.0-rc.2`, …, `3.0.0`), and the stock release it is built from is the pin's `deno` field.
-// Semver orders the two schemes in release order (`2.9.7-denext.22` < `3.0.0-rc.1`), so every
-// comparison goes through {@linkcode compareDenoVersions}.
+// (`3.0.0-rc.2`, …, `3.0.0-rc.6`, then `3.0.0-denext.1`, `3.0.0-denext.2`, …), and the stock
+// release it is built from is the pin's `deno` field. Semver orders the two schemes in release
+// order (`2.9.7-denext.22` < `3.0.0-rc.1`); on the own-version line denext's order puts every
+// `denext.N` above every `rc.N` (semver alone would not: `d` < `r`), so every comparison goes
+// through {@linkcode compareDenoVersions}.
 //
 // Upstream Deno releases a 3.0.0 too, so a version no longer says whose runtime a Deno is. From
 // 3.0.0-rc.3 denext's Deno carries an identity marker (`Deno.build.denext`, and a
@@ -68,11 +70,34 @@ function comparePrerelease(x: readonly string[], y: readonly string[]): number {
   return Math.sign(x.length - y.length);
 }
 
+/** The core of the fork's own-version line: `3.0.0-rc.N`, then `3.0.0-denext.N`. */
+const OWN_LINE_CORE = "3.0.0";
+
+/** The prerelease name that follows the release candidates on the fork's own-version line. */
+const OWN_LINE_PRERELEASE = "denext";
+
+/** Whether `v` has the core of the fork's own-version line ({@linkcode OWN_LINE_CORE}). */
+function onOwnLine(v: ParsedVersion): boolean {
+  return v.core.join(".") === OWN_LINE_CORE;
+}
+
 /**
- * Semver precedence of two Deno versions (build metadata ignored): `2.9.7-denext.9` <
- * `2.9.7-denext.10` < `2.9.7` (a prerelease sorts below its release) and `2.9.7-denext.22` <
- * `3.0.0-rc.1` < `3.0.0-rc.10` < `3.0.0`. A version that does not parse sorts below every one that
- * does.
+ * The rank of a prerelease's name on the fork's own-version line ({@linkcode OWN_LINE_CORE}):
+ * `rc.N` 0, `denext.N` 1. `undefined` for any other name or core, which keeps semver's order.
+ */
+function ownLineRank(v: ParsedVersion): number | undefined {
+  if (!onOwnLine(v)) return undefined;
+  const name = v.pre[0];
+  return name === "rc" ? 0 : name === OWN_LINE_PRERELEASE ? 1 : undefined;
+}
+
+/**
+ * The precedence of two Deno versions (build metadata ignored): semver's, with one exception for
+ * the fork's own-version line. `2.9.7-denext.9` < `2.9.7-denext.10` < `2.9.7` (a prerelease sorts
+ * below its release) and `2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.10` < `3.0.0-denext.1` <
+ * `3.0.0-denext.10` < `3.0.0`: on the `3.0.0` core a `denext.N` prerelease outranks every
+ * `rc.N` one (the fork's releases after its last release candidate), where semver's ASCII order
+ * would put it below. A version that does not parse sorts below every one that does.
  *
  * @param a A version.
  * @param b Another version.
@@ -89,6 +114,9 @@ export function compareDenoVersions(a: string, b: string): number {
   if (x.pre.length === 0 || y.pre.length === 0) {
     return Math.sign(y.pre.length - x.pre.length);
   }
+  const rx = ownLineRank(x);
+  const ry = ownLineRank(y);
+  if (rx !== undefined && ry !== undefined && rx !== ry) return Math.sign(rx - ry);
   return comparePrerelease(x.pre, y.pre);
 }
 
@@ -130,8 +158,18 @@ export function supportsIdleTrim(version: string): boolean {
   return compareDenoVersions(version, FIRST_IDLE_TRIM_RUNTIME) >= 0;
 }
 
-/** `2.9.7-denext.N`: a release of denext's Deno before it took its own version. */
+/** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
+
+/**
+ * The stock release an old-scheme version (`2.9.7-denext.N`) is built from, or `null`. The fork's
+ * own `3.0.0-denext.N` has the same shape but names no stock release: it is the own-version line
+ * ({@linkcode OWN_LINE_CORE}).
+ */
+function oldSchemeRelease(version: string): string | null {
+  const m = OLD_SCHEME.exec(version);
+  return m && m[1] !== OWN_LINE_CORE ? m[1] : null;
+}
 
 /**
  * The first release of denext's Deno that carries its identity marker: `Deno.build.denext` in
@@ -196,8 +234,9 @@ export function parseDenoVersionOutput(text: string): DenoIdentity | null {
 
 /**
  * The fallback for a Deno without the identity marker: whether its version alone names one of
- * denext's runtimes from before {@linkcode FIRST_MARKER_RUNTIME}. `X.Y.Z-denext.N` always does
- * (upstream never uses the suffix); a version under the fork's own scheme does only when it is
+ * denext's runtimes from before {@linkcode FIRST_MARKER_RUNTIME}. An old-scheme `2.9.7-denext.N`
+ * always does (upstream never uses the suffix; the fork's own `3.0.0-denext.N` carries the
+ * marker); a version under the fork's own scheme does only when it is
  * exactly the pinned toolchain and that pin predates the marker (`3.0.0-rc.2` and earlier), since
  * upstream's own `3.0.0-rc.N` and `3.0.0` cannot be told from the fork's by the version.
  *
@@ -209,7 +248,7 @@ export function isPreMarkerDenextVersion(
   version: string,
   pinned: string | null = toolchainPin.version,
 ): boolean {
-  if (OLD_SCHEME.test(version)) return true;
+  if (oldSchemeRelease(version) !== null) return true;
   return pinned !== null && version === pinned &&
     compareDenoVersions(pinned, FIRST_MARKER_RUNTIME) < 0;
 }
@@ -249,14 +288,14 @@ export function isPinnedDenextDeno(identity: DenoIdentity, pinned: string | null
 /**
  * Whether a version taken from denext's own pins or a Brainwires/deno release manifest (never from
  * a running Deno, which {@linkcode isDenextDenoVersion} answers) is in a scheme of denext's Deno
- * releases: `X.Y.Z-denext.N`, or the fork's own version from {@linkcode FIRST_OWN_VERSION_RUNTIME}
+ * releases: the old `2.9.7-denext.N`, or the fork's own version (`3.0.0-rc.N`, `3.0.0-denext.N`) from {@linkcode FIRST_OWN_VERSION_RUNTIME}
  * on.
  *
  * @param version A pin's or a release manifest's version.
  * @returns Whether it names a release of denext's Deno.
  */
 export function isDenextReleaseVersion(version: string): boolean {
-  return OLD_SCHEME.test(version) ||
+  return oldSchemeRelease(version) !== null ||
     (parseVersion(version) !== null &&
       compareDenoVersions(version, FIRST_OWN_VERSION_RUNTIME) >= 0);
 }
@@ -277,8 +316,8 @@ export function denoReleaseVersion(
   identity: DenoIdentity,
   upstream: string = toolchainPin.deno,
 ): string {
-  const old = OLD_SCHEME.exec(identity.deno);
-  if (old) return old[1];
+  const old = oldSchemeRelease(identity.deno);
+  if (old !== null) return old;
   return isDenextDenoVersion(identity) ? upstream : identity.deno;
 }
 
@@ -295,8 +334,8 @@ export function pinnedDenoReleaseVersion(
   version: string,
   upstream: string = toolchainPin.deno,
 ): string {
-  const old = OLD_SCHEME.exec(version);
-  if (old) return old[1];
+  const old = oldSchemeRelease(version);
+  if (old !== null) return old;
   return isDenextReleaseVersion(version) ? upstream : version;
 }
 

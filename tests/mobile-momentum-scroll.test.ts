@@ -669,22 +669,65 @@ Deno.test("momentum scroll: the last touch pointerup ends the touch; pointercanc
     assertEquals(scroller.top, 1015);
   }));
 
-Deno.test("momentum scroll: a touch with no activity for 1 s is reset and flushed", () =>
-  withScroll(async (env) => {
-    const { scroller, doc } = env;
-    doc.fire("touchstart", { touches: [{}], target: new Target() });
-    env.fling(-5);
-    await delay(600);
-    doc.fire("touchmove", { touches: [{}] }); // activity restarts the watchdog
-    await delay(600);
-    scroller.scrollBy(0, 30);
-    assertEquals(scroller.top, 995, "still touching");
-    await delay(1100);
-    assertEquals(scroller.top, 1025, "flushed by the watchdog");
-    assertEquals(translates(scroller), ["", ""]);
-    scroller.scrollBy(0, 5);
-    assertEquals(scroller.top, 1030, "no longer deferred");
-  }));
+/**
+ * A manual clock standing in for `setTimeout` / `clearTimeout`: {@linkcode advance} runs, in
+ * order, every timer due by then, so a test about a 1 s watchdog neither sleeps nor races one.
+ */
+function manualClock() {
+  let now = 0;
+  let next = 1;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  return {
+    setTimeout: (fn: () => void, ms = 0) => {
+      const id = next++;
+      timers.set(id, { at: now + Math.max(0, ms), fn });
+      return id;
+    },
+    clearTimeout: (id?: number) => void timers.delete(id ?? -1),
+    advance(ms: number) {
+      const until = now + ms;
+      for (;;) {
+        let due: [number, { at: number; fn: () => void }] | undefined;
+        for (const entry of timers) {
+          if (entry[1].at <= until && (!due || entry[1].at < due[1].at)) due = entry;
+        }
+        if (!due) break;
+        timers.delete(due[0]);
+        now = due[1].at;
+        due[1].fn();
+      }
+      now = until;
+    },
+  };
+}
+
+Deno.test("momentum scroll: a touch with no activity for 1 s is reset and flushed", () => {
+  const clock = manualClock();
+  return withScroll(
+    (env) => {
+      const { scroller, doc } = env;
+      doc.fire("touchstart", { touches: [{}], target: new Target() });
+      env.fling(-5);
+      clock.advance(600);
+      doc.fire("touchmove", { touches: [{}] }); // activity restarts the watchdog
+      clock.advance(600);
+      scroller.scrollBy(0, 30);
+      assertEquals(scroller.top, 995, "still touching");
+      clock.advance(399);
+      assertEquals(scroller.top, 995, "1 s since the last activity has not passed yet");
+      clock.advance(1);
+      assertEquals(scroller.top, 1025, "flushed by the watchdog");
+      assertEquals(translates(scroller), ["", ""]);
+      scroller.scrollBy(0, 5);
+      assertEquals(scroller.top, 1030, "no longer deferred");
+    },
+    { force: true, settleMs: SETTLE_MS },
+    {
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+    },
+  );
+});
 
 // ---- composed translate ------------------------------------------------------------
 

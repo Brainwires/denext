@@ -65,6 +65,7 @@ on:
       - "src/build/deno-cache-dir.ts"
       - "src/build/deno-toolchain.ts"
       - "src/build/deno-toolchain-pin.json"
+      - "src/build/linux-libc.ts"
       - "src/build/deno-version.ts"
       - "src/build/net-permissions.ts"
       - "src/build/file-lock.ts"
@@ -663,6 +664,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
+          # denext 4.9.0 and earlier carry no build attestation, and a signed-in gh (GITHUB_TOKEN)
+          # makes the installer refuse one: until the latest release is attested it installs on
+          # its checksum (DENEXT_INSECURE=1); from then on the attestation must verify.
+          $latest = (Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" } -Uri 'https://api.github.com/repos/${{ github.repository }}/releases/latest').tag_name
+          if ($latest -match '^v([0-3]|4\.[0-9])\.') { $env:DENEXT_INSECURE = '1' }
           $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext'
           & ./scripts/install.ps1
           $v = & (Join-Path $env:DENEXT_INSTALL 'bin\denext.exe') --version
@@ -761,6 +767,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
+          # denext 4.9.0 and earlier carry no build attestation, and a signed-in gh (GITHUB_TOKEN)
+          # makes the installer refuse one: until the latest release is attested it installs on
+          # its checksum (DENEXT_INSECURE=1); from then on the attestation must verify.
+          $latest = (Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" } -Uri 'https://api.github.com/repos/${{ github.repository }}/releases/latest').tag_name
+          if ($latest -match '^v([0-3]|4\.[0-9])\.') { $env:DENEXT_INSECURE = '1' }
           $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext'
           & ./scripts/install.ps1
           $v = & (Join-Path $env:DENEXT_INSTALL 'bin\denext.exe') --version
@@ -858,5 +869,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # denext 4.9.0 and earlier carry no build attestation, and a signed-in gh (GITHUB_TOKEN)
+          # makes the installer refuse one: until the latest release is attested it installs on
+          # its checksum (DENEXT_INSECURE=1); from then on the attestation must verify.
+          latest="$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)"
+          case "$latest" in v[0-3].* | v4.[0-9].*) export DENEXT_INSECURE=1 ;; esac
           DENEXT_INSTALL="$RUNNER_TEMP/denext-latest" sh scripts/install.sh
           "$RUNNER_TEMP/denext-latest/bin/denext" --version | grep -E '^denext [0-9]+\.[0-9]+\.[0-9]+.* \(binary\)$'

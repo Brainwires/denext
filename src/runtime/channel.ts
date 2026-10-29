@@ -89,6 +89,15 @@ export interface ChannelConfig<T> {
    */
   history?: number | { size: number; ttlSeconds?: number };
   /**
+   * Deliver every publish, in order, instead of the latest one: two publishes to a key within the
+   * hub's coalescing window both go out, and while a subscriber's frames are held (a slow socket,
+   * a re-authorization in flight) up to 256 of them are kept in order
+   * rather than the last one only. Past that the oldest are dropped, so a payload that must not
+   * be lost silently should carry its own sequence number for the subscriber to check. For a
+   * stream of deltas (each publish a batch of changes), not a state value.
+   */
+  ordered?: boolean;
+  /**
    * Called when `key` gets its first subscriber on THIS instance (after `authorize` allowed it
    * and the subscription was registered). Runs in the root context; a throw is logged.
    */
@@ -245,6 +254,8 @@ export interface ChannelInternals {
   authTtlSeconds?: number;
   /** The replay-log retention (`history`), when the channel keeps one. */
   history?: ChannelHistory;
+  /** Every publish delivered in order, none coalesced ({@linkcode ChannelConfig.ordered}). */
+  ordered?: boolean;
   /** A key's first local subscriber arrived. */
   onActive?: (key: string) => void;
   /** A key's last local subscriber left. */
@@ -256,6 +267,9 @@ export interface ChannelInternals {
 // channel without loading this module's server-only state; `isChannel` is re-exported from here.
 export { isChannel } from "./channel-brand.ts";
 const DEFAULT_KEY = /^[A-Za-z0-9_:.\-]{1,128}$/;
+
+/** How many held frames an {@linkcode ChannelConfig.ordered} channel keeps per subscriber. */
+export const ORDERED_HOLD_LIMIT = 256;
 
 /**
  * The process's channel state, shared by every copy of this module (see process-shared.ts): the
@@ -320,6 +334,7 @@ export function createChannel<T>(config: ChannelConfig<T>): Channel<T> {
     authorize: config.authorize,
     authTtlSeconds: config.authTtlSeconds,
     history: resolveHistory(config.history),
+    ordered: config.ordered === true,
     onActive: config.onActive,
     onIdle: config.onIdle,
   };

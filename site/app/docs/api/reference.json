@@ -4301,7 +4301,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.9.0",
+          "signature": "VERSION: 4.10.0",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -21792,8 +21792,8 @@
           "slug": "desktopSignWindows",
           "kind": "function",
           "signature": "desktopSignWindows(files: typeOperator, deps?: DesktopSignWindowsDeps): Promise<boolean>",
-          "doc": "Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD), else the certificate store's DENEXT_WINDOWS_CERT_THUMBPRINT, timestamped by DENEXT_SIGN_TIMESTAMP_URL, batched a few dozen files per signtool sign call. Without a certificate nothing is signed and a warning says so. With one but without signtool (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the script's --no-sign builds unsigned on purpose. The password, which signtool takes only as /p, is redacted from a failure message.",
-          "docFull": "Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password\n`DENEXT_WINDOWS_CERT_PASSWORD`), else the certificate store's `DENEXT_WINDOWS_CERT_THUMBPRINT`,\ntimestamped by `DENEXT_SIGN_TIMESTAMP_URL`, batched a few dozen files per `signtool sign` call.\nWithout a certificate nothing is signed and a warning says so. With one but without `signtool`\n(off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the\nscript's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as\n`/p`, is redacted from a failure message.",
+          "doc": "Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD), else the certificate store's DENEXT_WINDOWS_CERT_THUMBPRINT, timestamped by DENEXT_SIGN_TIMESTAMP_URL, batched a few dozen files per signtool sign call. Without a certificate nothing is signed and a warning says so. With one but without signtool (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the script's --no-sign builds unsigned on purpose. The password, which signtool takes only as /p, never reaches its command line: a password-protected .pfx is imported into the user's certificate store for the run and signed with by thumbprint (withSigntoolCertificate).",
+          "docFull": "Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password\n`DENEXT_WINDOWS_CERT_PASSWORD`), else the certificate store's `DENEXT_WINDOWS_CERT_THUMBPRINT`,\ntimestamped by `DENEXT_SIGN_TIMESTAMP_URL`, batched a few dozen files per `signtool sign` call.\nWithout a certificate nothing is signed and a warning says so. With one but without `signtool`\n(off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the\nscript's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as\n`/p`, never reaches its command line: a password-protected `.pfx` is imported into the user's\ncertificate store for the run and signed with by thumbprint ({@linkcode withSigntoolCertificate}).",
           "params": [
             {
               "name": "files",
@@ -22058,6 +22058,18 @@
           "signature": "LAUFEY_LAUNCH_FILE: laufey-launch.json",
           "doc": "The webview backend's launch-settings file name.",
           "docFull": "The webview backend's launch-settings file name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "LaufeyLaunchWriteOptions",
+          "slug": "LaufeyLaunchWriteOptions",
+          "kind": "interface",
+          "signature": "interface LaufeyLaunchWriteOptions",
+          "doc": "Options for writeLaufeyLaunchConfig.",
+          "docFull": "Options for {@linkcode writeLaufeyLaunchConfig}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -22575,6 +22587,18 @@
           "denextOnly": true
         },
         {
+          "name": "SigntoolCertificateDeps",
+          "slug": "SigntoolCertificateDeps",
+          "kind": "interface",
+          "signature": "interface SigntoolCertificateDeps",
+          "doc": "The seams of withSigntoolCertificate (tests pass fakes).",
+          "docFull": "The seams of {@linkcode withSigntoolCertificate} (tests pass fakes).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "stopSidecars",
           "slug": "stopSidecars",
           "kind": "function",
@@ -22586,6 +22610,42 @@
           "examples": [
             "```ts\nimport { stopSidecars } from \"denext/desktop\";\nimport { installAppUpdateAndRelaunch } from \"denext/desktop/updater\";\n\nawait stopSidecars();\ninstallAppUpdateAndRelaunch();\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "StoreCommandResult",
+          "slug": "StoreCommandResult",
+          "kind": "interface",
+          "signature": "interface StoreCommandResult",
+          "doc": "What a StoreCommandRunner saw a command do.",
+          "docFull": "What a {@linkcode StoreCommandRunner} saw a command do.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "StoreCommandRunner",
+          "slug": "StoreCommandRunner",
+          "kind": "typeAlias",
+          "signature": "type StoreCommandRunner = (cmd: typeOperator, stdin: string) => Promise<StoreCommandResult>",
+          "doc": "Runs cmd with stdin as its standard input (tests pass a fake).",
+          "docFull": "Runs `cmd` with `stdin` as its standard input (tests pass a fake).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "StoreCommandRunnerSync",
+          "slug": "StoreCommandRunnerSync",
+          "kind": "typeAlias",
+          "signature": "type StoreCommandRunnerSync = (cmd: typeOperator) => void",
+          "doc": "Runs cmd to its exit, synchronously (a signal handler's cleanup; tests pass a fake).",
+          "docFull": "Runs `cmd` to its exit, synchronously (a signal handler's cleanup; tests pass a fake).",
+          "params": [],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -22645,9 +22705,9 @@
           "name": "writeLaufeyLaunchConfig",
           "slug": "writeLaufeyLaunchConfig",
           "kind": "function",
-          "signature": "writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string): Promise<string | null>",
-          "doc": "Write the packaged app's laufey-launch.json from desktop.app, desktop.inspectable, (on Linux) desktop.linux.requireSandbox and (on Windows) desktop.windows.proxy in the project's denext.config.ts (the bridge pinned to the app origin, desktopBridgeOrigins) (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes. On macOS call it BEFORE code-signing: both files live inside the sealed bundle.",
-          "docFull": "Write the packaged app's `laufey-launch.json` from `desktop.app`, `desktop.inspectable`, (on\nLinux) `desktop.linux.requireSandbox` and (on Windows) `desktop.windows.proxy` in the project's\n`denext.config.ts` (the bridge pinned to the app origin, {@linkcode desktopBridgeOrigins})\n(resolved beside `entryUrl`'s directory, like `desktopPackageFlags`). On macOS it also lists\n`desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes`. On macOS call it BEFORE\ncode-signing: both files live inside the sealed bundle.",
+          "signature": "writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string, options?: LaufeyLaunchWriteOptions): Promise<string | null>",
+          "doc": "Write the packaged app's laufey-launch.json (packagedLaunchConfig) from the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes. On macOS call it BEFORE code-signing: both files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.",
+          "docFull": "Write the packaged app's `laufey-launch.json` ({@linkcode packagedLaunchConfig}) from the\nproject's `denext.config.ts` (resolved beside `entryUrl`'s directory, like\n`desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's\n`NSUserActivityTypes`. On macOS call it BEFORE code-signing: both files live inside the sealed\nbundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.",
           "params": [
             {
               "name": "entryUrl",
@@ -22660,6 +22720,10 @@
             {
               "name": "bundle",
               "doc": "The .app (macOS) or bundle directory (Windows / Linux) deno desktop wrote."
+            },
+            {
+              "name": "options",
+              "doc": "Whether the runtime is strict (default: from the pin and the env)."
             }
           ],
           "returns": "The path written (always written: it carries inspectable).",

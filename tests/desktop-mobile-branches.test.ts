@@ -48,6 +48,7 @@ import {
 import { resetLocalNotificationsForTesting } from "../src/mobile/local-notifications.ts";
 import { resetFileTransfersForTesting } from "../src/mobile/file-transfer.ts";
 import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
+import { resetStorageFallbackWarningsForTesting } from "../src/desktop/native.ts";
 import { isDesktopBridgeError } from "../src/desktop/client.ts";
 import {
   createFakeDesktopRuntime,
@@ -67,6 +68,7 @@ async function inDesktop(
   } finally {
     resetDesktopBridgeForTesting();
     resetLocalNotificationsForTesting();
+    resetStorageFallbackWarningsForTesting();
     restore();
   }
 }
@@ -565,8 +567,14 @@ Deno.test("notifications: desktop clicks reach onLocalNotificationTapped, the la
   const queued: unknown[] = [
     { id: 7, actionId: "tap", title: "Hi", data: { path: "/inbox" }, launch: true },
   ];
+  let takes = 0;
   await inDesktop({
-    notifications: { take: () => queued.splice(0, queued.length) },
+    notifications: {
+      take: () => {
+        takes++;
+        return queued.splice(0, queued.length);
+      },
+    },
   }, async (rt) => {
     const taps: Array<{ id: number; actionId: string; data: unknown }> = [];
     const stop = onLocalNotificationTapped(
@@ -581,19 +589,26 @@ Deno.test("notifications: desktop clicks reach onLocalNotificationTapped, the la
     rt.emit("notifications", "tap", null);
     await until(() => taps.length === 2);
     assertEquals(taps[1].actionId, "archive");
-    // A replayed signal takes an empty queue: no repeat.
+    // A replayed signal takes an empty queue: no repeat. Asserted once that take has answered
+    // (and its microtasks ran), not after a fixed wait a loaded machine may not have reached.
+    const before = takes;
     rt.emit("notifications", "tap", null);
-    await new Promise((r) => setTimeout(r, 30));
+    await until(() => takes > before);
+    await new Promise((r) => setTimeout(r, 0));
     assertEquals(taps.length, 2);
     stop();
   });
 });
 
 Deno.test("notifications: without the desktop capability a tap listener stays quiet", async () => {
-  await inDesktop({}, async () => {
+  await inDesktop({}, async (rt) => {
     const taps: unknown[] = [];
     const stop = onLocalNotificationTapped((tap) => taps.push(tap), { route: false });
-    await new Promise((r) => setTimeout(r, 30));
+    // The listener asks the runtime for queued clicks at once: wait until it has, and the refusal
+    // has been handled, rather than for a fixed time.
+    await until(() => rt.requests.some((r) => r.method === "POST"));
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(rt.calls, [], "nothing is enabled to answer");
     assertEquals(taps, []);
     stop();
   });

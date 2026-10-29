@@ -62,12 +62,18 @@ function serveRelease(tag: string, opts: { rateLimited?: boolean } = {}): Releas
   };
 }
 
-/** A zip holding `denext.exe` (a small system executable stands in for the real binary). */
+/**
+ * A zip holding `denext.exe`: a small system executable stands in for the real binary, its COFF
+ * timestamp changed so no Windows catalog vouches for it (the installer refuses a system file).
+ */
 async function releaseZip(dir: string): Promise<Uint8Array> {
   const stage = join(dir, "stage");
   await Deno.mkdir(stage, { recursive: true });
   const sys = Deno.env.get("SystemRoot") ?? "C:\\Windows";
-  await Deno.copyFile(join(sys, "System32", "whoami.exe"), join(stage, "denext.exe"));
+  await Deno.writeFile(
+    join(stage, "denext.exe"),
+    withChangedPeTimestamp(await Deno.readFile(join(sys, "System32", "whoami.exe"))),
+  );
   return await zipStage(dir, stage);
 }
 
@@ -142,6 +148,37 @@ Deno.test("install.ps1 harness: only a PowerShell host crash is retried, never t
   assert(!isPowerShellHostCrash(0, ""));
 });
 
+/**
+ * A stub `gh.cmd`, first on every run's Path so a runner's real GitHub CLI is never asked: signed
+ * in only with STUB_GH_AUTH set, `attestation verify` passes only with STUB_GH_VERIFY=ok, and every
+ * call is logged to STUB_GH_LOG when that is set.
+ */
+const GH_STUB = [
+  "@echo off",
+  'if defined STUB_GH_LOG echo %* >> "%STUB_GH_LOG%"',
+  // The real CLI writes its refusals to stderr, which Windows PowerShell 5.1 turns into a
+  // terminating NativeCommandError under ErrorActionPreference 'Stop'; the stub does the same.
+  'if "%1 %2"=="auth status" (if defined STUB_GH_AUTH (exit /b 0) else (echo You are not logged into any GitHub hosts. 1>&2& exit /b 1))',
+  'if "%1 %2"=="attestation verify" (if "%STUB_GH_VERIFY%"=="ok" (exit /b 0) else (echo Error: no attestations found 1>&2& exit /b 1))',
+  "exit /b 2",
+  "",
+].join("\r\n");
+
+/** The directory holding {@linkcode GH_STUB} (made once, on Windows only). */
+let ghStubDir: string | undefined;
+function ghStubs(): string {
+  if (ghStubDir === undefined) {
+    ghStubDir = Deno.makeTempDirSync({ prefix: "denext_gh_stub_" });
+    Deno.writeTextFileSync(join(ghStubDir, "gh.cmd"), GH_STUB);
+    globalThis.addEventListener("unload", () => {
+      try {
+        Deno.removeSync(ghStubDir!, { recursive: true });
+      } catch { /* already gone */ }
+    });
+  }
+  return ghStubDir;
+}
+
 /** Run the installer; returns its exit code and output. */
 async function install(
   release: Release,
@@ -150,6 +187,7 @@ async function install(
   args: string[] = [],
 ): Promise<{ code: number; out: string }> {
   const r = await powerShell(["-File", SCRIPT, ...args], {
+    PATH: `${ghStubs()};${Deno.env.get("PATH") ?? ""}`,
     DENEXT_DOWNLOAD_BASE: `${release.base}/dl`,
     DENEXT_API_BASE: `${release.base}/api`,
     DENEXT_WEB_BASE: `${release.base}/web`,
@@ -347,6 +385,160 @@ Deno.test("install.ps1: no checksum is fatal unless DENEXT_INSECURE=1; .sha256 i
     const fallback = await install(release, root);
     assertEquals(fallback.code, 0, fallback.out);
     assertStringIncludes(fallback.out, "checksum verified");
+  } finally {
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("install.ps1: a signed-in gh must verify the archive's build attestation", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  try {
+    const zip = await releaseZip(dir);
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    const log = join(dir, "gh.log");
+    const quiet = { DENEXT_NO_TOOLCHAIN: "1", STUB_GH_LOG: log };
+    const ok = await install(release, join(dir, "ok"), {
+      ...quiet,
+      STUB_GH_AUTH: "1",
+      STUB_GH_VERIFY: "ok",
+    });
+    assertEquals(ok.code, 0, ok.out);
+    assertStringIncludes(ok.out, "build attestation verified");
+    const calls = await Deno.readTextFile(log);
+    assertStringIncludes(calls, "--repo Brainwires/denext");
+    assertStringIncludes(
+      calls,
+      "--signer-workflow Brainwires/denext/.github/workflows/publish.yml",
+    );
+    // A release whose archive does not verify (swapped with a matching SHA256SUMS): nothing.
+    const bad = await install(release, join(dir, "bad"), { ...quiet, STUB_GH_AUTH: "1" });
+    assert(bad.code !== 0, bad.out);
+    assertStringIncludes(bad.out, "build attestation verification FAILED");
+    assert(!(await exists(join(dir, "bad", "bin", "denext.exe"))));
+    const forced = await install(release, join(dir, "forced"), {
+      ...quiet,
+      STUB_GH_AUTH: "1",
+      DENEXT_INSECURE: "1",
+    });
+    assertEquals(forced.code, 0, forced.out);
+    assertStringIncludes(forced.out, "could not be verified");
+    // No signed-in gh: a note, or a refusal when it is required.
+    const plain = await install(release, join(dir, "plain"), quiet);
+    assertEquals(plain.code, 0, plain.out);
+    assertStringIncludes(plain.out, "build attestation not checked");
+    const required = await install(release, join(dir, "required"), {
+      ...quiet,
+      DENEXT_REQUIRE_ATTESTATION: "1",
+    });
+    assert(required.code !== 0, required.out);
+    assertStringIncludes(required.out, "DENEXT_REQUIRE_ATTESTATION=1 needs the GitHub CLI");
+  } finally {
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/**
+ * `pe` (a PE file's bytes) with its COFF header's TimeDateStamp changed: the PE header's offset
+ * is at 0x3C, and the timestamp 8 bytes past it (after the `PE\0\0` signature and the
+ * Machine and NumberOfSections fields).
+ */
+function withChangedPeTimestamp(pe: Uint8Array): Uint8Array {
+  const out = pe.slice();
+  const view = new DataView(out.buffer);
+  const header = view.getUint32(0x3c, true);
+  assertEquals(view.getUint32(header, true), 0x00004550, "a PE file");
+  view.setUint32(header + 8, view.getUint32(header + 8, true) ^ 0x5a5a5a5a, true);
+  return out;
+}
+
+Deno.test("install.ps1: a denext.exe whose Authenticode signature does not verify is refused", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  const stage = join(dir, "stage");
+  let thumbprint = "";
+  try {
+    await Deno.mkdir(stage, { recursive: true });
+    const exe = join(stage, "denext.exe");
+    const sys = Deno.env.get("SystemRoot") ?? "C:\\Windows";
+    // A Windows binary with its COFF TimeDateStamp changed: the timestamp is covered by the
+    // Authenticode hash (the embedded signature is not), so no system catalog vouches for the
+    // copy and only the signature below is left to judge it.
+    await Deno.writeFile(
+      exe,
+      withChangedPeTimestamp(await Deno.readFile(join(sys, "System32", "whoami.exe"))),
+    );
+    // Signed by a throwaway certificate no root vouches for: present, and not valid.
+    const signed = await powerShell([
+      "-Command",
+      "$c = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=denext installer test' " +
+      "-CertStoreLocation Cert:\\CurrentUser\\My; " +
+      `Set-AuthenticodeSignature -LiteralPath '${exe}' -Certificate $c | Out-Null; ` +
+      "$c.Thumbprint",
+    ], {});
+    thumbprint = new TextDecoder().decode(signed.stdout).trim();
+    assert(/^[0-9A-F]{40}$/.test(thumbprint), thumbprint);
+    const zip = await zipStage(dir, stage);
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    const root = join(dir, "home");
+    const run = await install(release, root, { DENEXT_NO_TOOLCHAIN: "1", DENEXT_INSECURE: "1" });
+    assert(run.code !== 0, run.out);
+    assertStringIncludes(run.out, "Authenticode signature is");
+    assert(!(await exists(join(root, "bin", "denext.exe"))));
+  } finally {
+    if (/^[0-9A-F]{40}$/.test(thumbprint)) {
+      await powerShell([
+        "-Command",
+        `Remove-Item -LiteralPath 'Cert:\\CurrentUser\\My\\${thumbprint}' -DeleteKey`,
+      ], {});
+    }
+    await release.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("install.ps1: a Windows system file vouched for only by a catalog is refused", {
+  ignore: NOT_WINDOWS,
+}, async () => {
+  // Authenticode's hash leaves the embedded signature out, so a Windows binary matches its
+  // system catalog however it is (re-)signed: a Valid catalog signature is not a denext build's.
+  const probe = await powerShell([
+    "-Command",
+    "foreach ($f in 'whoami.exe','hostname.exe','where.exe','findstr.exe','cmd.exe') { " +
+    "$p = Join-Path $env:SystemRoot ('System32\\' + $f); " +
+    "$s = Get-AuthenticodeSignature -LiteralPath $p; " +
+    "if ([string]$s.Status -eq 'Valid' -and [string]$s.SignatureType -eq 'Catalog') " +
+    "{ $p; break } }",
+  ], {});
+  const system = new TextDecoder().decode(probe.stdout).trim();
+  if (!system) {
+    // Catalog lookups need the cryptographic service (absent over some remote sessions).
+    console.warn("no catalog-signed system binary verifies here; nothing to check");
+    return;
+  }
+  const dir = await Deno.makeTempDir();
+  const release = serveRelease("v9.9.9");
+  const stage = join(dir, "stage");
+  try {
+    await Deno.mkdir(stage, { recursive: true });
+    await Deno.copyFile(system, join(stage, "denext.exe"));
+    const zip = await zipStage(dir, stage);
+    release.files.set(ASSET, zip);
+    release.files.set("SHA256SUMS", new TextEncoder().encode(`${await sha256(zip)}  ${ASSET}\n`));
+    const root = join(dir, "home");
+    const run = await install(release, root, { DENEXT_NO_TOOLCHAIN: "1", DENEXT_INSECURE: "1" });
+    assert(run.code !== 0, run.out);
+    assertStringIncludes(run.out, "is a Windows system file");
+    assert(!run.out.includes("Authenticode signature verified"), run.out);
+    assert(!(await exists(join(root, "bin", "denext.exe"))));
   } finally {
     await release.close();
     await Deno.remove(dir, { recursive: true });

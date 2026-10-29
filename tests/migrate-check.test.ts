@@ -705,3 +705,48 @@ Deno.test("shellPathArg: a path as the user's shell reads it back", () => {
   assertEquals(shellPathArg("/tmp/it's", "linux"), "'/tmp/it'\\''s'");
   assertEquals(shellPathArg("/tmp/a\\b$c", "linux"), "'/tmp/a\\b$c'");
 });
+
+/**
+ * A home-directory and a temp-directory variable this machine sets (Windows sets no `HOME` and,
+ * outside a POSIX shell, no `TMPDIR`): a config reads them only when they are there.
+ */
+function machinePathVars(): { home: string; tmp: string } {
+  const set = (keys: string[]) => keys.find((k) => Deno.env.get(k) !== undefined) ?? keys[0];
+  return { home: set(["HOME", "USERPROFILE"]), tmp: set(["TMPDIR", "TEMP", "TMP"]) };
+}
+
+Deno.test("migrate: a next.config rule that reads a machine path is left out, never inlined", async () => {
+  const dir = await tempDir();
+  const { home, tmp } = machinePathVars();
+  try {
+    await writeTree(dir, {
+      "package.json": { name: "paths", dependencies: { next: "15.3.0", react: "19.1.0" } },
+      "next.config.mjs": `export default {
+  async redirects() {
+    return [
+      { source: "/cache", destination: "/files" + (process.env.${home} ?? "") + "/x", permanent: false },
+      { source: "/old", destination: "/new", permanent: true },
+    ];
+  },
+  async headers() {
+    return [{ source: "/(.*)", headers: [{ key: "x-tmp", value: String(Deno.env.get("${tmp}")) }] }];
+  },
+};
+`,
+      "app/layout.tsx": `export default function L({ children }) { return children; }\n`,
+      "app/page.tsx": `export default function P() { return null; }\n`,
+    });
+    await migrateProject(dir, {});
+    const config = await Deno.readTextFile(join(dir, "denext.config.ts"));
+    // The plain rule is inlined; the one reading the home path is not, and neither is this machine's path.
+    assertStringIncludes(config, '"source":"/old"');
+    assert(!config.includes('"source":"/cache"'), config);
+    assert(!config.includes("__denext_machine_env_"), config);
+    const homeValue = Deno.env.get(home);
+    if (homeValue) assert(!config.includes(homeValue), config);
+    assertStringIncludes(config, `// redirects: a rule or value reads ${home}`);
+    assertStringIncludes(config, `// headers: a rule or value reads ${tmp}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

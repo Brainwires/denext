@@ -49,6 +49,11 @@ export function warnStorageFallback(cap: string): void {
   );
 }
 
+/** Forget which capabilities were warned about (tests: each starts with no warning given). */
+export function resetStorageFallbackWarningsForTesting(): void {
+  warned.clear();
+}
+
 // --- secure store (cap "secureStore") ---------------------------------------
 
 /** `secureStore.get` on desktop: the OS keychain entry, or `null`. */

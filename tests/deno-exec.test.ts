@@ -77,3 +77,28 @@ Deno.test("resolveDenoExecutable: a compiled binary with no Deno anywhere refuse
   // Outside a binary the bare name is still a PATH lookup, as before.
   assertEquals(resolveDenoExecutable(seams({ standalone: false })), "deno");
 });
+
+Deno.test("resolveDenoExecutable: a relative DENO_BIN is resolved when read; a relative HOME is no home", () => {
+  // A child spawned in the project would resolve `./tc/deno` against the project instead.
+  assertEquals(
+    resolveDenoExecutable(seams({ vars: { DENO_BIN: "./tc/deno" }, cwd: () => "/work" })),
+    "/work/tc/deno",
+  );
+  assertEquals(
+    resolveDenoExecutable(
+      seams({ os: "windows", vars: { DENO_BIN: "tc\\deno.exe" }, cwd: () => "C:\\work" }),
+    ),
+    "C:\\work\\tc\\deno.exe",
+  );
+  // A bare name stays a PATH lookup.
+  assertEquals(
+    resolveDenoExecutable(seams({ vars: { DENO_BIN: "deno" }, cwd: () => "/work" })),
+    "deno",
+  );
+  // `HOME=repo` would make `repo/.deno/bin/deno` — a file in the checkout — the Deno to run.
+  assertThrows(() =>
+    resolveDenoExecutable(
+      seams({ vars: { HOME: "repo", PATH: "/usr/bin" }, files: ["repo/.deno/bin/deno"] }),
+    )
+  );
+});
