@@ -25,6 +25,10 @@ and this project adheres to
   ([GHSA-67mh-4wv8-2f99](https://github.com/advisories/GHSA-67mh-4wv8-2f99)), a stale optional peer;
   denext runs its own pinned esbuild binary. The published version ranges already admitted the
   fixed releases, so a fresh resolution in an app was not affected.
+- **`deno task audit:npm`** runs `deno audit` over the root `deno.lock` and fails on a high or
+  critical advisory. A fix still under Deno's minimum dependency age is held in
+  `security/npm-audit-allow.json` with the date it clears. CI's `cargo-audit` job and
+  `deno task precheck` (when `deno.lock`, a `deno.json` or the allowlist changes) run it.
 
 ## [4.10.0] - 2026-10-29
 

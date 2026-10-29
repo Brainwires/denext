@@ -1,0 +1,4 @@
+{
+  "$comment": "High / critical npm advisories `deno task audit:npm` (scripts/npm-audit.ts) lets pass while the fixed version is under Deno's minimum dependency age. Each entry: the GHSA id, the package, the reason and `until` (YYYY-MM-DD, UTC), the last day it applies; set it to the day the fix clears the hold and lock the fix then.",
+  "allow": []
+}
