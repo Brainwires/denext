@@ -22,39 +22,21 @@ import { getViewManagerConfig, nativeHostComponent } from "../src/react-native/n
 // codegenNativeCommands dispatch through (the overlay entry's).
 import { dispatchViewManagerCommand, withViewManagerCommands } from "../src/react-native/mod.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
-import { hasPendingPassiveEffects } from "../src/client/fiber/commit.ts";
 import { makeDom } from "./helpers/dom.ts";
-import { type Any, fakePlugin, inShell, mount, settle, until } from "./helpers/mobile-fakes.ts";
+import {
+  type Any,
+  fakePlugin,
+  inShell,
+  mount,
+  nativeIn,
+  passiveSettled,
+  settle,
+} from "./helpers/mobile-fakes.ts";
 
 /** Let passive effects and promise callbacks run. */
 async function tick(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 5));
   await settle();
-}
-
-/** The native view slot element under `node` (itself included), if any. */
-function slotIn(node: Any): Any {
-  if (!node) return null;
-  if (node.getAttribute?.("data-denext-native-view")) return node;
-  for (const child of node.childNodes ?? []) {
-    const slot = slotIn(child);
-    if (slot) return slot;
-  }
-  return null;
-}
-
-/**
- * Wait until the slot under `container` is native and the effects of that commit (the
- * `onCommand` handoff, the UIManager registration, `onMapReady`) have run. The slot goes native
- * when the plugin's `create` settles, and those effects run on the passive flush's own task
- * after that commit: awaited here, never assumed to fit in a fixed sleep.
- */
-async function nativeIn(container: Any): Promise<void> {
-  await until(
-    () =>
-      slotIn(container)?.getAttribute("data-status") === "native" && !hasPendingPassiveEffects(),
-    "the native view and its effects",
-  );
 }
 
 /** A tracker environment that never schedules anything (the tests read the plugin calls). */
@@ -368,7 +350,7 @@ Deno.test("react-native-video: the web renders a <video>; the shell the native p
     assertEquals((loads[0] as Any).duration, 7);
     paused = true;
     rerender();
-    await tick();
+    await passiveSettled();
     ref.current!.seek(3);
     assertEquals(await ref.current!.getCurrentPosition(), 4, "the native player's answer");
     const names = commands(views).map(([n]) => n);

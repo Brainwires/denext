@@ -8,6 +8,7 @@ import { h } from "../src/jsx/jsx-runtime.ts";
 import { NativeViewSlot, useNativeViewSlot } from "../src/mobile/mod.ts";
 import { nativeViewComponent } from "../src/mobile/native-view.ts";
 import { PARK_MS } from "../src/mobile/native-view-park.ts";
+import { hasPendingPassiveEffects } from "../src/client/fiber/commit.ts";
 import {
   clippingAncestors,
   clipsContent,
@@ -26,13 +27,17 @@ import {
   type TrackedSlot,
   type TrackerEnv,
 } from "../src/mobile/native-view-tracker.ts";
-import { type Any, fakePlugin, inShell, mount, settle } from "./helpers/mobile-fakes.ts";
-
-/** Let passive effects and promise callbacks run. */
-async function tick(): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, 5));
-  await settle();
-}
+import {
+  type Any,
+  fakePlugin,
+  inShell,
+  mount,
+  nativeIn,
+  passiveSettled,
+  settle,
+  slotsSettledIn,
+  until,
+} from "./helpers/mobile-fakes.ts";
 
 /** A fake element with a settable box, a parent chain and `contains`. */
 function box(x: number, y: number, width: number, height: number, parent: Any = null): Any {
@@ -322,7 +327,7 @@ Deno.test("NativeViewSlot: the web renders the children (the fallback)", async (
       h("img", { alt: "map" }),
     )
   );
-  await tick();
+  await passiveSettled();
   const slot = container.firstChild;
   assertEquals(slot.getAttribute("data-status"), "web");
   assertEquals(slot.getAttribute("id"), "m", "extra props pass through");
@@ -350,8 +355,7 @@ Deno.test("NativeViewSlot: iOS embeds the view in the slot's scroller; props, ev
         h("img", { alt: "fallback" }),
       )
     );
-    await tick();
-    await tick();
+    await nativeIn(container);
     const slot = container.firstChild;
     assertEquals(slot.getAttribute("data-status"), "native");
     const create = views.calls.find(([m]) => m === "create")![1] as Any;
@@ -371,12 +375,12 @@ Deno.test("NativeViewSlot: iOS embeds the view in the slot's scroller; props, ev
 
     zoom = 11;
     rerender();
-    await tick();
+    await passiveSettled();
     const setProps = views.calls.filter(([m]) => m === "setProps");
     assertEquals(setProps.length, 1);
     assertEquals((setProps[0][1] as Any).props.zoom, 11);
     rerender();
-    await tick();
+    await passiveSettled();
     assertEquals(views.calls.filter(([m]) => m === "setProps").length, 1, "same props: no call");
 
     views.fire("nativeViewEvent", { id: create.id, name: "regionChange", data: { zoom: 12 } });
@@ -384,7 +388,7 @@ Deno.test("NativeViewSlot: iOS embeds the view in the slot's scroller; props, ev
     assertEquals(events, [["regionChange", { zoom: 12 }]]);
 
     root.unmount();
-    await tick();
+    await passiveSettled();
     const hide = views.calls.filter(([m]) => m === "update").at(-1)![1] as Any;
     assertEquals([hide.frames[0].id, hide.frames[0].hidden], [create.id, true], "hidden at once");
     assertEquals(
@@ -414,13 +418,12 @@ Deno.test("NativeViewSlot: an inline callback ref gets the element and never re-
         ref: (el: unknown) => seen.push(el),
       })
     );
-    await tick();
-    await tick();
+    await nativeIn(container);
     const slot = container.firstChild;
     assertEquals(seen[0], slot, "the caller's ref holds the slot element");
     for (n = 1; n < 4; n++) {
       rerender();
-      await tick();
+      await passiveSettled();
     }
     assertEquals(views.calls.filter(([m]) => m === "create").length, 1, "one native view");
     assertEquals(
@@ -432,7 +435,7 @@ Deno.test("NativeViewSlot: an inline callback ref gets the element and never re-
     );
     assertEquals(seen.at(-1), slot, "the latest ref holds the element");
     root.unmount();
-    await tick();
+    await passiveSettled();
     // The unmounted view stays parked for a Fast Refresh remount, then goes: let it, here.
     await new Promise((r) => setTimeout(r, PARK_MS + 20));
   });
@@ -450,8 +453,7 @@ Deno.test("NativeViewSlot: Android draws over the page; an unknown type or a fai
         h(NativeViewSlot as Any, { type: "map" }, "web map"),
       )
     );
-    await tick();
-    await tick();
+    await slotsSettledIn(container, ["native", "web"]);
     const [video, map] = container.firstChild.childNodes;
     assertEquals(video.getAttribute("data-status"), "native");
     assertEquals((views.calls.find(([m]) => m === "create")![1] as Any).placement, "over");
@@ -469,8 +471,7 @@ Deno.test("NativeViewSlot: Android draws over the page; an unknown type or a fai
   });
   await inShell("android", { DenextNativeViews: failing.plugin }, async () => {
     const { container } = mount(() => h(NativeViewSlot as Any, { type: "video" }, "fallback"));
-    await tick();
-    await tick();
+    await slotsSettledIn(container, ["error"]);
     assertEquals(container.firstChild.getAttribute("data-status"), "error");
     assertEquals(container.firstChild.childNodes.length, 1, "the fallback is back");
   });
@@ -487,8 +488,10 @@ Deno.test("useNativeViewSlot: command reaches the view once native, rejects befo
     }
     mount(() => h(Probe, null));
     await assertRejects(() => handle.command("play"), Error, "not ready");
-    await tick();
-    await tick();
+    await until(
+      () => handle.status === "native" && !hasPendingPassiveEffects(),
+      "the native view and its effects",
+    );
     assertEquals(handle.status, "native");
     assertEquals(handle.placement, "under");
     assertEquals(await handle.command("play", { from: 0 }), { playing: true });
@@ -514,8 +517,7 @@ Deno.test("nativeViewComponent: React Native's host-component shape over a slot"
         onSelect: (e: unknown) => selected.push(e),
       }, h("span", null, "legend"))
     );
-    await tick();
-    await tick();
+    await nativeIn(container);
     const create = views.calls.find(([m]) => m === "create")![1] as Any;
     assertEquals(create.type, "chart");
     assertEquals(create.props, { values: [1, 2] }, "functions, style and testID stay out");
@@ -578,8 +580,7 @@ Deno.test("NativeViewSlot: iOS draws the video under the page by default (its co
   await inShell("ios", { DenextNativeViews: views.plugin }, async () => {
     pageTracker(views.plugin as Any, fakeEnv().env);
     const { container } = mount(() => h(NativeViewSlot as Any, { type: "video" }, "fallback"));
-    await tick();
-    await tick();
+    await nativeIn(container);
     assertEquals((views.calls.find(([m]) => m === "create")![1] as Any).placement, "under");
     assertEquals(container.firstChild.childNodes.length, 0, "no embed scroller");
   });
@@ -624,9 +625,8 @@ Deno.test("NativeViewSlot: a remount of the same slot takes the parked view over
       };
     };
     let Player = make();
-    const { rerender } = mount(() => h(Player as Any, null));
-    await tick();
-    await tick();
+    const { rerender, container } = mount(() => h(Player as Any, null));
+    await nativeIn(container);
     const creates = () => views.calls.filter(([m]) => m === "create");
     assertEquals(creates().length, 1);
     const id = (creates()[0][1] as Any).id;
@@ -634,8 +634,13 @@ Deno.test("NativeViewSlot: a remount of the same slot takes the parked view over
     Player = make();
     src = "b.mp4";
     rerender();
-    await tick();
-    await tick();
+    await nativeIn(container);
+    await until(
+      () =>
+        views.calls.some(([m, a]) => m === "setProps" && (a as Any).props.g === 2) &&
+        !hasPendingPassiveEffects(),
+      "the kept view's new props",
+    );
     assertEquals(creates().length, 1, "no second view");
     const props = views.calls.filter(([m]) => m === "setProps").at(-1)![1] as Any;
     assertEquals(props, { id, props: { src: "b.mp4", g: 2 } }, "the kept view gets the new props");
@@ -669,8 +674,7 @@ Deno.test("NativeViewSlot: scrollPassthrough defaults per type, reaches create a
         }),
       )
     );
-    await tick();
-    await tick();
+    await slotsSettledIn(container, ["native", "native", "native"]);
     const creates = views.calls.filter(([m]) => m === "create").map(([, a]) =>
       (a as Any).scrollPassthrough
     );
