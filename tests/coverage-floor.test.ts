@@ -5,6 +5,7 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { join, resolve } from "@std/path";
 import {
+  canonicalPath,
   checkFloor,
   FLOORED_FULL,
   flooredFiles,
@@ -201,4 +202,82 @@ Deno.test("flooredFiles --full: the whole-suite floor adds the 4.x files raised 
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test("canonicalPath: symlinks resolved; a missing tail kept on its deepest existing ancestor", () => {
+  // `/var` → `/private/var`, as on macOS; nothing else resolves past the root.
+  const links: Record<string, string> = { "/": "/", "/var": "/private/var" };
+  const realPath = (p: string) => {
+    for (const [from, to] of Object.entries(links)) {
+      if (p === from) return to;
+      if (from !== "/" && p.startsWith(`${from}/`)) {
+        if (p === "/var/t/repo" || p === "/var/t") return `${to}${p.slice(from.length)}`;
+      }
+    }
+    throw new Deno.errors.NotFound(p);
+  };
+  assertEquals(canonicalPath("/var/t/repo", realPath), "/private/var/t/repo");
+  // The file is gone (or never existed here): its existing ancestor is resolved.
+  assertEquals(canonicalPath("/var/t/repo/src/a.ts", realPath), "/private/var/t/repo/src/a.ts");
+  // A path with nothing resolvable but the root comes back as written.
+  assertEquals(canonicalPath("/home/runner/src/a.ts", realPath), "/home/runner/src/a.ts");
+});
+
+Deno.test("parseLcov: records of one file under two spellings merge, a point covered once", () => {
+  const lcov = `SF:/var/r/src/desktop/a.ts
+FNDA:1,f
+FNDA:0,g
+DA:1,1
+DA:2,0
+BRDA:2,0,0,1
+BRDA:2,0,1,0
+end_of_record
+SF:/private/var/r/src/desktop/a.ts
+FNDA:0,f
+FNDA:2,g
+DA:1,0
+DA:2,4
+BRDA:2,0,0,0
+BRDA:2,0,1,-
+end_of_record
+`;
+  const canonical = (p: string) => p.replace(/^\/var\//, "/private/var/");
+  assertEquals([...parseLcov(lcov, canonical)], [[
+    "/private/var/r/src/desktop/a.ts",
+    { lines: [2, 2], branches: [1, 2], functions: [2, 2] },
+  ]]);
+  // Without a canonical form the two spellings stay two files.
+  assertEquals(parseLcov(lcov).size, 2);
+});
+
+Deno.test({
+  name: "main: a root reached through a symlink and a report mixing both spellings agree",
+  // Creating a symlink on Windows needs a privilege CI's account may not hold.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const parent = await Deno.realPath(await Deno.makeTempDir());
+    const real = join(parent, "the-real-checkout");
+    const link = join(parent, "l");
+    const errs: string[] = [];
+    const prev = console.error;
+    console.error = (...a: unknown[]) => void errs.push(a.join(" "));
+    try {
+      await Deno.mkdir(join(real, "src/desktop"), { recursive: true });
+      await Deno.writeTextFile(join(real, "src/desktop/a.ts"), "");
+      await Deno.writeTextFile(join(real, "src/desktop/b.ts"), "");
+      await Deno.symlink(real, link);
+      const file = join(parent, "lcov.info");
+      await Deno.writeTextFile(
+        file,
+        `SF:${join(link, "src/desktop/a.ts")}\nDA:1,1\nDA:2,0\nend_of_record\n` +
+          `SF:${join(real, "src/desktop/a.ts")}\nDA:1,0\nDA:2,1\nend_of_record\n` +
+          `SF:${join(real, "src/desktop/b.ts")}\nDA:1,1\nend_of_record\n`,
+      );
+      // Read from the link: b.ts is found under the real spelling, a.ts's two records merge.
+      assertEquals(await main([file], link), 0, errs.join("\n"));
+    } finally {
+      console.error = prev;
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
 });

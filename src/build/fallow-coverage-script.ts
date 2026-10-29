@@ -125,29 +125,89 @@ function toIstanbul(rec: LcovRecord): IstanbulFileCoverage {
 }
 
 /**
+ * \`path\` with every symlink resolved (\`/var/…\` → \`/private/var/…\` on macOS), so the records of
+ * one file reached through two spellings meet. A path that no longer exists keeps its missing
+ * tail on its deepest existing (resolved) ancestor; one with no such ancestor is returned as is.
+ * (Self-contained, no imports: this script is also scaffolded into apps.)
+ *
+ * @param path An absolute path.
+ * @param realPath The resolver (\`Deno.realPathSync\`; injectable for tests).
+ */
+export function canonicalPath(
+  path: string,
+  realPath: (path: string) => string = Deno.realPathSync,
+): string {
+  const tail: string[] = [];
+  for (let dir = path;;) {
+    try {
+      const real = realPath(dir);
+      if (tail.length === 0) return real;
+      const sep = real.includes("\\\\") && !real.includes("/") ? "\\\\" : "/";
+      return [real.replace(/[\\\\/]+$/, ""), ...tail.reverse()].join(sep);
+    } catch { /* missing (or unreadable): try its parent */ }
+    const cut = Math.max(dir.lastIndexOf("/"), dir.lastIndexOf("\\\\"));
+    // The root (\`/\`, \`C:\\\\\`) or a bare name: nothing above it to resolve.
+    if (cut <= 0 || /^[A-Za-z]:$/.test(dir.slice(0, cut))) return path;
+    tail.push(dir.slice(cut + 1));
+    dir = dir.slice(0, cut);
+  }
+}
+
+/** Fold \`from\` (another record of the same file) into \`into\`: hits add up. */
+function mergeRecord(into: LcovRecord, from: LcovRecord): void {
+  const lines = new Map(into.lines);
+  for (const [line, count] of from.lines) {
+    lines.set(line, (lines.get(line) ?? 0) + count);
+  }
+  into.lines = [...lines];
+  for (const fn of from.fns) {
+    const same = into.fns.find((f) => f.name === fn.name && f.line === fn.line);
+    if (same) same.count += fn.count;
+    else into.fns.push({ ...fn });
+  }
+  for (const [key, entry] of from.branches) {
+    const same = into.branches.get(key);
+    if (!same) {
+      into.branches.set(key, { line: entry.line, counts: [...entry.counts] });
+      continue;
+    }
+    entry.counts.forEach((c, i) => {
+      same.counts[i] = (same.counts[i] ?? 0) + c;
+    });
+  }
+}
+
+/**
  * Convert lcov text to an Istanbul coverage map. Relative \`SF:\` paths are resolved
- * against \`root\` (lcov from \`deno coverage\` is already absolute).
+ * against \`root\` (lcov from \`deno coverage\` is already absolute), then mapped through
+ * \`canonical\`; records that land on one path are merged (a run under a symlinked
+ * directory writes both spellings of a file).
  */
 export function lcovToIstanbul(
   lcov: string,
   root: string,
+  canonical: (path: string) => string = (p) => p,
 ): IstanbulCoverageMap {
-  const map: IstanbulCoverageMap = {};
+  const records = new Map<string, LcovRecord>();
   let rec: LcovRecord | null = null;
   for (const raw of lcov.split("\\n")) {
     const line = raw.trim();
     if (line.startsWith("SF:")) {
       const p = line.slice(3);
       rec = newRecord(
-        p.startsWith("/") ? p : \`\${root.replace(/\\/$/, "")}/\${p}\`,
+        canonical(p.startsWith("/") ? p : \`\${root.replace(/\\/$/, "")}/\${p}\`),
       );
       continue;
     }
     if (rec !== null && readLcovLine(rec, line)) {
-      map[rec.path] = toIstanbul(rec);
+      const seen = records.get(rec.path);
+      if (seen) mergeRecord(seen, rec);
+      else records.set(rec.path, rec);
       rec = null;
     }
   }
+  const map: IstanbulCoverageMap = {};
+  for (const [path, record] of records) map[path] = toIstanbul(record);
   return map;
 }
 
@@ -162,6 +222,7 @@ if (import.meta.main) {
   const map = lcovToIstanbul(
     await Deno.readTextFile(inPath),
     rootArg ?? Deno.cwd(),
+    canonicalPath,
   );
   await Deno.writeTextFile(outPath, JSON.stringify(map));
   const count = Object.keys(map).length;

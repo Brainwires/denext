@@ -3,10 +3,11 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
-import { fromFileUrl } from "@std/path";
 import { buildInChild } from "../helpers/bounded-build.ts";
+import { copyExample } from "../helpers/example-copy.ts";
 
-const APP = fromFileUrl(new URL("../../examples/typed-api", import.meta.url));
+// A private copy: building the checkout's example would rewrite its tracked deno.lock.
+const APP = await copyExample("typed-api");
 
 type Ctx = { origin: string; html: string };
 
