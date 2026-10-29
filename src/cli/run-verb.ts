@@ -684,7 +684,7 @@ export async function runVerb(
   await noticeShadow(command, cwd);
   // Cargo-style build locks, taken here — in the process that runs the verb, after any re-exec —
   // and held for the whole run (the OS drops them if the process exits or is killed).
-  const lockRequest = command.locks?.(ctx);
+  const lockRequest = await command.locks?.(ctx);
   using _locks = lockRequest ? await acquireProjectLocks(lockRequest) : undefined;
   await command.run(ctx);
 }

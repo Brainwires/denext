@@ -113,6 +113,11 @@ and this project adheres to
   of them in one process shared the lock instead of waiting: the file lock only kept other
   processes out. They now take turns, in the order they asked, and the same holds for
   `createTestApp` calls on one project. Work a locked step starts itself still runs at once.
+- **`denext doctor` probes a project with plugins again.** Doctor holds the build directory's lock
+  shared while it reads the last build, but its route probe runs the plugins' prepare steps, which
+  write `.denext/` under the lock exclusive. The route-conformance check failed with "this process
+  holds a shared lock on build directory .denext and asked for an exclusive one". Doctor now takes
+  the lock exclusive when the project has plugins (outside SPA mode), and shared otherwise.
 - **A desktop app's sidecar log file has every line once `stopAll()` returns.** The lines a
   sidecar printed as it shut down were still being appended after the host reported it stopped.
 - **The report of a failed background CLI cache says when `deno cache` printed nothing.** It

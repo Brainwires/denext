@@ -954,29 +954,32 @@ Deno.test("the plan: rank order, path order inside a rank, the build dir locked 
   assert((await outputLockPath(dir, resolve("/elsewhere/out"))).includes(`${BUILD_DIR_LOCK}-ext-`));
 });
 
-Deno.test("verbs declare their locks", () => {
+Deno.test("verbs declare their locks", async () => {
   const reg = buildRegistry();
-  const locksOf = (argv: string[]) => {
+  const locksOf = async (argv: string[]) => {
     const out = reg.parse(argv);
     assert(out.kind === "run");
-    return out.command.locks?.(out.ctx);
+    return await out.command.locks?.(out.ctx);
   };
   const p = resolve("/p");
-  assertEquals(locksOf(["build", "/p"]), { projectDir: p, buildDir: "exclusive" });
-  assertEquals(locksOf(["export", "/p"]), {
+  assertEquals(await locksOf(["build", "/p"]), { projectDir: p, buildDir: "exclusive" });
+  assertEquals(await locksOf(["export", "/p"]), {
     projectDir: p,
     buildDir: "exclusive",
     outputDirs: ["out"],
   });
-  assertEquals(locksOf(["analyze", "/p"])?.buildDir, "exclusive");
-  assertEquals(locksOf(["doctor", "/p"])?.buildDir, "shared");
-  assertEquals(locksOf(["desktop", "package", "/p"]), { projectDir: p, packageDirs: ["dist"] });
-  assertEquals(locksOf(["desktop", "package", "/p", "--regenerate-scripts"]), undefined);
-  assertEquals(locksOf(["start", "/p"]), undefined, "a server never blocks builds");
-  assertEquals(locksOf(["dev", "/p"]), undefined, "dev locks per rebuild, not per session");
-  assertEquals(locksOf(["test"]), undefined);
-  assertEquals(locksOf(["test", "--coverage=cov"])?.outputDirs, ["cov"]);
-  assertEquals(locksOf(["mobile", "build", "ios", "--dry-run"]), undefined);
+  assertEquals((await locksOf(["analyze", "/p"]))?.buildDir, "exclusive");
+  assertEquals((await locksOf(["doctor", "/p"]))?.buildDir, "shared");
+  assertEquals(await locksOf(["desktop", "package", "/p"]), {
+    projectDir: p,
+    packageDirs: ["dist"],
+  });
+  assertEquals(await locksOf(["desktop", "package", "/p", "--regenerate-scripts"]), undefined);
+  assertEquals(await locksOf(["start", "/p"]), undefined, "a server never blocks builds");
+  assertEquals(await locksOf(["dev", "/p"]), undefined, "dev locks per rebuild, not per session");
+  assertEquals(await locksOf(["test"]), undefined);
+  assertEquals((await locksOf(["test", "--coverage=cov"]))?.outputDirs, ["cov"]);
+  assertEquals(await locksOf(["mobile", "build", "ios", "--dry-run"]), undefined);
 });
 
 Deno.test("coverageDir reads deno test's --coverage[=<dir>]", () => {
