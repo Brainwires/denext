@@ -10,7 +10,7 @@
 //   3. the report has the documented shape, including the `--json` CLI output, and a run with
 //      read permission only succeeds.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertFalse, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
 import { dirname, fromFileUrl, join, relative } from "@std/path";
 import { migrateProject } from "../src/build/migrate.ts";
@@ -194,6 +194,40 @@ Deno.test("migrate --check: Next App Router + Prisma — source rewrites are pla
   assert(paths.includes("modify app/db.server.ts"), paths.join("\n"));
   assert(paths.includes("modify package.json"), paths.join("\n"));
   assert(r.review.some((f) => f.item === "prisma"));
+});
+
+Deno.test({
+  name: "migrate --check: a next.config reading through a committed symlink gets nothing out",
+  ignore: Deno.build.os === "windows", // creating symlinks needs a privilege CI lacks there
+  fn: async () => {
+    const parent = await tempDir();
+    try {
+      const outside = join(parent, "outside");
+      await Deno.mkdir(outside);
+      await Deno.writeTextFile(join(outside, "credentials"), "OUTSIDE-SECRET");
+      const dirs = [join(parent, "check"), join(parent, "run")];
+      for (const dir of dirs) {
+        await writeTree(dir, {
+          ...NEXT_APP,
+          // The secret would land in pass-through fields the report and the config carry.
+          "next.config.js": `const fs = require("node:fs");
+let leaked = "none";
+try { leaked = fs.readFileSync("home/credentials", "utf8"); } catch {}
+module.exports = { basePath: "/" + leaked, env: { LEAKED: leaked } };
+`,
+        });
+        await Deno.symlink(join("..", "outside"), join(dir, "home"));
+      }
+      const report = await checkMigration(dirs[0]);
+      assertFalse(JSON.stringify(report).includes("OUTSIDE-SECRET"), "the --check report");
+      await migrateProject(dirs[1]);
+      const written = await Deno.readTextFile(join(dirs[1], "denext.config.ts"));
+      assertFalse(written.includes("OUTSIDE-SECRET"), written);
+      assertStringIncludes(written, "/none");
+    } finally {
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
 });
 
 Deno.test("migrate --check: Next Pages Router", async () => {

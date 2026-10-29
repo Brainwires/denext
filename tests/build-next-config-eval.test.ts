@@ -256,6 +256,90 @@ export default { wrote, fetched, readOutside, readInside };
   });
 });
 
+Deno.test({
+  name: "a symlink committed in the project can't read outside it, however the path is spelled",
+  // Creating symlinks on Windows needs a privilege CI accounts don't hold.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const parent = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-next-eval-" }));
+    try {
+      const dir = join(parent, "app");
+      const outside = join(parent, "outside");
+      await Deno.mkdir(join(dir, "b"), { recursive: true });
+      await Deno.mkdir(outside);
+      await Deno.writeTextFile(join(outside, "s.txt"), "OUTSIDE-SECRET");
+      await Deno.writeTextFile(join(dir, "in.txt"), "inside");
+      // A file link and a directory link out of the project, a link to a project directory
+      // that holds one (`a/u` reaches `outside` without naming the escaping link), and a
+      // link that stays inside.
+      await Deno.symlink(join("..", "outside", "s.txt"), join(dir, "link.txt"));
+      await Deno.symlink(join("..", "outside"), join(dir, "u"));
+      await Deno.symlink(join("..", "..", "outside"), join(dir, "b", "u"));
+      await Deno.symlink("b", join(dir, "a"));
+      await Deno.symlink("in.txt", join(dir, "ok.txt"));
+      const probe = `
+import { readFileSync } from "node:fs";
+const read = (p) => { try { return Deno.readTextFileSync(p); } catch (e) { return e.name; } };
+const nodeRead = (p) => { try { return readFileSync(p, "utf8"); } catch (e) { return e.name; } };
+export default {
+  env: {
+    file: read("link.txt"),
+    dir: read("u/s.txt"),
+    caseVariant: read("U/s.txt"),
+    nested: read("b/u/s.txt"),
+    viaInsideLink: read("a/u/s.txt"),
+    node: nodeRead("link.txt"),
+    absolute: read(${JSON.stringify(join(dir, "u", "s.txt"))}),
+    inside: read("in.txt"),
+    insideLink: read("ok.txt"),
+  },
+};
+`;
+      await Deno.writeTextFile(join(dir, "next.config.mjs"), probe);
+      const value = valueOf(await evalIn(dir, "next.config.mjs")) as {
+        env: Record<string, string>;
+      };
+      assertFalse(JSON.stringify(value).includes("OUTSIDE-SECRET"), JSON.stringify(value));
+      for (
+        const key of ["file", "dir", "caseVariant", "nested", "viaInsideLink", "node", "absolute"]
+      ) {
+        assertMatch(value.env[key], /NotCapable|PermissionDenied|NotFound/, key);
+      }
+      assertEquals(value.env.inside, "inside");
+      assertEquals(value.env.insideLink, "inside");
+    } finally {
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
+});
+
+Deno.test("the child reads the machine's sizing through node:os, not its name, user or home", async () => {
+  const probe = `
+import os from "node:os";
+const ask = (f) => { try { f(); return "allowed"; } catch (e) { return e.name; } };
+export default {
+  cpus: ask(() => os.cpus()),
+  totalmem: ask(() => os.totalmem()),
+  release: ask(() => os.release()),
+  hostname: ask(() => os.hostname()),
+  userInfo: ask(() => os.userInfo()),
+  homedir: ask(() => os.homedir()),
+  interfaces: ask(() => os.networkInterfaces()),
+};
+`;
+  await withConfig("next.config.mjs", probe, async (dir) => {
+    const value = valueOf(await evalIn(dir, "next.config.mjs")) as Record<string, string>;
+    assertEquals(
+      [value.cpus, value.totalmem, value.release],
+      ["allowed", "allowed", "allowed"],
+      JSON.stringify(value),
+    );
+    for (const key of ["hostname", "userInfo", "homedir", "interfaces"]) {
+      assert(value[key] !== "allowed", `${key} was readable`);
+    }
+  });
+});
+
 Deno.test("a project path with a comma is refused, not spawned with a widened read grant", async () => {
   // `--allow-read=<dir>` is a comma-separated LIST: `/a/project,etc` grants `/a/project` AND
   // `etc` (relative to the cwd — which is the project). The `,,` escape is refused by Deno 2.9.
