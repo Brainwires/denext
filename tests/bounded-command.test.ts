@@ -72,7 +72,10 @@ Deno.test("runBounded: at the deadline the whole tree is killed and the output s
     assertStringIncludes(r.output, "phase: waiting on the grandchild", "the tree was running");
     // The tree as it stood at the deadline names the child and the grandchild it waited on.
     assertStringIncludes(r.tree, `${r.pid} `, r.tree);
-    assertStringIncludes(r.tree, "Deno.listen", r.tree);
+    // (Command lines need Win32_Process, which a non-admin remote Windows session is refused.)
+    if (!r.tree.includes("Win32_Process refused")) {
+      assertStringIncludes(r.tree, "Deno.listen", r.tree);
+    }
     assert(
       Date.now() - t0 < DEADLINE_MS + 15_000,
       `returned ${Date.now() - t0} ms after the start`,
@@ -196,5 +199,7 @@ Deno.test("inChild: a child killed at its deadline names the subprocess it waite
   );
   // The tree: the grandchild, still alive at the deadline.
   const tree = err.message.slice(err.message.indexOf("Its process tree at the deadline:"));
-  assertStringIncludes(tree, "denext-stalled-grandchild", tree);
+  if (!tree.includes("Win32_Process refused")) {
+    assertStringIncludes(tree, "denext-stalled-grandchild", tree);
+  }
 });
