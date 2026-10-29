@@ -96,12 +96,56 @@ Deno.test("doctor's build-dir lock: exclusive only when its probe runs plugin pr
       "a plugin: the probe runs its prepare steps",
     );
     assertEquals(
-      await mode('export default { mode: "spa", plugins: [{ name: "p", setup() {} }] };\n'),
+      await mode(
+        'export default { mode: "spa", spa: { entry: "./src/main.tsx" }, ' +
+          'plugins: [{ name: "p", setup() {} }] };\n',
+      ),
       "shared",
       "SPA mode: no probe runs",
     );
-    assertEquals(await mode("export default {\n"), "shared", "a config that fails to load");
+    assertEquals(
+      await mode("export default {\n"),
+      "exclusive",
+      "a config that fails to load: whatever doctor's own load finds can run under it",
+    );
   } finally {
     for (const dir of dirs) await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("doctor probes a project whose config failed to load only when the verb took its locks", async () => {
+  // The function form is called on every load: the first (the lock decision's) throws, doctor's
+  // own load later succeeds and its probe runs the plugin's prepare step. Under a shared lock that
+  // step's exclusive acquire would fail ("not upgraded in place").
+  const dir = await pluginApp();
+  const flag = `__denextDoctorTransient_${crypto.randomUUID().replaceAll("-", "")}`;
+  await Deno.writeTextFile(
+    join(dir, "denext.config.ts"),
+    "const g = globalThis as Record<string, unknown>;\n" +
+      "export default () => {\n" +
+      `  if (!g.${flag}) { g.${flag} = true; throw new Error("transient config failure"); }\n` +
+      "  return {\n" +
+      "    plugins: [{\n" +
+      '      name: "fixture-codegen",\n' +
+      "      setup(ctx: { addPrepareStep(f: (p: { outDir: string }) => Promise<void>): void }) {\n" +
+      "        ctx.addPrepareStep(async (p) => {\n" +
+      "          await Deno.mkdir(p.outDir, { recursive: true });\n" +
+      '          await Deno.writeTextFile(`${p.outDir}/fixture-codegen.ts`, "export {};\\n");\n' +
+      "        });\n" +
+      "      },\n" +
+      "    }],\n" +
+      "  };\n" +
+      "};\n",
+  );
+  try {
+    const { checks } = await doctorUnderItsLocks(dir);
+    const conformance = checks.find((c) => c.name === "route conformance");
+    assert(conformance, `the route-conformance check ran: ${JSON.stringify(checks)}`);
+    assert(!conformance.detail.includes("not upgraded"), conformance.detail);
+    assert(conformance.ok, `route conformance passes: ${conformance.detail}`);
+    await Deno.stat(join(dir, ".denext", "fixture-codegen.ts"));
+  } finally {
+    delete (globalThis as Record<string, unknown>)[flag];
+    await Deno.remove(dir, { recursive: true });
   }
 });

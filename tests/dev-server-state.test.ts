@@ -5,6 +5,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { resolveProject } from "../src/build/paths.ts";
 import { compatBuildOf } from "../src/build/dev-server/compat.ts";
 import { createDevHandler } from "../src/build/dev-server/handler.ts";
@@ -95,6 +96,50 @@ Deno.test({
     ]);
     clearTimeout(timer);
     assertEquals(raced, "waiting", "the emit waits for the other rebuild's lock");
+    finish.resolve();
+    await prepare;
+    await emit;
+    await Deno.stat(join(dir, ".denext", "api.ts"));
+  } finally {
+    await removeTempDir(dir);
+  }
+});
+
+Deno.test({
+  name: "a dev request the runtime starts in a rebuild's leaked context still waits for it",
+}, async () => {
+  // Stock Deno leaves the async context of a module's first `import()` active for the next task it
+  // starts on its own: a `Deno.serve` handler can begin inside the lock task of the rebuild that
+  // imported (a plugin prepare step under `withBuildDirLock`). Simulated deterministically: the
+  // handler runs in a snapshot of that rebuild's context. Its typed-module emit must still wait
+  // for the rebuild instead of re-entering its lock and writing `.denext/` beside it.
+  const dir = await tempApp();
+  try {
+    const st = createDevState({ paths: await resolveProject(dir), unbundled: false });
+    st.load = defaultLoader;
+    const holding = Promise.withResolvers<<R>(fn: () => R) => R>();
+    const finish = Promise.withResolvers<void>();
+    const prepare = withBuildDirLock(dir, async () => {
+      holding.resolve(AsyncLocalStorage.snapshot());
+      await finish.promise;
+    });
+    const leaked = await holding.promise;
+    // The real wiring: createApp's route manifest is `getManifest(st)`.
+    const handle = createDevHandler(st, async () => {
+      await getManifest(st);
+      return new Response("app");
+    });
+    const res = await leaked(() => handle(new Request("http://localhost/")));
+    assertEquals(await res.text(), "app");
+    const emit = st.typedEmit;
+    assert(emit, "the request's scan started the typed-module emit");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const raced = await Promise.race([
+      emit.then(() => "emitted"),
+      new Promise((r) => timer = setTimeout(() => r("waiting"), 1_500)),
+    ]);
+    clearTimeout(timer);
+    assertEquals(raced, "waiting", "the emit waits for the rebuild whose context leaked");
     finish.resolve();
     await prepare;
     await emit;

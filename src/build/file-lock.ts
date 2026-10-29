@@ -17,18 +17,30 @@
 //   same rule: another task's request waits for this task's hold when either is exclusive (shared
 //   holds of several tasks coexist), first come first served. Two `denext dev` rebuilds started
 //   from separate tasks (the startup's prepare steps, a request's typed-module emit, a watcher
-//   batch) so never write `.denext/` at once. An in-process wait prints no Blocking line and has
-//   no time limit. The rule that keeps it from waiting on itself: while a task holds a lock, it
-//   must not await work started OUTSIDE it (by a sibling task, or a memoized promise another task
-//   created) that takes the same lock — that work waits for the holder, the holder for it. Work
-//   the holder started itself re-enters, so awaiting it is fine;
+//   batch) so never write `.denext/` at once. An in-process wait that lasts a few seconds prints
+//   one Blocking line too (`held by another task of this denext process`), and
+//   `DENEXT_LOCK_TIMEOUT` bounds it the same way. The rule that keeps it from waiting on itself:
+//   while a task holds a lock, it must not await work started OUTSIDE it (by a sibling task, or a
+//   memoized promise another task created) that takes the same lock — that work waits for the
+//   holder, the holder for it. Work the holder started itself re-enters, so awaiting it is fine;
+// - work the RUNTIME starts — a `Deno.serve` request handler, a file-watcher batch, a timer the
+//   server arms — enters through `outsideLockTasks`: stock Deno leaves the async context
+//   of a module's first `import()` active for the next task it starts on its own (see
+//   src/server/root-context.ts), so a request would otherwise inherit the lock task that happened
+//   to import a module and re-enter its locks instead of waiting for them;
 // - a shared lock is never upgraded in place (Cargo refuses the same: release, then acquire);
 // - locks carry a RANK and must be taken in increasing rank order, the fixed order that keeps
 //   two processes from each holding what the other waits for (Cargo PR #15698 fixed exactly
 //   that deadlock). Taking a lower rank while holding a higher one throws — a bug, not a wait.
 //   The check is per logical TASK (see `lockTask`): a lock counts against the task that took it
 //   and the work that task started, never against an unrelated task of the same process, which
-//   cannot be waiting on it.
+//   cannot be waiting on it — nor against the task that STARTED it (a parent may take a lower
+//   rank while a subtask still holds a higher one). The order is what keeps processes from
+//   deadlocking only together with the task rule that makes this sound: a subtask holding a lock
+//   never waits on its parent's later work (an `await` of something the parent resolves after
+//   taking a lock), so a parent's wait can't close a cycle through it. Counting subtasks against
+//   their parent would bring back the process-wide check, every task being a subtask of the
+//   root, and with it the false violations of two unrelated installs.
 // - a filesystem that cannot lock at all (some network mounts) proceeds unlocked, as Cargo does,
 //   with one warning; so does a SHARED lock (a reader) whose lock file can't be created on a
 //   read-only or unwritable directory.
@@ -56,7 +68,18 @@ export interface FileLockOptions {
    * seconds, else forever).
    */
   readonly timeoutMs?: number;
+  /**
+   * How long a wait for ANOTHER TASK of this process lasts before it prints its one Blocking line,
+   * in ms (default 3000).
+   */
+  readonly noticeAfterMs?: number;
 }
+
+/**
+ * How long a wait for another task of this process lasts before its Blocking line: a rebuild that
+ * holds the lock for a moment is normal and says nothing, one stuck for seconds is named.
+ */
+const IN_PROCESS_NOTICE_MS = 3_000;
 
 /** `DENEXT_LOCK_TIMEOUT`: seconds to wait for a contended lock before failing (unset: forever). */
 const LOCK_TIMEOUT_ENV = "DENEXT_LOCK_TIMEOUT";
@@ -108,6 +131,25 @@ function currentTask(): LockTaskFrame {
 }
 
 /**
+ * Run `fn` in the process's root task: outside every {@linkcode lockTask}, so the locks it takes
+ * wait for every task's conflicting holds instead of re-entering one. The entry point for work the
+ * runtime starts on its own — a `Deno.serve` request handler, a file-watcher batch, a timer a
+ * server arms. Stock Deno leaves the async context of a module's first `import()` active for the
+ * next task it starts (see src/server/root-context.ts): without this, a request served after a
+ * locked rebuild imported a module would run inside that rebuild's task and write `.denext/`
+ * while the rebuild holds it.
+ *
+ * Locks the root task itself holds (a verb's, taken outside every task) are still re-entered:
+ * every task was started in the root.
+ *
+ * @param fn The work.
+ * @returns What `fn` returns.
+ */
+export function outsideLockTasks<T>(fn: () => T): T {
+  return taskStorage.run(ROOT_TASK, fn);
+}
+
+/**
  * Run `fn` as its own logical task of the lock-rank check. The locks it takes count against it
  * and the work it starts, not against the rest of the process: a concurrent, unrelated task (one
  * install downloading under a rank-4 lock while another task reads a different cache at rank 3)
@@ -124,6 +166,11 @@ function currentTask(): LockTaskFrame {
  * locked sections. The same task boundary decides who waits for a lock file this process already
  * holds: the holding task and the work it started re-enter it, any other task waits its turn
  * (see {@linkcode acquireFileLock}).
+ *
+ * The rank check looks up the task chain, never down it: a lock a still-running subtask holds
+ * doesn't count against the task that started it, which may take a lower rank meanwhile. That is
+ * sound as long as the subtask never waits, while holding its lock, on work its parent does after
+ * taking one (each would wait for the other, across processes too); every call site keeps to it.
  *
  * @param fn The task's work.
  * @returns What `fn` returns.
@@ -155,20 +202,39 @@ interface Waiter {
   readonly admit: () => void;
 }
 
+/** The error a wait that outlived its limit fails with, naming who holds the lock. */
+function gaveUp(opts: FileLockOptions, path: string, timeoutMs: number, holder: LockHolder): Error {
+  const who = holder === "task" ? "another task of this denext process" : "another denext process";
+  return new Error(
+    `denext: gave up after ${timeoutMs / 1000}s waiting for file lock on ${opts.description} ` +
+      `(${path}); ${who} holds it (${LOCK_TIMEOUT_ENV})`,
+  );
+}
+
 /** Each lock file's in-process queue, first come first served, by absolute path. */
 const waiting = new Map<string, Waiter[]>();
 
+/** Who holds a lock a Blocking line waits for. */
+export type LockHolder = "process" | "task";
+
 /**
  * The Blocking line, in Cargo's wording (`Blocking` right-aligned in a 12-column status), plus the
- * lock file and how to get out.
+ * lock file, who holds it and how to get out.
  *
  * @param description What the lock guards (`build directory .denext`).
  * @param path The lock file.
+ * @param holder `process` (another denext process, the default) or `task` (another task of this
+ *   one, such as a dev rebuild still running).
  * @returns The line.
  */
-export function blockingLine(description: string, path: string): string {
-  return `    Blocking waiting for file lock on ${description} (${path}) — held by another denext ` +
-    "process; Ctrl-C to abort";
+export function blockingLine(
+  description: string,
+  path: string,
+  holder: LockHolder = "process",
+): string {
+  const who = holder === "task" ? "another task of this denext process" : "another denext process";
+  return `    Blocking waiting for file lock on ${description} (${path}) — held by ${who}; ` +
+    "Ctrl-C to abort";
 }
 
 function writeStderr(line: string): void {
@@ -229,10 +295,7 @@ async function lockWithin(
     await new Promise((r) => setTimeout(r, Math.min(200, Math.max(1, deadline - Date.now()))));
     if (await file.tryLock(exclusive)) return;
   }
-  throw new Error(
-    `denext: gave up after ${timeoutMs / 1000}s waiting for file lock on ${opts.description} ` +
-      `(${path}); another denext process holds it (${LOCK_TIMEOUT_ENV})`,
-  );
+  throw gaveUp(opts, path, timeoutMs, "process");
 }
 
 async function lockFile(path: string, opts: FileLockOptions): Promise<Deno.FsFile | null> {
@@ -323,13 +386,47 @@ function claim(key: string, opts: FileLockOptions, task: LockTaskFrame): Held {
   return entry;
 }
 
-/** Wait for `task`'s turn on `key` (other tasks' conflicting holds and earlier waiters first). */
+/**
+ * Wait for `task`'s turn on `key` (other tasks' conflicting holds and earlier waiters first). A
+ * wait that lasts {@linkcode FileLockOptions.noticeAfterMs} prints the one Blocking line, naming
+ * another task of this process as the holder; one that lasts the lock timeout
+ * (`DENEXT_LOCK_TIMEOUT`, as for another process's hold) leaves the queue and fails.
+ */
 function turn(key: string, opts: FileLockOptions, task: LockTaskFrame): Promise<Held> {
-  const { promise, resolve } = Promise.withResolvers<Held>();
+  const { promise, resolve, reject } = Promise.withResolvers<Held>();
   const queue = waiting.get(key) ?? [];
-  queue.push({ mode: opts.mode, admit: () => resolve(claim(key, opts, task)) });
+  const timers: ReturnType<typeof setTimeout>[] = [];
+  const waiter: Waiter = {
+    mode: opts.mode,
+    admit: () => {
+      for (const t of timers) clearTimeout(t);
+      resolve(claim(key, opts, task));
+    },
+  };
+  queue.push(waiter);
   waiting.set(key, queue);
+  timers.push(setTimeout(() => {
+    (opts.onBlocking ?? writeStderr)(blockingLine(opts.description, key, "task"));
+  }, opts.noticeAfterMs ?? IN_PROCESS_NOTICE_MS));
+  const timeoutMs = opts.timeoutMs ?? envLockTimeoutMs();
+  if (timeoutMs !== undefined) {
+    timers.push(setTimeout(() => {
+      for (const t of timers) clearTimeout(t);
+      leaveQueue(key, waiter);
+      reject(gaveUp(opts, key, timeoutMs, "task"));
+    }, timeoutMs));
+  }
   return promise;
+}
+
+/** Take `waiter` out of `key`'s queue (it gave up); the ones behind it may now be admitted. */
+function leaveQueue(key: string, waiter: Waiter): void {
+  const queue = waiting.get(key);
+  const at = queue?.indexOf(waiter) ?? -1;
+  if (!queue || at < 0) return;
+  queue.splice(at, 1);
+  if (queue.length === 0) waiting.delete(key);
+  else if (at === 0) admitWaiters(key);
 }
 
 /** Wait for the OS lock behind `task`'s reference to `entry`; a failure drops the reference. */
@@ -394,12 +491,15 @@ function handle(path: string, entry: Held, task: LockTaskFrame): FileLock {
  * must never await work started outside it (a sibling task, a memoized promise another task
  * created) that takes the same lock: each would wait for the other, forever. Code outside every
  * task is the root task, which every task was started in: a lock it holds is re-entered by all.
+ * Such a wait prints its own Blocking line once it has lasted a few seconds, and fails at the
+ * lock timeout like a wait for another process.
  *
  * @param path The lock file.
  * @param opts Mode, description, rank.
  * @returns The held lock.
  * @throws When the acquisition would break the rank order (a lower rank than the running task
- *   holds), or upgrade a shared lock the running task holds.
+ *   holds), or upgrade a shared lock the running task holds; or when the wait outlives the lock
+ *   timeout.
  */
 export async function acquireFileLock(path: string, opts: FileLockOptions): Promise<FileLock> {
   const key = resolve(path);

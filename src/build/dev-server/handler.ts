@@ -5,6 +5,7 @@
 import { join } from "@std/path";
 import { devPlatformOf, pinDevPlatform, type Platform } from "../platform-extensions.ts";
 import { withModuleGraphRedirects } from "../module-graph.ts";
+import { outsideLockTasks } from "../file-lock.ts";
 import { devBuildTarget, devStylesheetImports } from "./platform.ts";
 import type { RequestHandler } from "../../server/app.ts";
 import { LIVE_ENDPOINT } from "../../runtime/live-protocol.ts";
@@ -300,11 +301,14 @@ export function createDevHandler(st: DevState, appHandler: RequestHandler): Requ
     .catch((err) => console.warn(`denext: could not publish Partytown: ${err}`));
   const handle = devRequestHandler(st, appHandler);
   // A shell's `?__denext_platform=ios` is pinned in a cookie, so the page's module, Flight and
-  // navigation requests resolve that target's platform files too.
-  return async (request) => {
-    await partytown;
-    return pinDevPlatform(request, await handle(request));
-  };
+  // navigation requests resolve that target's platform files too. Outside every lock task: the
+  // runtime can start a request in the context a rebuild's `import()` left behind (stock Deno), and
+  // the request's own rebuild (the typed-module emit) must wait for that rebuild, not re-enter it.
+  return (request) =>
+    outsideLockTasks(async () => {
+      await partytown;
+      return pinDevPlatform(request, await handle(request));
+    });
 }
 
 /** {@linkcode createDevHandler}'s routing, before the platform cookie. */

@@ -2,6 +2,7 @@
 // unbundled module graph, the generation's client assets, `public/`, and the shell.
 
 import { devPlatformOf, pinDevPlatform } from "../platform-extensions.ts";
+import { outsideLockTasks } from "../file-lock.ts";
 import { devLogResponse, devOriginAllowed, devStateResponse } from "../dev-server/dev-endpoints.ts";
 import { DEV_INSPECT_PATH, DEV_LOG_PATH, DEV_STATE_PATH } from "../dev-server/state.ts";
 import { devInspectRead, devInspectSink } from "../dev-server/devtools-endpoints.ts";
@@ -183,8 +184,9 @@ async function serveUnbundled(
 export function createSpaDevHandler(st: SpaDevState): (request: Request) => Promise<Response> {
   const handle = spaRequestHandler(st);
   // A shell's `?__denext_platform=ios` is pinned in a cookie, so the page's module requests
-  // resolve that target's platform files too.
-  return async (request) => pinDevPlatform(request, await handle(request));
+  // resolve that target's platform files too. Outside every lock task: the runtime can start a
+  // request in the context a plugin prepare step's `import()` left behind (stock Deno).
+  return (request) => outsideLockTasks(async () => pinDevPlatform(request, await handle(request)));
 }
 
 /** `/_denext/dev-inspect`: the sink's POST, the MCP bridge's GET, nothing else. */

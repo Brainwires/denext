@@ -17,6 +17,7 @@
 // without a real stdio pipe; `runStdioServer` is the thin I/O loop over it.
 
 import { VERSION } from "../version.ts";
+import { outsideLockTasks } from "../build/file-lock.ts";
 import { IMPORT_RULES } from "./next-denext-map.ts";
 import { loadCorpus } from "./rag/corpus.ts";
 import { readDocs } from "./rag/read.ts";
@@ -224,7 +225,9 @@ export async function runStdioServer(streams: StdioStreams = {}): Promise<void> 
       buf = buf.slice(nl + 1);
       nl = buf.indexOf("\n");
       if (!line) continue;
-      await handleLine(line, write, tools);
+      // Outside every lock task: a tool that locks the project (doctor's probe, a route render)
+      // runs as its own task, whatever context an earlier call's `import()` left behind.
+      await outsideLockTasks(() => handleLine(line, write, tools));
     }
     if (buf.length > MAX_LINE) {
       await write(rpcError(null, -32700, "message too large"));

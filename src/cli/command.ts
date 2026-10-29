@@ -130,7 +130,7 @@ export interface CommandLocks {
   readonly projectDir: string;
   /**
    * The build directory (`.denext/`): `exclusive` for a verb that writes it (`build`,
-   * `export`), `shared` for one that only reads it (`doctor`, unless its probe runs plugin prepare
+   * `export`), `shared` for one that only reads it (`doctor`, unless its probe may run plugin prepare
    * steps); omitted, it is not locked.
    */
   readonly buildDir?: "shared" | "exclusive";

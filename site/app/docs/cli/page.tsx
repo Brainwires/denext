@@ -291,9 +291,13 @@ export default function Cli() {
       <p>
         A wait has no limit unless <code>DENEXT_LOCK_TIMEOUT=&lt;seconds&gt;</code>{" "}
         is set: then the command fails once that long has passed, naming the lock file (useful in
-        CI). A filesystem that cannot lock at all (some network mounts) proceeds unlocked with one
-        warning, as Cargo does; so does a shared lock — <code>doctor</code>{" "}
-        on a read-only checkout — whose lock file cannot be created.
+        CI). Within one process, <code>denext dev</code>
+        {"'"}s rebuilds take turns on the build directory the same way: one that waits more than a
+        few seconds for another prints the same line, naming another task of this process as the
+        holder, and the timeout bounds that wait too. A filesystem that cannot lock at all (some
+        network mounts) proceeds unlocked with one warning, as Cargo does; so does a shared lock —
+        {" "}
+        <code>doctor</code> on a read-only checkout — whose lock file cannot be created.
       </p>
 
       <div class="mcp-tools">

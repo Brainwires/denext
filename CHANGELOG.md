@@ -118,6 +118,20 @@ and this project adheres to
   write `.denext/` under the lock exclusive. The route-conformance check failed with "this process
   holds a shared lock on build directory .denext and asked for an exclusive one". Doctor now takes
   the lock exclusive when the project has plugins (outside SPA mode), and shared otherwise.
+- **A `denext dev` request on stock Deno waits for a rebuild in progress.** Stock Deno leaves the
+  async context of a module's first `import()` active for the next task it starts, so a request
+  served while a plugin prepare step was importing could join that rebuild's hold on `.denext/`
+  and write the typed modules beside it. Requests, watched-edit batches and MCP tool calls now start
+  outside every rebuild and wait their turn. denext's own Deno toolchain was not affected.
+- **A dev rebuild stuck behind another says so.** A wait for another task of the same process
+  printed nothing and had no limit, so a hung prepare step queued every later rebuild in silence.
+  After a few seconds it now prints `Blocking waiting for file lock on build directory .denext (…)
+  — held by another task of this denext process`, and `DENEXT_LOCK_TIMEOUT` bounds it as it does a
+  wait for another process.
+- **`denext doctor` on a config that fails to load once takes the build directory exclusive.** It
+  chose the lock before loading the config for its checks; when only that first load failed, the
+  route probe later ran the plugins' prepare steps under a shared lock and failed with "not upgraded
+  in place".
 - **A desktop app's sidecar log file has every line once `stopAll()` returns.** The lines a
   sidecar printed as it shut down were still being appended after the host reported it stopped.
 - **The report of a failed background CLI cache says when `deno cache` printed nothing.** It

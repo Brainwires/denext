@@ -3,7 +3,7 @@
 // | Lock                        | Lock file                          | Rank | Taken by                  |
 // | --------------------------- | ---------------------------------- | ---- | ------------------------- |
 // | package output (`dist/…`)   | `.denext/.denext-lock-<dir>`       | 0    | desktop package, mobile build |
-// | build directory (`.denext`) | `.denext/.denext-lock`             | 1    | build, export, analyze, dev (per rebuild), content build; doctor shared (exclusive with plugins) |
+// | build directory (`.denext`) | `.denext/.denext-lock`             | 1    | build, export, analyze, dev (per rebuild), content build; doctor shared (exclusive with plugins or an unloadable config) |
 // | output directory (`out`, `coverage`) | `.denext/.denext-lock-<dir>` | 2 | export, desktop build/run's export, test --coverage |
 // | desktop runtime cache       | `<DENO_DIR>/denext-desktop-runtime/.package-cache-mutate`, `.package-cache` | 3, 4 | the runtime downloader |
 //
