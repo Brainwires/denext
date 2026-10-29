@@ -104,7 +104,9 @@ export interface SidecarHost {
   readonly proxied?: { readonly name: string; readonly port: number };
   /** Start every sidecar. */
   startAll(): void;
-  /** Stop every sidecar (gracefully, in parallel). */
+  /**
+   * Stop every sidecar (gracefully, in parallel); resolves once their log files have every line.
+   */
   stopAll(): Promise<void>;
   /** End every sidecar now (synchronously). */
   killAll(): void;
@@ -213,23 +215,27 @@ function bundledLauncher(
 /** The largest log file before it is rotated to `.1`. */
 const LOG_ROTATE_BYTES = 5 * 1024 * 1024;
 
+/** A sidecar's output sink, and the wait for its log file to have every line given so far. */
+interface LogSink {
+  readonly onLine: (stream: "stdout" | "stderr", line: string) => void;
+  /** Settles once every line given so far is in the file (at once without a file). */
+  readonly written: () => Promise<void>;
+}
+
 /** A sidecar's output sink per its `logs` setting. */
 function logSink(
   def: SidecarDefinition,
   dataDir: string | undefined,
   rotateBytes = LOG_ROTATE_BYTES,
-): (stream: "stdout" | "stderr", line: string) => void {
+): LogSink {
   const mode = def.logs ?? SIDECAR_DEFAULTS.logs;
   const toConsole = mode === "inherit" || mode === "both";
   const toFile = (mode === "file" || mode === "both") && dataDir !== undefined;
   const path = toFile ? join(dataDir!, "logs", `sidecar-${def.name}.log`) : "";
   let pending: string[] = [];
-  let flushing = false;
-  const flush = async () => {
-    if (flushing || pending.length === 0) return;
-    flushing = true;
-    const text = pending.join("");
-    pending = [];
+  // One writer at a time, appending what arrived while it wrote before it ends.
+  let writing: Promise<void> | null = null;
+  const writeOnce = async (text: string) => {
     try {
       await Deno.mkdir(join(dataDir!, "logs"), { recursive: true });
       const size = await Deno.stat(path).then((s) => s.size, () => 0);
@@ -239,17 +245,28 @@ function logSink(
       await Deno.writeTextFile(path, text, { append: true });
     } catch (err) {
       console.error(`sidecar ${def.name}: cannot write ${path}: ${(err as Error).message}`);
-    } finally {
-      flushing = false;
-      if (pending.length > 0) void flush();
     }
   };
-  return (stream, line) => {
-    if (toConsole) console.error(`[sidecar:${def.name}]${stream === "stderr" ? "!" : ""} ${line}`);
-    if (toFile) {
-      pending.push(`${new Date().toISOString()} ${stream} ${line}\n`);
-      void flush();
-    }
+  const flush = () => {
+    writing ??= (async () => {
+      while (pending.length > 0) {
+        const text = pending.join("");
+        pending = [];
+        await writeOnce(text);
+      }
+    })().finally(() => writing = null);
+  };
+  return {
+    onLine: (stream, line) => {
+      if (toConsole) {
+        console.error(`[sidecar:${def.name}]${stream === "stderr" ? "!" : ""} ${line}`);
+      }
+      if (toFile) {
+        pending.push(`${new Date().toISOString()} ${stream} ${line}\n`);
+        flush();
+      }
+    },
+    written: () => writing ?? Promise.resolve(),
   };
 }
 
@@ -315,6 +332,7 @@ async function buildSupervisor(
   def: SidecarDefinition,
   port: number | undefined,
   options: SidecarHostOptions,
+  sink: LogSink,
   loginEnv?: () => Promise<Readonly<Record<string, string>> | undefined>,
   repickPort?: () => number,
 ): Promise<SidecarSupervisor> {
@@ -332,7 +350,7 @@ async function buildSupervisor(
     ...(repickPort ? { repickPort, portTaken: options.portTaken ?? loopbackPortTaken } : {}),
     secrets,
     values: resolveValues(def, secrets),
-    onLine: logSink(def, options.dataDir, options.logRotateBytes),
+    onLine: sink.onLine,
     ...(options.clock ? { clock: options.clock } : {}),
     ...(options.fetch ? { fetch: options.fetch } : {}),
   });
@@ -367,13 +385,16 @@ export async function createSidecarHost(options: SidecarHostOptions): Promise<Si
   const pick = options.pickPort ?? freeLoopbackPort;
   const taken = options.portTaken ?? loopbackPortTaken;
   const supervisors = new Map<string, SidecarSupervisor>();
+  const sinks: LogSink[] = [];
   const loginEnv = loginShellSource(options.sidecars, options);
   let proxied: { name: string; port: number } | undefined;
   for (const def of options.sidecars) {
     const auto = def.port === "auto";
     const port = auto ? pickUntaken(pick, taken, def.name) : def.port;
     const repick = auto ? () => pickUntaken(pick, taken, def.name) : undefined;
-    supervisors.set(def.name, await buildSupervisor(def, port, options, loginEnv, repick));
+    const sink = logSink(def, options.dataDir, options.logRotateBytes);
+    sinks.push(sink);
+    supervisors.set(def.name, await buildSupervisor(def, port, options, sink, loginEnv, repick));
     if (def.proxy === true && port !== undefined) proxied = { name: def.name, port };
   }
 
@@ -389,6 +410,8 @@ export async function createSidecarHost(options: SidecarHostOptions): Promise<Si
   };
   const stopAll = async () => {
     await Promise.all([...supervisors.values()].map((s) => s.stop()));
+    // What the sidecars printed up to their exit is in their log files before this returns.
+    await Promise.all(sinks.map((s) => s.written()));
   };
 
   const capability: DesktopCapability = {

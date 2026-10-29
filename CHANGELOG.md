@@ -100,6 +100,8 @@ and this project adheres to
   a second one started in the same process asked for the cache's read lock and stopped with "lock
   order violation — … (rank 3) requested while holding a rank-4 lock". The callers on one cache now
   take turns within the process, so the second waits for the first and then finds its install.
+- **A desktop app's sidecar log file has every line once `stopAll()` returns.** The lines a
+  sidecar printed as it shut down were still being appended after the host reported it stopped.
 - **`denext profile` downloads its headless Chrome with deadlines and retries.** The browser astral
   launches (Chrome for Testing, about 150 MB) was read through one `fetch` with no deadline, so a
   connection that stalled mid-body held the launch until the server dropped it, minutes later, and

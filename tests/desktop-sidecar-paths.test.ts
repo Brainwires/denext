@@ -4,7 +4,7 @@
 // that ignores SIGTERM, the host's own launchers (a real worker and a real program, "auto" ports,
 // log files and their rotation), and the registry the updater and `unload` reach.
 
-import { assert, assertEquals, assertMatch } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
   defineSidecar,
@@ -436,6 +436,40 @@ globalThis.denextSidecar.onShutdown(() => new Promise((r) => s.close(r)));
       threw = true;
     }
     assert(threw);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("host: stopAll returns once the log file has every line", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-sidecar-flush-" });
+  try {
+    let launched!: (s: "stdout" | "stderr", l: string) => void;
+    const host = await createSidecarHost({
+      sidecars: [{ name: "a", run: { module: "./a.ts" }, logs: "file" }],
+      dataDir: dir,
+      launcher: () => (ctx) => {
+        launched = ctx.onLine;
+        let end!: (e: SidecarExit) => void;
+        const exited = new Promise<SidecarExit>((r) => end = r);
+        return Promise.resolve({
+          exited,
+          stop: () => {
+            // What a sidecar prints as it shuts down, while the first line is still being written.
+            ctx.onLine("stderr", "bye");
+            end({ code: 0 });
+            return Promise.resolve();
+          },
+        });
+      },
+    });
+    host.startAll();
+    await until(() => launched !== undefined);
+    launched("stdout", "hello");
+    await host.stopAll();
+    const log = Deno.readTextFileSync(join(dir, "logs", "sidecar-a.log"));
+    assertStringIncludes(log, " stdout hello\n");
+    assertStringIncludes(log, " stderr bye\n");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
