@@ -22,13 +22,39 @@ import { getViewManagerConfig, nativeHostComponent } from "../src/react-native/n
 // codegenNativeCommands dispatch through (the overlay entry's).
 import { dispatchViewManagerCommand, withViewManagerCommands } from "../src/react-native/mod.ts";
 import { createRoot, flushSync, setDocument } from "../src/client/reconciler.ts";
+import { hasPendingPassiveEffects } from "../src/client/fiber/commit.ts";
 import { makeDom } from "./helpers/dom.ts";
-import { type Any, fakePlugin, inShell, mount, settle } from "./helpers/mobile-fakes.ts";
+import { type Any, fakePlugin, inShell, mount, settle, until } from "./helpers/mobile-fakes.ts";
 
 /** Let passive effects and promise callbacks run. */
 async function tick(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 5));
   await settle();
+}
+
+/** The native view slot element under `node` (itself included), if any. */
+function slotIn(node: Any): Any {
+  if (!node) return null;
+  if (node.getAttribute?.("data-denext-native-view")) return node;
+  for (const child of node.childNodes ?? []) {
+    const slot = slotIn(child);
+    if (slot) return slot;
+  }
+  return null;
+}
+
+/**
+ * Wait until the slot under `container` is native and the effects of that commit (the
+ * `onCommand` handoff, the UIManager registration, `onMapReady`) have run. The slot goes native
+ * when the plugin's `create` settles, and those effects run on the passive flush's own task
+ * after that commit: awaited here, never assumed to fit in a fixed sleep.
+ */
+async function nativeIn(container: Any): Promise<void> {
+  await until(
+    () =>
+      slotIn(container)?.getAttribute("data-status") === "native" && !hasPendingPassiveEffects(),
+    "the native view and its effects",
+  );
 }
 
 /** A tracker environment that never schedules anything (the tests read the plugin calls). */
@@ -136,7 +162,7 @@ Deno.test("expo-maps: AppleMaps.View drives the native map (camera, markers, eve
       { id: "a", coordinates: { latitude: 51.5, longitude: -0.1 }, title: "A" },
       { id: "b", coordinates: { latitude: 48.8, longitude: 2.3 } },
     ];
-    mount(() =>
+    const { container } = mount(() =>
       h(AppleMaps.View as Any, {
         ref,
         cameraPosition: { coordinates: { latitude: 51.5, longitude: -0.12 }, zoom: 11 },
@@ -146,8 +172,7 @@ Deno.test("expo-maps: AppleMaps.View drives the native map (camera, markers, eve
         onMarkerClick: (m: unknown) => clicks.push(m),
       })
     );
-    await tick();
-    await tick();
+    await nativeIn(container);
     const create = created(views);
     assertEquals(create.type, "map");
     assertEquals(create.props, {
@@ -194,7 +219,7 @@ Deno.test("react-native-maps: MapView's Markers, region events and ref reach the
     const regions: Any[] = [];
     const pressed: unknown[] = [];
     let ready = 0;
-    mount(() =>
+    const { container } = mount(() =>
       h(
         RNMapView as Any,
         {
@@ -213,8 +238,7 @@ Deno.test("react-native-maps: MapView's Markers, region events and ref reach the
         h("span", null, "not a marker"),
       )
     );
-    await tick();
-    await tick();
+    await nativeIn(container);
     const create = created(views);
     assertEquals(create.props.mapType, "satellite");
     assertEquals(create.props.markers, [
@@ -273,9 +297,8 @@ Deno.test("expo-video: VideoView shows the player natively; play / seek / events
       });
       return h(VideoView as Any, { player, contentFit: "cover", nativeControls: false });
     }
-    mount(() => h(Screen, null));
-    await tick();
-    await tick();
+    const { container } = mount(() => h(Screen, null));
+    await nativeIn(container);
     const create = created(views);
     assertEquals(create.type, "video");
     assertEquals(create.placement, "under", "iOS draws the system player under the page");
@@ -321,7 +344,7 @@ Deno.test("react-native-video: the web renders a <video>; the shell the native p
     const ref: { current: VideoRef | null } = { current: null };
     const loads: unknown[] = [];
     let paused = false;
-    const { rerender } = mountMedia(() =>
+    const { rerender, container } = mountMedia(() =>
       h(RNVideo as Any, {
         ref,
         source: "https://x/b.mp4",
@@ -331,8 +354,7 @@ Deno.test("react-native-video: the web renders a <video>; the shell the native p
         onLoad: (d: unknown) => loads.push(d),
       })
     );
-    await tick();
-    await tick();
+    await nativeIn(container);
     const create = created(views);
     assertEquals(create.props, {
       src: "https://x/b.mp4",
@@ -408,9 +430,8 @@ Deno.test("UIManager: dispatchViewManagerCommand runs on the native slot a ref n
       dispatchViewManagerCommand(42, "zoomTo", [2]);
       assertEquals(warned.length, 1);
       assert(String(warned[0]).includes('dispatchViewManagerCommand("zoomTo") names no native'));
-      mount(() => h(Chart as Any, { ref, values: [1] }));
-      await tick();
-      await tick();
+      const { container } = mount(() => h(Chart as Any, { ref, values: [1] }));
+      await nativeIn(container);
       assertEquals(ref.current?.getAttribute("data-denext-native-view"), "RNTChart");
       const id = created(views).id;
       const { Commands } = getViewManagerConfig("RNTChart")!;
