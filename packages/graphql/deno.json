@@ -1,6 +1,6 @@
 {
   "name": "@denext/graphql",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -12,7 +12,7 @@
     "@denext/denext": "jsr:@denext/denext@^4.10.0",
     "@std/path": "jsr:@std/path@^1.0.0",
     "graphql": "npm:graphql@^16.9.0",
-    "graphql-yoga": "npm:graphql-yoga@^5.10.0",
+    "graphql-yoga": "npm:graphql-yoga@^5.24.6",
     "@denext/openapi": "jsr:@denext/openapi@^0.7.0"
   },
   "denext": {

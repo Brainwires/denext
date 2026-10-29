@@ -90,12 +90,12 @@
           "npm:effect@^3.22.0"
         ]
       },
-      "jsr:@denext/graphql@0.6.0": {
+      "jsr:@denext/graphql@0.7.0": {
         "dependencies": [
           "jsr:@denext/denext@^4.10.0",
           "jsr:@denext/openapi@0.7",
           "jsr:@std/path@1",
-          "npm:graphql-yoga@^5.10.0",
+          "npm:graphql-yoga@^5.24.6",
           "npm:graphql@^16.9.0"
         ]
       },
