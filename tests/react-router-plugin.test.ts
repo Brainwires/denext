@@ -15,6 +15,7 @@ import { scanRoutes } from "../src/router/manifest.ts";
 import { createApp } from "./helpers/released-app.ts";
 import { defaultLoader } from "../src/server/mod.ts";
 import { PageCache } from "../src/server/cache.ts";
+import type { AppConfig } from "../src/server/app-config.ts";
 
 const DSL = new URL("../packages/react-router/routes.ts", import.meta.url).href;
 
@@ -242,7 +243,12 @@ async function withRrApp(
     app: (req: Request) => Promise<Response>,
     root: string,
   ) => Promise<void>,
-  options: { pageCache?: PageCache; plugin?: ReactRouterOptions; flight?: boolean } = {},
+  options: {
+    pageCache?: PageCache;
+    plugin?: ReactRouterOptions;
+    flight?: boolean;
+    headerRules?: AppConfig["headerRules"];
+  } = {},
 ): Promise<void> {
   resetPlugins();
   const tmpBase = fromFileUrl(new URL("./.tmp/", import.meta.url));
@@ -262,6 +268,7 @@ async function withRrApp(
       getManifest: () => manifest,
       load: defaultLoader,
       pageCache: options.pageCache,
+      headerRules: options.headerRules,
       ...(options.flight
         ? { flight: true, appDir: join(root, "app"), flightRoutes: new Set(["/teams/[id]"]) }
         : {}),
@@ -745,4 +752,71 @@ Deno.test("react-router plugin: a resource route's thrown error reaches next() a
     assertEquals(res.status, 503);
     assertEquals(await res.text(), "replaced");
   });
+});
+
+// A response a middleware builds after `next()` (a fresh one, a copy, or a thrown redirect) still
+// carries the app's configured headers and the cookies the render queued: only the rendered
+// response itself, which already has them, skips the final pass.
+const AFTER_RENDER_APP: Record<string, string> = {
+  "root.tsx": `import { Outlet, redirect } from "react-router";
+export const middleware = [
+  async ({ request }, next) => {
+    const mode = new URL(request.url).searchParams.get("mode");
+    const response = await next();
+    if (mode === "fresh") {
+      return new Response(response.body, { status: response.status, headers: { "x-own": "1" } });
+    }
+    if (mode === "copy") return new Response(response.body, response);
+    if (mode === "own") return new Response(response.body, { headers: { "x-app": "mine" } });
+    if (mode === "redirect") throw redirect("/elsewhere");
+    return response;
+  },
+];
+export function loader() {
+  return {};
+}
+export function Layout({ children }: { children: unknown }) {
+  return <html lang="en"><head /><body>{children}</body></html>;
+}
+export default function App() {
+  return <Outlet />;
+}
+`,
+  "routes.ts": `import { route } from ${JSON.stringify(DSL)};
+export default [route("page", "routes/page.tsx")];
+`,
+  "routes/page.tsx": `import { cookies } from "denext/server";
+export function loader() {
+  cookies().set("sid", "signed-in");
+  return { ok: true };
+}
+export default function Page() {
+  return <p id="page">page</p>;
+}
+`,
+};
+
+Deno.test("react-router plugin: a response built after next() keeps the app's headers and queued cookies", async () => {
+  await withRrApp(AFTER_RENDER_APP, async (app) => {
+    const sid = (res: Response) =>
+      res.headers.getSetCookie().filter((c) => c.startsWith("sid=signed-in"));
+    for (const mode of ["", "fresh", "copy"]) {
+      const res = await app(new Request(`http://localhost/page?mode=${mode}`));
+      assertStringIncludes(await res.text(), '<p id="page">page</p>', mode);
+      assertEquals(res.headers.get("x-app"), "rule", mode);
+      // Exactly once: a copy of the rendered headers is not given a second Set-Cookie.
+      assertEquals(sid(res).length, 1, mode);
+    }
+    const redirected = await app(new Request("http://localhost/page?mode=redirect"));
+    await redirected.body?.cancel();
+    assertEquals(redirected.status, 302);
+    assertEquals(redirected.headers.get("location"), "/elsewhere");
+    assertEquals(redirected.headers.get("x-app"), "rule");
+    assertEquals(sid(redirected).length, 1, "the sign-in cookie rides the redirect");
+    // A header the middleware set on purpose is its own: only what the response lacks is added.
+    const own = await app(new Request("http://localhost/page?mode=own"));
+    await own.body?.cancel();
+    assertEquals(own.headers.get("x-app"), "mine");
+    assertEquals(sid(own).length, 1);
+  }, { headerRules: [{ source: "/:path*", headers: [{ key: "x-app", value: "rule" }] }] });
 });

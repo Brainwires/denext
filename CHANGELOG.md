@@ -36,7 +36,11 @@ and this project adheres to
   route first with one shared `context`, and a throw before `next()` answers as that route's
   loader throwing it would. Around an action submitted from the page, `next()` now runs the
   action and resolves to its response; on a resource route a thrown `Response` reaches `next()`, and a thrown error does as React
-  Router's 500 response (`Unexpected Server Error`), which a middleware can replace.
+  Router's 500 response (`Unexpected Server Error`), which a middleware can replace. A response a middleware builds after `next()` (a fresh one, a copy of the
+  rendered one, or a `redirect()` thrown after `next()`) still carries the app's `headers` rules,
+  `middleware.ts`'s headers and the cookies `cookies().set()` queued during the render, each added
+  only where the response lacks it (a Set-Cookie is never repeated); before, only a response made
+  without calling `next()` got them, so such a redirect dropped a sign-in cookie.
 - **`@denext/backend`: a realtime re-read's statement is assembled from its parts.** The filters of
   a shared re-read were spliced into the finished statement with a text replacement, which
   rewrote a filter column whose catalog type is spelled with `$'`, `$&` or `$$`. Values were
