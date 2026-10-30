@@ -78,7 +78,8 @@ and this project adheres to
   (every interface, port 443 by default with `CAP_NET_BIND_SERVICE`, no `DENEXT_TRUST_PROXY`), no
   nginx or Caddy snippet, and the variables in `env.example`; `fly()` passes TLS through as raw TCP;
   `denoDeploy()` warns. The deploy manifest's `server.tls` lists the certificates' host names and
-  variable names (`null` for plain HTTP). The generators warn about several certificates without
+  variable names (`null` for plain HTTP), typed as `DeployServerTls` / `DeployTlsCertificate`
+  from `denext/deploy`. The generators warn about several certificates without
   `"unstable": ["net"]` in deno.json and a health probe no certificate serves.
 - **`denext migrate` carries pnpm and Bun patches.** `pnpm.patchedDependencies` (package.json),
   `patchedDependencies` in pnpm-workspace.yaml (the workspace root's for an app inside one) and
