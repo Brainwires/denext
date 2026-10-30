@@ -2,10 +2,11 @@
 // `scripts/gen-config-schema.ts`): resolve the node at a form path, unwrap an array's item
 // schema, pick a union branch for a value, and walk every node the schema contains.
 //
-// The schema ships with the framework, so it is imported as JSON rather than fetched — the UI
-// works offline, from a JSR install, and inside `deno compile`.
+// The schema ships with the framework, so it is imported rather than fetched — the UI works
+// offline, from a JSR install, and inside `deno compile`. It ships in `@denext/docs-corpus`
+// (which denext pins at its own version), out of the 20 MiB @denext/denext package.
 
-import CONFIG_SCHEMA from "../../../denext.config.schema.json" with { type: "json" };
+import { CONFIG_SCHEMA_JSON } from "@denext/docs-corpus/config-schema";
 import { OVERRIDES } from "./schema-overrides.ts";
 
 /** The subset of JSON Schema the config schema actually uses, plus denext's `x-denext` hints. */
@@ -57,13 +58,15 @@ export interface SchemaNode {
  */
 export const MAP_SEGMENT = "*";
 
+let configSchema: SchemaNode | undefined;
+
 /**
- * The framework's generated config schema.
+ * The framework's generated config schema, parsed on the first call.
  *
  * @returns The root schema node of `denext.config.schema.json`.
  */
 export function loadConfigSchema(): SchemaNode {
-  return CONFIG_SCHEMA as SchemaNode;
+  return configSchema ??= JSON.parse(CONFIG_SCHEMA_JSON) as SchemaNode;
 }
 
 /**

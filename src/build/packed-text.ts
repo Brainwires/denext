@@ -5,7 +5,7 @@
 // so importing a packed module costs nothing until a text is used.
 //
 // The native templates are packed this way (scripts/gen-native-templates.ts →
-// src/build/native-templates.packed.ts).
+// src/build/native-templates.packed.ts, which imports the pack from @denext/docs-corpus).
 
 import { decodeBase64 } from "@std/encoding/base64";
 import { brotliDecompressSync } from "node:zlib";

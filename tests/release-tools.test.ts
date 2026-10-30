@@ -305,20 +305,34 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   // resolveAlias reaches by path, so there was nothing to drop; 0.15 MiB of headroom to 20 MiB is
   // left. Splitting the package (the auth package first) is 5.0 work. Raised to 19.9 MiB on
   // 2026-10-30 for the 4.10-d train (19.79 → 19.85 MiB: workspace globs, desktop transfer
-  // records, the child-exit grace, React Router render middleware, then the revoked-runtimes
-  // list: the verifier and the two pins' `rollback`); a size reduction is queued.
+  // records, the child-exit grace, React Router render middleware). Lowered to 19.75 MiB for the
+  // 4.10-e train (20.03 MiB with its merges, the revoked-runtimes list, start.tls and the Prisma
+  // 7 migration among them, → 19.61 MiB): four generated data files moved into
+  // @denext/docs-corpus, which denext pins at exactly its own version and every release publishes
+  // first (the packed native templates, the config schema, the CLI's verb descriptions, the
+  // Google Fonts families; scripts/lib/docs-corpus-package.ts CORPUS_DATA_MODULES). Raise it only
+  // with the reason.
   const files = await publishedFiles();
   if (!files) return; // not a git checkout: nothing to measure
   const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
-  assert(mib < 19.9, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
+  assert(mib < 19.75, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
+  // The data @denext/docs-corpus carries for denext stays out of it.
+  for (
+    const file of [
+      "denext.config.schema.json",
+      "src/build/native-templates/ota.ts",
+      "src/compat/next/font/google-families.ts",
+    ]
+  ) assert(!files.has(file), `${file} is published again`);
+  for (
+    const file of ["src/build/native-templates.packed.ts", "src/cli/command-table.generated.ts"]
+  ) {
+    assert((files.get(file) ?? 0) < 16 * 1024, `${file} carries its data again`);
+  }
 });
 
 /** Published generated files over 50 KiB that may ship uncompressed, and why. */
 const UNCOMPRESSED_GENERATED_OK: Readonly<Record<string, string>> = {
-  "denext.config.schema.json":
-    "imported as JSON by the project UI and read by editors as-is; already minified",
-  "src/cli/command-table.generated.ts":
-    "read by every CLI start: decoding it would load node:zlib for `denext --version`",
   "src/compat/next/font/font-metrics.ts":
     "next/font can run in a browser bundle, which has no node:zlib; already one compact row string",
 };

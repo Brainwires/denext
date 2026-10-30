@@ -9,7 +9,7 @@
 // correct). esbuild tree-shakes the ~1,900 unused loaders away.
 
 import type * as esbuild from "./esbuild/mod.ts";
-import { GOOGLE_FONT_FAMILIES } from "../compat/next/font/google-families.ts";
+import { GOOGLE_FONT_FAMILIES } from "@denext/docs-corpus/google-font-families";
 
 const SPECIFIER = "next/font/google";
 const NS = "denext-font-google";

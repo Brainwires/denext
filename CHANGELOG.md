@@ -120,6 +120,14 @@ and this project adheres to
   of its `prisma-client` generator and any adapter it already passes to `new PrismaClient()`;
   before, it was pinned back to Prisma 6, whose CLI rejected its schema without a `url`. The
   seed is written to `prisma.config.ts`'s `migrations.seed`, where Prisma 7 reads it.
+- **The `@denext/denext` package is 0.42 MiB smaller** than it would be (19.61 MiB with this
+  release's additions, against JSR's 20 MiB cap; 4.10.3 was 19.86 MiB). Four generated data files
+  it read moved into `@denext/docs-corpus`, which denext already
+  pins at exactly its own version and which every release publishes first: the packed native
+  templates `denext mobile add` writes, the `denext.config.ts` JSON Schema the project UI renders
+  its forms from, the CLI's verb descriptions and the Google Fonts family list behind
+  `next/font/google`. No import path or behaviour changes; the repository keeps
+  `denext.config.schema.json`, which the JSR package no longer carries.
 
 ### Fixed
 
