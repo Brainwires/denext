@@ -144,6 +144,13 @@ and this project adheres to
 
 ### Fixed
 
+- **`spa.tanstackRouter` builds no longer fail with `EXDEV` when the project and the working
+  directory are on different file systems.** TanStack's route generator writes the route tree to
+  its scratch directory and renames it into place, and it resolved that directory
+  (`.tanstack/tmp`) against the process's working directory, not the project: a build run from
+  elsewhere (a monorepo root, a project under a `/tmp` tmpfs) failed the rename across devices and
+  left `.tanstack/` outside the project. denext now points it at the project's own
+  `.tanstack/tmp`, unless `tsr.config.json`'s `tmpDir` or `TSR_TMP_DIR` names one.
 - **A SPA shell's inline script that writes a `<script>` tag keeps working under
   `nextScriptWorkers`.** The per-response nonce stamp put `nonce="…"` into every `<script` it
   found, a script's string literal included (`"<script src=…><\/script>"`), which ended the string
