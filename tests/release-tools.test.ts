@@ -100,6 +100,7 @@ Deno.test("prepareRelease (dry) reports the bump, the golden refresh and the cha
   const out = await captured(() => prepareRelease("99.0.0-test.1", true));
   assertStringIncludes(out, "1. Bump");
   assertStringIncludes(out, "1b. ");
+  assertStringIncludes(out, "1c. revocation floor (skipped — dry run)");
   assertStringIncludes(out, "2. CHANGELOG: rolled [Unreleased] → [99.0.0-test.1]");
 });
 

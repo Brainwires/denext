@@ -575,10 +575,20 @@ prints it and never writes it to disk.
    `development → main`). Publish a GitHub advisory if security is involved.
 6. Optionally point the fork release's notes at the revocation (its assets stay immutable).
 
-**Freshness.** A list expires 60 days after signing and denext then ignores it (`doctor` warns).
+**Freshness.** A list expires 21 days after signing and denext then ignores it (`doctor` warns).
 There is no scheduled job: `deno task release` re-signs it (step 7, `deno task revocations resign
---if-due`) when fewer than 30 days remain, on the machine that holds the key. A failure there is a
-warning, never a failed release; run `deno task revocations resign` by hand. `deno task
+--if-due`) when fewer than 10 days remain, on the machine that holds the key. A failure there is a
+warning, never a failed release; run `deno task revocations resign` by hand when releases pause
+for more than about 10 days. Sign on a machine whose clock is right: a list dated more than a day
+ahead of a user's clock is refused.
+
+**The compiled-in floor.** Each release compiles in the sequence of the list published when it
+was cut (`RUNTIME_REVOCATION_MIN_SEQUENCE` in `src/build/runtime-revocation-keys.ts`), so a fresh
+install never takes an older, still-valid list from a stale or tampered mirror. `deno task
+release` raises it at step 1c (`deno task revocations floor`, the published list verified against
+the compiled-in keys; it never lowers it). A failure there is a warning and the release keeps the
+previous floor. After revoking a release in an emergency, cut the patch release from step 5 of the
+runbook so the new revocation becomes its floor. `deno task
 revocations verify` checks the published copy against the compiled-in keys. To rotate, sign with
 the backup key (store it in the keychain as the `active` item), compile a new backup into the next release, and retire the old active key.
 

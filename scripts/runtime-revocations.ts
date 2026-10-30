@@ -12,9 +12,13 @@
 //   deno task revocations resign [--if-due] [--no-publish]     fresh expiry + sequence, same entries
 //   deno task revocations verify [<file>]               a file, or the published copies
 //   deno task revocations publish <file>                upload a signed list
+//   deno task revocations floor [--file <keys module>]  raise the compiled-in minimum sequence
+//       (RUNTIME_REVOCATION_MIN_SEQUENCE in src/build/runtime-revocation-keys.ts) to the published
+//       list's: `deno task release` runs it before the release commit, so every release refuses
+//       any list older than the one current when it was cut
 //
 // Every signing command takes the key from the keychain (`security find-generic-password -w`),
-// signs a payload with a fresh `issuedAt`, a 60-day `expiresAt` and a `sequence` above the
+// signs a payload with a fresh `issuedAt`, a 21-day `expiresAt` and a `sequence` above the
 // published one, verifies the result against the public keys COMPILED INTO this checkout (a key
 // that isn't one of them is refused before anything is published), writes it to
 // `.denext/runtime-revocations.json` (`--out` changes it) and publishes it unless `--no-publish`:
@@ -24,7 +28,7 @@
 //   2. a commit of `runtime-revocations.json` on the orphan branch `denext-revocations` of
 //      Brainwires/deno (the GitHub CLI's git data API; never a force push), the mirror.
 //
-// `resign --if-due` does nothing while 30 days or more remain: `deno task release` runs it.
+// `resign --if-due` does nothing while 10 days or more remain: `deno task release` runs it.
 
 import { join } from "@std/path";
 import {
@@ -52,6 +56,9 @@ const MIRROR_FILE = "runtime-revocations.json";
 export const RSYNC_ROOT_ENV = "DENEXT_REVOCATIONS_RSYNC_ROOT";
 /** The default output file (git-ignored). */
 const DEFAULT_OUT = ".denext/runtime-revocations.json";
+/** The module the compiled-in floor lives in (`floor`). */
+export const KEYS_MODULE = "src/build/runtime-revocation-keys.ts";
+const FLOOR_RE = /(export const RUNTIME_REVOCATION_MIN_SEQUENCE: number = )(\d+);/;
 
 /** A finished command: its exit code and standard output. */
 export interface RunResult {
@@ -451,8 +458,47 @@ async function verify(deps: RevocationsDeps, file: string | undefined) {
   }
 }
 
+/**
+ * The compiled-in minimum sequence `source` (the keys module) declares.
+ *
+ * @param source The module's text.
+ * @returns The sequence.
+ */
+export function minSequenceIn(source: string): number {
+  const m = FLOOR_RE.exec(source) ??
+    fail(`${KEYS_MODULE} declares no RUNTIME_REVOCATION_MIN_SEQUENCE`);
+  return Number(m[2]);
+}
+
+/**
+ * `source` (the keys module) with its compiled-in minimum sequence set to `sequence`.
+ *
+ * @param source The module's text.
+ * @param sequence The new floor.
+ * @returns The new text.
+ */
+export function withMinSequence(source: string, sequence: number): string {
+  minSequenceIn(source);
+  return source.replace(FLOOR_RE, `$1${sequence};`);
+}
+
+/** `floor`: raise the compiled-in minimum sequence to the published list's (never lower it). */
+async function floor(deps: RevocationsDeps, flags: Record<string, string | boolean>) {
+  if (deps.keys.length === 0) {
+    return deps.log("no revocation public key is compiled in: the floor stays");
+  }
+  const current = await publishedList(deps) ??
+    fail("could not read the published list (offline, or none published yet: `init`)");
+  const file = typeof flags.file === "string" ? flags.file : KEYS_MODULE;
+  const source = await Deno.readTextFile(file);
+  const was = minSequenceIn(source);
+  if (current.sequence <= was) return deps.log(`the compiled-in floor stays at #${was}`);
+  await Deno.writeTextFile(file, withMinSequence(source, current.sequence));
+  deps.log(`raised the compiled-in floor #${was} → #${current.sequence} (${file})`);
+}
+
 const USAGE = "usage: deno task revocations <keygen | init | add | sign | resign | verify | " +
-  "publish> (see the header of scripts/runtime-revocations.ts)";
+  "publish | floor> (see the header of scripts/runtime-revocations.ts)";
 
 /**
  * The CLI.
@@ -484,6 +530,8 @@ export async function main(args: string[], deps: RevocationsDeps = realDeps()): 
       return await verify(deps, arg);
     case "publish":
       return await publish(deps, await Deno.readTextFile(arg ?? fail(USAGE)));
+    case "floor":
+      return await floor(deps, flags);
     default:
       fail(USAGE);
   }

@@ -15,3 +15,12 @@ export const RUNTIME_REVOCATION_PUBLIC_KEYS: readonly [active: string, backup: s
   "",
   "",
 ];
+
+/**
+ * The sequence of the revoked-runtimes list published when this denext was released: a list
+ * below it is never taken, so a fresh machine (no cached list) can't be handed an older,
+ * still-valid list that omits a newer revocation. `deno task release` raises it to the published
+ * list's sequence before the release commit (`deno task revocations floor`); `0` until a list is
+ * published.
+ */
+export const RUNTIME_REVOCATION_MIN_SEQUENCE: number = 0;

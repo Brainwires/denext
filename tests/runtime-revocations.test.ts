@@ -21,10 +21,12 @@ import {
   honourRevocationKeysFileForTests,
   loadRuntimeRevocations,
   REVOCATION_CHECK_ENV,
+  REVOCATION_DEFAULT_EXPIRY_DAYS,
   REVOCATION_FETCH_BUDGET_MS,
   REVOCATION_KEYS_FILE_ENV,
   REVOCATION_MAX_BYTES,
   REVOCATION_MAX_FUTURE_MS,
+  REVOCATION_RESIGN_DAYS,
   REVOCATION_SIGNATURE_DOMAIN,
   revocationCacheRoot,
   revocationKeys,
@@ -40,7 +42,10 @@ import {
   signRevocationList,
   verifyRevocationDocument,
 } from "../src/build/runtime-revocations.ts";
-import { RUNTIME_REVOCATION_PUBLIC_KEYS } from "../src/build/runtime-revocation-keys.ts";
+import {
+  RUNTIME_REVOCATION_MIN_SEQUENCE,
+  RUNTIME_REVOCATION_PUBLIC_KEYS,
+} from "../src/build/runtime-revocation-keys.ts";
 import { toBase64 } from "../src/build/ota-signing.ts";
 
 const LINUX = "x86_64-unknown-linux-gnu";
@@ -230,17 +235,19 @@ Deno.test("signRevocationList refuses an invalid payload; freshRevocationList da
   );
   const first = listAt([], NOW);
   assertEquals(first.issuedAt, "2026-10-30T00:00:00.000Z");
-  assertEquals(Date.parse(first.expiresAt) - NOW, 60 * DAY);
+  assertEquals(Date.parse(first.expiresAt) - NOW, 21 * DAY);
+  assertEquals(REVOCATION_DEFAULT_EXPIRY_DAYS, 21);
   assertEquals(first.sequence, NOW / 1000);
   // Never at or below the list it replaces, whatever the clock says.
   assertEquals(listAt([], NOW - DAY, { sequence: NOW / 1000 + 5 }).sequence, NOW / 1000 + 6);
 });
 
-Deno.test("revocationResignDue: fewer than 30 days left (or an unreadable expiry)", () => {
+Deno.test("revocationResignDue: fewer than 10 days left (or an unreadable expiry)", () => {
   const at = (days: number) => ({ expiresAt: new Date(NOW + days * DAY).toISOString() });
-  assertFalse(revocationResignDue(at(31), NOW));
-  assertFalse(revocationResignDue(at(30), NOW));
-  assert(revocationResignDue(at(29), NOW));
+  assertEquals(REVOCATION_RESIGN_DAYS, 10);
+  assertFalse(revocationResignDue(at(21), NOW), "a fresh list");
+  assertFalse(revocationResignDue(at(10), NOW));
+  assert(revocationResignDue(at(9), NOW));
   assert(revocationResignDue(at(-1), NOW));
   assert(revocationResignDue({ expiresAt: "?" }, NOW));
   assert(revocationResignDue(at(10), NOW, 7) === false);
@@ -593,6 +600,84 @@ Deno.test("loadRuntimeRevocations: a run on the test keys file writes nothing to
       env: (k) => k === REVOCATION_KEYS_FILE_ENV ? "/test/keys.json" : undefined,
     });
     assertEquals([...Deno.readDirSync(dir)], []);
+  } finally {
+    await srv.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("loadRuntimeRevocations asks every source at once: a stale primary can't hide a newer mirror list", async () => {
+  const { key, pub } = await keyPair();
+  const older = await signed(listAt([], NOW - 2 * DAY), key);
+  const newer = listAt([ENTRY], NOW);
+  let hang = false;
+  const pending: Array<() => void> = [];
+  const primary = server(() =>
+    hang
+      ? new Promise<Response>((resolve) => pending.push(() => resolve(new Response(older))))
+      : new Response(older)
+  );
+  const mirror = server(async () => new Response(await signed(newer, key)));
+  const dir = await Deno.makeTempDir();
+  try {
+    const base = {
+      cacheRoot: dir,
+      keys: [pub],
+      urls: [primary.url, mirror.url],
+      netGranted: granted,
+      now: () => NOW + 1000,
+      env: () => undefined,
+      mode: "force" as const,
+    };
+    // A fresh machine (no floor yet): the primary's older, still-valid list answers first, yet
+    // the mirror's newer one is taken.
+    const got = await loadRuntimeRevocations(base);
+    assertEquals([got.source, got.list?.sequence], ["network", newer.sequence]);
+    assertEquals([primary.hits(), mirror.hits()], [1, 1]);
+    // A primary that never answers doesn't use up the mirror's time: one budget for both.
+    await Deno.remove(dir, { recursive: true });
+    await Deno.mkdir(dir);
+    hang = true;
+    const started = performance.now();
+    const slow = await loadRuntimeRevocations({ ...base, budgetMs: 800 });
+    const took = performance.now() - started;
+    assertEquals(slow.list?.sequence, newer.sequence);
+    assert(took < 800 + 700, `took ${took} ms`);
+  } finally {
+    for (const r of pending) r();
+    await primary.close();
+    await mirror.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("loadRuntimeRevocations: a list below the compiled-in floor is never taken, cached or fetched", async () => {
+  const { key, pub } = await keyPair();
+  const list = listAt();
+  const doc = await signed(list, key);
+  const srv = server(() => new Response(doc));
+  const dir = await Deno.makeTempDir();
+  try {
+    const base = {
+      cacheRoot: dir,
+      keys: [pub],
+      urls: [srv.url],
+      netGranted: granted,
+      now: () => NOW + 1000,
+      env: () => undefined,
+      mode: "force" as const,
+    };
+    // At the floor: taken (and cached).
+    assertEquals(
+      (await loadRuntimeRevocations({ ...base, minSequence: list.sequence })).source,
+      "network",
+    );
+    // A release cut after a newer list was published: this one is a replay, fetched or cached.
+    const above = { ...base, minSequence: list.sequence + 1 };
+    assertEquals((await loadRuntimeRevocations(above)).list, null);
+    assertEquals((await loadRuntimeRevocations({ ...above, mode: "cache-only" })).list, null);
+    // The default is the floor compiled into this release.
+    assertEquals(RUNTIME_REVOCATION_MIN_SEQUENCE, 0);
   } finally {
     await srv.close();
     await Deno.remove(dir, { recursive: true });

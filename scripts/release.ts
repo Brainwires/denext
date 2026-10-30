@@ -18,6 +18,9 @@
 //      native-plugins.yml runs on HEAD (every job), else ABORT
 //      (scripts/release-ci.ts)
 //   1. bump the version pins (scripts/bump-version.ts)
+//   1c. raise the compiled-in revoked-runtimes floor to the published list's sequence
+//      (`deno task revocations floor`; a warning on failure, never an abort), so this release
+//      never takes a list older than the one current when it was cut
 //   2. roll CHANGELOG.md  [Unreleased] → [<version>] - <today>  (fresh [Unreleased] on top)
 //   2b. a stable release folds the rc sections in and re-points the docs pages' links to
 //       their anchors (`/docs/changelog#250-rc1---…`) at the folded release header
@@ -38,7 +41,7 @@
 //      while any workspace member denext imports at run time (scripts/lib/jsr-pins.ts) pins a
 //      version JSR does not have (4.1.0 shipped pinning an unpublished @denext/og); then tag
 //      v<version> and push branch + tag
-//   7. re-sign the signed revoked-runtimes list when fewer than 30 days remain before it expires
+//   7. re-sign the signed revoked-runtimes list when fewer than 10 days remain before it expires
 //      (`deno task revocations resign --if-due`, the keychain key; a warning on failure, never an
 //      abort: the list is advisory)
 //
@@ -648,7 +651,7 @@ async function publishSteps(
   await resignRevocations();
 }
 
-/** Step 7's command: re-sign the revoked-runtimes list when fewer than 30 days remain. */
+/** Step 7's command: re-sign the revoked-runtimes list when fewer than 10 days remain. */
 const RESIGN_REVOCATIONS = [
   "deno",
   "run",
@@ -660,18 +663,38 @@ const RESIGN_REVOCATIONS = [
 
 /**
  * Step 7: keep the signed revoked-runtimes list (src/build/runtime-revocations.ts) fresh — it
- * expires 60 days after signing, and releases are what re-sign it (there is no scheduled job): a
- * list with fewer than 30 days left is re-signed with the keychain key and published again. It is
+ * expires 21 days after signing, and releases are what re-sign it (there is no scheduled job): a
+ * list with fewer than 10 days left is re-signed with the keychain key and published again. It is
  * advisory, so a failure (no key on this machine, offline) is a warning, never a failed release.
  */
 async function resignRevocations(): Promise<void> {
-  console.log("\n7. Revoked-runtimes list: re-sign when fewer than 30 days remain…");
+  console.log("\n7. Revoked-runtimes list: re-sign when fewer than 10 days remain…");
   const [cmd, ...args] = RESIGN_REVOCATIONS;
   if (await run(cmd, ...args) !== 0) {
     console.warn(
       "release: warning — the revoked-runtimes list was not re-signed. It is advisory and " +
         "lapses only at its expiry; run `deno task revocations resign` on the machine that " +
         "holds the key (CONTRIBUTING.md → A bad runtime release).",
+    );
+  }
+}
+
+/** Step 1c's command: raise the compiled-in revoked-runtimes floor to the published list's. */
+export const REVOCATION_FLOOR = ["deno", "run", "-A", "scripts/runtime-revocations.ts", "floor"];
+
+/**
+ * Step 1c: compile the published revoked-runtimes list's sequence into the release
+ * (`RUNTIME_REVOCATION_MIN_SEQUENCE`), so a fresh install never takes an older list a stale
+ * mirror serves. Advisory like the list: a failure (offline) is a warning, never a failed release.
+ */
+async function raiseRevocationFloor(dry: boolean): Promise<void> {
+  if (dry) return console.log("1c. revocation floor (skipped — dry run)");
+  console.log("1c. Revoked-runtimes floor: the published list's sequence…");
+  const [cmd, ...args] = REVOCATION_FLOOR;
+  if (await run(cmd, ...args) !== 0) {
+    console.warn(
+      "release: warning — the compiled-in revoked-runtimes floor was not raised; this release " +
+        "keeps the previous one.",
     );
   }
 }
@@ -763,6 +786,8 @@ export async function prepareRelease(version: string, dry: boolean): Promise<voi
   for (const { file, hits } of bump.changed) console.log(`     ${file} (${hits})`);
   // 1b. Refresh the version-pinned examples/effect migrate golden (else the gate fails).
   console.log(goldenLine(await refreshEffectGolden(dry), dry));
+  // 1c. The compiled-in revoked-runtimes floor: the published list's sequence.
+  await raiseRevocationFloor(dry);
   const { entries, relinked } = await rollChangelog(version, dry);
   console.log(
     `2. CHANGELOG: rolled [Unreleased] → [${version}] (${plural(entries, "entry", "entries")})`,

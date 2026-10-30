@@ -19,8 +19,11 @@
 // the floor but never raise it, so no local write can turn the check off for good. Unknown fields
 // are ignored; an unknown `schema` is ignored as a whole.
 //
-// Transport is untrusted (trust comes from the signature): denext.dev first, then a mirror on
-// GitHub, within a budget (1.5 s; 5 s for `toolchain status` / `install` / `doctor`). The list is
+// Transport is untrusted (trust comes from the signature): denext.dev and a mirror on GitHub,
+// both asked at once within one budget (1.5 s; 5 s for `toolchain status` / `install` /
+// `doctor`), the highest valid sequence winning — a stale copy on one never hides a newer list
+// on the other. Each denext release compiles in the sequence published when it was cut
+// (runtime-revocation-keys.ts), so even a fresh machine never takes an older list. The list is
 // cached under the toolchain cache with a 12 h lifetime and re-verified on every read. Nothing
 // here ever fails a command: a network, HTTP, size or signature problem means the cached list, or
 // none. With no public key compiled in, the whole check is a no-op: no cache read, no fetch.
@@ -29,11 +32,14 @@ import { join } from "@std/path";
 import { denoCacheDir } from "./deno-cache-dir.ts";
 import { fromBase64, toBase64 } from "./ota-signing.ts";
 import { encodeHex } from "@std/encoding/hex";
-import { RUNTIME_REVOCATION_PUBLIC_KEYS } from "./runtime-revocation-keys.ts";
+import {
+  RUNTIME_REVOCATION_MIN_SEQUENCE,
+  RUNTIME_REVOCATION_PUBLIC_KEYS,
+} from "./runtime-revocation-keys.ts";
 
 /** What the signature covers before the signed string. */
 export const REVOCATION_SIGNATURE_DOMAIN = "denext-runtime-revocations-v1\n";
-/** Where the list is fetched from, in order: denext.dev, then the fork's orphan branch. */
+/** Where the list is fetched from (all at once): denext.dev and the fork's orphan branch. */
 export const REVOCATION_URLS: readonly string[] = [
   "https://denext.dev/runtime/revocations.json",
   "https://raw.githubusercontent.com/Brainwires/deno/denext-revocations/runtime-revocations.json",
@@ -49,7 +55,9 @@ export const REVOCATION_FETCH_BUDGET_MS = 1500;
 /** The time `toolchain status` / `install` and `doctor` may spend fetching it. */
 const REVOCATION_FORCE_BUDGET_MS = 5000;
 /** How long a signed list stays valid when no expiry is given. */
-const REVOCATION_DEFAULT_EXPIRY_DAYS = 60;
+export const REVOCATION_DEFAULT_EXPIRY_DAYS = 21;
+/** A list with fewer days than this before it expires is re-signed (`deno task release`). */
+export const REVOCATION_RESIGN_DAYS = 10;
 
 /** How far ahead of the clock a list's `issuedAt` / `sequence` may be (a skewed signer). */
 export const REVOCATION_MAX_FUTURE_MS = 24 * 3600_000;
@@ -380,8 +388,9 @@ export function freshRevocationList(
 }
 
 /**
- * Whether a published list is due a re-sign: fewer than `days` days (30) remain before it
- * expires (or it already has). `deno task release` re-signs it then.
+ * Whether a published list is due a re-sign: fewer than `days` days
+ * ({@linkcode REVOCATION_RESIGN_DAYS}) remain before it expires (or it already has).
+ * `deno task release` re-signs it then.
  *
  * @param list The published list.
  * @param now The clock, epoch ms.
@@ -391,7 +400,7 @@ export function freshRevocationList(
 export function revocationResignDue(
   list: Pick<RuntimeRevocationList, "expiresAt">,
   now: number = Date.now(),
-  days = 30,
+  days: number = REVOCATION_RESIGN_DAYS,
 ): boolean {
   const expires = Date.parse(list.expiresAt);
   return Number.isNaN(expires) || expires - now < days * DAY_MS;
@@ -520,6 +529,11 @@ export interface LoadRevocationsOptions {
   readonly now?: () => number;
   /** Test seam. */
   readonly fetch?: typeof fetch;
+  /**
+   * The lowest sequence taken at all (default {@linkcode RUNTIME_REVOCATION_MIN_SEQUENCE}, the
+   * one published when this denext was released).
+   */
+  readonly minSequence?: number;
   /** Whether this process may reach `url` without a prompt (default: a permission query). */
   readonly netGranted?: (url: string) => Promise<boolean>;
 }
@@ -553,9 +567,13 @@ async function netGrantedByQuery(url: string): Promise<boolean> {
   }
 }
 
-/** The body of a GET of `url`, capped at {@linkcode REVOCATION_MAX_BYTES}, within `ms`. */
-async function fetchCapped(url: string, ms: number, fetchImpl: typeof fetch): Promise<string> {
-  const res = await fetchImpl(url, { signal: AbortSignal.timeout(ms) });
+/** The body of a GET of `url`, capped at {@linkcode REVOCATION_MAX_BYTES}, until `signal`. */
+async function fetchCapped(
+  url: string,
+  signal: AbortSignal,
+  fetchImpl: typeof fetch,
+): Promise<string> {
+  const res = await fetchImpl(url, { signal });
   if (!res.ok || !res.body) {
     await res.body?.cancel().catch(() => {});
     throw new Error(`HTTP ${res.status}`);
@@ -583,9 +601,9 @@ interface Fetched {
 }
 
 /**
- * The first source in `urls` that serves a list verifying with `keys`, tried in order within
- * `budgetMs` overall (each gets what is left); `null` when none does. Records an expired list it
- * met in `expired`.
+ * The highest-sequence list any source in `urls` serves that verifies with `keys`: every source
+ * asked at once, within `budgetMs` overall, so a stale copy on one never hides a newer list on
+ * another; `null` when none does. Records an expired list it met in `expired`.
  */
 async function fetchVerified(
   urls: readonly string[],
@@ -594,20 +612,23 @@ async function fetchVerified(
   netGranted: (url: string) => Promise<boolean>,
   expired: { list: RuntimeRevocationList | null },
 ): Promise<Fetched | null> {
-  const deadline = performance.now() + o.budgetMs;
-  for (const url of urls) {
-    const left = Math.floor(deadline - performance.now());
-    if (left <= 0) break;
-    if (!await netGranted(url)) continue;
+  const signal = AbortSignal.timeout(o.budgetMs);
+  const one = async (url: string): Promise<Fetched | null> => {
+    if (!await netGranted(url)) return null;
     try {
-      const text = await fetchCapped(url, left, o.fetch);
+      const text = await fetchCapped(url, signal, o.fetch);
       const list = await verifyRevocationDocument(text, keys, o);
-      if (list) return { text, list };
+      return list ? { text, list } : null;
     } catch (err) {
       if (err instanceof RevocationListError && err.code === "expired") expired.list = err.list!;
+      return null;
     }
-  }
-  return null;
+  };
+  const lists = await Promise.all(urls.map(one));
+  return lists.reduce<Fetched | null>(
+    (best, f) => f !== null && (best === null || f.list.sequence > best.list.sequence) ? f : best,
+    null,
+  );
 }
 
 /** The cached list, re-verified; `expired` gets a verified list that has expired. */
@@ -667,7 +688,7 @@ export async function loadRuntimeRevocations(
   const root = keys === null ? null : cacheRootOf(options, env);
   if (keys === null || root === null) return NOT_CONFIGURED;
   const now = (options.now ?? Date.now)();
-  const held = await readHeld(root, keys, now);
+  const held = await readHeld(root, keys, now, options.minSequence);
   if (!fetchDue(mode, held.state, now)) return result(held.cached, "cache", held.expired.list);
   const budgetMs = options.budgetMs ??
     (mode === "force" ? REVOCATION_FORCE_BUDGET_MS : REVOCATION_FETCH_BUDGET_MS);
@@ -704,13 +725,21 @@ interface HeldRevocations {
   readonly minSequence: number;
 }
 
-/** The cached list (re-verified under `keys`) and the bookkeeping written under the same keys. */
-async function readHeld(root: string, keys: readonly string[], now: number) {
+/**
+ * The cached list (re-verified under `keys`, at or above the compiled-in floor) and the
+ * bookkeeping written under the same keys.
+ */
+async function readHeld(
+  root: string,
+  keys: readonly string[],
+  now: number,
+  compiled: number = RUNTIME_REVOCATION_MIN_SEQUENCE,
+) {
   const keySet = await revocationKeySetId(keys);
   const state = await readState(root, keySet);
   const expired = { list: null as RuntimeRevocationList | null };
-  const cached = await readCached(root, keys, { now, minSequence: 0 }, expired);
-  const minSequence = replayFloor(cached ?? expired.list, state);
+  const cached = await readCached(root, keys, { now, minSequence: compiled }, expired);
+  const minSequence = Math.max(compiled, replayFloor(cached ?? expired.list, state));
   return { keySet, state, cached, expired, minSequence } satisfies HeldRevocations;
 }
 

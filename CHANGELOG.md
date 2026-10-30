@@ -22,7 +22,9 @@ and this project adheres to
   runs, with one warning per process tree. `build --compile`, `desktop build` and
   `desktop package` refuse to ship a revoked runtime unless `DENEXT_ALLOW_REVOKED_RUNTIME=<version>`
   names it; the desktop verbs move the toolchain and the Deno Desktop runtime back together. The
-  list is cached for 12 hours and refreshed within 1.5 seconds at most (`toolchain status`,
+  list is cached for 12 hours and refreshed within 1.5 seconds at most, from denext.dev and a
+  GitHub mirror at once (the newest valid list wins), and a list older than the one published
+  when this denext was released is never taken (`toolchain status`,
   `install` and `doctor` fetch it every time, within 5 seconds, and report its sequence and expiry;
   `toolchain status --json` adds `revocation`); a network, HTTP or signature problem never fails or
   delays a command beyond that, a process without network permission never fetches, and
@@ -36,9 +38,10 @@ and this project adheres to
   reads and fetches nothing. See
   [Revoked runtimes](https://denext.dev/docs/toolchain#revoked-runtimes).
 - **`deno task revocations`** (maintainers): `keygen` (the private key straight into the login
-  keychain), `init`, `add`, `sign`, `resign`, `verify` and `publish` for the signed list, which
+  keychain), `init`, `add`, `sign`, `resign`, `verify`, `publish` and `floor` for the signed list, which
   self-verifies against the compiled-in keys before it is published to denext.dev and a mirror.
-  `deno task release` re-signs the list when fewer than 30 days remain before it expires.
+  A list expires 21 days after signing; `deno task release` re-signs it when fewer than 10 days
+  remain, and compiles the published list's sequence into the release as its floor (`floor`).
 
 ### Changed
 

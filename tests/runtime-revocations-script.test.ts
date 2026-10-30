@@ -8,13 +8,17 @@ import { join } from "@std/path";
 import {
   entryFromFlags,
   KEYCHAIN_SERVICE,
+  KEYS_MODULE,
   main,
+  minSequenceIn,
   parseArgs,
   readSignedList,
   type RevocationsDeps,
   RSYNC_ROOT_ENV,
   type RunResult,
+  withMinSequence,
 } from "../scripts/runtime-revocations.ts";
+import { REVOCATION_FLOOR } from "../scripts/release.ts";
 import {
   freshRevocationList,
   type RuntimeRevocationList,
@@ -209,7 +213,7 @@ Deno.test("add appends (or replaces) an entry above the published sequence; resi
       fixedIn: "denext 4.10.3",
     }]);
     assertEquals(f.web, [], "--no-publish");
-    // resign --if-due: 59 days left → nothing; past the 30-day mark → re-signed with the same entries.
+    // resign --if-due: 21 days left → nothing; past the 10-day mark → re-signed with the same entries.
     await publishedWith(f, list);
     await main(["resign", "--if-due", "--out", out], f.deps);
     assertStringIncludes(f.logged.at(-1)!, "not due yet");
@@ -355,3 +359,53 @@ Deno.test("entryFromFlags / parseArgs / readSignedList", async () => {
   await assertRejects(() => readSignedList(doc, [pub], NOW), Error, "schema");
   await assertRejects(() => readSignedList("{}", [pub], NOW));
 });
+
+Deno.test("floor raises the compiled-in minimum sequence to the published list's, never lowers it", async () => {
+  const f = await withKey();
+  const dir = await Deno.makeTempDir();
+  try {
+    const file = join(dir, "keys.ts");
+    // The real module declares it in the shape `floor` rewrites.
+    const real = await Deno.readTextFile(new URL(`../${KEYS_MODULE}`, import.meta.url));
+    await Deno.writeTextFile(file, real);
+    assertEquals(minSequenceIn(real), 0);
+    const list = freshRevocationList([], NOW);
+    await publishedWith(f, list);
+    await main(["floor", "--file", file], f.deps);
+    assertEquals(minSequenceIn(await Deno.readTextFile(file)), list.sequence);
+    assertStringIncludes(f.logged.at(-1)!, `#0 → #${list.sequence}`);
+    // An older published copy (a stale mirror) never lowers it.
+    await publishedWith(f, { ...list, sequence: list.sequence - 10 });
+    await main(["floor", "--file", file], f.deps);
+    assertEquals(minSequenceIn(await Deno.readTextFile(file)), list.sequence);
+    assertStringIncludes(f.logged.at(-1)!, "stays");
+    // Nothing published: an error (the release warns and keeps the previous floor).
+    f.published.text = null;
+    await assertRejects(() => main(["floor", "--file", file], f.deps), Error, "published list");
+    // No key compiled in: nothing to do.
+    const keyless = await fake();
+    await main(["floor", "--file", file], keyless.deps);
+    assertStringIncludes(keyless.logged.at(-1)!, "floor stays");
+    // The rewrite is exact; a module without the constant is refused.
+    assertEquals(minSequenceIn(withMinSequence(real, 42)), 42);
+    assertEquals(withMinSequence(real, 42).replace(/= 42;/, "= 0;"), real);
+    assertThrowsMessage(
+      () => minSequenceIn("export const X = 1;"),
+      "RUNTIME_REVOCATION_MIN_SEQUENCE",
+    );
+    // `deno task release` runs exactly this command at step 1c.
+    assertEquals(REVOCATION_FLOOR.slice(-2), ["scripts/runtime-revocations.ts", "floor"]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/** `fn` throws an error whose message includes `text`. */
+function assertThrowsMessage(fn: () => unknown, text: string): void {
+  try {
+    fn();
+  } catch (err) {
+    return assertStringIncludes((err as Error).message, text);
+  }
+  throw new Error("did not throw");
+}
