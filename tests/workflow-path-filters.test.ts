@@ -17,6 +17,7 @@ import { assert, assertEquals } from "@std/assert";
 import { expandGlob } from "@std/fs";
 import { fromFileUrl, globToRegExp, join, relative, toFileUrl } from "@std/path";
 import { parse } from "@std/yaml";
+import { boundedDeno } from "../scripts/deno-doc.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 
@@ -168,15 +169,10 @@ async function denoInfo(files: readonly string[], cwd: string): Promise<Map<stri
       entry,
       files.map((f) => `import ${JSON.stringify(toFileUrl(join(ROOT, f)).href)};`).join("\n"),
     );
-    const out = await new Deno.Command(Deno.execPath(), {
-      // never rewrite a lockfile; a file URL, as `deno info` reads a Windows path as a URL
-      args: ["info", "--json", "--no-lock", toFileUrl(entry).href],
-      cwd,
-      stdout: "piped",
-      stderr: "piped",
-    }).output();
-    assert(out.success, `deno info failed:\n${new TextDecoder().decode(out.stderr)}`);
-    const info = JSON.parse(new TextDecoder().decode(out.stdout)) as { modules: InfoModule[] };
+    // never rewrite a lockfile; a file URL, as `deno info` reads a Windows path as a URL
+    const out = await boundedDeno(["info", "--json", "--no-lock", toFileUrl(entry).href], { cwd });
+    assert(out.success, `deno info failed:\n${out.stderr}`);
+    const info = JSON.parse(out.stdout) as { modules: InfoModule[] };
     return new Map(info.modules.map((m) => [m.specifier, m]));
   } finally {
     await Deno.remove(dir, { recursive: true });

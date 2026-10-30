@@ -701,6 +701,10 @@ jobs:
     runs-on: windows-latest
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 150
+    # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
+    # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).
+    env:
+      DENEXT_CHILD_PROBE: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -806,6 +810,10 @@ jobs:
   windows-resolve:
     runs-on: windows-latest
     timeout-minutes: 15
+    # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
+    # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).
+    env:
+      DENEXT_CHILD_PROBE: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 

@@ -18,7 +18,9 @@
 // A child still running after its deadline is killed ({@linkcode boundedOutput}) and started again
 // once, after one line on stderr naming its pid and arguments; a second stall fails with an error
 // naming both pids. `DENEXT_CHILD_DEADLINE_MS` replaces the deadlines (`0`: none), for a cold
-// cache on a slow link (a first Docker build).
+// cache on a slow link (a first Docker build). Under `DENEXT_CHILD_PROBE=1` a child spawned
+// through child-probe.ts `boundedSpawn` also runs with Deno's debug log on, and the stall line and
+// error carry its log's tail and two CPU samples.
 //
 // A LONG-LIVED child (the esbuild service, a server a test starts) is spawned through
 // {@linkcode spawnExclusive}: on Windows it takes the same turn, so it is never created while a
@@ -36,19 +38,29 @@ export class ChildStallError extends Error {
   /** What it wrote on stderr before it was killed. */
   readonly stderr: string;
   /**
+   * Where it was when it was killed, for a probed child (child-probe.ts): CPU samples, output
+   * progress and the debug log's tail. `undefined` for a child that was not probed.
+   */
+  readonly probe: string | undefined;
+  /**
    * @param label The command, e.g. `deno info`.
    * @param pid The killed child's pid.
    * @param deadlineMs The deadline it overran.
    * @param stderr What it wrote on stderr.
+   * @param probe A probed child's report.
    */
-  constructor(label: string, pid: number, deadlineMs: number, stderr: string) {
+  constructor(label: string, pid: number, deadlineMs: number, stderr: string, probe?: string) {
     super(
       `${label} (pid ${pid}) was still running after ${deadlineMs / 1000} s and was killed:\n` +
-        stderr,
+        stderr +
+        (probe === undefined
+          ? ""
+          : `${stderr === "" || stderr.endsWith("\n") ? "" : "\n"}${probe}`),
     );
     this.name = "ChildStallError";
     this.pid = pid;
     this.stderr = stderr;
+    this.probe = probe;
   }
 }
 
@@ -320,17 +332,19 @@ export function retryOnStall<T>(
       onStall(
         `    warning: ${label} (pid ${err.pid}) was still running after ${deadlineMs / 1000} s ` +
           `and was killed; retrying once (DENEXT_CHILD_DEADLINE_MS raises the deadline): ` +
-          `${label} ${args.join(" ")}`,
+          `${label} ${args.join(" ")}` + (err.probe === undefined ? "" : `\n${err.probe}`),
       );
       try {
         return await attempt(deadlineMs);
       } catch (again) {
         if (!(again instanceof ChildStallError)) throw again;
+        const probes = [err.probe, again.probe].filter((p) => p !== undefined);
         throw new ChildStallError(
           `${label} (stalled twice; first pid ${err.pid})`,
           again.pid,
           deadlineMs,
           again.stderr,
+          probes.length ? probes.join("\n") : undefined,
         );
       }
     }

@@ -4,7 +4,7 @@
 //
 //   deno task surface:refresh   # rewrite tests/fixtures/public-surface.json
 
-import { denoDocJson } from "./deno-doc.ts";
+import { denoDocJsonMany } from "./deno-doc.ts";
 import { fromFileUrl } from "@std/path";
 
 const ROOT = new URL("../", import.meta.url);
@@ -20,11 +20,14 @@ export async function publicSurface(): Promise<Record<string, string[]>> {
   const denoJson = JSON.parse(await Deno.readTextFile(new URL("deno.json", ROOT))) as {
     exports: Record<string, string>;
   };
+  const entries = Object.entries(denoJson.exports);
+  // A few `deno doc` children for every entry, not one each (see denoDocJsonMany).
+  const docs = await denoDocJsonMany(entries.map(([, file]) => fromFileUrl(new URL(file, ROOT))));
   const out: Record<string, string[]> = {};
-  for (const [key, file] of Object.entries(denoJson.exports)) {
+  entries.forEach(([key], i) => {
     const module = key === "." ? "denext" : `denext/${key.slice(2)}`;
-    out[module] = symbolsOf(await denoDocJson(fromFileUrl(new URL(file, ROOT))));
-  }
+    out[module] = symbolsOf(docs[i]);
+  });
   return out;
 }
 

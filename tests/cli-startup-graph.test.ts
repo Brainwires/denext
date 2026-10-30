@@ -20,7 +20,7 @@ import {
   TABLE_OUT,
 } from "../scripts/gen-command-table.ts";
 import { CLI_MODULES_URL } from "../src/cli/cli-cache.ts";
-import { boundedOutput, childDeadlineMs, retryOnStall } from "../src/build/serial-child.ts";
+import { boundedDeno } from "../scripts/deno-doc.ts";
 import { VERSION as CLI_VERSION } from "../src/version.ts";
 import { VERSION } from "../mod.ts";
 import { CLI_COMPILE_INCLUDES, compileCliArgs } from "../scripts/compile-cli.ts";
@@ -35,34 +35,21 @@ interface ModuleInfo {
 }
 
 /**
- * `deno info --json <root>`, the way the build runs it (src/build/serial-child.ts): one `deno info`
- * child at a time in this process, read until it exits, killed at its deadline and retried once.
- * On Windows a `deno info` child started beside the other Deno children of `deno test --parallel`
- * sometimes never exits; unbounded, that held this file until the 600 s stall watchdog.
+ * `deno info --json <root>`, bounded the way the build runs it (scripts/deno-doc.ts
+ * `boundedDeno`, over src/build/serial-child.ts): one `deno info` child at a time in this process,
+ * read until it exits, killed at its deadline and retried once, a second stall failing with its
+ * CPU time and debug-log tail. On Windows a `deno info` child started beside the other Deno
+ * children of `deno test --parallel` sometimes never exits; unbounded, that held this file until
+ * the 600 s stall watchdog.
  */
 async function info(root: string): Promise<ModuleInfo> {
   // a file URL, not a path: `deno info` reads a Windows `C:\…` path as a URL with scheme "c"
-  const args = ["info", "--json", toFileUrl(join(ROOT, root)).href];
-  const { stdout, success } = await retryOnStall(
-    "deno info",
-    args,
-    (deadline) =>
-      boundedOutput(
-        new Deno.Command(Deno.execPath(), {
-          args,
-          cwd: ROOT,
-          stdin: "null",
-          stdout: "piped",
-          stderr: "null",
-        }).spawn(),
-        { stdout: true, stderr: false },
-        deadline,
-        "deno info",
-      ),
-    childDeadlineMs(120_000),
+  const { stdout, success, stderr } = await boundedDeno(
+    ["info", "--json", toFileUrl(join(ROOT, root)).href],
+    { cwd: ROOT },
   );
-  assert(success, `deno info ${root}`);
-  return JSON.parse(new TextDecoder().decode(stdout));
+  assert(success, `deno info ${root}: ${stderr}`);
+  return JSON.parse(stdout);
 }
 
 /** Every module reachable from the info's roots through code dependencies, into `out`. */

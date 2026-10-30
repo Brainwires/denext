@@ -17,7 +17,7 @@
 //   • `slug` — a case-insensitively-unique URL segment (macOS's case-insensitive FS
 //     would otherwise clobber e.g. `draftMode` vs `DraftMode` on static export).
 
-import { denoDocJson } from "./deno-doc.ts";
+import { denoDocJsonMany } from "./deno-doc.ts";
 import { dirname, fromFileUrl } from "@std/path";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
@@ -328,14 +328,14 @@ async function realSurfaceNames(): Promise<Set<string>> {
 
 const realNames = await realSurfaceNames();
 
-/** `deno doc --json` for a module (v2 shape: `{ nodes: { "<file url>": { symbols } } }`). */
-async function denoDocSymbols(file: string): Promise<Decl[]> {
-  const parsed = (await denoDocJson(file)) as { nodes?: Record<string, Decl> };
+/** A `deno doc --json` document's symbols (v2 shape: `{ nodes: { "<file url>": { symbols } } }`). */
+function denoDocSymbols(doc: unknown): Decl[] {
+  const parsed = doc as { nodes?: Record<string, Decl> };
   return Object.values(parsed.nodes ?? {}).flatMap((n: Decl) => n.symbols ?? []);
 }
 
-async function docFor(file: string): Promise<Group["symbols"]> {
-  const symbols = await denoDocSymbols(file);
+function docFor(doc: unknown): Group["symbols"] {
+  const symbols = denoDocSymbols(doc);
   const seen = new Set<string>();
   const out: Symbol[] = [];
   for (const s of symbols) {
@@ -370,9 +370,11 @@ function symbolEntry(name: string, decl: Decl): Symbol {
   };
 }
 
+// A few `deno doc` children for every entry, not one each (see denoDocJsonMany).
+const docs = await denoDocJsonMany(ENTRIES.map((e) => e.file));
 const groups: Group[] = [];
-for (const { module, file } of ENTRIES) {
-  const symbols = await docFor(file);
+for (const [i, { module }] of ENTRIES.entries()) {
+  const symbols = docFor(docs[i]);
   // An Expo shim mirrors an `expo-*` package's API, so its exports have an upstream to read.
   if (module.startsWith("denext/expo/")) { for (const s of symbols) s.denextOnly = false; }
   groups.push({ module, symbols });

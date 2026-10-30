@@ -21,7 +21,7 @@
 // when that interface is not exported, or when `configKeys` lists a key the interface does
 // not declare — so the UI's per-plugin form can never drift from the factory's real type.
 
-import { denoDocJson } from "./deno-doc.ts";
+import { denoDocJsonMany } from "./deno-doc.ts";
 import { description, interfaceSchema, type Schema, symbolTable } from "./lib/ts-to-schema.ts";
 import { readmeSummary } from "./readme-blurb.ts";
 import { fromFileUrl } from "@std/path";
@@ -252,23 +252,34 @@ function rootModule(dir: string, exports: unknown): string {
   return `${ROOT}${dir}/${String(root).replace(/^\.\//, "")}`;
 }
 
-/** Read one workspace package from disk; a plugin's root module is `deno doc`ed too. */
-async function readPackage(dir: string): Promise<PackageSource> {
+/** Read one workspace package from disk, without its `deno doc` (see generatePluginCatalog). */
+function readPackage(dir: string): PackageSource {
   const config = readJson(`${ROOT}${dir}/deno.json`);
-  const kind = (config.denext as { catalog?: CatalogBlock } | undefined)?.catalog?.kind;
   const readmePath = `${ROOT}${dir}/README.md`;
   return {
     dir,
     config,
     readme: exists(readmePath) ? Deno.readTextFileSync(readmePath) : "",
     hasDocsPage: exists(`${DOCS_DIR}/${dir.split("/").pop()}`),
-    doc: kind === "plugin" ? await denoDocJson(rootModule(dir, config.exports)) : undefined,
+    doc: undefined,
   };
+}
+
+/** Whether a package's catalog block says it is a plugin (its root module is `deno doc`ed). */
+function isPlugin(pkg: PackageSource): boolean {
+  return (pkg.config.denext as { catalog?: CatalogBlock } | undefined)?.catalog?.kind === "plugin";
 }
 
 /** The catalog as the exact JSON text that belongs in `src/plugin/catalog.json`. */
 export async function generatePluginCatalog(): Promise<string> {
-  return buildCatalog(await Promise.all(workspaceDirs().map(readPackage)));
+  const packages = workspaceDirs().map(readPackage);
+  const plugins = packages.filter(isPlugin);
+  // Every plugin's root module in one `deno doc` child, not one each (see denoDocJsonMany).
+  const docs = await denoDocJsonMany(plugins.map((p) => rootModule(p.dir, p.config.exports)));
+  const documented = new Map(plugins.map((p, i) => [p, docs[i]]));
+  return buildCatalog(
+    packages.map((p) => documented.has(p) ? { ...p, doc: documented.get(p) } : p),
+  );
 }
 
 if (import.meta.main) {

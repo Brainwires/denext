@@ -36,6 +36,7 @@ import {
   type ProfileExpr,
 } from "../src/compat/next-auth/providers/generated.ts";
 import { OAUTH_CHECKS } from "../src/server/auth/oauth.ts";
+import { boundedDeno } from "./deno-doc.ts";
 import type { OAuthCheck } from "../src/server/auth/types.ts";
 
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
@@ -749,8 +750,9 @@ async function buildManifest(): Promise<ProviderManifest> {
 async function listProviders(): Promise<string[]> {
   // Load one provider so the package is in Deno's npm cache, then read its export map there.
   await import(`npm:@auth/core@${AUTHJS_CORE_VERSION}/providers/github`);
-  const info = await new Deno.Command(Deno.execPath(), { args: ["info", "--json"] }).output();
-  const { npmCache } = JSON.parse(new TextDecoder().decode(info.stdout)) as { npmCache: string };
+  const info = await boundedDeno(["info", "--json"]);
+  if (!info.success) throw new Error(`gen:auth-providers: deno info failed: ${info.stderr}`);
+  const { npmCache } = JSON.parse(info.stdout) as { npmCache: string };
   const dir = join(npmCache, "registry.npmjs.org/@auth/core", AUTHJS_CORE_VERSION, "providers");
   const ids: string[] = [];
   for await (const entry of Deno.readDir(dir)) {

@@ -28,7 +28,7 @@ import { startUiServer } from "../src/ui/server.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
 import { UI_JS } from "../src/ui/client.ts";
 import { fromFileUrl } from "@std/path";
-import { quietDeno } from "./helpers/quiet-deno.ts";
+import { boundedDeno } from "../scripts/deno-doc.ts";
 
 /** The named references the renderer (or literal markup) emits. */
 const NAMED: Record<string, string> = {
@@ -414,7 +414,7 @@ function reachableWithout(graph: GraphJson, cut: (specifier: string) => boolean)
 }
 
 Deno.test("the flip adds exactly the three view modules to the UI server's graph", async () => {
-  const output = await quietDeno(["info", "--json", "src/ui/server.ts"], {
+  const output = await boundedDeno(["info", "--json", "src/ui/server.ts"], {
     cwd: fromFileUrl(new URL("../", import.meta.url)),
   });
   assert(output.success, output.stderr);
