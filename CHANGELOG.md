@@ -8,6 +8,28 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Runtime 3.0.0-denext.3: denext pins it** (was `3.0.0-denext.2`; the toolchain, the Deno
+  Desktop runtime and CI's Linux toolchain zip move together). It moves to V8 15.2.124.45 and adds
+  runtime APIs denext doesn't use yet: the `HTMLRewriter` global (`--unstable-html-rewriter`),
+  `resolveCertificate` (a certificate per server name for `Deno.listenTls` / `Deno.serve`), a cookie
+  jar for `fetch` (`Deno.CookieJar`, `Deno.Cookie`, `Deno.CookieMap`; `--unstable-cookies`) and npm
+  `patchedDependencies`. Also: better-sqlite3 under Jest's module registry, a shell-spawned `node`
+  shim keeps the npm resolution, a package.json script's arguments lose npm's leading `--`,
+  `node:test` parents wait for unawaited subtests, a desktop bind call from a page that is gone is
+  rejected and dropped, and the idle trim keeps a wake-up during a trim and skips the GC on a large
+  live heap (`DENO_IDLE_TRIM_MAX_GC_HEAP_MB`). The glibc floor stays 2.27. The
+  [runtime reference](https://denext.dev/docs/runtime-reference) lists the new APIs.
+
+### Security
+
+- **Runtime 3.0.0-denext.3 carries V8 15.2.124.45**, with the fixes for two V8 bugs exploited in
+  the wild (CVE-2026-85046, a type confusion, and CVE-2026-87491, an out-of-bounds write) that the
+  pinned `3.0.0-denext.2`'s V8 15.2.124.1 lacks. A sloppy-import hint no longer reveals whether a
+  file exists to a computed `import()` without read permission. Security advisory
+  [GHSA-qr84-w8xw-f7r4](https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4).
+
 ## [4.10.2] - 2026-10-30
 
 ### Added
