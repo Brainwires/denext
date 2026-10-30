@@ -305,7 +305,7 @@ Deno.test("waitFor resolves once the callback stops throwing", async () => {
     tries++;
     if (tries < 3) throw new Error("not yet");
     return "done";
-  }, { timeout: 500, interval: 5 });
+  }, { timeout: 5_000, interval: 5 }); // the bound only ends a failure: a stall between tries passes
   assertEquals(value, "done");
   assert(tries >= 3);
 });

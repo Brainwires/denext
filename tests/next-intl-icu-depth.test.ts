@@ -196,7 +196,9 @@ Deno.test("ICU skeleton tokens: a long run of digits parses in linear time", () 
     const start = performance.now();
     formatIcu(message, { n: 1 }, "en");
     const ms = performance.now() - start;
-    assertEquals(ms < 500, true, `${message.slice(0, 40)}… took ${ms.toFixed(0)} ms`);
+    // Linear is milliseconds; quadratic in 100k digits is many seconds. The bound sits between, far
+    // enough from the first for a loaded machine's scheduling stalls (500 ms was not).
+    assertEquals(ms < 2_000, true, `${message.slice(0, 40)}… took ${ms.toFixed(0)} ms`);
   }
   // A width Intl cannot express (over 21 digits) is ignored, not a RangeError.
   assertEquals(formatIcu(`{n, number, ::integer-width/${"0".repeat(22)}}`, { n: 5 }, "en"), "5");

@@ -171,6 +171,7 @@ Deno.test("dynamic(): `retry` re-imports after a failure; `pastDelay`/`timedOut`
   );
   const hung = await render(h(Hung, {}));
   assertStringIncludes(hung.container.textContent ?? "", "past:false timedOut:false");
-  await waitFor(() => hung.getByText(/past:true/), { timeout: 500 });
-  await waitFor(() => hung.getByText(/timedOut:true/), { timeout: 500 });
+  // The bounds only end a failure (500 ms was within a loaded machine's scheduling stalls).
+  await waitFor(() => hung.getByText(/past:true/), { timeout: 5_000 });
+  await waitFor(() => hung.getByText(/timedOut:true/), { timeout: 5_000 });
 });

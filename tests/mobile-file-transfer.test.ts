@@ -120,6 +120,7 @@ function streamingFetch(
   const requests: Array<{ url: string; headers: Headers }> = [];
   let release: (() => void) | null = null;
   let pending = 0;
+  let served = false;
   const gate = () => new Promise<void>((resolve) => (release = resolve));
   const fetch = (url: string, init: { headers?: HeadersInit; signal?: AbortSignal } = {}) => {
     const headers = new Headers(init.headers);
@@ -129,7 +130,10 @@ function streamingFetch(
     let at = start;
     const body = new ReadableStream<Uint8Array<ArrayBuffer>>({
       async pull(controller) {
-        if (at >= size) return controller.close();
+        if (at >= size) {
+          served = true;
+          return controller.close();
+        }
         pending++;
         await gate();
         pending--;
@@ -165,14 +169,15 @@ function streamingFetch(
         await settle();
       }
     },
-    /** Let every chunk through. */
+    /**
+     * Let every chunk through, until a body has been served to its end. (Waiting for the next
+     * chunk with a short limit instead ended early whenever a loaded machine made the downloader
+     * slower than the limit, leaving the transfer stuck.)
+     */
     async drain() {
-      while (true) {
-        try {
-          await until(() => pending > 0 && release !== null, "a chunk", 200);
-        } catch {
-          return;
-        }
+      for (;;) {
+        await until(() => (pending > 0 && release !== null) || served, "a chunk or the end");
+        if (pending === 0 || release === null) return;
         const r = release!;
         release = null;
         r();

@@ -54,9 +54,13 @@ Deno.test({
 export async function GET(req: Request) {
   const signal = requestSignal()!;
   const name = new URL(req.url).pathname;
-  signal.addEventListener("abort", () => console.log("aborted " + name));
+  // Each step is also an event the script waits on (globalThis.steps), instead of guessing times.
+  const step = (what) => globalThis.steps?.dispatchEvent(new Event(what + " " + name));
+  signal.addEventListener("abort", () => (console.log("aborted " + name), step("aborted")));
+  step("started");
   await new Promise((r) => setTimeout(r, ${ms}));
   console.log("returning " + name + " aborted=" + signal.aborted);
+  step("returned");
   return new Response("ok");
 }
 `;
@@ -78,13 +82,20 @@ const server = serveWithPortFallback({
   port: 0, hostname: "127.0.0.1", strict: true, signal: done.signal, onListen() {},
 }, handler);
 const base = "http://127.0.0.1:" + server.addr.port;
+globalThis.steps = new EventTarget();
+const step = (type) => new Promise((r) => globalThis.steps.addEventListener(type, r, { once: true }));
+const fastAborted = step("aborted /fast");
 console.log(await (await fetch(base + "/fast")).text());
-await new Promise((r) => setTimeout(r, 100));
+await fastAborted;
 const client = new AbortController();
+const slowStarted = step("started /slow");
+const slowReturned = step("returned /slow");
 const slow = fetch(base + "/slow", { signal: client.signal }).catch(() => {});
-setTimeout(() => client.abort(), 300);
+// The client goes away mid-request: once the handler runs, with its whole wait still ahead.
+await slowStarted;
+client.abort();
 await slow;
-await new Promise((r) => setTimeout(r, 1600));
+await slowReturned;
 done.abort();
 await server.finished;
 `,

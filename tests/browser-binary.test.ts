@@ -15,6 +15,12 @@ const VERSION = SUPPORTED_VERSIONS.chrome;
 const LINUX = { os: "linux", arch: "x86_64" };
 /** Short deadlines, so a stall is given up on in a fraction of a second. */
 const QUICK = { ...downloadDeadlines(() => undefined), connectMs: 300, idleMs: 300 };
+/**
+ * For a download that must stall once and then succeed: the stall is given up on at the 1 s idle
+ * deadline, and the attempt that answers has 5 s for its headers and 1 s between chunks — room
+ * for a loaded machine's scheduling stalls, where 300 ms was not.
+ */
+const STALL_ONCE = { ...QUICK, connectMs: 5_000, idleMs: 1_000 };
 const NO_ENV = () => undefined;
 
 /** A Chrome for Testing linux64 archive holding a stand-in executable. */
@@ -43,7 +49,7 @@ Deno.test("browser binary: a download that stalls mid-body is retried on a new c
       const path = await ensureBrowserBinary({
         cache,
         baseUrl: server.origin,
-        deadlines: QUICK,
+        deadlines: STALL_ONCE,
         host: LINUX,
         env: NO_ENV,
         log: (l) => lines.push(l),
@@ -52,7 +58,7 @@ Deno.test("browser binary: a download that stalls mid-body is retried on a new c
       assertEquals(await Deno.readTextFile(path!), "#!/bin/sh\n");
       assertEquals(server.connections(), 2, "the retry used a new connection");
       assertEquals(lines.length, 1);
-      assertStringIncludes(lines[0], "no data for 0.3 s");
+      assertStringIncludes(lines[0], "no data for 1 s");
       assertStringIncludes(lines[0], "retrying on a new connection (attempt 2 of 4)");
       // Recorded where astral looks, and nothing left beside it.
       const config = JSON.parse(await Deno.readTextFile(join(cache, "cache.json")));

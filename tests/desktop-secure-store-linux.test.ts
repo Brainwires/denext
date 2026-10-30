@@ -251,11 +251,19 @@ Deno.test("secureStore (Linux): a Secret Service that never answers fails within
   const started = performance.now();
   await unavailable(call(cap, "get", { key: "tok" }), "did not answer within 0.05 s");
   assert(performance.now() - started < 1_000, "bounded by the probe, not D-Bus's 25 s");
-  // Cached for the session: no call reaches the store again, and none waits.
+  // Cached for the session: no call reaches the store again, and none waits. "At once" is
+  // "before a timer of the probe bound armed just before the call": waiting on a new probe would
+  // arm its own timer after that one. (Measuring under 50 ms instead failed whenever a loaded
+  // machine stalled the process that long.)
   for (const [method, args] of METHODS) {
-    const t = performance.now();
-    await unavailable(call(cap, method, args), "did not answer");
-    assert(performance.now() - t < 50, `${method} fails at once`);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<"waited">((r) => timer = setTimeout(() => r("waited"), 50));
+    const first = await Promise.race([
+      unavailable(call(cap, method, args), "did not answer").then(() => "at once" as const),
+      bound,
+    ]);
+    clearTimeout(timer);
+    assertEquals(first, "at once", `${method} fails at once`);
   }
   assertEquals(runtime.calls, ["get denext.secure-store.probe"]);
 });
