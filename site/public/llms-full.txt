@@ -1647,7 +1647,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.10.2` — The denext framework version.
+- `VERSION: 4.10.3` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -3278,7 +3278,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type FileTransferKind = download | upload` — A transfer's direction.
 - `interface FileTransferOptions` — Options every transfer takes (with directory, the file's folder).
 - `interface FileTransferProgress` — Bytes moved so far, for an onProgress callback.
-- `fileTransfers(): Promise<FileTransferInfo[]>` — Every transfer this page knows: in the shell, the plugin's records (running, paused, and finished ones not yet forgotten — those that finished while the page was gone included); on the web and in a Deno Desktop window, the ones this page started.
+- `fileTransfers(): Promise<FileTransferInfo[]>` — Every transfer this page knows: in the shell, the plugin's records (running, paused, and finished ones not yet forgotten — those that finished while the page was gone included); in a Deno Desktop window, the ones this page started and the runtime's records (an earlier launch's paused, failed and recently done downloads included: a download the app quit during is failed, resumable when its partial file can continue); on the web, the ones this page started.
 - `type FileTransferState = running | paused | done | failed | cancelled` — Where a transfer is: running, paused, or settled (done, failed, cancelled).
 - `interface FlexibleUpdateProgress` — A flexible update's progress, from onFlexibleUpdateProgress.
 - `forgetFileTransfer(id: string): Promise<boolean>` — Drop a settled transfer's record (done, failed or cancelled), once the app has dealt with it.

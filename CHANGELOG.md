@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.10.3] - 2026-10-30
+
 ### Added
 
 - **Deno Desktop downloads are recorded across restarts**, as the mobile `DenextTransfer` plugin
@@ -19897,7 +19899,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.2...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.3...development
+[4.10.3]: https://jsr.io/@denext/denext@4.10.3
 [4.10.2]: https://jsr.io/@denext/denext@4.10.2
 [4.10.1]: https://jsr.io/@denext/denext@4.10.1
 [4.10.0]: https://jsr.io/@denext/denext@4.10.0
