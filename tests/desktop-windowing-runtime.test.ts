@@ -1015,12 +1015,14 @@ Deno.test("menuWire: submenus become children, disabled becomes enabled", () => 
   assertEquals(
     menuWire([
       "separator",
+      { separator: true },
       { role: "quit" },
       { label: "More", submenu: [{ id: "a", label: "A", disabled: true, checked: true }] },
       { id: "b", label: "B", accelerator: "Cmd+B", tooltip: "t", icon: "x", destructive: true },
       null,
     ]),
     [
+      "separator",
       "separator",
       { role: "quit" },
       { label: "More", children: [{ id: "a", label: "A", enabled: false, checked: true }] },

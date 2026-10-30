@@ -323,6 +323,7 @@ export {
   type DesktopSidecarShutdownConfig,
   type DesktopSize,
   type DesktopTrayConfig,
+  type DesktopTrayMenuEntry,
   type DesktopTrayMenuItem,
   type DesktopTrayPanelConfig,
   type DesktopUiUpdateConfig,

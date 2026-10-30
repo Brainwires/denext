@@ -1893,7 +1893,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopSidecarShutdownConfig` — DesktopSidecarConfig.shutdown.
 - `interface DesktopSize` — A window size in CSS pixels (DesktopConfig.minSize / DesktopConfig.maxSize).
 - `interface DesktopTrayConfig` — The backend-owned tray icon (DesktopConfig.tray).
-- `type DesktopTrayMenuItem = object | object | object | separator` — One entry of a DesktopTrayConfig menu (the shape of denext/desktop/app's menus).
+- `interface DesktopTrayMenuEntry` — One entry of a tray submenu (DesktopTrayMenuItem.submenu).
+- `interface DesktopTrayMenuItem` — One entry of a DesktopTrayConfig menu: an action (id + label), a separator (separator: true), a standard item (role) or a submenu (label + submenu, one level).
 - `interface DesktopTrayPanelConfig` — The tray panel (DesktopTrayConfig.panel).
 - `interface DesktopUiUpdateConfig` — DesktopUpdateConfig.ui: the signed UI overlay's feed.
 - `interface DesktopUpdateConfig` — DesktopConfig.update: full-app self-update.
@@ -2971,7 +2972,6 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopVcRedistUrl(arch: DesktopWindowsArch): string` — The VC++ 2015-2022 redistributable installer for arch.
 - `interface DesktopVcRuntimeDeps` — What bundleDesktopVcRuntime reads the machine and files through (tests stub them).
 - `desktopVersionProblem(format: msi | deb | rpm, version: string | undefined): string | undefined` — Why version (deno.json version) cannot be the package version of format — MSI packs major.minor.build into 8/8/16 bits, Debian and RPM need a leading digit and a small character set — or undefined when it can (see msiProductVersion / linuxPackageVersion).
-- `type DesktopWindowLevel = floating | status | pop-up-menu | screen-saver` — How far above other windows an always-on-top window floats (Electron's level names).
 - `interface DesktopWindowRef` — One of the app's windows, as desktop.ts drives it (DesktopRuntime.windows).
 - `interface DesktopWindows` — The app's windows, as desktop.ts drives them (DesktopRuntime.windows).
 - `type DesktopWindowsArch = x86_64 | arm64` — A Windows bundle's architecture, as the package script names it.

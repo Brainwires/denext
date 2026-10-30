@@ -30,7 +30,9 @@
           "id": "hide",
           "label": "Hide Loopy"
         },
-        "separator",
+        {
+          "separator": true
+        },
         {
           "role": "quit"
         }

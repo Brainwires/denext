@@ -23,6 +23,8 @@ export function menuWire(menu: readonly MenuSource[]): unknown[] {
   return menu.map((entry) => {
     if (typeof entry !== "object" || entry === null) return entry;
     const e = entry as Record<string, unknown>;
+    // `{ separator: true }`: how `desktop.tray.menu` (a config form) writes a separator.
+    if (e.separator === true) return "separator";
     if (Array.isArray(e.submenu)) return { label: e.label, children: menuWire(e.submenu) };
     if (e.role !== undefined) return { role: e.role };
     return actionWire(e);

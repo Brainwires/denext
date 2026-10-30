@@ -1524,29 +1524,40 @@ export interface DesktopSize {
   height: number;
 }
 
-/** One entry of a {@link DesktopTrayConfig} menu (the shape of `denext/desktop/app`'s menus). */
-export type DesktopTrayMenuItem =
-  | {
-    /** The id the backend's and pages' menu handlers receive. */
-    id: string;
-    /** The item's text. */
-    label: string;
-    /** Greyed out. */
-    disabled?: boolean;
-    /** A checkmark next to it. */
-    checked?: boolean;
-  }
-  | {
-    /** The submenu's text. */
-    label: string;
-    /** Its entries. */
-    submenu: readonly DesktopTrayMenuItem[];
-  }
-  | {
-    /** A standard item the OS handles (`"quit"`). */
-    role: "quit" | "about" | "hide" | "hideOthers" | "unhide";
-  }
-  | "separator";
+/**
+ * One entry of a {@link DesktopTrayConfig} menu: an action (`id` + `label`), a separator
+ * (`separator: true`), a standard item (`role`) or a submenu (`label` + `submenu`, one level).
+ */
+export interface DesktopTrayMenuItem {
+  /** The id the backend's and pages' menu handlers receive (an action). */
+  id?: string;
+  /** The item's or submenu's text. */
+  label?: string;
+  /** Greyed out. */
+  disabled?: boolean;
+  /** A checkmark next to it. */
+  checked?: boolean;
+  /** A separator line instead of an item. */
+  separator?: boolean;
+  /** A standard item the OS handles (`"quit"`). */
+  role?: "quit" | "about" | "hide" | "hideOthers" | "unhide";
+  /** A submenu's entries (actions and separators). */
+  submenu?: readonly DesktopTrayMenuEntry[];
+}
+
+/** One entry of a tray submenu ({@link DesktopTrayMenuItem.submenu}). */
+export interface DesktopTrayMenuEntry {
+  /** The id the menu handlers receive. */
+  id?: string;
+  /** The item's text. */
+  label?: string;
+  /** Greyed out. */
+  disabled?: boolean;
+  /** A checkmark next to it. */
+  checked?: boolean;
+  /** A separator line instead of an item. */
+  separator?: boolean;
+}
 
 /** The backend-owned tray icon ({@link DesktopConfig.tray}). */
 export interface DesktopTrayConfig {

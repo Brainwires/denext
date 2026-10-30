@@ -2874,7 +2874,7 @@ export default {
     tray: {
       icon: "/tray.png",         // public/tray.png
       tooltip: "Hangar",
-      menu: [{ id: "open", label: "Open Hangar" }, "separator", { role: "quit" }],
+      menu: [{ id: "open", label: "Open Hangar" }, { separator: true }, { role: "quit" }],
       panel: { url: "/panel", width: 360, height: 480 },
     },
   },

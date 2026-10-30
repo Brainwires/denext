@@ -32,7 +32,9 @@
           "label": "No VMs running",
           "disabled": true
         },
-        "separator",
+        {
+          "separator": true
+        },
         {
           "id": "panel",
           "label": "Show panel"
@@ -53,7 +55,9 @@
           "id": "open:/settings",
           "label": "Settings"
         },
-        "separator",
+        {
+          "separator": true
+        },
         {
           "role": "quit"
         }

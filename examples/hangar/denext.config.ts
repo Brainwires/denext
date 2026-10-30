@@ -1,4 +1,4 @@
-import type { DenextConfig } from "denext/server";
+import type { DenextConfig, DesktopTrayMenuItem } from "denext/server";
 import { PANEL_SIZE, trayMenu } from "./lib/tray.ts";
 
 // Hangar: a tray-first desktop app over QEMU VMs. The backend is the `hangar` desktop extension
@@ -30,7 +30,11 @@ export default {
       icon: "/tray.png",
       tooltip: "Hangar",
       // The menu until the main page has the overview (it updates it every few seconds).
-      menu: trayMenu(null),
+      // (A config form has no bare "separator" strings: `{ separator: true }`; the first menu
+      // has no submenus.)
+      menu: trayMenu(null).flatMap((item): DesktopTrayMenuItem[] =>
+        item === "separator" ? [{ separator: true }] : "submenu" in item ? [] : [item]
+      ),
       panel: { url: "/panel", ...PANEL_SIZE },
     },
     capabilities: {

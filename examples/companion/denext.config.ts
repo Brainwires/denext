@@ -34,7 +34,7 @@ export default {
       menu: [
         { id: "show", label: "Show Loopy" },
         { id: "hide", label: "Hide Loopy" },
-        "separator",
+        { separator: true },
         { role: "quit" },
       ],
     },

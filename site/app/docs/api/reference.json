@@ -7504,12 +7504,24 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopTrayMenuEntry",
+          "slug": "DesktopTrayMenuEntry",
+          "kind": "interface",
+          "signature": "interface DesktopTrayMenuEntry",
+          "doc": "One entry of a tray submenu (DesktopTrayMenuItem.submenu).",
+          "docFull": "One entry of a tray submenu ({@link DesktopTrayMenuItem.submenu}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopTrayMenuItem",
           "slug": "DesktopTrayMenuItem",
-          "kind": "typeAlias",
-          "signature": "type DesktopTrayMenuItem = object | object | object | separator",
-          "doc": "One entry of a DesktopTrayConfig menu (the shape of denext/desktop/app's menus).",
-          "docFull": "One entry of a {@link DesktopTrayConfig} menu (the shape of `denext/desktop/app`'s menus).",
+          "kind": "interface",
+          "signature": "interface DesktopTrayMenuItem",
+          "doc": "One entry of a DesktopTrayConfig menu: an action (id + label), a separator (separator: true), a standard item (role) or a submenu (label + submenu, one level).",
+          "docFull": "One entry of a {@link DesktopTrayConfig} menu: an action (`id` + `label`), a separator\n(`separator: true`), a standard item (`role`) or a submenu (`label` + `submenu`, one level).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -22170,18 +22182,6 @@
             }
           ],
           "returns": "The reason, or undefined.",
-          "examples": [],
-          "denextOnly": true
-        },
-        {
-          "name": "DesktopWindowLevel",
-          "slug": "DesktopWindowLevel",
-          "kind": "typeAlias",
-          "signature": "type DesktopWindowLevel = floating | status | pop-up-menu | screen-saver",
-          "doc": "How far above other windows an always-on-top window floats (Electron's level names).",
-          "docFull": "How far above other windows an always-on-top window floats (Electron's level names).",
-          "params": [],
-          "returns": "",
           "examples": [],
           "denextOnly": true
         },
