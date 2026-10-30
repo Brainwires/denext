@@ -17,6 +17,10 @@
  * before the kill (`Get-Process` on Windows, `ps` elsewhere), so a child blocked on a lock, a pipe
  * or the network reads differently from one that spins. A child that finishes costs only that tail.
  *
+ * A `deno doc --json` / `deno info --json` child that has written a complete JSON document and then
+ * stays silent without exiting (seen on Windows: a spin in the process's teardown) is killed after
+ * a grace (`DENEXT_CHILD_EXIT_GRACE_MS`, 5 s) and its output used, with one line naming its pid.
+ *
  * `deno doc --json` takes many modules at once, and {@linkcode denoDocJsonMany} documents them a
  * batch per child: a few children instead of one per module.
  *
@@ -24,7 +28,7 @@
  */
 
 import { resolve, toFileUrl } from "@std/path";
-import { boundedSpawn, DENO_CHILD_LOG } from "../src/build/child-probe.ts";
+import { boundedSpawn, DENO_CHILD_LOG, type JsonStdout } from "../src/build/child-probe.ts";
 import { childDeadlineMs, ChildStallError, retryOnStall } from "../src/build/serial-child.ts";
 
 export { DENO_CHILD_LOG, sampleProcess } from "../src/build/child-probe.ts";
@@ -54,6 +58,17 @@ export interface BoundedDenoOptions {
   readonly deadlineMs?: number;
   /** Where the retry notice (with the stalled attempt's report) goes (default: stderr). */
   readonly onStall?: (line: string) => void;
+  /**
+   * Whether the child's output is one JSON document on stdout, so that a child which wrote all of
+   * it and then never exits is killed after a grace and its output used (child-probe.ts
+   * `boundedSpawn`). Default: `{}` for `deno doc --json` and `deno info --json`, `false` otherwise.
+   */
+  readonly jsonStdout?: JsonStdout | false;
+}
+
+/** Whether `args` run a `deno doc --json` or `deno info --json`: one JSON document on stdout. */
+function jsonDocument(args: readonly string[]): boolean {
+  return (args[0] === "doc" || args[0] === "info") && args.includes("--json");
 }
 
 /** A `deno` child that was still running at its deadline on both attempts. */
@@ -95,6 +110,7 @@ export async function boundedDeno(
   const deadlineMs = options.deadlineMs ?? childDeadlineMs(DENO_CHILD_DEADLINE_MS);
   const label = `deno ${args[0] ?? ""}`.trim();
   const reports: string[] = [];
+  const jsonStdout = options.jsonStdout ?? (jsonDocument(args) ? {} : false);
   try {
     return await retryOnStall(
       label,
@@ -114,6 +130,7 @@ export async function boundedDeno(
             deadline,
             label,
             true,
+            jsonStdout === false ? undefined : jsonStdout,
           );
           const dec = new TextDecoder();
           return {

@@ -93,6 +93,39 @@ Deno.test("boundedDeno: a child that finishes returns its output, the debug log'
   assertEquals(out.stderr, "plain\n");
 });
 
+Deno.test("boundedDeno: a JSON child that writes its whole document and then spins is killed and its output used", async () => {
+  const notices: string[] = [];
+  const doc = { nodes: { "file:///mod.ts": { symbols: [{ name: "one" }] } } };
+  const outcome = await within(
+    boundedDeno(
+      ["eval", `console.log(${JSON.stringify(JSON.stringify(doc))}); for (;;) {}`],
+      { deadlineMs: 120_000, jsonStdout: { graceMs: 500, onSettled: (l) => notices.push(l) } },
+    ),
+    90_000,
+  );
+  assertEquals(outcome.status, "fulfilled", String((outcome as PromiseRejectedResult).reason));
+  const out = (outcome as PromiseFulfilledResult<Awaited<ReturnType<typeof boundedDeno>>>).value;
+  assertEquals(out.code, 0);
+  assertEquals(JSON.parse(out.stdout), doc);
+  assertEquals(notices.length, 1);
+  assertMatch(notices[0], /deno eval \(pid \d+\): output complete; the process did not exit/);
+  // Probed (as every child here is): the notice carries the report.
+  assertStringIncludes(notices[0], "\n    cpu: ");
+});
+
+Deno.test("boundedDeno: a child that is not `doc --json` / `info --json` is waited on to its exit", async () => {
+  // Silent after a complete document, but not a JSON command: it runs until its deadline.
+  const outcome = await within(
+    boundedDeno(["eval", `console.log("{}"); for (;;) {}`], {
+      deadlineMs: 1_500,
+      onStall: () => {},
+    }),
+    540_000,
+  );
+  assertEquals(outcome.status, "rejected");
+  assert((outcome as PromiseRejectedResult).reason instanceof DenoChildStallError);
+});
+
 Deno.test("boundedDeno: the caller's DENO_LOG replaces the default filter", async () => {
   const out = await boundedDeno(["eval", `console.log(Deno.env.get("DENO_LOG"))`], {
     env: { DENO_LOG: "warn" },

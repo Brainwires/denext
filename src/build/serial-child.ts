@@ -22,6 +22,11 @@
 // through child-probe.ts `boundedSpawn` also runs with Deno's debug log on, and the stall line and
 // error carry its log's tail and two CPU samples.
 //
+// A child whose whole result is one JSON document on stdout (`deno info --json`, `deno doc --json`)
+// is not waited on past its output: once stdout parses as a complete JSON object or array and the
+// child has been silent on both pipes for a grace (`DENEXT_CHILD_EXIT_GRACE_MS`, 5 s), it is killed
+// and the output used, after one line on stderr naming its pid (child-probe.ts `boundedSpawn`).
+//
 // A LONG-LIVED child (the esbuild service, a server a test starts) is spawned through
 // {@linkcode spawnExclusive}: on Windows it takes the same turn, so it is never created while a
 // `deno info` / `deno bundle` child of this process holds its pipes, and so can't inherit (and
@@ -139,6 +144,34 @@ function readEnv(k: string): string | undefined {
  */
 export function childDeadlineMs(defaultMs: number, env: EnvGet = readEnv): number {
   const raw = env("DENEXT_CHILD_DEADLINE_MS")?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return defaultMs;
+  const ms = Number(raw);
+  return ms === 0 ? Infinity : ms;
+}
+
+/**
+ * How long a child whose whole result is one JSON document on stdout (`deno info --json`,
+ * `deno doc --json`) may stay alive, by default, once that document is complete and the child has
+ * written nothing more on either pipe, before it is killed and its output used (child-probe.ts
+ * {@linkcode boundedSpawn}'s `jsonStdout`): on Windows such a child has been seen to write its
+ * whole output and then spin at 100% CPU in its teardown instead of exiting.
+ */
+export const CHILD_EXIT_GRACE_MS = 5_000;
+
+/**
+ * The grace a finished JSON child gets to exit ({@linkcode CHILD_EXIT_GRACE_MS}):
+ * `DENEXT_CHILD_EXIT_GRACE_MS` when set (a positive number of milliseconds, or `0` to wait for the
+ * exit, up to the deadline), else `defaultMs`.
+ *
+ * @param defaultMs The default grace.
+ * @param env Env reader.
+ * @returns The grace in milliseconds (`Infinity`: wait for the exit).
+ */
+export function childExitGraceMs(
+  defaultMs: number = CHILD_EXIT_GRACE_MS,
+  env: EnvGet = readEnv,
+): number {
+  const raw = env("DENEXT_CHILD_EXIT_GRACE_MS")?.trim();
   if (!raw || !/^\d+$/.test(raw)) return defaultMs;
   const ms = Number(raw);
   return ms === 0 ? Infinity : ms;

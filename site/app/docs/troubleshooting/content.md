@@ -712,6 +712,17 @@ take longer than that without being stuck.
 deadlines (`DENEXT_CHILD_DEADLINE_MS=900000` for 15 minutes), and `0` removes them. Warm the
 cache in an earlier layer (`RUN denext install`) so later builds don't pay for it.
 
+## `deno info (pid …): output complete; the process did not exit` during a build
+
+**Cause.** A `deno info --json` child of the build wrote its whole JSON output and then went
+silent without exiting (seen on loaded Windows machines: the process spins in its teardown). After
+`DENEXT_CHILD_EXIT_GRACE_MS` (5 s) of silence with a complete document, denext kills it and uses
+that output, so the build goes on. The line is a warning, not a failure.
+
+**Fix.** Nothing is needed. To report it, rebuild with `DENEXT_CHILD_PROBE=1`: the line then
+carries the child's CPU samples and the tail of its debug log. `DENEXT_CHILD_EXIT_GRACE_MS=0`
+waits for the exit instead, up to the child's deadline.
+
 ## Docker: `required variable … is missing a value: set it in .env`
 
 **Cause.** The self-hosted compose file from `denext generate docker` reads every secret as

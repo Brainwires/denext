@@ -50,6 +50,16 @@ and this project adheres to
   and `{a,b}`. A glob names only folders that hold the tool's manifest and skips `node_modules`,
   dot folders and symlinks out of the root. A `pnpm-workspace.yaml`'s `packages` now count for the
   jail settings as well.
+- **A `deno info --json` child that finished but never exits no longer holds the build until its
+  deadline.** On a loaded Windows machine such a child has been seen to write its complete JSON
+  output and then spin at full CPU without exiting, until the build killed it at its 120 s deadline
+  and ran it again. A `deno info --json` child of the build (its module-graph crawl and the esbuild
+  loader's) whose output parses as one complete JSON document, and which has then written nothing
+  on either pipe for a grace, is now killed and its output used, with one stderr line naming its pid
+  (and, under `DENEXT_CHILD_PROBE=1`, its CPU samples and debug log's tail). Output that stopped
+  mid-document is never used: that child still ends at its deadline. `DENEXT_CHILD_EXIT_GRACE_MS`
+  sets the grace (default 5000; `0` waits for the exit). The repository's `deno doc --json` /
+  `deno info --json` children get the same treatment.
 
 ### Documentation
 
