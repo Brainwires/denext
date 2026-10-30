@@ -120,12 +120,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `deno test` with default discovery would run those. A `denext create` project's `deno.json`
   excludes `.deno/` (top-level `exclude`), as denext's own does; an older project adds
   `"exclude": [".deno/"]` itself. A runtime issue, to be fixed in a later runtime by keeping the
-  copy out of the project.
+  copy out of the project. Planned before 5.0 (ROADMAP, "Before 5.0 / Runtime fork").
 - **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
   `denext start` begins its graceful shutdown on those events too, but Windows ends a console
   process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
   the `services/` stop and `onShutdown()` don't get to finish. Stop a server with Ctrl-C or
-  Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully.
+  Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully. Planned for 5.x (ROADMAP, "5.x / Runtime fork").
 - **The production server's idle memory trim is glibc Linux only, and a trim can delay one
   request.** On macOS, Windows and musl (Alpine) the runtime ignores the switch. The trim runs
   between event loop polls, so a request that arrives while one runs waits for it once (up to about
@@ -185,7 +185,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `documentsErrors`.
 - **`@denext/graphql` reloads a schema object only when it can trace it:** one built in
   `denext.config.ts` itself, or imported through an alias rather than a relative import, needs a
-  dev-server restart after an edit (a module-path `schema` always reloads).
+  dev-server restart after an edit (a module-path `schema` always reloads). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 
 ### Gleam and Lustre (`denext/gleam`)
 
@@ -234,7 +234,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
 - **Native passkey rows sign in usernameless only:** `/native/passkey/*` has no step-up of a
   pending native sign-in with a passkey (a code at `/native/mfa` finishes it), and no list or
-  delete rows (the cookie `/passkeys` rows, or `listPasskeys` / `deletePasskey` on the server).
+  delete rows (the cookie `/passkeys` rows, or `listPasskeys` / `deletePasskey` on the server). Planned for 5.x (ROADMAP, "5.x / Deno Desktop").
 - **Passkeys accept ES256 / RS256 / Ed25519 credential keys only** (every WebAuthn L3
   attestation format is verified, `android-safetynet` and `compound` included). Revocation of the
   Metadata Service paths (OCSP, then CRL) fails closed by default, so an unreachable responder and
@@ -336,7 +336,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `apps/`; a deeper or mid-path glob (`packages/**`, `apps/*/web`) names nothing to denext, so an
   app it covers builds on its own config and its siblings' names don't resolve. List such members
   one by one. A package's own import map applies to its files as a scope, except in a server copy
-  `denext dev` writes after an edit there, which resolves through the app's map.
+  `denext dev` writes after an edit there, which resolves through the app's map. Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
@@ -387,7 +387,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   response (headers set on it reach the page; another `Response` answers like a thrown one), code
   after `next()` runs before the loaders, and a parent route's loader may run before a child
   route's middleware. On a resource route and a plain POST to a page's action `next()` runs the
-  real handler. `clientMiddleware` does not run.
+  real handler. `clientMiddleware` does not run. Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
 - **Prisma auto-migration wires SQLite, Postgres (CockroachDB too), MySQL and SQL Server only:**
   a `mongodb` datasource keeps its `new PrismaClient()` unwired (Prisma 6 has no MongoDB driver
@@ -397,7 +397,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   3.0.0-rc.1 or later; for an app that runs on an earlier runtime (or under
   `DENEXT_DENO=stock`) migrate wires Prisma's npm adapters
   (`@prisma/adapter-better-sqlite3` with its `links` shim, `@prisma/adapter-pg`), and CockroachDB
-  and MySQL always take theirs.
+  and MySQL always take theirs. Planned for 5.x (ROADMAP, "5.x / Backend").
 - **`denext/prisma-adapter` reads no `interval`, range, composite or geometric Postgres column**
   (Prisma's `UnsupportedNativeDataType`; cast it to `text` in a raw query). `money` is read at
   the fractional digits of `lc_monetary` as the first `money` result found it: a session that
@@ -417,7 +417,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   allows its own inline styles by hash and runs no inline script), and `import.meta.env.PROD` is
   true under `denext start`, where the source runs in place rather than from Vite's build output.
   `denext migrate --check` lists each one it finds
-  ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)).
+  ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **Preact:** `@preact/signals`' `useSignalRef` / `createModel` / `useModel` are not provided, and
   its `signal` / `computed` / `effect` (and hook forms) take no options argument.
   `denext/preact/compat` lacks `createFactory`, `findDOMNode`, `isFragment`, `isMemo` and
@@ -433,7 +433,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   needs the app to name it once). `denext/preact/render-to-string` keeps denext's attribute order and hyphenated SVG attributes, ignores the legacy `context` argument,
   and `renderToReadableStream` sends the whole document once resolved (no fallback-first
   streaming); `preact-render-to-string/jsx` and `/stream-node` are not mapped. A migrated Preact
-  app runs as a SPA, so preset-vite's `prerender` does not carry over.
+  app runs as a SPA, so preset-vite's `prerender` does not carry over. Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **`denext/signals` re-renders the component that read a signal**, where Preact patches the text
   node in place; a signal bound to a DOM prop needs Preact's JSX runtime
   (`jsxImportSource: "preact"`).
@@ -494,7 +494,7 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   the background. On the web a transfer lasts as long as the page. A Deno Desktop download
   pauses and resumes, but `fileTransfers()` lists only the ones this page started: after a
   restart, download the same URL to the same file again to continue its kept partial file. Background
-  device run: target unscheduled (needs an iPhone and an Android phone).
+  device run: target unscheduled (needs an iPhone and an Android phone). The Deno Desktop `fileTransfers()` restart gap is planned for 5.x (ROADMAP, "5.x / Deno Desktop").
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame
@@ -519,7 +519,7 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   keychain has no biometric access control yet), the gate is denext's code in the page and page
   script can read the value. Android needs 9 or later (8 and earlier refuse it); the passcode as
   a fallback (`allowDeviceCredential`) needs Android 11. A gated value is dropped when the enrolled
-  biometrics change, and it is never backed up.
+  biometrics change, and it is never backed up. The Deno Desktop gate is planned for 5.x (ROADMAP, "5.x / Deno Desktop").
 - **`secureStore`'s `accessibility` is an iOS Keychain class.** On Android the secure-storage
   plugin's Keystore key never leaves the device and needs no unlock, so every value behaves as
   `"afterFirstUnlockThisDeviceOnly"` whatever is passed (no `whenUnlocked` lock requirement there);
