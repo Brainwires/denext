@@ -913,6 +913,10 @@ Deno.test("prisma migrate (deno-sql): an app's own better-sqlite3 keeps the link
   assertEquals(deno.links, ["./patch/better-sqlite3"]);
   assert(!("better-sqlite3" in (deno.imports ?? {})), "better-sqlite3 resolves through the link");
   assertStringIncludes(await read(dir, "patch/better-sqlite3/package.json"), `"better-sqlite3"`);
+  // Deno takes the link only for a range its version satisfies: the app's own `^11` would
+  // otherwise install the native package (whose addon the server bundle cannot load).
+  const link = JSON.parse(await read(dir, "patch/better-sqlite3/package.json")).version;
+  assertEquals(JSON.parse(await read(dir, "package.json")).dependencies["better-sqlite3"], link);
   assertStringIncludes(
     await read(dir, "scripts/denext-prisma-setup.ts"),
     "bundle the better-sqlite3 compat",

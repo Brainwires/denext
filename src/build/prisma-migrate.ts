@@ -47,7 +47,8 @@ import { mfs } from "./migrate-io.ts";
 const PRISMA_VERSION = "7.10.1";
 /**
  * The `better-sqlite3` version the patch package advertises (matches examples/prisma): within
- * the 7.x `@prisma/adapter-better-sqlite3`'s `^12.6.0`.
+ * the 7.x `@prisma/adapter-better-sqlite3`'s `^12.6.0`. An app that requires `better-sqlite3`
+ * itself is pinned to it too: Deno takes a link only for a range its version satisfies.
  */
 const BETTER_SQLITE3_VERSION = "12.6.2";
 /**
@@ -548,7 +549,11 @@ async function transformPrismaApp(plan: TransformPlan): Promise<PrismaMigrateInf
   // 4. Drop the superseded prisma deps from package.json so `deno install` materializes the
   //    v7 client/adapter (pinned in deno.json) rather than an older client, and point
   //    Prisma's seed command (prisma.config.ts, and package.json's for older tools) at Deno.
-  const packageJsonEdited = await stripPrismaFromPackageJson(join(dir, "package.json"), seed);
+  const packageJsonEdited = await stripPrismaFromPackageJson(
+    join(dir, "package.json"),
+    seed,
+    plan.shim,
+  );
   await writePrismaConfig(plan, warnings);
 
   // 5. The `links` patch package (better-sqlite3 only), the setup script, and the gitignore.
@@ -766,17 +771,24 @@ function passesAdapter(text: string, open: number): boolean {
 
 /**
  * Remove `@prisma/client` and `prisma` from package.json deps/devDeps, pin the app's own
- * `@prisma/adapter-*` to the client's version (a 6.x adapter can't drive the 7.x client), and
- * point a `prisma.seed` command at Deno (for tools that still read it; Prisma 7 reads the seed
+ * `@prisma/adapter-*` to the client's version (a 6.x adapter can't drive the 7.x client) and,
+ * with the `links` shim (`shim`), its own `better-sqlite3` to the version the link advertises,
+ * and point a `prisma.seed` command at Deno (for tools that still read it; Prisma 7 reads the seed
  * from `prisma.config.ts`). Returns whether the Prisma deps were removed.
  */
-async function stripPrismaFromPackageJson(pkgPath: string, seed: string | null): Promise<boolean> {
+async function stripPrismaFromPackageJson(
+  pkgPath: string,
+  seed: string | null,
+  shim: boolean,
+): Promise<boolean> {
   const pkg = await readPackageJson(pkgPath);
   if (!pkg) return false;
   const seedChanged = seed !== null && pointSeedAtDeno(pkg, seed);
   const depsDropped = dropPrismaDeps(pkg);
   const adaptersPinned = pinPrismaAdapters(pkg);
-  if (seedChanged || depsDropped || adaptersPinned) {
+  const linkPinned = shim &&
+    pinDeps(pkg, (name) => name === "better-sqlite3", BETTER_SQLITE3_VERSION);
+  if (seedChanged || depsDropped || adaptersPinned || linkPinned) {
     // Preserve the file's indentation style where obvious (2-space default).
     await mfs.remove(pkgPath).catch(() => {}); // unlink a possible symlink (cloned repos)
     await mfs.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
@@ -819,12 +831,21 @@ function dropPrismaDeps(pkg: Record<string, unknown>): boolean {
 
 /** Pin every `@prisma/adapter-*` in deps/devDeps to {@link PRISMA_VERSION}; whether any moved. */
 function pinPrismaAdapters(pkg: Record<string, unknown>): boolean {
+  return pinDeps(pkg, (name) => name.startsWith("@prisma/adapter-"), PRISMA_VERSION);
+}
+
+/** Pin every dep/devDep `which` names to `version`; whether any moved. */
+function pinDeps(
+  pkg: Record<string, unknown>,
+  which: (name: string) => boolean,
+  version: string,
+): boolean {
   let changed = false;
   for (const field of ["dependencies", "devDependencies"]) {
     const block = pkg[field] as Record<string, string> | undefined;
     for (const name of Object.keys(block ?? {})) {
-      if (name.startsWith("@prisma/adapter-") && block![name] !== PRISMA_VERSION) {
-        block![name] = PRISMA_VERSION;
+      if (which(name) && block![name] !== version) {
+        block![name] = version;
         changed = true;
       }
     }
