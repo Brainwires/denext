@@ -41,6 +41,12 @@ import {
 } from "./download-partial.ts";
 import { confineRelative, isReservedDataName, refuseReservedDataPath } from "../path-scope.ts";
 import type { PickedPaths } from "../picked-paths.ts";
+import {
+  recordInfo,
+  type TransferRecord,
+  type TransferRecordPatch,
+  TransferRecords,
+} from "./transfer-records.ts";
 
 /** An app-directory name (the string forms of a `FileDirectory`; kept local so this cap doesn't
  * couple to the page-side `FileDirectory` union, which also carries the `{ picked }` variant). */
@@ -81,6 +87,8 @@ export interface FsCapabilityConfig {
   readonly resolveHost?: HostResolver;
   /** The `fetch` `download` uses (tests inject one; defaults to the global). */
   readonly fetch?: typeof fetch;
+  /** The clock the download records are stamped with (tests move it; defaults to `Date.now`). */
+  readonly transferClock?: () => number;
 }
 
 /** A `forbidden` download target. */
@@ -702,8 +710,9 @@ async function downloadFailure(
   }
   const base = stoppedError(err, AbortSignal.any([ctxSignal, stop]), timeout);
   const kept = await settlePartial(job, why === "cancel" || DROPS_PARTIAL.has(base.code));
-  if (base.code !== "network") return base;
-  return new DesktopCapError("network", base.message, { data: keptData(kept) });
+  // A network failure, or the page going away (not the user's cancel), keeps what it wrote.
+  if (base.code !== "network" && (base.code !== "cancelled" || why === "cancel")) return base;
+  return new DesktopCapError(base.code, base.message, { data: keptData(kept) });
 }
 
 /** A `directory` arg that names a picked handle (`{ picked: "<handle>" }`) instead of a token. */
@@ -816,6 +825,75 @@ interface RunningDownload {
   readonly settled: Promise<void>;
   /** Set once it has stopped because of a pause (its partial kept). */
   paused: boolean;
+  /** Set once it finished: a stop that came too late leaves it done. */
+  done: boolean;
+}
+
+/** The runtime's download failure codes as the page's `FileTransferError` codes, for a record. */
+const RECORD_CODES: Readonly<Record<string, string>> = {
+  download_failed: "HTTP",
+  network: "NETWORK",
+  cancelled: "NETWORK",
+  io: "IO",
+  too_large: "IO",
+  validation: "INVALID",
+  forbidden: "INVALID",
+  exists: "EXISTS",
+};
+
+/** A stopped download's error `data`: what it kept, and an HTTP failure's status. */
+function failureData(failure: DesktopCapError): {
+  bytes: number;
+  total: number | null;
+  resumable: boolean;
+  status?: number;
+} {
+  const d = (failure.data ?? {}) as {
+    bytes?: unknown;
+    total?: unknown;
+    resumable?: unknown;
+    status?: unknown;
+  };
+  const out: { bytes: number; total: number | null; resumable: boolean; status?: number } = {
+    bytes: typeof d.bytes === "number" ? d.bytes : 0,
+    total: typeof d.total === "number" ? d.total : null,
+    resumable: d.resumable === true,
+  };
+  if (typeof d.status === "number") out.status = d.status;
+  return out;
+}
+
+/**
+ * The record of a download that stopped (not paused, not the user's cancel): failed, with what it
+ * kept. The page going away is told apart from a network failure.
+ */
+function failedRecordPatch(failure: DesktopCapError): TransferRecordPatch {
+  const { bytes, total, resumable, status } = failureData(failure);
+  return {
+    state: "failed",
+    code: RECORD_CODES[failure.code] ?? "NETWORK",
+    error: failure.code === "cancelled"
+      ? "the download stopped when its page went away"
+      : failure.message,
+    status,
+    bytes,
+    total,
+    resumable,
+    file: undefined,
+  };
+}
+
+/** The request headers as a plain record (to keep with a download's record). */
+function headerObject(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  headers.forEach((value, name) => (out[name] = value));
+  return out;
+}
+
+/** Whether `headers` has none. */
+function noHeaders(headers: Headers): boolean {
+  for (const _ of headers.keys()) return false;
+  return true;
 }
 
 /** The `exists` refusal for a download id or destination already in use. */
@@ -823,21 +901,137 @@ function inUse(what: string): DesktopCapError {
   return new DesktopCapError("exists", `${what} is already downloading`, { status: 409 });
 }
 
-/** The `fs` methods that download: `download` / `resumeDownload`, and the pause / cancel controls. */
+/** How one download attempt keeps its record up to date. */
+interface DownloadRecorder {
+  /** It starts (running, with its request headers). */
+  start(): Promise<void>;
+  /** It finished into `target`. */
+  done(target: string, bytes: number): Promise<void>;
+  /** It stopped: paused, cancelled (the record goes), or failed. */
+  stopped(failure: DesktopCapError, why: StopWhy | undefined): Promise<void>;
+}
+
+/** No record (a download without an id, or into a picked file). */
+const NO_RECORD: DownloadRecorder = {
+  start: () => Promise.resolve(),
+  done: () => Promise.resolve(),
+  stopped: () => Promise.resolve(),
+};
+
+/**
+ * The recorder of one attempt at download `req`: a download with an id into an app folder is
+ * recorded (a picked file's handle lasts one launch, so a restart could not continue it). Every
+ * change is this attempt's, so an attempt that stopped never writes over its successor's record.
+ */
+function downloadRecorder(
+  records: TransferRecords,
+  a: Record<string, unknown>,
+  req: { url: string; id: string | undefined; headers: Headers },
+): DownloadRecorder {
+  const id = req.id;
+  if (id === undefined || pickedHandle(a.directory) !== undefined) return NO_RECORD;
+  const attempt = crypto.randomUUID();
+  const cleared = { code: undefined, error: undefined, status: undefined };
+  return {
+    start: () =>
+      records.start({
+        id,
+        url: req.url,
+        directory: a.directory as TransferRecord["directory"],
+        path: a.path as string,
+        headers: headerObject(req.headers),
+        state: "running",
+        bytes: 0,
+        total: null,
+        resumable: false,
+        attempt,
+      }),
+    done: async (target, bytes) => {
+      const patch = { state: "done", bytes, total: bytes, resumable: false, file: target } as const;
+      await records.update(id, attempt, { ...patch, ...cleared });
+    },
+    stopped: async (failure, why) => {
+      if (failure.code === "paused") {
+        const { bytes, total, resumable } = failureData(failure);
+        await records.update(id, attempt, { state: "paused", bytes, total, resumable, ...cleared });
+      } else if (why === "cancel") {
+        await records.remove(id, attempt);
+      } else {
+        await records.update(id, attempt, failedRecordPatch(failure));
+      }
+    },
+  };
+}
+
+/** The `fs` methods that download: `download` / `resumeDownload`, the controls, and the records. */
 type DownloadMethods = Record<
-  "download" | "resumeDownload" | "pauseDownload" | "cancelDownload",
+  | "download"
+  | "resumeDownload"
+  | "pauseDownload"
+  | "cancelDownload"
+  | "listDownloads"
+  | "forgetDownload",
   DesktopCapability["methods"][string]
 >;
 
+/** The checked `id` arg of a control (`pauseDownload`, `cancelDownload`, …). */
+function controlId(args: unknown): string | undefined {
+  return downloadId((args as { id?: unknown } | null)?.id);
+}
+
 /**
  * The download methods over `cfg`, sharing one registry: the downloads running under a page-given
- * id, the partials a stopped one kept (by id, for `cancelDownload`), and the destinations being
- * written (one download per file, as they share its partial).
+ * id, the partials a stopped one kept (by id, for `cancelDownload`), the destinations being
+ * written (one download per file, as they share its partial), and the records of the downloads
+ * with an id (kept across restarts: {@link TransferRecords}).
  */
 function downloadMethods(cfg: FsCapabilityConfig): DownloadMethods {
   const running = new Map<string, RunningDownload>();
   const kept = new Map<string, PartialAt>();
   const busy = new Set<string>();
+  const clock = cfg.transferClock ?? Date.now;
+  const records = new TransferRecords(cfg.dirs.data, clock);
+
+  /** Where record `r`'s partial lives, or `undefined` when its folder is no longer granted. */
+  const recordPartial = async (r: TransferRecord): Promise<PartialAt | undefined> => {
+    try {
+      const { target } = await resolveTarget(cfg, r.directory, r.path, true);
+      return await partialAt(target);
+    } catch {
+      return undefined;
+    }
+  };
+
+  /**
+   * A loaded record as this launch sees it: one that was running when the app stopped failed
+   * there, resumable from its partial file when that kept bytes and a validator (as a download a
+   * force-quit stopped comes back on iOS).
+   */
+  const restore = async (r: TransferRecord): Promise<TransferRecord> => {
+    if (r.state !== "running") return r;
+    const at = await recordPartial(r);
+    const data = keptData(at ? await readPartial(at, r.url) : null);
+    return {
+      ...r,
+      state: "failed",
+      code: "NETWORK",
+      error: "the download stopped when the app quit",
+      bytes: data.bytes,
+      total: data.total ?? r.total,
+      resumable: data.resumable,
+      headers: data.resumable ? r.headers : {},
+      updatedAt: clock(),
+    };
+  };
+
+  /** A record dropped for its age: a failed one's partial file goes with it. */
+  const expire = async (r: TransferRecord): Promise<void> => {
+    if (r.state !== "failed") return;
+    const at = await recordPartial(r);
+    if (at) await discardPartial(at);
+  };
+
+  const ready = () => records.ready(restore, expire);
 
   /** Note whether download `id` (if it has one) left a partial (at `at`) behind. */
   const remember = (id: string | undefined, at: PartialAt, keeps: boolean) => {
@@ -867,52 +1061,78 @@ function downloadMethods(cfg: FsCapabilityConfig): DownloadMethods {
       privateTarget,
       signal: AbortSignal.any([ctx.signal, timeout, entry.stop.signal]),
     });
+    const record = downloadRecorder(records, a, req);
     try {
+      await record.start();
       await mkdirp(root);
       await onDisk(() => mkdirp(dirname(target)));
       const bytes = await runDownload(job);
+      entry.done = true;
       remember(req.id, at, false);
+      await record.done(target, bytes);
       return { path: target, bytes };
     } catch (err) {
       const failure = await downloadFailure(err, job, entry.stop.signal, ctx.signal, timeout);
       entry.paused = failure.code === "paused";
       const keeps = (failure.data as { bytes?: unknown } | undefined)?.bytes;
       remember(req.id, at, typeof keeps === "number" && keeps > 0);
+      await record.stopped(failure, stopWhy(entry.stop.signal));
       throw failure;
     } finally {
       busy.delete(target);
     }
   };
 
-  const download: DesktopCapability["methods"][string] = {
+  /**
+   * A resume that sends no headers of its own continues with the ones its record kept (the page
+   * that started it may be gone, after a restart), when the record names the same URL and file.
+   */
+  const resumeHeaders = (
+    a: Record<string, unknown>,
+    req: { url: string; id: string | undefined; headers: Headers },
+  ): Headers => {
+    if (req.id === undefined || !noHeaders(req.headers)) return req.headers;
+    const r = records.get(req.id);
+    const same = r !== undefined && r.url === req.url && r.directory === a.directory &&
+      r.path === a.path;
+    return same ? new Headers(r.headers) : req.headers;
+  };
+
+  /** The `download` (or, with `resume`, `resumeDownload`) method. */
+  const downloadMethod = (resume: boolean): DesktopCapability["methods"][string] => ({
     // The runtime fetches the URL itself; the bridge deadline is off (a large file may take a
     // while) and the download enforces its own timeout and byte cap instead.
     timeoutMs: false,
     permissions: { write: [...cfg.write], net: ["*"] },
     handler: async (args, ctx) => {
       const a = (args ?? {}) as Record<string, unknown>;
-      const req = downloadArgs(a);
-      if (req.id !== undefined && running.has(req.id)) throw inUse(`download ${req.id}`);
+      const checked = downloadArgs(a);
+      if (checked.id !== undefined && running.has(checked.id)) {
+        throw inUse(`download ${checked.id}`);
+      }
       // Registered before the first await, so a pause or cancel can never slip in ahead of it.
       const settled = Promise.withResolvers<void>();
       const entry: RunningDownload = {
         stop: new AbortController(),
         settled: settled.promise,
         paused: false,
+        done: false,
       };
-      if (req.id !== undefined) running.set(req.id, entry);
+      if (checked.id !== undefined) running.set(checked.id, entry);
       try {
+        await ready();
+        const req = resume ? { ...checked, headers: resumeHeaders(a, checked) } : checked;
         return await transfer(a, ctx, req, entry);
       } finally {
-        if (req.id !== undefined) running.delete(req.id);
+        if (checked.id !== undefined) running.delete(checked.id);
         settled.resolve();
       }
     },
-  };
+  });
 
   /** Stop running download `id` for `why`; resolves once it has stopped (or `undefined`). */
   const stopRunning = async (args: unknown, why: StopWhy) => {
-    const id = downloadId((args as { id?: unknown } | null)?.id);
+    const id = controlId(args);
     const entry = id === undefined ? undefined : running.get(id);
     if (entry) {
       entry.stop.abort(why);
@@ -921,11 +1141,31 @@ function downloadMethods(cfg: FsCapabilityConfig): DownloadMethods {
     return { id, entry };
   };
 
+  /** Drop the partial download `id` kept (and its record): whether there was one to drop. */
+  const dropKept = async (id: string): Promise<boolean> => {
+    const at = kept.get(id);
+    if (at !== undefined) {
+      if (busy.has(at.target)) return false;
+      kept.delete(id);
+      await discardPartial(at);
+      await records.remove(id);
+      return true;
+    }
+    const r = records.get(id);
+    // A done download is the user's file: a cancel that comes after it is too late.
+    if (!r || r.state === "done" || r.state === "running") return false;
+    const recordAt = await recordPartial(r);
+    if (recordAt && busy.has(recordAt.target)) return false;
+    if (recordAt) await discardPartial(recordAt);
+    await records.remove(id);
+    return true;
+  };
+
   return {
-    download,
+    download: downloadMethod(false),
     // The same download: it continues the partial a paused or interrupted one kept for the same
     // URL and file (this launch's or an earlier one's), else starts over.
-    resumeDownload: download,
+    resumeDownload: downloadMethod(true),
     pauseDownload: {
       // Answers once the download has stopped, its partial file and sidecar kept.
       handler: async (args) => {
@@ -935,15 +1175,36 @@ function downloadMethods(cfg: FsCapabilityConfig): DownloadMethods {
     },
     cancelDownload: {
       // Answers once the download has stopped and its partial file is gone; a paused (or failed)
-      // one's kept partial is dropped too.
+      // one's kept partial is dropped too, an earlier launch's included. One that finished first
+      // is not cancelled: its file stays.
       handler: async (args) => {
-        const { id, entry } = await stopRunning(args, "cancel");
-        if (entry) return { cancelled: true };
-        const at = id === undefined ? undefined : kept.get(id);
-        if (at === undefined || busy.has(at.target)) return { cancelled: false };
-        kept.delete(id!);
-        await discardPartial(at);
-        return { cancelled: true };
+        const id = controlId(args);
+        if (id !== undefined && !running.has(id)) await ready();
+        const { entry } = await stopRunning(args, "cancel");
+        if (entry) return { cancelled: !entry.done };
+        return { cancelled: id !== undefined && (await dropKept(id)) };
+      },
+    },
+    listDownloads: {
+      // The recorded downloads (those started with an id into an app folder): running, paused,
+      // failed, and done ones not yet forgotten — an earlier launch's included.
+      handler: async () => {
+        await ready();
+        return { transfers: records.all().map(recordInfo) };
+      },
+    },
+    forgetDownload: {
+      // Drops a settled download's record (a failed one's kept partial file with it).
+      handler: async (args) => {
+        const id = controlId(args);
+        await ready();
+        const r = id === undefined ? undefined : records.get(id);
+        if (!r || r.state === "running" || r.state === "paused" || running.has(r.id)) {
+          return { forgotten: false };
+        }
+        if (r.state === "failed") await dropKept(r.id);
+        await records.remove(r.id);
+        return { forgotten: true };
       },
     },
   };

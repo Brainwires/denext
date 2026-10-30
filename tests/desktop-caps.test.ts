@@ -2482,8 +2482,10 @@ Deno.test("fs.download: progress events carry the id; a failure's code says what
     const dl = (url: string) => call(cap, "download", { url, path: "n.bin", directory: "data" });
     assertEquals(await rejectCode(dl("https://files.test/offline")), "network");
     assertEquals(await rejectCode(dl("https://files.test/cut")), "network");
-    // A cut connection keeps the bytes so far (and the sidecar) for a resume.
+    // A cut connection keeps the bytes so far (and the sidecar) for a resume. (`dl-1`'s record
+    // is in the runtime's reserved folder.)
     assertEquals((await Array.fromAsync(Deno.readDir(root))).map((e) => e.name).sort(), [
+      "denext-transfers",
       "f.bin",
       "g.bin",
       "n.bin.part",

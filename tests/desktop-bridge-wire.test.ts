@@ -534,6 +534,8 @@ async function partReaches(path: string, bytes: number, ms = 5_000): Promise<voi
 async function filesUnder(dir: string): Promise<string[]> {
   const out: string[] = [];
   for await (const e of Deno.readDir(dir)) {
+    // The runtime's download records (its reserved folder, which the page never sees).
+    if (e.name === "denext-transfers") continue;
     if (e.isDirectory) {
       out.push(...(await filesUnder(join(dir, e.name))).map((n) => `${e.name}/${n}`));
     } else out.push(e.name);

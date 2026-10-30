@@ -129,10 +129,19 @@ export async function confineWithinRoots(abs: string, roots: readonly string[]):
  * - `CEF`, `WebKitGTK` and `WebView2` are the web engine's profile (cookies, local storage, the
  *   HTTP cache, saved credentials): reading it hands the page every session the app holds, and
  *   writing it plants state the engine trusts.
+ * - `denext-transfers` holds the `fs` capability's download records (`caps/transfer-records.ts`):
+ *   a live one carries its request headers (an `Authorization`, say), and a page that could write
+ *   there would point a resume at another URL or file.
  *
  * Lower-case: names are compared case-insensitively.
  */
-const RESERVED_DATA_SUBDIRS: readonly string[] = ["ui-updates", "cef", "webkitgtk", "webview2"];
+const RESERVED_DATA_SUBDIRS: readonly string[] = [
+  "ui-updates",
+  "cef",
+  "webkitgtk",
+  "webview2",
+  "denext-transfers",
+];
 
 /**
  * Whether a directory-entry name in the data root is a runtime-owned one (see

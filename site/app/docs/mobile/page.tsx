@@ -2420,10 +2420,20 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         (a strong <code>ETag</code> or <code>Last-Modified</code>; a server that answers{" "}
         <code>200</code>, or offers only a weak <code>ETag</code>, starts it over), and{" "}
         <code>cancelFileTransfer</code>{" "}
-        stops it in the runtime and drops the partial file. A download a network failure or a
-        restart interrupted keeps its partial file too: downloading the same URL to the same file
-        again continues it. <code>uploadFile</code>{" "}
-        reads the file through the runtime and sends it from the page.
+        stops it in the runtime and drops the partial file. Like the plugin, the runtime keeps each
+        download&apos;s record across restarts (in a folder of the app&apos;s data directory the
+        page&apos;s <code>fs</code> calls cannot reach): after one, <code>fileTransfers()</code>
+        {" "}
+        lists the paused ones, the failed ones and those done in the last 7 days (until{" "}
+        <code>forgetFileTransfer(id)</code>), and <code>resumeFileTransfer(id)</code>{" "}
+        continues a paused or failed one from its partial file with the request headers it was
+        started with. A download that was running when the app quit is listed as <code>failed</code>
+        {" "}
+        (code <code>"NETWORK"</code>, <code>resumable</code>{" "}
+        when its partial file can continue), as iOS reports a transfer a force-quit stopped; so is
+        one whose page reloaded or closed. A cancelled download&apos;s record goes with its partial
+        file, and a live record&apos;s request headers are dropped once it is over for good.{" "}
+        <code>uploadFile</code> reads the file through the runtime and sends it from the page.
       </p>
       <Callout kind="note">
         <strong>Android&apos;s limits.</strong>{" "}
