@@ -82,11 +82,15 @@ function options(dir: string, extra: Partial<MobileBuildOptions> = {}): MobileBu
 }
 
 /** Deps whose `cap sync` succeeds and whose native build fails (so reaching it is visible). */
-function deps(extra: Partial<MobileBuildDeps> = {}): MobileBuildDeps & { ran: string[] } {
+function deps(
+  extra: Partial<MobileBuildDeps> = {},
+): MobileBuildDeps & { ran: string[]; logged: string[] } {
   const ran: string[] = [];
+  const logged: string[] = [];
   return {
     ran,
-    log: () => {},
+    logged,
+    log: (line) => void logged.push(line),
     run: (c: BuildCommand) => {
       ran.push(c.cmd);
       return Promise.resolve({ code: c.cmd === "npx" ? 0 : 1 });
@@ -293,6 +297,7 @@ Deno.test("mobile build --release: a doctor error stops the build after cap sync
       level: "error" as const,
       message: "capacitor.config.json: android.webContentsDebuggingEnabled is true",
       fix: "remove it",
+      releaseGate: true,
     };
     const refused = deps({ doctor: report(dir, [error]) });
     await assertRejects(
@@ -314,6 +319,17 @@ Deno.test("mobile build --release: a doctor error stops the build after cap sync
     });
     await assertRejects(() => runMobileBuild(plan, {}, passed), Error, "exited with 1");
     assertEquals(passed.ran, ["npx", "./gradlew"]);
+    // A doctor error outside the release-security gate is printed with its fix; the build goes on.
+    const csp = {
+      check: "csp",
+      level: "error" as const,
+      message: "out/index.html has no Content-Security-Policy meta tag",
+      fix: "add one",
+    };
+    const warned = deps({ doctor: report(dir, [csp]) });
+    await assertRejects(() => runMobileBuild(plan, {}, warned), Error, "exited with 1");
+    assertEquals(warned.ran, ["npx", "./gradlew"]);
+    assertStringIncludes(warned.logged.join("\n"), "warning: [csp] out/index.html has no");
     // A debug build is not gated.
     const debug = deps({ doctor: report(dir, [error]) });
     await assertRejects(
@@ -435,5 +451,36 @@ Deno.test("mobile build --release: a flavor's https serverUrl is not a server-ur
     assert(!(await Deno.readTextFile(join(dir, "capacitor.config.json"))).includes("app.example"));
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("mobile build --release: a missing CSP builds with a warning; a wildcard allowNavigation is refused", async () => {
+  const noCsp = { "out/index.html": "<!doctype html><html><head></head></html>" };
+  const dir = await project(noCsp);
+  try {
+    const plan = await planMobileBuild(options(dir, { release: true, skipExport: true }));
+    const d = deps();
+    await assertRejects(() => runMobileBuild(plan, {}, d), Error, "exited with 1");
+    assertEquals(d.ran, ["npx", "./gradlew"], "the native build ran");
+    assertStringIncludes(d.logged.join("\n"), "warning: [csp]");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  const wild = await project({
+    ...noCsp,
+    "capacitor.config.json": JSON.stringify({
+      appId: "dev.example",
+      webDir: "out",
+      server: { allowNavigation: ["*"] },
+    }),
+  });
+  try {
+    const plan = await planMobileBuild(options(wild, { release: true, skipExport: true }));
+    const d = deps();
+    const err = await assertRejects(() => runMobileBuild(plan, {}, d), Error, "[allow-navigation]");
+    assert(!err.message.includes("[csp]"), "only the release-security findings refuse");
+    assertEquals(d.ran, ["npx"]);
+  } finally {
+    await Deno.remove(wild, { recursive: true });
   }
 });

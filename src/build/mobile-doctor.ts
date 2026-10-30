@@ -53,6 +53,25 @@ export interface MobileDoctorFinding {
   readonly level: "error" | "warning";
   readonly message: string;
   readonly fix: string;
+  /**
+   * A release-security hole `denext mobile build --release` refuses to ship (see
+   * {@linkcode releaseGateFindings}): a dev / http `server.url`, a wildcard or http
+   * `allowNavigation`, `frameGuard: false` over a foreign origin, cleartext in the Capacitor
+   * config or a network security config, a debuggable WebView, the legacy bridge, a leftover
+   * `NSAllowsLocalNetworking`. Every other finding only warns there.
+   */
+  readonly releaseGate?: boolean;
+}
+
+/**
+ * The findings `denext mobile build --release` refuses on: errors tagged
+ * {@linkcode MobileDoctorFinding.releaseGate}.
+ *
+ * @param report A `--release` doctor report.
+ * @returns The gating errors, in report order.
+ */
+export function releaseGateFindings(report: MobileDoctorReport): MobileDoctorFinding[] {
+  return report.findings.filter((f) => f.level === "error" && f.releaseGate === true);
 }
 
 /** What the doctor found. */
@@ -214,6 +233,11 @@ const serverUrl: Check = {
     perConfig(p, (c) => typeof at(c, "server", "url") === "string", (label) => ({
       check: "server-url",
       level: "error",
+      // A LAN / loopback / plain-http server (a dev session's) is a release hole; a hosted
+      // https one is a store-review matter.
+      releaseGate: !/^https:\/\//i.test(
+        String(at(p.configs.find((s) => s.label === label)!.config, "server", "url")).trim(),
+      ),
       message: `${label} sets server.url (${
         String(at(p.configs.find((s) => s.label === label)!.config, "server", "url"))
       }): the app loads a remote site instead of its bundled export, the classic 4.2 rejection`,
@@ -253,6 +277,7 @@ const webviewDebugging: Check = {
       perConfig(p, (c) => at(c, platform, "webContentsDebuggingEnabled") === true, (label) => ({
         check: "webview-debugging",
         level: "error",
+        releaseGate: true,
         message: `${label}: ${platform}.webContentsDebuggingEnabled is true, so a release build ` +
           "lets anyone attach a web inspector to the app",
         fix: `remove ${platform}.webContentsDebuggingEnabled (debug builds are inspectable ` +
@@ -280,6 +305,7 @@ const legacyBridge: Check = {
     perConfig(p, (c) => at(c, "android", "useLegacyBridge") === true, (label) => ({
       check: "legacy-bridge",
       level: "error",
+      releaseGate: true,
       message: `${label}: android.useLegacyBridge exposes the native bridge through ` +
         "addJavascriptInterface, which every frame can call: an iframe could reach every " +
         "installed plugin (the default bridge accepts plugin calls from the main frame only)",
@@ -323,7 +349,7 @@ const bridgeOriginGuard: Check = {
   id: "bridge-origin-guard",
   profiles: ["store", "release"],
   run: (p, profile) =>
-    p.configs.flatMap(({ label, config }) => {
+    p.configs.flatMap(({ label, config }): MobileDoctorFinding[] => {
       const hosted = hostedOrigins(config);
       if (hosted.length === 0) return [];
       if (at(config, "plugins", "DenextBridge", "frameGuard") === false) {
@@ -336,6 +362,7 @@ const bridgeOriginGuard: Check = {
         return [{
           check: "bridge-origin-guard",
           level: profile === "release" && others ? "error" as const : "warning" as const,
+          releaseGate: others,
           message: `${label}: plugins.DenextBridge.frameGuard is false, so a page on ` +
             `${hosted.join(", ")} can call every installed native plugin`,
           fix: "list only the origins whose pages must call plugins in " +
@@ -530,6 +557,7 @@ const allowNavigation: Check = {
         return problem === null ? [] : [{
           check: "allow-navigation",
           level: problem.level,
+          releaseGate: problem.level === "error",
           message: `${label}: server.allowNavigation ${problem.why} (with the native bridge)`,
           fix: "list the exact https hosts the WebView must navigate to; open everything else " +
             "with openExternal()",
@@ -569,6 +597,7 @@ const cleartext: Check = {
     const out = perConfig(p, (c) => at(c, "server", "cleartext") === true, (label) => ({
       check: "cleartext",
       level,
+      releaseGate: true,
       message: `${label}: server.cleartext allows plain-http traffic from the WebView (Android)`,
       fix: "remove server.cleartext (it is for live reload) and use https",
     }));
@@ -576,6 +605,7 @@ const cleartext: Check = {
       out.push({
         check: "cleartext",
         level,
+        releaseGate: key === "NSAllowsLocalNetworking",
         message: `${nativeRel(p.root, INFO_PLIST)}: App Transport Security exception ${key}` +
           (key === "NSAllowsLocalNetworking" ? " (left by a `denext mobile dev` session?)" : ""),
         fix: "remove the exception (App Review asks for a justification of each) and use https",
@@ -627,6 +657,7 @@ async function networkSecurityCleartext(
   return where.length === 0 ? [] : [{
     check: "cleartext",
     level,
+    releaseGate: true,
     message: `${nativeRel(p.root, rel)}: cleartextTrafficPermitted="true" on ${
       where.join(" and ")
     } allows plain-http traffic`,

@@ -45,8 +45,10 @@ import {
 } from "./mobile-flavor.ts";
 import { loadNativeDirs, nativeJoin, nativeRel, nativeText } from "./capacitor-native-dirs.ts";
 import {
+  type MobileDoctorFinding,
   type MobileDoctorOptions,
   type MobileDoctorReport,
+  releaseGateFindings,
   runMobileDoctor,
 } from "./mobile-doctor.ts";
 
@@ -821,29 +823,35 @@ function otherPlatformPrefix(plan: MobileBuildPlan): string {
 }
 
 /**
- * The release gate: `denext mobile doctor --release` over the synced project, refusing the build
- * on any error (a debuggable WebView, a wildcard or http `allowNavigation`, the legacy bridge,
- * cleartext, a leftover `NSAllowsLocalNetworking`, …). Findings about the other platform's
- * native project do not block this one, and with a flavor's (https) `serverUrl` its
- * `server-url` finding is the flavor's deliberate setting.
+ * The release gate: `denext mobile doctor --release` over the synced project. It refuses the
+ * build on the release-security findings ({@linkcode releaseGateFindings}: a dev / http
+ * `server.url`, a wildcard or http `allowNavigation`, `frameGuard: false` over a foreign origin,
+ * cleartext in the Capacitor config or a network security config, a debuggable WebView, the
+ * legacy bridge, a leftover `NSAllowsLocalNetworking`); every other doctor error is printed as a
+ * warning with its fix and the build goes on. Findings about the other platform's native project
+ * do not block this one, and with a flavor's (https) `serverUrl` its `server-url` finding is the
+ * flavor's deliberate setting.
  *
  * @param plan The plan being run.
- * @param deps The doctor to use.
- * @throws {Error} Listing each error and its fix.
+ * @param deps The doctor to use, and the log the warnings go to.
+ * @throws {Error} Listing each gating error and its fix.
  */
 async function assertReleaseDoctor(plan: MobileBuildPlan, deps: MobileBuildDeps): Promise<void> {
   if (plan.configuration !== "Release") return;
   const doctor = deps.doctor ?? runMobileDoctor;
   const report = await doctor({ root: plan.root, profile: "release", appDir: plan.appDir });
   const other = otherPlatformPrefix(plan);
-  const errors = report.findings.filter((f) =>
-    f.level === "error" && !f.message.startsWith(other) &&
-    !(f.check === "server-url" && plan.flavor?.config.serverUrl)
-  );
-  if (errors.length === 0) return;
+  const applies = (f: MobileDoctorFinding) =>
+    !f.message.startsWith(other) && !(f.check === "server-url" && plan.flavor?.config.serverUrl);
+  const gate = new Set(releaseGateFindings(report).filter(applies));
+  for (const f of report.findings) {
+    if (f.level !== "error" || gate.has(f) || !applies(f)) continue;
+    deps.log(`  warning: [${f.check}] ${f.message}\n    fix: ${f.fix}`);
+  }
+  if (gate.size === 0) return;
   throw new Error(
-    `the release checks (\`denext mobile doctor --release\`) found ${errors.length} error(s):\n` +
-      errors.map((f) => `  [${f.check}] ${f.message}\n    fix: ${f.fix}`).join("\n"),
+    `the release checks (\`denext mobile doctor --release\`) found ${gate.size} error(s):\n` +
+      [...gate].map((f) => `  [${f.check}] ${f.message}\n    fix: ${f.fix}`).join("\n"),
   );
 }
 

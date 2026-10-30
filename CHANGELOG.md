@@ -38,9 +38,13 @@ and this project adheres to
   exact version, saved exactly, and `mobile add` checks each pin's npm publish time against the
   rule `create`, `migrate` and `upgrade` apply before installing, refusing one still held.
 - **`denext mobile build --release` runs the release checks.** After `cap sync` and before Xcode
-  or Gradle, it runs `denext mobile doctor --release` and stops on any error (a debuggable
-  WebView, a wildcard or `http:` `allowNavigation`, the legacy bridge, cleartext, a leftover
-  `NSAllowsLocalNetworking`, …). A flavor's `serverUrl` that is not `https` is refused.
+  or Gradle, it runs `denext mobile doctor --release` and stops on its release-security
+  findings: a LAN / loopback / `http` `server.url`, a wildcard or `http:` `allowNavigation`,
+  `frameGuard: false` over a foreign origin, cleartext in the Capacitor config or a network
+  security config, a debuggable WebView, the legacy bridge and a leftover
+  `NSAllowsLocalNetworking`. Every other doctor error (a missing CSP, a secret-shaped string in
+  the export, …) is printed as a warning with its fix, and the build goes on. A flavor's
+  `serverUrl` that is not `https` is refused.
 - **The fastlane CI workflow pins its actions.** `denext mobile add fastlane --ci` writes every
   action as a commit SHA with its tag in a comment, decodes the upload keystore with a private
   umask, and deletes it in an `if: always()` step.

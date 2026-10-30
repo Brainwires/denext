@@ -155,18 +155,24 @@ a Swift Package Manager project (the Capacitor 8 default) through the project.
 ### Release checks
 
 A `--release` build runs `denext mobile doctor --release` after `cap sync` (so it reads the
-native copies the shell will load) and before Xcode or Gradle, and stops on any error, each
-with its fix: a debuggable WebView (`webContentsDebuggingEnabled`), `server.allowNavigation`
-with `*`, a wildcard over hosts you do not own or an `http:` entry, `android.useLegacyBridge`,
-`plugins.DenextBridge.frameGuard: false` over an `allowNavigation` origin, cleartext
-(`server.cleartext`, an App Transport Security exception such as a leftover
-`NSAllowsLocalNetworking`, `usesCleartextTraffic`, a network security config with
-`cleartextTrafficPermitted="true"`), a missing CSP or a secret in the export, and the rest of
-the [release profile](/docs/mobile#app-store-review). Warnings do not stop it, and a
-finding about the other platform's native project does not stop this one. Before anything runs,
-it also refuses a `denext mobile dev` session's leftover config, a `server.url` that is a LAN /
-loopback `http` dev server, and a flavor `serverUrl` that is not `https`. A debug build is not
-checked.
+native copies the shell will load) and before Xcode or Gradle. It stops on the release-security
+findings, each with its fix:
+
+- a `server.url` on a LAN / loopback address or plain `http`;
+- `server.allowNavigation` with `*`, a wildcard over hosts you do not own, or an `http:` entry;
+- `plugins.DenextBridge.frameGuard: false` over an `allowNavigation` origin;
+- cleartext in the Capacitor config (`server.cleartext`) or in a network security config
+  (`cleartextTrafficPermitted="true"`), and a leftover `NSAllowsLocalNetworking`;
+- a debuggable WebView (`webContentsDebuggingEnabled`);
+- `android.useLegacyBridge`.
+
+Every other error of the [release profile](/docs/mobile#app-store-review) (a missing CSP, a
+secret-shaped string in the export, another App Transport Security exception, …) is printed as
+a warning with its fix, and the build goes on: run `denext mobile doctor --release` to see them
+all. A finding about the other platform's native project does not stop this one. Before anything
+runs, the build also refuses a `denext mobile dev` session's leftover config, a `server.url`
+that is a LAN / loopback `http` dev server, and a flavor `serverUrl` that is not `https`. A debug
+build is not checked.
 
 ### Versions and build numbers
 

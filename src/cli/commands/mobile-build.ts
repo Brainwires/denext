@@ -830,7 +830,8 @@ export const MOBILE_BUILD_HELP = "\n" +
   "\n" +
   "  build: `denext export` (--app, default the Capacitor project; a flavor's env is added),\n" +
   "  the flavor's edits, `npx --no cap sync <platform>` (the project's own @capacitor/cli),\n" +
-  "  with --release `denext mobile doctor --release` (any error stops the build), then the native\n" +
+  "  with --release `denext mobile doctor --release` (its release-security errors stop the build;\n" +
+  "  the rest print as warnings), then the native\n" +
   "  build. The export and cap sync never see the signing variables. Without --release:\n" +
   "  a Debug build (Android: a debug-signed .apk). iOS signs automatically (-allowProvisioning\n" +
   "  Updates) for --team / DENEXT_IOS_TEAM, with DENEXT_ASC_KEY_PATH / _KEY_ID / _ISSUER_ID as the\n" +

@@ -4201,8 +4201,9 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
         <code>denext export</code> and <code>npx cap sync</code> (the CI recipe does);{" "}
         <code>denext mobile build --release</code> runs the release profile itself after its{" "}
         <code>cap sync</code>{" "}
-        and refuses on any error (<a href="/docs/mobile-build#release-checks">release checks</a>).
-        Both profiles also report a <code>DenextBridgeViewController.swift</code>{" "}
+        and refuses on its release-security errors, printing the rest as warnings
+        (<a href="/docs/mobile-build#release-checks">release checks</a>). Both profiles also report
+        a <code>DenextBridgeViewController.swift</code>{" "}
         written before the main-frame guard: the one every <code>denext mobile add</code>{" "}
         of a denext native plugin now writes accepts native plugin calls from the page&apos;s main
         frame only, never from an iframe (Capacitor&apos;s own iOS handler answers every frame).

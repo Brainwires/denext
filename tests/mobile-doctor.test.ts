@@ -8,6 +8,7 @@ import {
   formatMobileDoctor,
   mobileDoctorChecks,
   type MobileDoctorReport,
+  releaseGateFindings,
   runMobileDoctor,
 } from "../src/build/mobile-doctor.ts";
 import { mergePrivacyManifest, privacyEntriesFor } from "../src/build/mobile-privacy.ts";
@@ -446,4 +447,43 @@ Deno.test("mobile doctor --release: frameGuard off over a third-party allowNavig
   assertEquals(await level(others, "store"), ["warning"]);
   // A hosted app's own server.url alone (what `denext migrate` opts out for) stays a warning.
   assertEquals(await level({ url: "https://app.example" }, "release"), ["warning"]);
+});
+
+Deno.test("mobile doctor: the release gate is the release-security findings only", async () => {
+  const dir = await project({
+    ...cleanFiles(),
+    "capacitor.config.json": JSON.stringify({
+      appId: "dev.example",
+      webDir: "out",
+      server: { url: "https://app.example", allowNavigation: ["*.example.com", "*"] },
+      android: { webContentsDebuggingEnabled: true, useLegacyBridge: true },
+    }),
+    "ios/App/App/Info.plist": plist(
+      "\t<key>NSAppTransportSecurity</key>\n\t<dict>\n\t\t<key>NSAllowsLocalNetworking</key>\n" +
+        "\t\t<true/>\n\t\t<key>NSAllowsArbitraryLoads</key>\n\t\t<true/>\n\t</dict>",
+    ),
+    "out/index.html": "<!doctype html><html><head></head></html>",
+  });
+  try {
+    const report = await runMobileDoctor({ root: dir, profile: "release" });
+    const gate = releaseGateFindings(report);
+    assertEquals([...new Set(gate.map((f) => f.check))].sort(), [
+      "allow-navigation",
+      "cleartext",
+      "legacy-bridge",
+      "webview-debugging",
+    ]);
+    const cleartext = gate.filter((f) => f.check === "cleartext").map((f) => f.message);
+    assertEquals(cleartext.length, 1, cleartext.join("\n"));
+    assertStringIncludes(cleartext[0], "NSAllowsLocalNetworking");
+    // The wildcard subdomain is a warning, never a gate.
+    assertEquals(gate.filter((f) => f.check === "allow-navigation").length, 1);
+    // Errors outside the gate: a hosted https server.url, NSAllowsArbitraryLoads, the CSP.
+    const rest = report.findings.filter((f) => f.level === "error" && !f.releaseGate);
+    for (const id of ["server-url", "cleartext", "csp"]) {
+      assert(rest.some((f) => f.check === id), id);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
