@@ -461,6 +461,10 @@ and this project adheres to
 - **The Deno Desktop runtime guide's releases table gains its `3.0.0-rc.6` row**, the runtime
   reference no longer says upstream Deno releases a `3.0.0`, and the `.deno/npm-compat`
   limitation names the runtimes that still leave it (through the pinned `3.0.0-denext.2`).
+- **The `shell` capability's printed note names every launcher it bakes** (`osascript`, `rundll32.exe`,
+  `powershell.exe`, `gio`, `dbus-send` as well as `open` / `explorer.exe` / `xdg-open`), and the
+  native-menu limitation says what the Deno Desktop menu really draws (red destructive items and
+  icons; Windows draws a destructive item as a normal one).
 
 ## [4.10.1] - 2026-10-29
 

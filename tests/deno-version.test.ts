@@ -63,8 +63,8 @@ Deno.test("isDenextDenoVersion: the identity marker says it, whatever the versio
 });
 
 Deno.test("isDenextDenoVersion: upstream Deno's 3.0.0-rc.N / 3.0.0 is not denext's", () => {
-  // Upstream Deno releases a 3.0.0 too: without the marker, only a pre-marker pin's exact version
-  // counts, so upstream's release candidates and its 3.0.0 final are stock Deno.
+  // There is no upstream Deno 3.0, so denext tells its runtime apart by the identity marker: without
+  // it, only a pre-marker pin's exact version counts, and a 3.0.0-rc.N / 3.0.0 is stock Deno.
   for (const v of ["3.0.0-rc.3", "3.0.0-rc.4", "3.0.0-rc.10", "3.0.0", "3.0.0-rc.3+ci.42"]) {
     assertFalse(isDenextDenoVersion({ deno: v }, "3.0.0-rc.2"), `${v} with rc.2 pinned`);
     assertFalse(isDenextDenoVersion({ deno: v }, "3.0.0-rc.3"), `${v} with rc.3 pinned`);

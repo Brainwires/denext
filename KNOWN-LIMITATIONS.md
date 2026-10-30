@@ -56,12 +56,15 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### denext's Deno toolchain
 
+- **Won't: esbuild compiled to wasm** (`@denext/esbuild`). It would remove the npm download but runs
+  several times slower on every compat build and dev session; the build runs the toolchain's esbuild
+  binary instead.
 - **Built for six targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64,
   arm64). Elsewhere, and offline on first use, a command that needs the toolchain stops with an
   error naming `denext toolchain install`; `DENEXT_DENO=stock` runs stock Deno instead, without
   `Deno.SQL` or Vitest/Jest compatibility in `deno test`.
 - **Windows on Arm has run on a VM, not yet on Arm64 hardware** (last verified on toolchain
-  2.9.7-denext.21). On
+  2.9.7-denext.21, 2026-10-19; later runtimes are covered by CI's `windows-11-arm` job only). On
   a Windows 11 Arm64 virtual machine (QEMU/KVM on an Arm64 board, software rendering through WARP,
   no GPU) these pass: `denext toolchain install` (`deno --version` reports `2.9.7-denext.21`,
   `aarch64-pc-windows-msvc`); `desktop run` and `desktop dev` windows on WebView2 and CEF (the page
@@ -74,7 +77,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   pages). denext's unit and integration suites run there too; what fails on that VM fails the
   same way on Windows x64, where CI's `windows-tests` job runs those suites for every release. CI's `windows-11-arm` job (desktop
   suites, `install.ps1`, the Arm64 `.msi`) is required for a release. Not yet run on Arm64: a
-  physical PC (GPU rendering), Authenticode-signed builds and the trusted-update checks. A
+  physical PC (GPU rendering), Authenticode-signed builds and the trusted-update checks (target:
+  unscheduled; they need a Windows on Arm PC and an Authenticode certificate). A
   `desktop run` / `dev` window loads the VC++ runtime
   from System32, so it needs the Arm64 VC++ 2015-2022 redistributable on the machine; a packaged
   bundle carries the runtime next to its `.exe`.
@@ -470,7 +474,8 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   IndexedDB on the web; certificate pinning can't cover the WebView's own `fetch`/XHR.
 - **Native context menus differ per OS:** iOS lifts a preview only for a bound element
   (`useContextMenu`); Android's `PopupMenu` flattens submenus into groups and draws no icons or
-  title; the Deno Desktop menu draws no destructive style or icons.
+  title; the Deno Desktop menu draws `destructive` items in red and `iconPng` icons, except that
+  Windows' menus draw a destructive item as a normal one.
 - **Background audio (`denext mobile add background-audio`) and `pickMedia`** are compiled and
   unit-tested, not yet run on a device (background playback, the lock-screen and notification
   controls, multi-select and video picks). `setAudioSession`'s `interruption` applies on iOS only
@@ -479,7 +484,8 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   foreground (Android 12+) and keeps it until `clearNowPlaying()`. expo-audio's other audio-mode
   fields (silent mode, earpiece routing, background recording) are accepted without effect. A
   native `selectionLimit` holds on iOS and Android 13+ (elsewhere, and on the web, the result is
-  cut to it); `ordered` needs `@capawesome/capacitor-file-picker` and iOS 15+.
+  cut to it); `ordered` needs `@capawesome/capacitor-file-picker` and iOS 15+. Device run: target
+  unscheduled (needs an iPhone and an Android phone).
 - **File transfers (`denext mobile add file-transfer`)** are compiled and tested against a local
   server (the iOS manager through macOS's `URLSession`, the Android HTTP half through the JDK), not
   yet run on a device in the background. Android's WorkManager stops a job after about ten
@@ -487,7 +493,8 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   cannot pause anywhere. iOS may defer a background transfer started while the app is already in
   the background. On the web a transfer lasts as long as the page. A Deno Desktop download
   pauses and resumes, but `fileTransfers()` lists only the ones this page started: after a
-  restart, download the same URL to the same file again to continue its kept partial file.
+  restart, download the same URL to the same file again to continue its kept partial file. Background
+  device run: target unscheduled (needs an iPhone and an Android phone).
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame
@@ -589,7 +596,8 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   `DenextBrightness` plugins `denext mobile add calendar | contacts | print | brightness` write
   are compiled (Java against Capacitor 8) and type-checked (Swift against the iOS SDK) but not
   yet run on a phone (Android's split of a repeating event from one occurrence on included), and
-  `expo-print`'s `printToFileAsync` lays HTML out without running its scripts.
+  `expo-print`'s `printToFileAsync` lays HTML out without running its scripts. Device run: target unscheduled (needs an iPhone and
+  an Android phone).
 - **A strict CSP still blocks a `<style>` element a library fills with text at run time**,
   and react-native-web's second sheet when it renders into a shadow root; those need
   `style-src 'unsafe-inline'`. react-native-web's own sheet and React Native mode's rules need
@@ -602,7 +610,8 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   only for a context made with `react`'s `createContext` (what the renderers and migrated code
   use); one made with `denext`'s own is read there with its default unless it is provided above a
   bridging root (react-three-fiber's `<Canvas>`, react-konva's `<Stage>`). React Native Skia with
-  Reanimated, and in the Capacitor shell's WebViews, is not yet verified.
+  Reanimated, and in the Capacitor shell's WebViews, is not yet verified (target: unscheduled; needs an
+  iPhone and an Android phone).
 - **Unistyles' Babel plugin is ported in part:** the component swap and `useVariants` run, the
   per-style dependency pass does not (the theme is CSS variables; a style that depends on the
   breakpoint or another runtime value updates when its component renders again). Tamagui's
@@ -723,7 +732,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   window on Wayland can't be named to the portal, so its portal dialog isn't modal to the window.
 - **Some desktop paths can only be verified by hand** (Touch ID / Windows Hello passkeys, signed
   macOS notifications, the update signer match with real identities, Mica, real HiDPI displays):
-  no CI runner has the hardware or identities, so they are checked before each final release
+  no CI runner has the hardware or identities, so they are checked before each final release (target: unscheduled for the paths that need a
+  Windows Hello machine, signed macOS and Windows builds, or a FIDO2 key on Linux)
   ([checklist](https://denext.dev/docs/contributing#manual-desktop-checks-before-a-final-release)).
 - **No Touch Bar.** `react-native-windows` / `-macos` native
   modules don't run (write a desktop extension); their extra components are DOM stand-ins.

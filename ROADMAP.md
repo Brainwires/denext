@@ -8,11 +8,6 @@
 > The current release is denext **4.10.1**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 
-## Deno toolchain
-
-- **Deno's next minor:** rebase denext's patches onto it and cut the next `3.0.0-rc.N`. That release
-  replaces Deno's TypeScript fork with stock TypeScript 6, so this rebase is larger than usual.
-
 ## Supply chain (lifecycle-script jail)
 
 - **GitHub-hosted declared downloads** (`bcrypt` 5, `argon2` before 0.28, `@discordjs/opus`,
@@ -21,8 +16,6 @@
 - **`Requires ffi access` in an install log.** `jailFailures` doesn't explain it yet: before denext.1
   (and where the OS can't confine) a jailed install check can't load the package's own native
   addon; say to leave the package unapproved.
-- **A package.json project's npm workspace member** gets its exceptions written to its own
-  package.json `"deno"` object when `denext add` runs in it; the runtime reads the root's only.
 
 ## Deno Desktop
 
@@ -33,16 +26,7 @@
   `?denext_nonce=…`, which a development instance accepts against the allowed `myapp://app/`.
   Confirm with one real sign-in that a production instance's native redirect allowlist matches it
   too (an exact match would fail the sign-in closed).
-- **Back to stock Deno once it carries the runtime changes.** Upstreaming them to denoland/deno
-  and littledivy/laufey is the maintainer's own work, not tracked here. When stock Deno carries
-  them, drop the runtime download, the Deno 2.9.8 pin and the cross-host backend directory
-  (2.9.8's CLI looks a prebuilt backend up under the host's executable name), and archive the
-  forks.
-
 - **Desktop hardening leftovers from the 4.8 packaging audit (all Low):**
-  - The `shell` capability's printed note names only `open` / `explorer` / `xdg-open`, while it
-    also bakes `osascript`, `powershell.exe`, `rundll32.exe`, `gio` and `dbus-send` (the docs
-    table lists them all). Make the note match.
   - The runtime's build provenance (`gh attestation verify`) is opt-in (`--attest-runtime`); the
     SHA-256 pin shipped in the denext package is the default trust root. Attest by default when
     `gh` is signed in, and say so when it is not.
@@ -134,7 +118,3 @@ seeded fallback. No Deno has the hook below yet.
 - **When it gets a resolver / loader plugin API** (no committed issue yet): port
   `appResolverPlugin` / `denextRuntimePlugin` first, then the transforms one hook at a time;
   the compat e2es (`tests/e2e/next-compat-*`, `spa-compat`, `unbundled-*`) are the gate.
-- **Not taking yet:** esbuild compiled to wasm as `@denext/esbuild`. It removes the npm download
-  but runs several times slower on every compat build and dev session.
-- **Maintenance:** track each vendored codec's upstream CVEs, rebuild SHA-256-pinned and
-  regenerate its `THIRD-PARTY-LICENSES.md` before re-publishing.

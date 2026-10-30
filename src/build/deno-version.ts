@@ -10,8 +10,9 @@
 // `denext.N` above every `rc.N` (semver alone would not: `d` < `r`), so every comparison goes
 // through {@linkcode compareDenoVersions}.
 //
-// Upstream Deno releases a 3.0.0 too, so a version no longer says whose runtime a Deno is. From
-// 3.0.0-rc.3 denext's Deno carries an identity marker (`Deno.build.denext`, and a
+// There is no upstream Deno 3.0 (upstream stays on 2.9), so denext's `3.0.0-*` versions are its own;
+// a version still isn't proof of whose runtime a Deno is, so denext tells its runtime apart by an
+// identity marker. From 3.0.0-rc.3 denext's Deno carries an identity marker (`Deno.build.denext`, and a
 // `denext <version> (Brainwires)` line in `deno --version`), and a running Deno is recognised by it
 // ({@linkcode isDenextDenoVersion}); the version alone counts only for the runtimes from before the
 // marker ({@linkcode isPreMarkerDenextVersion}). A version read from denext's own pins or release
@@ -192,7 +193,7 @@ function oldSchemeRelease(version: string): string | null {
 /**
  * The first release of denext's Deno that carries its identity marker: `Deno.build.denext` in
  * process and a `denext <version> (Brainwires)` line in `deno --version` (Brainwires/deno
- * DENEXT.md item 99). Upstream Deno releases a 3.0.0 too, so from here on the marker, never the
+ * DENEXT.md item 99). There is no upstream Deno 3.0, but from here on the marker, never the
  * version, says whose runtime a Deno is.
  */
 export const FIRST_MARKER_RUNTIME = "3.0.0-rc.3";
