@@ -128,8 +128,10 @@ the placeholder as an error.
 1. `denext export` in the app (`--app <dir>`, default the Capacitor project), unless
    `--skip-export`;
 2. the flavor's edits, when `--flavor` names one (see [Flavors](#flavors));
-3. `npx cap sync <platform>`;
-4. the native build:
+3. `npx --no cap sync <platform>` (the project's own `@capacitor/cli`: a missing one stops the
+   build with an install hint, never a download of the npm package named `cap`);
+4. with `--release`, the [release checks](#release-checks);
+5. the native build:
 
 | Command                         | Runs                                                                        | Produces                               |
 | ------------------------------- | --------------------------------------------------------------------------- | -------------------------------------- |
@@ -150,9 +152,34 @@ runs nothing. `--jobs <n>` caps the parallelism (`xcodebuild -jobs`, Gradle `--m
 A CocoaPods project (`ios/App/Podfile` and `App.xcworkspace`) is built through the workspace;
 a Swift Package Manager project (the Capacitor 8 default) through the project.
 
+### Release checks
+
+A `--release` build runs `denext mobile doctor --release` after `cap sync` (so it reads the
+native copies the shell will load) and before Xcode or Gradle. It stops on the release-security
+findings, each with its fix:
+
+- a `server.url` on a LAN / loopback address or plain `http`;
+- `server.allowNavigation` with `*`, a wildcard over hosts you do not own, or an `http:` entry;
+- `plugins.DenextBridge.frameGuard: false` over an `allowNavigation` origin;
+- cleartext from any source: `server.cleartext`, the manifest's
+  `android:usesCleartextTraffic="true"`, a network security config with
+  `cleartextTrafficPermitted="true"`, and a leftover `NSAllowsLocalNetworking`;
+- a debuggable WebView (`webContentsDebuggingEnabled`) or APK (`android:debuggable="true"`);
+- `android.useLegacyBridge`.
+
+Every other error of the [release profile](/docs/mobile#app-store-review) (a missing CSP, a
+secret-shaped string in the export, `NSAllowsArbitraryLoads` or an insecure exception domain,
+`android.allowMixedContent`, …) is printed as
+a warning with its fix, and the build goes on: run `denext mobile doctor --release` to see them
+all. A finding about the other platform's native project does not stop this one. Before anything
+runs, the build also refuses a `denext mobile dev` session's leftover config, a `server.url`
+that is a LAN / loopback `http` dev server, and a flavor `serverUrl` that is not `https`. A debug
+build is not checked.
+
 ### Versions and build numbers
 
-- `--build-number <n>` and `--version-name <x.y.z>` apply to this build only. iOS gets
+- `--build-number <n>` and `--version-name <x.y.z>` apply to this build only (a version name is
+  letters, digits, `.`, `+` and `-`: it is written into `build.gradle`'s double-quoted string). iOS gets
   `CURRENT_PROJECT_VERSION` / `MARKETING_VERSION` on the xcodebuild command line; Android's
   `versionCode` / `versionName` in `android/app/build.gradle` are changed for the build and put
   back afterwards. The sources stay as they were, and so does the
@@ -165,8 +192,12 @@ In CI, pass the run number: `--build-number "${{ github.run_number }}"`.
 
 ## Signing
 
-Secrets never appear on the command line (where `ps` shows them) or in the output. Each input
-is a flag or an environment variable:
+Secrets never appear on the command line (where `ps` shows them) or in the output, and they
+never reach the steps that run your project's code: `denext export` (your build plugins) and
+`cap sync` run with the signing variables below, fastlane's `MATCH_*`, `SUPPLY_*` and
+`FASTLANE_*`, `APP_STORE_CONNECT_API_KEY_*` and `DENEXT_PLAY_SERVICE_ACCOUNT` removed from
+their environment; only Xcode and Gradle get them. Each input is a flag or an environment
+variable:
 
 | Input                          | Flag             | Environment                                                      |
 | ------------------------------ | ---------------- | ---------------------------------------------------------------- |
@@ -186,7 +217,8 @@ certificates and profiles with `-authenticationKeyPath`. Import your distributio
 into a keychain first so Xcode does not mint a new one per run (the
 [CI recipe](https://github.com/Brainwires/denext/tree/main/examples/capacitor-ci) shows how).
 `--export-method` picks another export (`release-testing` for ad hoc, `enterprise`), and
-`--export-options <plist>` uses your own `ExportOptions.plist` verbatim.
+`--export-options <plist>` uses your own `ExportOptions.plist` verbatim. The team id is ten
+uppercase letters and digits (anything else is refused before it reaches the plist).
 
 **Android** release builds are signed with your upload keystore. The passwords reach Gradle as
 `android.injected.signing.*` properties inside `GRADLE_OPTS` (the same properties Android
@@ -228,12 +260,14 @@ export default {
 
 and build one with `denext mobile build android --release --flavor staging`. For that build:
 
-- `appId` (or the base id plus `appIdSuffix`) replaces `appId` in `capacitor.config.*`, every
+- `appId` (or the base id plus `appIdSuffix`, which must make a reverse-DNS id: letters, digits,
+  `_` and `-` in dot-separated parts) replaces `appId` in `capacitor.config.*`, every
   `PRODUCT_BUNDLE_IDENTIFIER` in `project.pbxproj` that is the app's id or starts with it (so
   app extensions follow: `com.example.app.widgets` becomes `com.example.app.staging.widgets`),
   and `applicationId` in `build.gradle`;
 - `appName` replaces `appName`, `CFBundleDisplayName` and Android's `app_name`;
-- `serverUrl` sets `server.url` (the app loads that origin instead of the bundled UI);
+- `serverUrl` sets `server.url` (the app loads that origin instead of the bundled UI; a
+  `--release` build refuses one that is not `https`);
 - `icon`, `splash` and `backgroundColor` run `denext mobile assets` for the flavor;
 - `env` is added to the environment of `denext export`.
 
@@ -345,14 +379,14 @@ denext's pinned gems, so `denext fastlane` warns when the Pluginfile lists plugi
 projects, use the generated `Gemfile`: `bundle install` (commit `Gemfile.lock`), then `bundle
 exec fastlane …` with your own Ruby (3.2 or newer).
 
-| File                                   | What it holds                                                                                                                                                                                                         |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `fastlane/Appfile`                     | `app_identifier` / `package_name` from `capacitor.config` `appId`; the Apple team and the Play key file from the environment                                                                                          |
-| `fastlane/Fastfile`                    | `ios` and `android` lanes: `build`, `beta`, `release`                                                                                                                                                                 |
-| `fastlane/Matchfile`                   | match's store (`MATCH_GIT_URL`, `MATCH_STORAGE_MODE`), type `appstore`, the app id                                                                                                                                    |
-| `fastlane/.gitignore`                  | what a run generates (`report.xml`, `README.md`, `Preview.html`, screenshots) and key files                                                                                                                           |
-| `Gemfile`                              | for `bundle exec` with your own Ruby (plugins): `gem "fastlane", "~> 2.240"` and fastlane's `Pluginfile` (`bundle exec fastlane add_plugin <name>`)                                                                   |
-| `.github/workflows/mobile-release.yml` | `--ci` only, at the repository root: a manual dispatch running `denext fastlane <platform> <lane>` on Ubuntu (Android) and macOS (iOS), the managed fastlane cached (`actions/cache`, keyed on denext's fastlane pin) |
+| File                                   | What it holds                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `fastlane/Appfile`                     | `app_identifier` / `package_name` from `capacitor.config` `appId`; the Apple team and the Play key file from the environment                                                                                                                                                                                                                                       |
+| `fastlane/Fastfile`                    | `ios` and `android` lanes: `build`, `beta`, `release`                                                                                                                                                                                                                                                                                                              |
+| `fastlane/Matchfile`                   | match's store (`MATCH_GIT_URL`, `MATCH_STORAGE_MODE`), type `appstore`, the app id                                                                                                                                                                                                                                                                                 |
+| `fastlane/.gitignore`                  | what a run generates (`report.xml`, `README.md`, `Preview.html`, screenshots) and key files                                                                                                                                                                                                                                                                        |
+| `Gemfile`                              | for `bundle exec` with your own Ruby (plugins): `gem "fastlane", "~> 2.240"` and fastlane's `Pluginfile` (`bundle exec fastlane add_plugin <name>`)                                                                                                                                                                                                                |
+| `.github/workflows/mobile-release.yml` | `--ci` only, at the repository root: a manual dispatch running `denext fastlane <platform> <lane>` on Ubuntu (Android) and macOS (iOS), the managed fastlane cached (`actions/cache`, keyed on denext's fastlane pin); every action pinned to a commit SHA (its tag in a comment), and the decoded upload keystore deleted when the job ends, whatever its outcome |
 
 Every lane runs `denext mobile build <platform> --release --json` (export, the flavor's edits,
 `npx cap sync`, Xcode or Gradle) and reads the artifact record it prints, so the binary always
@@ -369,7 +403,9 @@ set as fastlane's `IPA_OUTPUT_PATH` / `GRADLE_AAB_OUTPUT_PATH`, so plugin action
 
 Every lane takes `flavor:<name>`, `build_number:<n>`, `version_name:<x.y.z>`, `bump:true`,
 `skip_export:true` and `app:<dir>` (the denext app, when it is not the Capacitor project), passed
-to `denext mobile build` as the flags of the same name. Versions stay denext's: the lanes never
+to `denext mobile build` as the flags of the same name. The iOS `build` lane also takes
+`unsigned:true` (`--unsigned`: an unsigned `.ipa`, with no match, certificate or Apple account,
+for a CI check); `beta` and `release` refuse it. Versions stay denext's: the lanes never
 call `increment_build_number` or `agvtool`. `beta` and `release` take the store's latest build
 number plus one (`latest_testflight_build_number`, the Play tracks' version codes) when it is
 higher than the sources', for that build only (`--build-number`), unless `build_number:` or

@@ -191,9 +191,28 @@ Deno.test("maybeReexecToolchain: upstream Deno of the pinned version is not the 
 });
 
 Deno.test("maybeReexecToolchain: an opt-out continues in-process; a toolchain that can't be had refuses", async () => {
-  const silent = deps({ kind: "stock", reason: "DENEXT_DENO=stock" });
-  assertEquals(await maybeReexecToolchain(true, silent.d), false);
-  assertEquals(silent.seen.warned, []);
+  const optedOut = deps({ kind: "stock", reason: "DENEXT_DENO=stock", optedOut: true });
+  assertEquals(await maybeReexecToolchain(true, optedOut.d), false);
+  // Deprecated: one notice naming 5.0 and the fix, and the marker that keeps children quiet.
+  assertEquals(optedOut.seen.warned.length, 1);
+  assertStringIncludes(optedOut.seen.warned[0], "denext 5.0 drops stock Deno support");
+  assertStringIncludes(optedOut.seen.warned[0], "Fix: unset DENEXT_DENO");
+  assertEquals(optedOut.vars.DENEXT_STOCK_DEPRECATION_SHOWN, "1");
+  // A child (the marker inherited) says nothing; neither does the opt-out of the notice.
+  for (
+    const vars of [
+      { DENEXT_STOCK_DEPRECATION_SHOWN: "1" },
+      { DENEXT_NO_DEPRECATION_WARNINGS: "1" },
+    ] as Record<string, string>[]
+  ) {
+    const quiet = deps({ kind: "stock", reason: "DENEXT_DENO=stock", optedOut: true }, { vars });
+    assertEquals(await maybeReexecToolchain(true, quiet.d), false);
+    assertEquals(quiet.seen.warned, []);
+  }
+  // No pin for this denext version: stock without a notice (there is nothing to switch to).
+  const unpinned = deps({ kind: "stock", reason: "not available for this denext version" });
+  assertEquals(await maybeReexecToolchain(true, unpinned.d), false);
+  assertEquals(unpinned.seen.warned, []);
   // Offline on first use (or no build for this host, a tampered download): the resolver's error
   // ends the command — no other Deno runs on its own.
   const offline = deps(TOOLCHAIN, {
@@ -213,6 +232,47 @@ Deno.test("maybeReexecToolchain: an opt-out continues in-process; a toolchain th
     );
     assertEquals(handing.vars.DENO_BIN, undefined);
   }
+});
+
+Deno.test("maybeReexecToolchain: a DENEXT_DENO=<path> that is stock Deno, or a path marker on a stock process, is deprecated", async () => {
+  // The resolver flagged the binary as stock Deno: the notice before it re-runs there.
+  const stockPath = deps({ ...TOOLCHAIN, version: "path", deno: "/opt/deno", stock: true });
+  assert(await maybeReexecToolchain(true, stockPath.d));
+  assertEquals(stockPath.seen.warned.length, 1);
+  assertStringIncludes(stockPath.seen.warned[0], "DENEXT_DENO points at a stock Deno binary");
+  assertStringIncludes(stockPath.seen.warned[0], "denext 5.0 drops stock Deno support");
+  assertEquals(stockPath.vars.DENEXT_STOCK_DEPRECATION_SHOWN, "1");
+  assertEquals(stockPath.seen.spawned.length, 1);
+  // denext's own Deno at the path: nothing.
+  const own = deps({ ...TOOLCHAIN, version: "path", deno: "/opt/deno" });
+  assert(await maybeReexecToolchain(true, own.d));
+  assertEquals(own.seen.warned, []);
+  // The path marker (set by the parent, a unit or an image) on a process that runs stock Deno:
+  // it serves on stock Deno, so it says so.
+  const onStock = deps(TOOLCHAIN, { vars: { DENEXT_TOOLCHAIN_ACTIVE: "path" } });
+  assertEquals(await maybeReexecToolchain(true, onStock.d), false);
+  assertEquals(onStock.seen.warned.length, 1);
+  assertStringIncludes(onStock.seen.warned[0], "DENEXT_DENO points at a stock Deno binary");
+  assertEquals(onStock.seen.resolved, 0);
+  // Still once per process tree, and the opt-out hides it.
+  for (
+    const vars of [
+      { DENEXT_STOCK_DEPRECATION_SHOWN: "1" },
+      { DENEXT_NO_DEPRECATION_WARNINGS: "1" },
+    ] as Record<string, string>[]
+  ) {
+    const quiet = deps(TOOLCHAIN, { vars: { DENEXT_TOOLCHAIN_ACTIVE: "path", ...vars } });
+    assertEquals(await maybeReexecToolchain(true, quiet.d), false);
+    assertEquals(quiet.seen.warned, []);
+  }
+  // On denext's Deno (the identity marker), the path marker is silent.
+  const onDenext = deps(TOOLCHAIN, {
+    vars: { DENEXT_TOOLCHAIN_ACTIVE: "path" },
+    denoVersion: "3.0.0-denext.2",
+    denext: "3.0.0-denext.2",
+  });
+  assertEquals(await maybeReexecToolchain(true, onDenext.d), false);
+  assertEquals(onDenext.seen.warned, []);
 });
 
 Deno.test("maybeReexecToolchain: a project-code verb that can't start the toolchain refuses, never serves on stock", async () => {
@@ -255,9 +315,14 @@ Deno.test("maybeReexecToolchain: under deno run, a verb that runs no project cod
     assertEquals(on.seen.resolved, 0);
   }
   // DENEXT_DENO=stock: the children keep the Deno that started the CLI.
-  const stock = deps({ kind: "stock", reason: "DENEXT_DENO=stock" }, { handOff: true });
+  const stock = deps({ kind: "stock", reason: "DENEXT_DENO=stock", optedOut: true }, {
+    handOff: true,
+  });
   assertEquals(await maybeReexecToolchain(false, stock.d), false);
   assertEquals(stock.vars.DENO_BIN, undefined);
+  // Their children (a task's steps) run project code on stock Deno: the deprecation notice.
+  assertEquals(stock.seen.warned.length, 1);
+  assertStringIncludes(stock.seen.warned[0], "denext 5.0 drops stock Deno support");
 });
 
 Deno.test("handsToolchainToChildren: every non-project verb that may spawn deno, under deno run only", () => {
@@ -647,10 +712,22 @@ Deno.test({
       });
       assertEquals(missing.code, 1);
       assertStringIncludes(missing.stderr, "is not a file");
-      const stock = await cli(["deno", "--version"], dir, { ...env, DENEXT_DENO: "stock" });
+      const stock = await cli(["deno", "--version"], dir, {
+        ...env,
+        DENEXT_DENO: "stock",
+        // Whatever this test process said or was told: the child starts its own tree.
+        DENEXT_STOCK_DEPRECATION_SHOWN: "",
+        DENEXT_NO_DEPRECATION_WARNINGS: "",
+      });
       assertEquals(stock.code, 0, stock.stderr);
       assertStringIncludes(stock.stdout, `deno ${Deno.version.deno}`);
       assertStringIncludes(stock.stderr, "DENEXT_DENO=stock");
+      // Deprecated: said once, though the gate and the passthrough both see the opt-out.
+      assertEquals(
+        stock.stderr.split("denext 5.0 drops stock Deno support").length,
+        2,
+        stock.stderr,
+      );
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

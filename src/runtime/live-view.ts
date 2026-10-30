@@ -51,7 +51,9 @@ export interface LiveViewConfig<Model, Msg, Props> extends MvuProgram<Model, Msg
    * `getSession()` / `auth()` work) when the page renders, when the browser mounts or resumes the
    * view, and again before an event once `live.limits.channelAuthTtlSeconds` has passed. `false`
    * renders nothing on the page and ends the view on the socket (`denied`). Without it, any
-   * viewer holding the page's signed props may mount the view.
+   * viewer holding the page's signed props (until they expire,
+   * `live.limits.viewTokenMaxAgeSeconds`) may mount the view; `denext dev` warns once per view
+   * that has none.
    */
   authorize?: (props: Props, ctx: LiveViewContext) => boolean | Promise<boolean>;
   /**
@@ -104,8 +106,20 @@ export function createHandlerTable<Msg>(): { send: Send<Msg>; table: MsgSource<M
   return { send, table };
 }
 
-/** The MAC domain of a live view's props token. */
-const TOKEN_DOMAIN = "denext.liveview.v1";
+/** The MAC domain of a live view's props token (v2: the token carries its issue time). */
+const TOKEN_DOMAIN = "denext.liveview.v2";
+
+/** The environment variable that sets the live-view secret for every instance. */
+export const LIVE_VIEW_SECRET_ENV = "DENEXT_LIVE_VIEW_SECRET";
+
+/** The shortest secret the environment may set (as for `DENEXT_ACTION_ID_SECRET`). */
+const MIN_SECRET_LENGTH = 16;
+
+/** How long a props token is accepted by default (`live.limits.viewTokenMaxAgeSeconds`). */
+export const DEFAULT_VIEW_TOKEN_MAX_AGE_SECONDS = 86_400;
+
+/** How far ahead of this server's clock a token's issue time may be (another instance's skew). */
+const TOKEN_CLOCK_SKEW_SECONDS = 300;
 
 /**
  * The key live-view tokens are signed with, and the shared view store's snapshots are sealed
@@ -114,13 +128,22 @@ const TOKEN_DOMAIN = "denext.liveview.v1";
  * route for a fresh token, and another instance cannot open this one's snapshots).
  *
  * @returns The secret.
+ * @throws {Error} When `DENEXT_LIVE_VIEW_SECRET` is set to fewer than 16 characters.
  */
 export function liveViewSecret(): string {
   let configured: string | undefined;
   try {
-    configured = (globalThis as { Deno?: typeof Deno }).Deno?.env.get("DENEXT_LIVE_VIEW_SECRET");
+    configured = (globalThis as { Deno?: typeof Deno }).Deno?.env.get(LIVE_VIEW_SECRET_ENV);
   } catch { /* no env permission: the per-process key */ }
-  if (configured) return configured;
+  if (configured) {
+    if (configured.length < MIN_SECRET_LENGTH) {
+      throw new Error(
+        `denext: ${LIVE_VIEW_SECRET_ENV} must be at least ${MIN_SECRET_LENGTH} characters; ` +
+          "generate one with `openssl rand -base64 32`",
+      );
+    }
+    return configured;
+  }
   // One key per process, shared by every copy of this module (see process-shared.ts).
   return processShared("liveViewSecret", () => {
     const bytes = crypto.getRandomValues(new Uint8Array(32));
@@ -145,8 +168,8 @@ function hmacKey(secret: string): Promise<CryptoKey> {
   return key;
 }
 
-function tokenInput(view: string, props: string): Uint8Array<ArrayBuffer> {
-  return new TextEncoder().encode(`${TOKEN_DOMAIN}\0${view}\0${props}`);
+function tokenInput(view: string, props: string, iat: string): Uint8Array<ArrayBuffer> {
+  return new TextEncoder().encode(`${TOKEN_DOMAIN}\0${view}\0${props}\0${iat}`);
 }
 
 function toBase64Url(bytes: Uint8Array): string {
@@ -165,35 +188,71 @@ function fromBase64Url(text: string): Uint8Array<ArrayBuffer> | null {
 }
 
 /**
- * Sign a view's props (the JSON text the page carries).
+ * Sign a view's props (the JSON text the page carries). The token is
+ * `<issued-at, base-36 seconds>.<HMAC>`: the MAC covers the view, the props and the issue time.
  *
  * @param view The view id.
  * @param props The props as JSON text.
+ * @param now The signing time in ms (tests).
  * @returns The token.
  */
-export async function signLiveViewToken(view: string, props: string): Promise<string> {
+export async function signLiveViewToken(
+  view: string,
+  props: string,
+  now: number = Date.now(),
+): Promise<string> {
+  const iat = Math.floor(now / 1000).toString(36);
   const key = await hmacKey(liveViewSecret());
-  const sig = await crypto.subtle.sign("HMAC", key, tokenInput(view, props));
-  return toBase64Url(new Uint8Array(sig));
+  const sig = await crypto.subtle.sign("HMAC", key, tokenInput(view, props, iat));
+  return `${iat}.${toBase64Url(new Uint8Array(sig))}`;
 }
 
 /**
- * Check a token against a view's props (constant time).
+ * Check a token against a view's props (constant time), and that it is younger than `maxAgeSeconds`.
  *
  * @param view The view id.
  * @param props The props as JSON text.
  * @param token The token the client sent.
- * @returns Whether the server signed exactly these props for this view.
+ * @param maxAgeSeconds How long after signing it is accepted (`live.limits.viewTokenMaxAgeSeconds`).
+ * @returns Whether the server signed exactly these props for this view, recently enough.
  */
 export async function verifyLiveViewToken(
   view: string,
   props: string,
   token: string,
+  maxAgeSeconds: number = DEFAULT_VIEW_TOKEN_MAX_AGE_SECONDS,
 ): Promise<boolean> {
-  const sig = typeof token === "string" && token.length <= 128 ? fromBase64Url(token) : null;
+  if (typeof token !== "string" || token.length > 128) return false;
+  const dot = token.indexOf(".");
+  const iat = token.slice(0, dot);
+  if (dot < 1 || !/^[0-9a-z]{1,10}$/.test(iat)) return false;
+  const sig = fromBase64Url(token.slice(dot + 1));
   if (!sig) return false;
+  const age = Math.floor(Date.now() / 1000) - parseInt(iat, 36);
+  if (age > maxAgeSeconds || age < -TOKEN_CLOCK_SKEW_SECONDS) return false;
   const key = await hmacKey(liveViewSecret());
-  return crypto.subtle.verify("HMAC", key, sig, tokenInput(view, props));
+  return crypto.subtle.verify("HMAC", key, sig, tokenInput(view, props, iat));
+}
+
+/** Views already warned about having no `authorize` (once each per process). */
+const warnedNoAuthorize = /* @__PURE__ */ processShared(
+  "liveViewNoAuthorize",
+  () => new Set<string>(),
+);
+
+/**
+ * Under `denext dev`, warn once that view `id` has no `authorize`: whoever holds the page's signed
+ * props may mount it. A warning, not an error: `authorize` stays optional for public views.
+ */
+function warnNoAuthorize(id: string): void {
+  if ((globalThis as { __denextDev?: boolean }).__denextDev !== true) return;
+  if (warnedNoAuthorize.has(id)) return;
+  warnedNoAuthorize.add(id);
+  console.warn(
+    `denext live view ${id}: no \`authorize\` — any viewer holding the page's signed props may ` +
+      "mount it until they expire (`live.limits.viewTokenMaxAgeSeconds`). Add " +
+      "`authorize: (props) => …` (it runs in the viewer's session) unless the view is public.",
+  );
 }
 
 /** The props a component receives besides `init`'s (stripped before `init` sees them). */
@@ -231,7 +290,8 @@ export function defineLiveView<Model, Msg, Props = Record<string, never>>(
   views.set(config.id, config as unknown as LiveViewDef);
   const component = async (raw: Props): Promise<VNode | null> => {
     const props = initProps(raw as Record<string, unknown>) as Props;
-    if (config.authorize && !(await config.authorize(props, { connection: null }))) return null;
+    if (!config.authorize) warnNoAuthorize(config.id);
+    else if (!(await config.authorize(props, { connection: null }))) return null;
     const [model] = config.init(props);
     const { send } = createHandlerTable<Msg>();
     const prepared = prepareWire(props);

@@ -519,7 +519,10 @@ Deno.test("host: ports, secrets and exposed values; the bridge capability answer
       { name: "worker", run: { exec: "true" } },
     ],
     launcher: () => fake.launch,
+    // A fixed port, never really bound (the fake launcher listens on nothing): another process
+    // may hold 45678 (it is in Linux's ephemeral range), so the probe answers for the fake.
     pickPort: () => 45678,
+    portTaken: () => false,
     clock,
     emit: (cap, event, data) => events.push([cap, event, (data as SidecarStatus).state]),
   });

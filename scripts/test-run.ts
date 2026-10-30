@@ -606,11 +606,36 @@ async function vitestPass(args: string[] | null, toolchain: string | null | fals
   return toolchain !== false && await runVitestPass(args, toolchain);
 }
 
+/**
+ * Whether the run's temp root is still there at the end. This run removes nothing but its own
+ * root; a root that vanished was removed by something else on the machine (another tool's
+ * temp-dir cleanup glob, Windows Storage Sense's temporary-files cleanup on low disk space), which
+ * fails every later test with NotFound, so the run says so instead of leaving a wall of
+ * unexplained failures.
+ *
+ * @param root The run's temp root.
+ * @returns True when it still exists.
+ */
+export async function tempRootSurvived(root: string): Promise<boolean> {
+  try {
+    await Deno.stat(root);
+    return true;
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+    console.error(
+      `test-run: the run's temp root ${root} was removed by another process while the tests ` +
+        "ran (a cleanup of the machine's temp dir?); the NotFound failures above follow from it.",
+    );
+    return false;
+  }
+}
+
 if (import.meta.main) {
   runTempRoot = await Deno.makeTempDir({ prefix: "dnx-tr-" });
   let ok = false;
   try {
     ok = await runPasses();
+    ok = await tempRootSurvived(runTempRoot) && ok;
   } finally {
     await removeTempRoot(runTempRoot);
   }

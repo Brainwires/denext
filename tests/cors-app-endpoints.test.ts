@@ -90,6 +90,24 @@ Deno.test("cors + Server Action: a cookie-carrying (or ambient-auth) cross-origi
   assertEquals(own.status, 200);
 });
 
+Deno.test("cors + Server Action: the wildcard cors policy lets no cross-origin call skip the same-origin gate", async () => {
+  const app = batchApp({ cors: { origins: ["*"] } });
+  // A cookieless fetch from any page, marker and all, is refused: `*` names no origin.
+  const marked = await app(action({ origin: EVIL }));
+  assertEquals(marked.status, 403);
+  // Same-origin is unaffected.
+  assertEquals((await app(action({ origin: "http://localhost" }))).status, 200);
+});
+
+Deno.test("cors + Server Action: the cross-origin path needs the x-denext-action marker", async () => {
+  const app = batchApp({ cors: CORS });
+  const req = action({ origin: WEB });
+  req.headers.delete("x-denext-action"); // a plain cross-site <form> post can't set it
+  assertEquals((await app(req)).status, 403);
+  // An exactly listed origin with the marker still runs.
+  assertEquals((await app(action({ origin: WEB }))).status, 200);
+});
+
 // ---- the API batch ------------------------------------------------------------------------------
 
 Deno.test("cors + API batch: cookieless from an allowed origin runs; with a cookie it is refused", async () => {
@@ -100,6 +118,12 @@ Deno.test("cors + API batch: cookieless from an allowed origin runs; with a cook
   assertEquals((await app(batch({ origin: WEB, cookie: "session=abc" }))).status, 403);
   assertEquals((await app(batch({ origin: EVIL }))).status, 403);
   assertEquals((await batchApp()(batch({ origin: WEB }))).status, 403);
+});
+
+Deno.test("cors + API batch: the wildcard cors policy lets no cross-origin batch in", async () => {
+  const app = batchApp({ cors: { origins: ["*"] } });
+  assertEquals((await app(batch({ origin: EVIL }))).status, 403);
+  assertEquals((await app(batch({ origin: "http://localhost" }))).status, 200);
 });
 
 // ---- preflights ---------------------------------------------------------------------------------
@@ -268,4 +292,5 @@ Deno.test("corsCredentialless: exact origin, no cookie, no ambient Authorization
   assert(!corsCredentialless(req({ origin: `${WEB}.evil` }), cors));
   assert(!corsCredentialless(req({}), cors));
   assert(!corsCredentialless(req({ origin: WEB }), null));
+  assert(!corsCredentialless(req({ origin: WEB }), resolveCors({ origins: ["*"] })));
 });

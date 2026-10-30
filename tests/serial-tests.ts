@@ -66,10 +66,15 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/jail-scripts.test.ts",
   "tests/job-discovery.test.ts",
   "tests/legacy-migrate-job.test.ts",
+  "tests/live-views.test.ts",
+  // Sets and restores DENEXT_CHILD_PROBE around one case (the probed loader `deno info`).
+  "tests/loader-deno-info.test.ts",
   "tests/mcp-dev-logs-spa.test.ts",
   "tests/mcp-devtools.test.ts",
+  "tests/migrate-check.test.ts",
   "tests/migrate-effect-fixture.test.ts",
   "tests/migrate-spa.test.ts",
+  "tests/mobile-build-hardening.test.ts",
   "tests/mobile-build.test.ts",
   "tests/mobile-fastlane.test.ts",
   "tests/mobile-sentry.test.ts",
@@ -81,6 +86,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/next-compat-build.test.ts",
   // Deno.chdir into a fixture: next/font/local resolves its files against the cwd.
   "tests/next-font-local-fallback.test.ts",
+  "tests/ota-app-binding.test.ts",
   "tests/ota-manifest.test.ts",
   // Both set and restore DENEXT_BOOT_DDL around each case (the boot-DDL opt-out every Postgres
   // store reads when it starts): a parallel test starting a store would see the other value.
@@ -96,6 +102,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/server-misc-coverage.test.ts",
   "tests/sourcemap-attribution.test.ts",
   "tests/spa-export.test.ts",
+  "tests/stock-deprecation.test.ts",
   "tests/tailwind.test.ts",
   "tests/toolchain-audit.test.ts",
   "tests/toolchain-download-timeouts.test.ts",
@@ -144,6 +151,10 @@ export const SERIAL_SOURCES: Readonly<
 /** src modules that change process-wide state without making a test that reaches them serial. */
 export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {
   "src/build/fumadocs-mdx-worker.ts": "the entry point of its own `deno run` child process",
+  "src/build/stock-deprecation.ts":
+    "warnStockDeprecation sets DENEXT_STOCK_DEPRECATION_SHOWN=1 (set-once, one constant) only on " +
+    "a stock-Deno path run with the process's own env; tests pass env / setEnv seams, and the " +
+    "real process tree runs in `deno eval` children",
   "src/build/desktop.ts":
     "runDesktop clears DENO_SERVE_ADDRESS (the desktop runtime's page transport) only for an app " +
     "that declares sidecars, after its own server took it; no test sets or reads that variable",

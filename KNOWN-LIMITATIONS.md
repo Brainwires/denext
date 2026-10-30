@@ -42,6 +42,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   segment). npm packages are not scanned, so a package that renders either of the first two by
   itself, with props the app never names, or builds a route pattern itself, needs the app to name
   it once. A next-compat (npm React) build keeps all three.
+- **A Server Action's `notFound()` / `forbidden()` / `unauthorized()` reaching the client tree**
+  renders the page level's nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx`, which
+  the server renders for the current URL. Next picks the file nearest the calling component
+  (for a client component in a layout, the parent segment's). On a route that renders as one
+  client bundle (a page or layout that calls a hook itself, the compatibility path) the bundle
+  re-renders the page, so the page stays as it was; an async `startTransition` callback that
+  rejects with one leaves it unhandled, as any rejection.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`) and Next's `taint` config
   (React's `experimental_taint*` are enforced).
 
@@ -103,11 +110,12 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   keeps TypeScript 6 whatever the setting says, and a `deno.unstable` list in
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
-- **Runtime 3.0.0-rc.5's type-check leaves `.deno/npm-compat` in the project root.** It holds
+- **The runtime's type-check leaves `.deno/npm-compat` in the project root** (3.0.0-rc.5 through
+  the pinned 3.0.0-denext.2). It holds
   an npm-shaped copy of the `@jsr/*` packages, their `_test.ts` files included, and a later
   `deno test` with default discovery would run those. A `denext create` project's `deno.json`
   excludes `.deno/` (top-level `exclude`), as denext's own does; an older project adds
-  `"exclude": [".deno/"]` itself. A runtime issue, to be fixed in rc.6 or later by keeping the
+  `"exclude": [".deno/"]` itself. A runtime issue, to be fixed in a later runtime by keeping the
   copy out of the project.
 - **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
   `denext start` begins its graceful shutdown on those events too, but Windows ends a console
@@ -499,21 +507,39 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   `MessageHandler` by its type; if a future Capacitor changes that, the guard logs it and the
   bridge keeps Capacitor's own origin rules. Plugin responses then go back through
   `evaluateJavascript` (Capacitor's fallback path).
-- **`openAuthSession` needs PKCE** (S256) on every platform unless `pkce: "not-applicable"` with a
-  `reason`; Deno Desktop's loopback flow does not check for it yet.
 - **`secureStore`'s `requireBiometric` is OS-enforced only in a current binary** (`denext mobile
   add biometrics` from a denext newer than 4.8.0, in a new binary): in an older binary, and in a Deno Desktop window (the desktop
   keychain has no biometric access control yet), the gate is denext's code in the page and page
   script can read the value. Android needs 9 or later (8 and earlier refuse it); the passcode as
   a fallback (`allowDeviceCredential`) needs Android 11. A gated value is dropped when the enrolled
   biometrics change, and it is never backed up.
+- **`secureStore`'s `accessibility` is an iOS Keychain class.** On Android the secure-storage
+  plugin's Keystore key never leaves the device and needs no unlock, so every value behaves as
+  `"afterFirstUnlockThisDeviceOnly"` whatever is passed (no `whenUnlocked` lock requirement there);
+  on the web and in a Deno Desktop window the option has no effect.
+- **The OTA check on `/_capacitor_file_` requests (iOS) needs Capacitor's own asset handler:** the
+  bridge turns that handler into `DenextOtaFileGuard`. When it cannot (an app that installs its own
+  handler subclass), the app serves no downloaded UI: it runs the bundled UI, `onOtaRejected` fires
+  with `code: "guard_unavailable"`, and updates are refused with that code.
+  `plugins.DenextBridge.otaFileGuard: false` in the Capacitor config serves downloaded UIs anyway,
+  with `/_capacitor_file_` reads of their files unchecked: a file changed on the device can then
+  reach the page through `Capacitor.convertFileSrc`, and a `/_capacitor_file_` path with a NUL
+  crashes the app in Capacitor's own handler. Set it only for a handler that does its own checks.
+- **A signed OTA app takes only its platform's export:** with a public key embedded, a manifest
+  without the `_denext/platform.txt` stamp (an unstamped web export) is refused
+  (`platform_mismatch`). Stamp it with `denext export --platform ios|android` or
+  `denext ota manifest <dir> --platform ios|android` before signing.
+- **The OTA serve check trusts a file's stat between hashes:** a verified file is hashed again only
+  when its size, modification or change time, or inode changes. On Android the change time has
+  whole-second resolution, so a rewrite within the second of the first check that also restores
+  the modification time is served until the next launch.
 - **`denext fastlane` (the managed fastlane)** runs on macOS and Linux only (arm64, x64); Windows
   is not supported. Its first install needs a C compiler, because several of fastlane's gems
   build C extensions. It runs denext's pinned gems, so plugins in `fastlane/Pluginfile` need the
   project's Gemfile and `bundle exec`. The Ruby comes from denext's own mirror (the `toolchain-assets`
   GitHub release), with Homebrew's `ghcr.io` registry as the fallback, both pinned by SHA-256. It has been run on
-  macOS x64, Linux x64 (Ubuntu) and Linux arm64 (Fedora, SELinux enforcing); on macOS arm64 the
-  Ruby is pinned and its hash checked, but the install has not been run there yet.
+  macOS x64, Linux x64 (Ubuntu) and Linux arm64 (Fedora, SELinux enforcing); on macOS arm64,
+  release CI installs it and runs the iOS `build` lane (unsigned) on a GitHub-hosted macOS 15 runner.
 - **Won't:** native UIs for watches, cars and App Clips; hosted services (an Expo Go-style
   client, push relay, build/submit, OTA CDN); install attribution; MDM configuration wrappers;
   code obfuscation (keep secrets on the server).
@@ -568,12 +594,15 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   and react-native-web's second sheet when it renders into a shadow root; those need
   `style-src 'unsafe-inline'`. react-native-web's own sheet and React Native mode's rules need
   nothing (the CSP is hash-based, so there is no nonce to give such an element).
-- **Renderers built on `react-reconciler` see no denext context** (React Native Skia's
-  `<Canvas>`, react-three-fiber, react-konva): a component inside their tree reads a context's default
-  value (as in React, contexts don't cross renderers), and a provider placed inside the tree does
-  not reach it either (in React it would); pass the values as props. A class component inside such
-  a tree is not supported. React Native Skia with Reanimated, and in the Capacitor shell's
-  WebViews, is not yet verified.
+- **A class's `static contextType` inside a `react-reconciler` renderer's tree reads nothing**
+  (React Native Skia's `<Canvas>`, react-three-fiber, react-konva): the renderer takes only React's
+  context object there, and a denext context is a function, so `this.context` stays empty. Read
+  the context with `<Context.Consumer>` or a function component's `useContext` instead (both work
+  inside the tree, as do class components otherwise). A provider inside such a tree reaches it
+  only for a context made with `react`'s `createContext` (what the renderers and migrated code
+  use); one made with `denext`'s own is read there with its default unless it is provided above a
+  bridging root (react-three-fiber's `<Canvas>`, react-konva's `<Stage>`). React Native Skia with
+  Reanimated, and in the Capacitor shell's WebViews, is not yet verified.
 - **Unistyles' Babel plugin is ported in part:** the component swap and `useVariants` run, the
   per-style dependency pass does not (the theme is CSS variables; a style that depends on the
   breakpoint or another runtime value updates when its component renders again). Tamagui's
@@ -632,6 +661,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **The Linux clipboard** is readable by an app in the background while the session is unlocked,
   as on macOS and Windows; a locked session refuses reads only where the locker sets logind's
   `LockedHint` ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
+- **UI overlay files are served whole.** A file of a UI update (`denext/desktop/updater`) is read
+  into memory and checked before it is sent, never streamed from its folder, so a large media file
+  in an overlay costs its size per request (the bundled export still streams). Where the OS reports
+  no inode or change time the file is hashed on every read. `denext desktop package` reads the
+  floor sequence from `out/_denext/ota.json`, the default export folder.
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move

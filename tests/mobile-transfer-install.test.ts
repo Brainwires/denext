@@ -53,6 +53,7 @@ async function inProject(fn: (dir: string) => Promise<void>, gradle = true): Pro
     "capacitor.config.ts": "export default { appId: 'com.example.app', webDir: 'out' };\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
     "out/index.html": "<!doctype html>\n",
     [PBXPROJ]: PBXPROJ_FIXTURE,
     [APP_DELEGATE]: STOCK_APP_DELEGATE,

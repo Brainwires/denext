@@ -34,6 +34,7 @@ import {
   removeTempRoot,
   stockPassDeno,
   tempRootEnv,
+  tempRootSurvived,
   testPasses,
   TOOL_CACHE_DIRS,
   vitestSkipAllowed,
@@ -41,7 +42,7 @@ import {
   WATCHDOG_PRELOAD,
   withWatchdog,
 } from "../scripts/test-run.ts";
-import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
 import { boundedOutput } from "./helpers/bounded-command.ts";
 
 Deno.test("serial tests: each file that changes process-wide state is listed, and only those", async () => {
@@ -368,6 +369,22 @@ Deno.test("test-run: removeTempRoot removes a full root and tolerates a missing 
   await removeTempRoot(root); // already gone: no throw
 });
 
+Deno.test("test-run: a temp root something else removed mid-run is reported, not left unexplained", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext_tr_root_" });
+  assertEquals(await tempRootSurvived(root), true);
+  await Deno.remove(root);
+  const orig = console.error;
+  const lines: string[] = [];
+  console.error = (...a: unknown[]) => lines.push(a.join(" "));
+  try {
+    assertEquals(await tempRootSurvived(root), false);
+  } finally {
+    console.error = orig;
+  }
+  assertEquals(lines.length, 1);
+  assert(lines[0].includes(`temp root ${root} was removed by another process`), lines[0]);
+});
+
 Deno.test("test-run: the temp dirs a test leaves behind go with the run's temp root", async () => {
   // The machine's temp dir, as the run sees it: nothing may be left in it afterwards.
   const machineTmp = await Deno.makeTempDir({ prefix: "denext_tr_machine_" });
@@ -380,6 +397,10 @@ Deno.test("test-run: the temp dirs a test leaves behind go with the run's temp r
         `  await Deno.writeTextFile(d + "/f", "x");\n` +
         `});\n`,
     );
+    // Another run's root in the same temp dir (two runs on one machine): this run's cleanup must
+    // leave it alone, removing only the root it made.
+    const sibling = await Deno.makeTempDir({ dir: machineTmp, prefix: "dnx-tr-" });
+    await Deno.writeTextFile(join(sibling, "in-use"), "x");
     const script = fromFileUrl(new URL("../scripts/test-run.ts", import.meta.url));
     const { success, stderr } = await new Deno.Command(Deno.execPath(), {
       args: ["run", "-A", script, "--no-check", probe],
@@ -391,7 +412,8 @@ Deno.test("test-run: the temp dirs a test leaves behind go with the run's temp r
     const left = [...Deno.readDirSync(machineTmp)].map((e) => e.name).filter((n) =>
       n !== "leak_probe_test.ts"
     );
-    assertEquals(left, [], "the run left these in the temp dir");
+    assertEquals(left, [basename(sibling)], "the run left these in the temp dir");
+    assertEquals(await Deno.readTextFile(join(sibling, "in-use")), "x", "the other run's root");
   } finally {
     await Deno.remove(machineTmp, { recursive: true });
   }

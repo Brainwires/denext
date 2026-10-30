@@ -57,16 +57,30 @@ Deno.test({
     const paths = await resolveProject(dir);
     paths.config = { ...paths.config, plugins: [plugin] };
     const server = startSpaDevServer({ paths, port: 0, signal: ac.signal, onListen() {} });
-    assert(await waitFor(() => runs.length >= 1, 10_000), "the prepare step ran at startup");
-    assertEquals(modes, ["dev"]);
-    assertEquals(
-      await Deno.readTextFile(join(paths.outDir, "generated.ts")),
-      "export const n = 1;",
+    // The step's output, once it has written it (it is seen to run before its writes land).
+    const generated = () => {
+      try {
+        return Deno.readTextFileSync(join(paths.outDir, "generated.ts"));
+      } catch {
+        return null;
+      }
+    };
+    assert(
+      await waitFor(() => generated() === "export const n = 1;", 10_000),
+      `the prepare step ran at startup (its output: ${generated()})`,
     );
-    // An edit under the step's watch glob regenerates its output.
-    await new Promise((r) => setTimeout(r, 200)); // let the watcher start
-    await Deno.writeTextFile(join(dir, "content", "post.md"), "# hi\n");
-    assert(await waitFor(() => runs.length >= 2, 10_000), "the step re-ran on a watched edit");
+    assertEquals(runs.length, 1);
+    assertEquals(modes, ["dev"]);
+    // An edit under the step's watch glob regenerates its output. The watcher starts once the
+    // startup step has finished and released the build lock, a moment after it was seen to run:
+    // edit until a re-run shows one was seen (a fixed pause before one edit lost that race
+    // whenever the step's I/O on a loaded machine took longer than the pause).
+    let rerun = false;
+    for (let i = 0; i < 40 && !rerun; i++) {
+      await Deno.writeTextFile(join(dir, "content", "post.md"), `# hi ${i}\n`);
+      rerun = await waitFor(() => runs.length >= 2, 500);
+    }
+    assert(rerun, "the step re-ran on a watched edit");
     ac.abort();
     await server.finished;
   } finally {

@@ -22,6 +22,7 @@ import { WAIVERS } from "../scripts/parity/waivers.ts";
 import type { Baseline } from "../scripts/parity/types.ts";
 import { fromFileUrl } from "@std/path";
 import { watchTests } from "./helpers/watchdog.ts";
+import { DenoChildStallError } from "../scripts/deno-doc.ts";
 
 // The surface extraction runs `deno doc` children from this process, one per catalog module,
 // serially: a stall (CI windows-tests, runtime 3.0.0-rc.5) fails it at the deadline, naming the
@@ -88,7 +89,7 @@ Deno.test("parity: denext surface matches React/ReactDOM/Next", async (t) => {
   }
 });
 
-Deno.test("parity: a deno doc past its deadline is killed and named, not awaited forever", async () => {
+Deno.test("parity: a deno doc past its deadline is killed, retried once and named, not awaited forever", async () => {
   const file = `${ROOT}/src/compat/react-version.ts`;
   // A child that can't finish in time: it beats a heartbeat file until killed. A real `deno doc`
   // with a 1 ms deadline raced it, and lost whenever the thread was held between the spawn and the
@@ -98,8 +99,14 @@ Deno.test("parity: a deno doc past its deadline is killed and named, not awaited
     const stub = `let n = 0; setInterval(() => Deno.writeTextFileSync(${
       JSON.stringify(beat)
     }, String(++n)), 25);`;
-    const err = await assertRejects(() => docFor(file, 1_500, ["eval", stub]), Error);
-    assert(/^deno doc \(pid \d+\) still running after 1500 ms: /.test(err.message), err.message);
+    const err = await assertRejects(
+      () => docFor(file, 1_500, ["eval", stub]),
+      DenoChildStallError,
+    );
+    assert(
+      / stalled: still running after 1\.5 s on each of 2 attempts/.test(err.message),
+      err.message,
+    );
     // Killed, not left running: the heartbeat stops.
     await new Promise((r) => setTimeout(r, 500));
     const before = await Deno.readTextFile(beat);

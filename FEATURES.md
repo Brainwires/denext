@@ -767,7 +767,9 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   generated from `app/`, and the shell gets Expo web's root style. Unistyles 3
   works with no setup, Metro's `require.context` (literal arguments) is
   generated at build, and `react-reconciler` renderers (React Native Skia,
-  react-three-fiber, react-konva) load on denext's `react`. —
+  react-three-fiber, react-konva) load on denext's `react`, with contexts (bridged into a
+  react-three-fiber `<Canvas>` / react-konva `<Stage>`) and class components inside their
+  trees. —
   `src/build/react-native.ts`, `src/build/react-native-unistyles.ts`,
   `src/build/require-context.ts`.
 - **`denext/expo/*`** — 59 drop-in shims for `expo`, `expo-*` and `@expo/ui`

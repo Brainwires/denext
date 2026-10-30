@@ -355,8 +355,9 @@ export const COMMUNITY_ALIASES: Readonly<Record<string, CommunityAlias>> = {
       "in the shell, IndexedDB on the web). BIOMETRY_* / USER_PRESENCE / DEVICE_PASSCODE access " +
       "controls put reads behind authenticateBiometric (the passcode allowed for the " +
       "*_OR_DEVICE_PASSCODE variants); a refusal resolves false. The gate is enforced in denext " +
-      "code, not by the Keychain item. accessible, securityLevel, storage, accessGroup and " +
-      "cloudSync are accepted and ignored; results report STORAGE_TYPE.AES_GCM_NO_AUTH; " +
+      "code, not by the Keychain item. accessible picks the secureStore " +
+      "accessibility class (ALWAYS, deprecated by Apple, takes afterFirstUnlock); securityLevel, " +
+      "storage, accessGroup and cloudSync are accepted and ignored; results report STORAGE_TYPE.AES_GCM_NO_AUTH; " +
       "getSecurityLevel returns null; the shared web credential calls reject.",
   },
 

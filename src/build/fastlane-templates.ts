@@ -166,7 +166,8 @@ const FASTFILE =
 #   app:<dir>               the denext app, when it is not the Capacitor project ($DENEXT_APP_DIR)
 #   ios:      match:false (skip match), export_options:<plist>, changelog:<text>, wait:true
 #             (wait for TestFlight processing), metadata:true / screenshots:true /
-#             submit:true / automatic_release:true (release)
+#             submit:true / automatic_release:true (release), unsigned:true (build only: an
+#             unsigned .ipa, no certificate or Apple account needed)
 #   android:  track:<name>, draft:true, rollout:<0..1>, apk:true, metadata:true (release)
 #
 # The denext CLI: $DENEXT_CLI (e.g. "deno run -A jsr:@denext/denext/cli"), else \`denext\` on PATH.
@@ -226,6 +227,7 @@ def denext_build_args(platform, options, dry_run: false)
   args << "--bump" if truthy(options[:bump]) && !dry_run
   args << "--skip-export" if truthy(options[:skip_export])
   args << "--apk" if platform.to_s == "android" && truthy(options[:apk])
+  args << "--unsigned" if platform.to_s == "ios" && truthy(options[:unsigned])
   if platform.to_s == "ios" && options[:export_options]
     args += ["--export-options", File.expand_path(options[:export_options].to_s, denext_root)]
   end
@@ -315,8 +317,10 @@ def denext_match(app_id, options)
 end
 
 def denext_ios_build(options, store: false)
-  setup_ci if env_value("CI")
-  denext_match(denext_plan(:ios, options)["appId"], options)
+  unsigned = truthy(options[:unsigned])
+  UI.user_error!("unsigned:true builds only (the stores take a signed .ipa)") if unsigned && store
+  setup_ci if env_value("CI") && !unsigned
+  denext_match(denext_plan(:ios, options)["appId"], options) unless unsigned
   next_build = lambda do |plan|
     unless asc_api_key || env_value("FASTLANE_USER")
       UI.important("No App Store Connect API key: keeping the sources' build number")
@@ -377,7 +381,7 @@ def play_upload(artifact, options, track)
 end
 
 platform :ios do
-  desc "Signed App Store .ipa with \`denext mobile build ios --release\` (match first when configured)"
+  desc "Signed App Store .ipa with \`denext mobile build ios --release\` (match first when configured; unsigned:true for an unsigned one)"
   lane :build do |options|
     denext_ios_build(options)
   end
@@ -454,15 +458,30 @@ export interface WorkflowOptions {
   readonly cli: string;
 }
 
+/**
+ * The actions the workflow uses, each pinned to a full commit SHA with its release tag in a
+ * comment (a tag can be moved to other code; a SHA cannot), as denext's own workflows pin them.
+ * https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions#using-third-party-actions
+ */
+export const WORKFLOW_ACTIONS = {
+  checkout: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0",
+  setupDeno: "denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5",
+  setupNode: "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0",
+  setupJava: "actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1",
+  cache: "actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0",
+  pnpm: "pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0",
+  bun: "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0",
+} as const;
+
 /** The setup step (if any) and the install command for a package manager. */
 function installSteps(install: WorkflowInstall, locked: boolean): string {
   const step = (name: string, run: string) => `      - name: ${name}\n        run: ${run}\n`;
   switch (install) {
     case "pnpm":
-      return "      - uses: pnpm/action-setup@v4\n" +
+      return `      - uses: ${WORKFLOW_ACTIONS.pnpm}\n` +
         step("Install the Capacitor packages", "pnpm install --frozen-lockfile");
     case "bun":
-      return "      - uses: oven-sh/setup-bun@v2\n" +
+      return `      - uses: ${WORKFLOW_ACTIONS.bun}\n` +
         step("Install the Capacitor packages", "bun install --frozen-lockfile");
     case "yarn":
       return step("Install the Capacitor packages", "yarn install --frozen-lockfile");
@@ -495,7 +514,7 @@ function yamlPath(path: string): string {
  */
 function fastlaneCacheStep(denoDir: string): string {
   return "      # denext's managed fastlane (Ruby + gems), keyed on the pin it was written for.\n" +
-    "      - uses: actions/cache@v4\n" +
+    `      - uses: ${WORKFLOW_ACTIONS.cache}\n` +
     "        with:\n" +
     `          path: ${denoDir}/denext-deno/fastlane\n` +
     "          key: denext-fastlane-${{ runner.os }}-${{ runner.arch }}-" +
@@ -511,15 +530,15 @@ function fastlaneCacheStep(denoDir: string): string {
 export function workflowTemplate(opts: WorkflowOptions): string {
   const wd = yamlPath(opts.workingDirectory);
   const setup = (java: boolean) =>
-    "      - uses: actions/checkout@v5\n" +
-    "      - uses: denoland/setup-deno@v2\n" +
+    `      - uses: ${WORKFLOW_ACTIONS.checkout}\n` +
+    `      - uses: ${WORKFLOW_ACTIONS.setupDeno}\n` +
     "        with:\n" +
     '          deno-version: "v2.x"\n' +
-    "      - uses: actions/setup-node@v4\n" +
+    `      - uses: ${WORKFLOW_ACTIONS.setupNode}\n` +
     "        with:\n" +
     '          node-version: "22"\n' +
     (java
-      ? "      - uses: actions/setup-java@v4\n" +
+      ? `      - uses: ${WORKFLOW_ACTIONS.setupJava}\n` +
         "        with:\n" +
         "          distribution: temurin\n" +
         '          java-version: "21"\n'
@@ -584,7 +603,7 @@ jobs:
         working-directory: ${wd}
     steps:
 ${setup(true)}      - name: Upload keystore
-        run: echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks"
+        run: (umask 077 && echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/upload.jks")
         env:
           ANDROID_KEYSTORE_BASE64: \${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       - name: fastlane android
@@ -595,6 +614,10 @@ ${setup(true)}      - name: Upload keystore
           DENEXT_ANDROID_KEY_ALIAS: \${{ secrets.ANDROID_KEY_ALIAS }}
           DENEXT_ANDROID_KEYSTORE_PASSWORD: \${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           DENEXT_ANDROID_KEY_PASSWORD: \${{ secrets.ANDROID_KEY_PASSWORD }}
+      # The decoded keystore never outlives the job, even when a step failed.
+      - name: Remove the upload keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/upload.jks"
 
   ios:
     if: inputs.platforms != 'android'

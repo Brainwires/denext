@@ -29,6 +29,7 @@ import {
   compareDenoVersions,
   currentDenoIdentity,
   type DenoIdentity,
+  denoVersionOutput,
   isDenextDenoVersion,
   isDenextReleaseVersion,
   parseDenoVersionOutput,
@@ -42,7 +43,6 @@ import {
   type JailPackageException,
   type JailWriteTarget,
 } from "./jail-exceptions.ts";
-import { runToExit } from "./exited-output.ts";
 
 export { npmrcValue };
 
@@ -310,20 +310,6 @@ export interface JailRuntimeSeams {
   readonly versionOutput?: (bin: string) => Promise<string | null>;
   /** The pinned toolchain version (default: the checked-in pin's). */
   readonly pinned?: string | null;
-}
-
-/** `<bin> --version`'s output, or null (not runnable, or no answer within 10 s). */
-async function denoVersionOutput(bin: string): Promise<string | null> {
-  try {
-    const out = await runToExit(bin, {
-      args: ["--version"],
-      stderr: "null",
-      signal: AbortSignal.timeout(10_000),
-    });
-    return out.success ? new TextDecoder().decode(out.stdout) : null;
-  } catch {
-    return null;
-  }
 }
 
 /**

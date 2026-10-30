@@ -7,7 +7,8 @@
 // registered view and a token the server signed over exactly these props (under the Lustre
 // namespace, so a live-view token never mounts one; either failing is `gone`); the props decode;
 // the view's `authorize` in the viewer's session (a throw is a deny); a post-await connected + cap
-// re-check. Then a runtime parked here under the `resume` id (same view, same signed props) is
+// re-check. Then a runtime parked here under the `resume` id (same view, same signed props, same
+// viewer — `viewerIdentity`) is
 // reattached, or a new one starts (`init` runs). Lustre's model is not serialisable, so nothing is
 // written to the shared view store: another instance runs `init` again.
 //
@@ -49,6 +50,7 @@ import {
   mountView,
   str,
   takeParked,
+  viewerIdentity,
   type ViewHubBaseDeps,
   type ViewHubFrames,
 } from "./view-hub-common.ts";
@@ -79,6 +81,8 @@ interface Instance<C> extends LustreViewInstance {
   props: unknown;
   /** `view + "\0" + token`: a resume must present the same signed props. */
   signed: string;
+  /** The viewer it was mounted for (`viewerIdentity`): only the same viewer resumes it. */
+  identity: string;
   owner: C;
   attached: boolean;
   stopped: boolean;
@@ -333,6 +337,7 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
     vid: string,
     admitted: { def: LustreViewDef; props: unknown },
     signed: string,
+    identity: string,
   ): Instance<C> | null => {
     const { def, props } = admitted;
     let self: Instance<C> | null = null;
@@ -350,6 +355,7 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
       def,
       props,
       signed,
+      identity,
       owner: conn,
       attached: false,
       stopped: false,
@@ -364,17 +370,25 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
     return self;
   };
 
-  /** Put an admitted view on the connection: the runtime parked here, else a new one. */
-  const place = (
+  /**
+   * Put an admitted view on the connection: the runtime parked here for the same viewer, else a
+   * new one.
+   */
+  const place = async (
     conn: C,
     shape: MountShape,
     admitted: { def: LustreViewDef; props: unknown },
-  ): void => {
+  ): Promise<void> => {
     const signed = `${shape.view}\0${shape.token}`;
+    const identity = await viewerIdentity(deps, conn);
+    if (!deps.isConnected(conn)) return;
+    if (atCap(conn, shape.vid)) {
+      return deps.sendError(conn, "limit", "too many views", { subId: shape.vid });
+    }
     const replaced = own(conn, shape.vid);
     if (replaced) stop(replaced);
-    const inst = takeParked(parkedViews, shape.resume, shape.view, signed) ??
-      start(conn, shape.vid, admitted, signed);
+    const inst = takeParked(parkedViews, shape.resume, shape.view, signed, identity) ??
+      start(conn, shape.vid, admitted, signed, identity);
     if (inst) attach(conn, shape.vid, inst);
   };
 

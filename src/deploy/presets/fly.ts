@@ -7,6 +7,7 @@
 import type { DeployAdapter, DeployContext } from "../adapter.ts";
 import type { DeployManifest } from "../manifest.ts";
 import { writeDockerFiles } from "./docker.ts";
+import { memoryLimitBytes } from "../../server/config-validate/limits.ts";
 import { appName, drainMsOf, header, marker, requiredSecrets, stopTimeoutSec } from "./shared.ts";
 
 /** Options for {@linkcode fly}. */
@@ -28,6 +29,9 @@ export interface FlyPresetOptions {
    */
   drainMs?: number;
 }
+
+/** The machine's memory when the preset sets none. */
+const DEFAULT_VM_MEMORY = "512mb";
 
 /** Fly's longest `kill_timeout` (seconds). */
 const FLY_MAX_KILL_TIMEOUT_S = 300;
@@ -111,13 +115,35 @@ ${
     timeout = "3s"
 
 [[vm]]
-  memory = ${toml(options.memory ?? "512mb")}
+  memory = ${toml(options.memory ?? DEFAULT_VM_MEMORY)}
 `;
 }
 
+/** A Fly `[[vm]] memory` value in bytes (`"512mb"`, `"1gb"`, a number of megabytes), or `null`. */
+function vmMemoryBytes(memory: string): number | null {
+  const m = /^\s*(\d+)\s*(mb|gb)?\s*$/i.exec(memory);
+  if (!m) return null;
+  return Number(m[1]) * 1024 ** ((m[2] ?? "mb").toLowerCase() === "gb" ? 3 : 2);
+}
+
+/**
+ * The warning when `start.limits.memory` (the server's heap limit) is not below the machine's
+ * memory: the kernel's OOM killer would end the server before the heap limit could.
+ */
+function heapLimitWarning(manifest: DeployManifest, vmMemory: string): string | null {
+  const flag = (manifest.server.limits ?? []).find((f) => f.startsWith("--max-memory="));
+  const heap = flag ? memoryLimitBytes(flag.slice("--max-memory=".length)) : null;
+  const vm = vmMemoryBytes(vmMemory);
+  if (heap === null || vm === null || heap < vm) return null;
+  return `fly: start.limits.memory (${flag}) is not below the machine's memory (${vmMemory}); ` +
+    "the OOM killer ends the server first — lower the limit or raise the preset's memory";
+}
+
 /** Warn about what Fly changes for this app. */
-function flyWarnings(ctx: DeployContext): void {
+function flyWarnings(ctx: DeployContext, vmMemory: string): void {
   const { manifest } = ctx;
+  const heap = heapLimitWarning(manifest, vmMemory);
+  if (heap) ctx.warn(heap);
   if (manifest.schedules.length) {
     ctx.warn(
       "fly: every machine runs the schedules — keep one machine (`fly scale count 1`) or a " +
@@ -167,7 +193,7 @@ export function fly(options: FlyPresetOptions = {}): DeployAdapter {
         in: "project",
         marker: marker("fly"),
       });
-      flyWarnings(ctx);
+      flyWarnings(ctx, options.memory ?? DEFAULT_VM_MEMORY);
     },
     deploy: flyDeploy,
   };

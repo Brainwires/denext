@@ -9,8 +9,9 @@
  * ```
  *
  * When a socket drops, the hub parks each of its views in the process (as before) and also
- * writes a snapshot — the view id, the signed props it was mounted with, and its model — to the
- * store for `live.limits.viewResumeSeconds`. A reconnect naming the instance id takes the
+ * writes a snapshot — the view id, the signed props it was mounted with, the viewer it was
+ * mounted for, and its model — to the store for `live.limits.viewResumeSeconds`. Only the same
+ * viewer resumes it (another account or a signed-out viewer runs `init`). A reconnect naming the instance id takes the
  * snapshot back (once: `take` reads and deletes it), so any instance can resume the model.
  *
  * A snapshot is sealed with AES-256-GCM under a key derived from the view secret
@@ -123,6 +124,8 @@ export interface ViewSnapshot {
   view: string;
   /** `view + "\0" + token`: a resume must present the same signed props. */
   signed: string;
+  /** The viewer that parked it (`viewerIdentity`): a resume must come from the same viewer. */
+  identity: string;
   /** The model. */
   model: unknown;
 }
@@ -168,6 +171,7 @@ export async function sealViewSnapshot(id: string, snapshot: ViewSnapshot): Prom
   const plain = JSON.stringify({
     v: snapshot.view,
     s: snapshot.signed,
+    i: snapshot.identity,
     m: wire.value ?? null,
     ...(wire.tagged ? { t: 1 } : {}),
   });
@@ -200,8 +204,8 @@ export async function openViewSnapshot(id: string, sealed: string): Promise<View
       bytes.subarray(12),
     );
     const o = JSON.parse(new TextDecoder().decode(plain));
-    if (typeof o?.v !== "string" || typeof o.s !== "string") return null;
-    return { view: o.v, signed: o.s, model: o.t === 1 ? decodeWire(o.m) : o.m };
+    if (typeof o?.v !== "string" || typeof o.s !== "string" || typeof o.i !== "string") return null;
+    return { view: o.v, signed: o.s, identity: o.i, model: o.t === 1 ? decodeWire(o.m) : o.m };
   } catch {
     return null;
   }

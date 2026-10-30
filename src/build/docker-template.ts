@@ -17,6 +17,7 @@
 import { isAbsolute, join, relative } from "@std/path";
 import { currentDenoIdentity, denoReleaseVersion } from "./deno-version.ts";
 import { splitNetFlag, toolchainNetSplit } from "./net-permissions.ts";
+import { LIMITS_APPLIED_ENV, withLimitFlags } from "./resource-limits.ts";
 import {
   DOCKER_SENTINEL,
   isStack,
@@ -58,6 +59,12 @@ export interface DockerOptions extends StackOptions {
    * (`start: { idleTrim: false }`, `DENEXT_IDLE_TRIM=0`). Default: off.
    */
   readonly idleTrim?: boolean;
+  /**
+   * The server's resource-limit flags (`start.limits`: `--max-memory=…`, `--max-cpu-time=…`,
+   * `--max-time=…`), put on the `CMD`'s `deno run`. `resolveDocker()` sets them when the project
+   * configures limits and the pinned toolchain takes them (3.0.0-rc.2 or later). Default: none.
+   */
+  readonly limits?: readonly string[];
 }
 
 /** One file a Docker regeneration would produce, next to what is on disk today. */
@@ -163,7 +170,7 @@ function imageStartCommand(port: number, options: DockerOptions): readonly strin
  */
 function serverCmd(port: number, options: DockerOptions): string {
   const lines = [`ENTRYPOINT ["/tini", "-g", "--", "docker-entrypoint.sh"]`, "STOPSIGNAL SIGTERM"];
-  const start = imageStartCommand(port, options);
+  const start = limitedStartCommand(imageStartCommand(port, options), options, lines);
   if (start) {
     lines.push("# The `start` task's own command, run directly (not through `deno task`).");
   }
@@ -177,6 +184,36 @@ function serverCmd(port: number, options: DockerOptions): string {
   if (port !== DEFAULT_PORT) lines.push(`ENV PORT=${port}`);
   lines.push(`CMD ${start ? execForm(start) : `["deno", "task", "start"]`}`);
   return lines.join("\n");
+}
+
+/**
+ * The start command with the server's resource limits ({@linkcode DockerOptions.limits}) after its
+ * `run`, and the lines that say so pushed onto `lines` (with `DENEXT_LIMITS_APPLIED`, which tells
+ * `denext start` the process already runs under them). A start command that is no `deno run` (or
+ * none: the `deno task start` fallback) can't take them: a comment says so instead.
+ */
+function limitedStartCommand(
+  start: readonly string[] | undefined,
+  options: DockerOptions,
+  lines: string[],
+): readonly string[] | undefined {
+  const limits = options.limits ?? [];
+  if (limits.length === 0) return start;
+  const limited = start ? withLimitFlags(start, limits) : null;
+  if (!limited) {
+    lines.push(
+      `# start.limits (${
+        limits.join(" ")
+      }) are not applied: the start task is no \`deno run\` line.`,
+    );
+    return start;
+  }
+  lines.push(
+    "# start.limits from denext.config: each ends the server with its own exit code (heap 137,",
+    "# CPU time 152, wall clock 124) for the restart policy to start it again. Regenerate after a change.",
+    `ENV ${LIMITS_APPLIED_ENV}=${JSON.stringify(limits.join(" "))}`,
+  );
+  return limited;
 }
 
 /**

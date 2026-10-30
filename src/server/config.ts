@@ -1531,6 +1531,45 @@ export interface StartConfig {
    * @default true
    */
   idleTrim?: boolean;
+  /**
+   * Process resource limits for the production server, enforced by denext's Deno from runtime
+   * 3.0.0-rc.2 (`--max-memory`, `--max-cpu-time`, `--max-time`). Applied where the production
+   * server starts: `denext start` (on the process it starts), baked into the `build --compile`
+   * executable, and written into the Docker image's command and the systemd unit's `ExecStart` —
+   * never for `dev`, tests or `denext job` (a compiled executable enforces them on whatever it
+   * runs, `./app job` included). Each limit ends the whole process with its own exit code, for
+   * a supervisor (Docker's restart policy, systemd's `Restart=`) to start it again. Best-effort
+   * guardrails, not a security boundary: subprocesses are not counted. On stock Deno they are not
+   * applied (a warning says so). See
+   * {@link https://denext.dev/docs/deployment-targets#resource-limits}.
+   */
+  limits?: StartLimits;
+}
+
+/** The production server's resource limits (see {@link StartConfig.limits}). */
+export interface StartLimits {
+  /**
+   * The main thread's JavaScript heap limit: a number of megabytes, or a size string with a
+   * binary `k` / `m` / `g` unit (`"512m"`, `"2g"`); at least 32 MB. Over it the process exits
+   * with code 137 (`Memory limit exceeded`). Workers have their own heaps, and memory outside the
+   * heap (`ArrayBuffer`s, native code) is not counted.
+   */
+  memory?: number | string;
+  /**
+   * The process's CPU time budget, user + system across every thread, in whole seconds (at least
+   * 1), counted from the server's start: once spent the process exits with code 152 (`CPU time
+   * limit exceeded`). A long-running server spends it over its whole life.
+   *
+   * @minimum 1
+   */
+  cpuSeconds?: number;
+  /**
+   * Wall-clock lifetime in whole seconds (at least 1), idle time included: the process exits with
+   * code 124 (`Time limit exceeded`) when it is reached — a scheduled restart under a supervisor.
+   *
+   * @minimum 1
+   */
+  deadlineSeconds?: number;
 }
 
 /** `denext build --compile` settings (see {@link DenextConfig.compile}). */
@@ -2245,7 +2284,7 @@ export interface DenextConfig {
   compile?: CompileConfig;
   /**
    * The production server (`denext start`, the `build --compile` executable, the generated Docker
-   * image and systemd unit): its idle memory trim. See
+   * image and systemd unit): its idle memory trim and its resource limits. See
    * {@link https://denext.dev/docs/deployment-targets#idle-memory-trim}.
    */
   start?: StartConfig;
@@ -2476,6 +2515,13 @@ export interface LiveLimits {
   viewResumeSeconds?: number;
   /** Max live views waiting to be resumed across the server (default 1000; the oldest go first). */
   maxParkedViews?: number;
+  /**
+   * Seconds a live view's signed props token (rendered into the page) is accepted for a mount or
+   * a resume (default 86400, a day). An older one is refused as `gone`, and the browser re-renders
+   * the route once for a fresh token. A page cached longer than this (`force-static`, or ISR with a
+   * longer `revalidate`) needs a larger value.
+   */
+  viewTokenMaxAgeSeconds?: number;
 }
 
 /**

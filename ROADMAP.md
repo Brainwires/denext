@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.10.1**; 4.x patch and minor releases are cut from
+> The current release is denext **4.10.2**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 
 ## Deno toolchain
@@ -88,10 +88,6 @@
   the controls reaching the page, the Android foreground service), and `pickMedia`'s
   multi-select and video picks, on an iPhone and an Android phone; React Native Skia with
   Reanimated and inside the Capacitor shell's WebViews.
-- **Managed fastlane on macOS arm64:** run `denext toolchain install --with fastlane` and one lane
-  (`denext fastlane ios build`) on an Apple-silicon Mac. The Ruby there is
-  pinned and its hash checked, but the install has not been run; drop the KNOWN-LIMITATIONS
-  clause once it passes.
 
 ## Backend (`@denext/backend`)
 
@@ -112,21 +108,15 @@ Low findings of the 4.8 backend audit (realtime and storage):
 
 The audit's lows that were security gaps have landed (see the CHANGELOG: manifest expiry, loopback OTA only in
 debug builds, `booted()` bound to a version, directory requests, OS-enforced `requireBiometric`,
-print confinement, `baseUrl` credentials, the bridge's origin guard, PKCE on mobile `openAuthSession`). What is left, each with why it is not done there:
+print confinement, `baseUrl` credentials, the bridge's origin guard, PKCE on mobile `openAuthSession`,
+the native platform-stamp check, the fail-closed serve check and its `/_capacitor_file_` half, and
+the `secureStore` `accessibility` option). What is left, each with why it is not done there:
 
 - **`requireBiometric` on Deno Desktop:** the desktop keychain items have no biometric access
   control, so the gate is in the page there; it needs a runtime capability (macOS
   `SecAccessControl`, Windows Hello) in the Brainwires/deno fork.
-- **OTA serve check, the rest:** checking the platform stamp natively (a signed export of the same
-  publisher for another target, not a trust breach), `admit` failing closed outside the versions
-  root (the served base is chosen by native code, never by the page) and the check on
-  `/_capacitor_file_/` paths (needs write access to the app container already) are hardening, not
-  gaps. NFC/NFD variants do not reach it (Swift compares paths by canonical equivalence; Android's
-  filesystems are normalization-sensitive).
-- **Small ones:** Android transfer record names from a hash of the id (a collision overwrites a
-  record, but the page chooses every id: no boundary is crossed); a `secureStore` accessibility
-  option (ThisDeviceOnly for tokens) is new API and changing the default changes documented
-  behaviour, so it needs a decision.
+- **Android transfer record names** come from a hash of the id (a collision overwrites a record,
+  but the page chooses every id: no boundary is crossed).
 
 ## Build toolchain: waiting on `deno bundle`
 
@@ -148,14 +138,3 @@ seeded fallback. No Deno has the hook below yet.
   but runs several times slower on every compat build and dev session.
 - **Maintenance:** track each vendored codec's upstream CVEs, rebuild SHA-256-pinned and
   regenerate its `THIRD-PARTY-LICENSES.md` before re-publishing.
-
-## Client runtime and Server Actions (AU5 audit, low severity)
-
-From the 4.8 client-runtime and Server Actions audit; the High and Medium findings shipped.
-
-- **`notFound()` / `forbidden()` / `unauthorized()` in a Server Action called from the browser**
-  reaches the client as a plain `Error("notFound")` (src/client/action-dispatch.ts), so the error
-  boundary renders, not `not-found.tsx`; the client has no not-found boundary for an event-path
-  signal yet. Add one, then re-raise the reply's `signal` as the branded error.
-- **The Fragment-ref runtime chunk**, once it fails to load, leaves a no-op for the page's life
-  (src/client/fiber/fragment-ref-support.ts); retry it on the next Fragment ref.

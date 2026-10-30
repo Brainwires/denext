@@ -235,9 +235,10 @@ jobs:
       - name: cargo audit (packages/*/Cargo.lock)
         run: CARGO_AUDIT="$HOME/.cargo-audit-bin/cargo-audit" deno task audit:cargo
 
-      # The same gate for npm: `deno audit` over the root deno.lock; a high or critical advisory
-      # fails unless security/npm-audit-allow.json holds it (a fix still under the age hold).
-      - name: deno audit (deno.lock)
+      # The same gate for npm: `deno audit` over the root deno.lock and every example's deno.lock;
+      # a high or critical advisory fails unless security/npm-audit-allow.json holds it (a fix
+      # still under the age hold).
+      - name: deno audit (deno.lock + examples)
         run: deno task audit:npm
 
   # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
@@ -700,6 +701,10 @@ jobs:
     runs-on: windows-latest
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 150
+    # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
+    # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).
+    env:
+      DENEXT_CHILD_PROBE: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -805,6 +810,10 @@ jobs:
   windows-resolve:
     runs-on: windows-latest
     timeout-minutes: 15
+    # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
+    # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).
+    env:
+      DENEXT_CHILD_PROBE: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -827,3 +836,6 @@ jobs:
 
       - name: The deno-loader resolves package.json dependencies on Windows
         run: deno test -A tests/deno-loader-plugins.test.ts
+
+      - name: The deno-loader's own deno info children are bounded on Windows
+        run: deno test -A tests/loader-deno-info.test.ts

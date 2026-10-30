@@ -28,6 +28,7 @@
 
 import { denoCacheDir } from "./deno-cache-dir.ts";
 import { acquireCacheLock } from "./project-locks.ts";
+import { lockTask } from "./file-lock.ts";
 import { basename, dirname, fromFileUrl, join } from "@std/path";
 import { extractArchive, type ExtractedFile } from "./safe-extract.ts";
 import {
@@ -55,6 +56,7 @@ import {
 import { denoSupportsNetSplit, NET_SPLIT_RELEASE, supportsNetSplit } from "./net-permissions.ts";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
+import { warnStockDeprecation } from "./stock-deprecation.ts";
 
 /** A runtime backend (`deno desktop --backend`). */
 export type DesktopRuntimeBackend = "webview" | "cef";
@@ -725,7 +727,13 @@ async function installRuntime(plan: InstallPlan): Promise<void> {
  * @param options What to fetch and how.
  * @returns The runtime's paths.
  */
-export async function ensureDesktopRuntime(
+export function ensureDesktopRuntime(
+  options: EnsureDesktopRuntimeOptions,
+): Promise<ResolvedDesktopRuntime> {
+  return lockTask(() => ensureDesktopRuntimeInTask(options));
+}
+
+async function ensureDesktopRuntimeInTask(
   options: EnsureDesktopRuntimeOptions,
 ): Promise<ResolvedDesktopRuntime> {
   const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
@@ -1154,7 +1162,16 @@ async function mirrorBackendDir(
  * {@linkcode crossHostBackendRename}). Built once per runtime archive and reused; installed with
  * the same atomic rename as the runtime itself.
  */
-async function crossHostLaufeyDir(
+function crossHostLaufeyDir(
+  rt: ResolvedDesktopRuntime,
+  rename: CrossHostRename,
+  log: (line: string) => void,
+  full: boolean,
+): Promise<string> {
+  return lockTask(() => crossHostLaufeyDirInTask(rt, rename, log, full));
+}
+
+async function crossHostLaufeyDirInTask(
   rt: ResolvedDesktopRuntime,
   rename: CrossHostRename,
   log: (line: string) => void,
@@ -1184,6 +1201,11 @@ async function crossHostLaufeyDir(
   }
   if (!await valid()) throw new Error(`denext: the cross-host backend at ${shim} did not verify`);
   return join(shim, "laufey");
+}
+
+/** The deprecation notice's seams: the caller's env seam when it has one, and its log. */
+function deprecationDeps(env: EnvGet | undefined, log: (l: string) => void) {
+  return env ? { env, warn: log } : { warn: log };
 }
 
 /** The stock fallback of `desktop run` / `dev` for a `deno` of another version (a warning). */
@@ -1225,6 +1247,7 @@ export async function resolveDesktopRuntimeEnv(
     log(
       `  denext: ${RUNTIME_ENV}=stock — building with the STOCK Deno Desktop runtime (${STOCK_LACKS}).`,
     );
+    warnStockDeprecation("desktop-env", deprecationDeps(options.env, log));
     return { mode: "stock", env: {} };
   }
   const localDir = env(RUNTIME_DIR_ENV);
@@ -1239,7 +1262,11 @@ export async function resolveDesktopRuntimeEnv(
   const deno = options.deno ?? "deno";
   const found = asIdentity(await (options.denoVersion ?? denoCliVersion)(deno));
   if (denoReleaseVersion(found) !== pin.deno) {
-    if (options.onDenoMismatch === "stock") return stockForMismatch(found.deno, pin, deno, log);
+    if (options.onDenoMismatch === "stock") {
+      const stock = stockForMismatch(found.deno, pin, deno, log);
+      warnStockDeprecation("desktop-mismatch", deprecationDeps(options.env, log));
+      return stock;
+    }
     throw new Error(denoVersionMismatchMessage(found.deno, pin, deno));
   }
   const backend = options.backend ?? await projectDesktopBackend(options.projectDir);

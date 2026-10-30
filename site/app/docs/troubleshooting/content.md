@@ -619,6 +619,20 @@ platform-specific files builds each platform its own.
 which picks the export by the `x-denext-ota-platform` header the app sends. See
 [Over-the-air updates](/docs/platform-files#over-the-air-updates).
 
+### An over-the-air update is refused with `app_mismatch`
+
+**Cause.** The manifest's signed `appId` names another app (a feed misrouted, or another app that
+shares the signing key), or it names none while the app verifies signatures: an app binary that
+embeds a public key, or a Deno Desktop overlay with `desktop.app.identifier`. A manifest signed
+before denext added the app id names none.
+
+**Fix.** Sign each app's release for that app: a signed `spa.ota` export, `denext mobile build`
+and `denext ota manifest out --sign <key>` stamp the Capacitor `appId` (a desktop export stamps
+`desktop.app.identifier`); otherwise pass `--app-id <id>` or set `DENEXT_OTA_APP_ID`. Re-sign the
+release the feed serves now: `denext ota manifest out --app-id com.example.app --sign ota.key`.
+Binaries from before the app id verify the same manifest unchanged. See
+[Over-the-air updates](/docs/mobile#over-the-air-ui-updates).
+
 ### An over-the-air update is refused with `expired`
 
 **Cause.** The manifest's signed `expiresAt` has passed (`denext ota manifest --sign` stamps 30
@@ -688,8 +702,8 @@ shell's `ios` / `android` key when the spec has no `web` key. See
 
 ## `deno info (pid …) was still running after 120 s and was killed` during a build
 
-**Cause.** `denext build` runs its module-graph crawl (`deno info`, 120 s) and its client bundle
-(`deno bundle`, 300 s) one at a time, each with a deadline after which it is killed and started
+**Cause.** `denext build` runs its module-graph crawl and the esbuild loader's module lookups
+(`deno info`, 120 s) and its client bundle (`deno bundle`, 300 s) one at a time, each with a deadline after which it is killed and started
 once more; a second overrun fails the build with `ChildStallError`. A first build with a cold
 cache on a slow link (a Docker `RUN denext task build` that downloads every npm package) can
 take longer than that without being stuck.

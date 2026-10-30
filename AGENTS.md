@@ -62,7 +62,8 @@ emit correct denext instead of Next.js.
    `--desktop` adds a Deno Desktop target; `--enable-capacitor [--app-id <id>] [--platform
    ios,android]` adds an iOS / Android one (a SPA, App Router or Expo app): `capacitor.config.ts`,
    the `mobile:*` tasks, `spa.precompress: false` + `mobile.icon`, Capacitor 8 installed with the
-   app's package manager, and review items for what it can't know (a hosted-mode env switch, a
+   app's package manager (the install, export and `cap add` run the project's own code: only with
+   `--yes` or after a prompt, else printed to run by hand), and review items for what it can't know (a hosted-mode env switch, a
    backend URL a phone can reach, CORS for `capacitor://localhost` / `https://localhost`).
    `denext upgrade [--to <v>] [--dry-run | --check] [--allow-major] [--allow-downgrade]` moves
    the `jsr:@denext/denext` pin, the pinned CLI tasks and every first-party `@denext/*` package
@@ -289,9 +290,9 @@ export const Counter = defineLiveView({
 ```
 
 `send(msg)` sends only a handler index (the message stays on the server); a reconnect within
-`live.limits.viewResumeSeconds` resumes the model, else `init` re-runs. Set
-`DENEXT_LIVE_VIEW_SECRET` on every instance. Docs: https://denext.dev/docs/live-views,
-https://denext.dev/docs/mvu
+`live.limits.viewResumeSeconds` resumes the model for the same viewer, else `init` re-runs. Set
+`DENEXT_LIVE_VIEW_SECRET` (16+ characters) on every instance. Docs:
+https://denext.dev/docs/live-views, https://denext.dev/docs/mvu
 
 **A typed Server Action (the mutation side, also type-checked):** `defineAction` validates
 `FormData` into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its `Out`
@@ -492,7 +493,7 @@ to Capacitor through `window.Capacitor`, so no `@capacitor/*` import. iOS moment
 survives virtualized-list scroll corrections automatically (the runtime installs the shim on iOS
 WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
-`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
+`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web; `{ accessibility }` sets the iOS Keychain class), `readFile`/`writeFile`/
 `listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickMedia` (several photos and
 videos)/`pickDocument`/`scanBarcode`/`pickContact` (`null` when cancelled), `setQuickActions`/`useQuickAction`
 (home-screen shortcuts), `openSqlite` (the
@@ -766,7 +767,10 @@ Docs: https://denext.dev/docs/desktop#desktop-capabilities
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
 `_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it (a signed
 manifest expires: 30 days, `--expires-in <days>`; past it every shell refuses it, code `expired`,
-so re-sign the live release);
+so re-sign the live release; an app with a key embedded takes only its platform's stamped export,
+`denext export --platform ios` or `ota manifest --platform ios`, code `platform_mismatch`, and
+only a release signed for its own app: `--app-id <id>`, by default the Capacitor `appId` /
+`desktop.app.identifier`, code `app_mismatch`);
 `denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
 `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
 drive it; `createOtaHandler` from `denext/server` serves the export. A downloaded UI is
@@ -821,8 +825,10 @@ suggests them).
 https://denext.dev/docs/native-sdk-recipes. Unistyles 3 needs no setup (its wrapped components and
 `useVariants`; `reactNative: { unistyles: false }` turns it off), Tamagui runs on its runtime
 styles, and Metro's `require.context` with literal arguments is generated at build. Renderers built
-on `react-reconciler` load (React Native Skia's `<Canvas>`, react-three-fiber, react-konva; no
-context crosses into them): Skia imports CanvasKit's wasm with `?url`, and under a CSP needs
+on `react-reconciler` load (React Native Skia's `<Canvas>`, react-three-fiber, react-konva):
+contexts and class components work inside their trees, and the providers above reach a
+react-three-fiber `<Canvas>` / react-konva `<Stage>` (its-fine's bridge), not a Skia Canvas (as in
+React): Skia imports CanvasKit's wasm with `?url`, and under a CSP needs
 `'wasm-unsafe-eval'` in `scriptSrc` (React Native mode also needs `'unsafe-inline'` in `styleSrc`).
 Docs: https://denext.dev/docs/react-native
 
@@ -1008,6 +1014,11 @@ for example `export async function onShutdown() { await sql.end(); }`. The proce
 runs a full GC and `malloc_trim(0)` once its event loop has been idle for a second (glibc Linux;
 at most once per idle period, 10 s apart, then only after 16 MB of growth). Never for `dev`, tests
 or jobs. Opt out with `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0`.
+`start: { limits: { memory: "384m", cpuSeconds, deadlineSeconds } }` caps the same processes
+(runtime 3.0.0-rc.2+; `--max-memory` / `--max-cpu-time` / `--max-time`, exit 137 / 152 / 124 for
+the supervisor to restart; only on the process that serves, never a CLI re-run before it; baked
+into a compiled binary, whose `job` / `db` then run under them too; never `dev` or tests; not
+applied on stock Deno, with a warning): https://denext.dev/docs/deployment-targets#resource-limits
 
 **Long-lived server work (supervised services):** `services/<name>.ts` default-exports
 `defineService({ start(ctx) })` from `denext/server` — `start`'s promise is the service's life (a
@@ -1187,14 +1198,17 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   2.9.8: `Deno.SQL`, Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced (every API, flag
   and env var it adds over Deno 2.9.8, by version: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
-  opts out, `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
+  opts out (deprecated: denext 5.0 drops stock Deno; every stock path — `DENEXT_DENO=stock`,
+  `DENEXT_DESKTOP_RUNTIME=stock`, the npm esbuild, `createTestApp()` under a stock `deno test` —
+  prints one notice per process tree with the fix, `DENEXT_NO_DEPRECATION_WARNINGS=1` hides it),
+  `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
   first use, no build for the host, a failed download) the command stops with the fix
   (`denext toolchain install`) — denext never runs another Deno on its own. Downloads of the
   toolchain and the Deno Desktop runtime give up on a stalled connection after 10 s with no response
   (`DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`) or 20 s with no data (`DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS`;
   `0` removes either) and retry on a new connection (`DENEXT_DOWNLOAD_ATTEMPTS`, 4 in all; none
-  starts after `DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS`, 120 s), and `DENEXT_CHILD_DEADLINE_MS` replaces the build's `deno info` /
-  `deno bundle` deadlines (120 s / 300 s; `0`: none) for a cold cache on a slow link. Every other verb that
+  starts after `DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS`, 120 s), and `DENEXT_CHILD_DEADLINE_MS` replaces the build's `deno info` (the
+  esbuild loader's too) / `deno bundle` deadlines (120 s / 300 s; `0`: none) for a cold cache on a slow link. Every other verb that
   starts `deno` (`fmt`, `lint`, `add`, `ui`, `mcp`, `create`, …) hands it the toolchain too.
   `denext task <name>` is Deno's `deno task` on the toolchain, and every
   `deno` inside it (its own steps, and any a script it starts finds on PATH) is the toolchain too; a

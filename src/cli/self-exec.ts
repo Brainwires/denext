@@ -9,8 +9,15 @@ import {
   isDenextDenoVersion,
   needsNoLegacyAbortFlag,
 } from "../build/deno-version.ts";
+import {
+  hopLimits,
+  limitFlagsFor,
+  limitsNotAppliedWarning,
+  supportsLimitsWhy,
+} from "../build/resource-limits.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
 import { runToExit } from "../build/exited-output.ts";
+import { type StockDenoPath, warnStockDeprecation } from "../build/stock-deprecation.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
@@ -820,6 +827,29 @@ export interface ReexecToolchainDeps {
 }
 
 /**
+ * Say what the resolver asked to be said about its choice, and that the explicit
+ * `DENEXT_DENO=stock` opt-out is deprecated (once per process tree: 5.0 refuses it).
+ */
+function announceChoice(choice: DenoToolchainChoice, deps: ReexecToolchainDeps): void {
+  if (choice.warning) deps.warn(choice.warning);
+  const path = stockPathOf(choice);
+  if (path) warnStockDeprecation(path, deps);
+}
+
+/**
+ * The deprecated stock path a {@linkcode DenoToolchainChoice} runs on, or `null`: the explicit
+ * `DENEXT_DENO=stock` opt-out, or a `DENEXT_DENO=<path>` binary that is stock Deno. (A denext that
+ * pins no toolchain, and a process that lacks the grants to start it, say nothing here.)
+ *
+ * @param choice The resolver's choice.
+ * @returns The path for {@linkcode warnStockDeprecation}, or `null`.
+ */
+export function stockPathOf(choice: DenoToolchainChoice): StockDenoPath | null {
+  if (choice.kind === "toolchain") return choice.stock ? "deno-path" : null;
+  return choice.optedOut ? "deno-env" : null;
+}
+
+/**
  * A compiled binary's half of {@linkcode maybeReexecToolchain}: it cannot swap its own runtime, so
  * it resolves the toolchain (downloading it on first need) and hands it to every child through its
  * own environment — `DENO_BIN` (what `denoExecutable()` spawns), the toolchain marker, and a PATH
@@ -832,7 +862,7 @@ async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false
   // Under `deno run` on the toolchain already, `denoExecutable()` is this very binary.
   if (!deps.standalone() && onToolchainNow(deps)) return false;
   const choice = await deps.resolve();
-  if (choice.warning) deps.warn(choice.warning);
+  announceChoice(choice, deps);
   if (choice.kind === "stock") return false;
   deps.setEnv(TOOLCHAIN_ACTIVE_ENV, choice.version);
   deps.setEnv("DENO_BIN", choice.deno);
@@ -863,6 +893,11 @@ async function reexecForRuntimeFlags(deps: ReexecToolchainDeps): Promise<boolean
   return true;
 }
 
+/** This process's Deno, as the gate's seams report it. */
+function ownIdentity(deps: ReexecToolchainDeps): DenoIdentity {
+  return deps.denext ? { deno: deps.denoVersion, denext: deps.denext } : { deno: deps.denoVersion };
+}
+
 /**
  * Whether this `deno run` process already runs on the toolchain: it is denext's Deno (its
  * `Deno.build.denext` marker, or a pre-marker build's version; src/build/deno-version.ts) and the
@@ -872,10 +907,7 @@ async function reexecForRuntimeFlags(deps: ReexecToolchainDeps): Promise<boolean
 function onToolchainNow(deps: ReexecToolchainDeps): boolean {
   const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
   if (marker === "path") return true;
-  const identity = deps.denext
-    ? { deno: deps.denoVersion, denext: deps.denext }
-    : { deno: deps.denoVersion };
-  if (!isDenextDenoVersion(identity, deps.pinnedVersion)) return false;
+  if (!isDenextDenoVersion(ownIdentity(deps), deps.pinnedVersion)) return false;
   return marker === deps.denoVersion || deps.denoVersion === deps.pinnedVersion;
 }
 
@@ -907,14 +939,88 @@ export async function maybeReexecToolchain(
   if (!applies) return deps.handOff ? await handToolchainToChildren(deps) : false;
   if (deps.standalone()) return await handToolchainToChildren(deps);
   const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
-  if (marker === "path") return false;
+  if (marker === "path") {
+    // A child of a `DENEXT_DENO=<path>` run (the parent said so if that binary is stock Deno), or
+    // a process started with the marker already set (a unit or image): its own Deno tells.
+    if (!isDenextDenoVersion(ownIdentity(deps), deps.pinnedVersion)) {
+      warnStockDeprecation("deno-path", deps);
+    }
+    return false;
+  }
   if (onToolchainNow(deps)) return await reexecForRuntimeFlags(deps);
   const choice = await deps.resolve();
-  if (choice.warning) deps.warn(choice.warning);
+  announceChoice(choice, deps);
   if (choice.kind === "stock" && choice.refusal) throw new Error(choice.refusal);
   if (choice.kind === "stock") return false;
   // The child gets the runtime flags with the spawn; told so, it skips their check.
   const told = deps.pids ? { [RUNTIME_FLAGS_ENV]: String(deps.pids.pid) } : undefined;
   deps.exit(await deps.spawn(choice.deno, choice.version, told));
+  return true;
+}
+
+/** What {@linkcode maybeReexecForLimits} touches in the process (injectable for tests). */
+export interface LimitsGateDeps {
+  /**
+   * The flags `start.limits` configures (src/build/resource-limits.ts): handed down by an earlier
+   * hop, else read from the project. None for every verb but `start`.
+   */
+  readonly configured: readonly string[];
+  /**
+   * The runtime this process runs: denext's Deno version, `"path"` for a `DENEXT_DENO=<path>` Deno
+   * of unknown version, `undefined` for stock Deno.
+   */
+  readonly runtime: string | undefined;
+  /** `DENEXT_LIMITS_APPLIED` as this process received it: the flags it was started with. */
+  readonly applied: string | undefined;
+  /** Whether this process may start its own Deno again (`--allow-run` for it). */
+  readonly mayRespawn: boolean;
+  /** This process's pid (its child is told it gets the runtime flags with the re-run). */
+  readonly pid: number;
+  /**
+   * Re-run this invocation on this process's own Deno with `flags` after `run` (and the
+   * toolchain's runtime flags) and `env` added; resolve its exit code.
+   */
+  readonly spawn: (flags: readonly string[], env: Record<string, string>) => Promise<number>;
+  /** End the process (production: `Deno.exit`). */
+  readonly exit: (code: number) => void;
+  /** Say something on stderr. */
+  readonly warn: (message: string) => void;
+}
+
+/**
+ * The last gate before `denext start` serves: the configured resource limits go on the process
+ * that serves, and on no CLI hop before it (those hand them down as data, src/build/resource-
+ * limits.ts {@linkcode hopLimits}). This process serves; when it was not started with exactly the
+ * flags its runtime takes — `DENEXT_LIMITS_APPLIED` is compared with those, so a marker another
+ * process left, or one from before the config changed, never counts — it re-runs itself once with
+ * them and exits with the child's code (the child, started with them and told so, serves). With no
+ * permission to re-run, on stock Deno, a Deno of unknown version or one older than runtime
+ * 3.0.0-rc.2 it serves without them and says so.
+ *
+ * @param deps The process seams.
+ * @returns Whether the process re-ran (only a test observes `true`).
+ */
+export async function maybeReexecForLimits(deps: LimitsGateDeps): Promise<boolean> {
+  const { configured } = deps;
+  if (configured.length === 0) return false;
+  const wanted = limitFlagsFor(deps.runtime, configured);
+  if (wanted.length === 0) {
+    deps.warn(limitsNotAppliedWarning(configured, supportsLimitsWhy(deps.runtime)));
+    return false;
+  }
+  if (deps.applied === wanted.join(" ")) return false;
+  if (!deps.mayRespawn) {
+    deps.warn(limitsNotAppliedWarning(
+      wanted,
+      "this server was started on denext's Deno without them, and without the --allow-run to " +
+        "re-run itself with them — put them after `run` in the start task (with " +
+        "DENEXT_LIMITS_APPLIED naming them), or run `denext start`",
+    ));
+    return false;
+  }
+  const child = hopLimits(true, deps.runtime, configured); // the last hop: it serves
+  deps.exit(
+    await deps.spawn(child.flags, { ...child.env, [RUNTIME_FLAGS_ENV]: String(deps.pid) }),
+  );
   return true;
 }

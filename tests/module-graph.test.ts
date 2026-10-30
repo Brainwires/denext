@@ -635,7 +635,8 @@ Deno.test({
     await Deno.writeTextFile(join(dir, "a.ts"), "export const a = 1;\n");
     const { value } = await inChild<{ ok: string[]; failed: string; failLog: string[] }>({
       imports: `import { denoInfoGraph } from "@repo/src/build/module-graph.ts";`,
-      env: { DENO_BIN: fake },
+      // Unprobed, whatever the job sets: a probed child's stderr is always piped (child-probe.ts).
+      env: { DENO_BIN: fake, DENEXT_CHILD_PROBE: undefined },
       body: `
         const read = async () => (await Deno.readTextFile(${
         JSON.stringify(log)

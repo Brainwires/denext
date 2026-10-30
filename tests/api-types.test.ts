@@ -159,7 +159,7 @@ Deno.test("generateApiTypes: empty (and unregistered) when an app has no route h
   }
 });
 
-Deno.test("generateApiTypes: is a pure function of the manifest — no subprocess, sub-millisecond per route", async () => {
+Deno.test("generateApiTypes: is a pure function of the manifest — no subprocess, no seconds per route", async () => {
   const api = Array.from({ length: 50 }, (_, i) => ({
     kind: "api" as const,
     pattern: parsePattern(`/api/r${i}/[id]`),
@@ -167,10 +167,23 @@ Deno.test("generateApiTypes: is a pure function of the manifest — no subproces
     filePath: `/app/api/r${i}/[id]/route.ts`,
   }));
   const manifest = { pages: [], api, rootLayout: null, rootNotFound: null, rootGlobalError: null };
+  // No subprocess: one would fail here. And the time is a loose backstop (a `deno doc` per route
+  // took seconds each, so 50 took minutes): a tight bound failed whenever a loaded machine stalled
+  // the process for longer than it.
+  const deno = Deno as unknown as { Command: unknown };
+  const RealCommand = deno.Command;
+  deno.Command = function () {
+    throw new Error("generateApiTypes started a subprocess");
+  };
   const t0 = performance.now();
-  const src = await generateApiTypes(manifest as never, { outDir: "/app/.denext" });
+  let src: string;
+  try {
+    src = await generateApiTypes(manifest as never, { outDir: "/app/.denext" });
+  } finally {
+    deno.Command = RealCommand;
+  }
   const ms = performance.now() - t0;
-  assert(ms < 50, `50 routes took ${ms.toFixed(1)} ms (a deno doc per route took seconds)`);
+  assert(ms < 5_000, `50 routes took ${ms.toFixed(1)} ms (a deno doc per route took seconds)`);
   assertStringIncludes(src, "typeof R49");
 });
 

@@ -336,6 +336,12 @@ Deno.test("childPermissionFlags: a grant held only in part is not widened for th
     await childPermissionFlags(query({ net: "granted", read: "granted" })),
     ["--allow-read", "--allow-net"],
   );
+  // A permission name this Deno does not know (an older runtime's `ffi`, say) is skipped.
+  const older = (name: string) =>
+    name === "ffi"
+      ? Promise.reject(new TypeError(`unknown permission name: ${name}`))
+      : query({ env: "granted" })(name);
+  assertEquals(await childPermissionFlags(older), ["--allow-env"]);
   // The real query on this process: a deny list here would have to show up as `partial`.
   const live = await Deno.permissions.query({ name: "net" });
   if (live.partial) assertFalse((await childPermissionFlags()).includes("--allow-net"));

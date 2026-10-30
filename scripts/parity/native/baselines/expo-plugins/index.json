@@ -15,7 +15,7 @@
   },
   "intent-launcher": {
     "npm": "@capgo/capacitor-intent-launcher",
-    "version": "8.3.34",
+    "version": "8.3.33",
     "pluginName": "IntentLauncher",
     "pluginInterface": "IntentLauncherPlugin",
     "definitions": "@capgo/capacitor-intent-launcher/definitions.d.ts"
@@ -29,7 +29,7 @@
   },
   "calendar": {
     "npm": "@ebarooni/capacitor-calendar",
-    "version": "8.8.0",
+    "version": "8.7.1",
     "pluginName": "CapacitorCalendar",
     "pluginInterface": "CapacitorCalendarPlugin",
     "definitions": "@ebarooni/capacitor-calendar/definitions.d.ts"

@@ -12,6 +12,11 @@ import type { DeployAdapter, DeployContext } from "../adapter.ts";
 import type { DeployManifest } from "../manifest.ts";
 import { appName, header } from "./shared.ts";
 import { splitNetFlag, toolchainNetSplit } from "../../build/net-permissions.ts";
+import {
+  LIMITS_APPLIED_ENV,
+  pinnedLimitFlags,
+  withLimitFlags,
+} from "../../build/resource-limits.ts";
 import { drainMsOf, stopTimeoutSec } from "./shared.ts";
 
 /** Options for {@linkcode genericHost}. */
@@ -144,9 +149,24 @@ function execStart(manifest: DeployManifest, o: Resolved): string {
   const [first, ...words] = manifest.server.command;
   const binds = words.some((w) => /^--(host|hostname)(=|$)/.test(w));
   const rest = first === "deno" && o.deno === `${o.directory}/${TOOLCHAIN_LINK}`
-    ? toolchainNet(words, manifest, binds ? null : o.port)
+    ? withLimits(toolchainNet(words, manifest, binds ? null : o.port), manifest)
     : words;
   return [first === "deno" ? o.deno : first, ...rest, ...(binds ? [] : loopback)].join(" ");
+}
+
+/**
+ * The server's resource limits (`server.limits`, on the pinned toolchain) after `run` in the start
+ * command's words (`deno` dropped); the words as they are when there are none or it is no
+ * `deno run` command.
+ */
+function withLimits(words: readonly string[], manifest: DeployManifest): readonly string[] {
+  const limits = unitLimits(manifest);
+  return withLimitFlags(["deno", ...words], limits)?.slice(1) ?? words;
+}
+
+/** The limit flags the unit's `ExecStart` gets (none for a `--compile` executable: baked in). */
+function unitLimits(manifest: DeployManifest): string[] {
+  return manifest.compile ? [] : pinnedLimitFlags(manifest.server.limits ?? []);
 }
 
 /**
@@ -175,12 +195,36 @@ function toolchainNet(
  * `DENO_UNSTABLE_IDLE_TRIM=0` to turn it off.
  */
 function idleTrimLines(manifest: DeployManifest, o: Resolved): string {
-  const onToolchain = manifest.server.command[0] === "deno" &&
-    o.deno === `${o.directory}/${TOOLCHAIN_LINK}`;
-  if (!manifest.server.idleTrim || manifest.compile || !onToolchain) return "";
+  if (!manifest.server.idleTrim || manifest.compile || !onToolchain(manifest, o)) return "";
   return `# Hand the memory a load burst leaves behind back to the OS once the server goes idle (a full
 # GC, then malloc_trim). DENO_UNSTABLE_IDLE_TRIM=0 in the env file below turns it off.
 Environment=DENO_UNSTABLE_IDLE_TRIM=1
+`;
+}
+
+/** Whether `ExecStart` runs the start command's `deno` on the toolchain `build.sh` links. */
+function onToolchain(manifest: DeployManifest, o: Resolved): boolean {
+  return manifest.server.command[0] === "deno" && o.deno === `${o.directory}/${TOOLCHAIN_LINK}`;
+}
+
+/**
+ * The unit's resource-limit lines: what `ExecStart` carries (`start.limits`), or why it carries
+ * none, and `DENEXT_LIMITS_APPLIED`, which tells `denext start` the process runs under them.
+ */
+function limitLines(manifest: DeployManifest, o: Resolved): string {
+  const limits = unitLimits(manifest);
+  if (limits.length === 0) return "";
+  const applied = onToolchain(manifest, o) &&
+    withLimitFlags(manifest.server.command, limits) !== null;
+  if (!applied) {
+    return `# start.limits (${
+      limits.join(" ")
+    }) are not applied: ExecStart is no \`deno run\` on denext's Deno toolchain.
+`;
+  }
+  return `# start.limits from denext.config, on ExecStart: each ends the server with its own exit code (heap
+# 137, CPU time 152, wall clock 124), and Restart=always starts it again.
+Environment="${LIMITS_APPLIED_ENV}=${limits.join(" ")}"
 `;
 }
 
@@ -221,7 +265,7 @@ Environment=DENEXT_LOG=json
 # headers so clientIp() and the per-address limits (rateLimit(), auth's per-IP budgets, Live's
 # per-IP cap) see each client. Safe because the server listens on 127.0.0.1 only (ExecStart).
 Environment=DENEXT_TRUST_PROXY=1
-${idleTrimLines(manifest, o)}EnvironmentFile=-/etc/${o.name}/env
+${idleTrimLines(manifest, o)}${limitLines(manifest, o)}EnvironmentFile=-/etc/${o.name}/env
 ExecStart=${execStart(manifest, o)}
 Restart=always
 RestartSec=2

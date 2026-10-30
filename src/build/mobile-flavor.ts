@@ -54,6 +54,45 @@ export function flavorAppId(baseId: string, flavor: MobileFlavorConfig | undefin
   return flavor?.appId ?? (flavor?.appIdSuffix ? baseId + flavor.appIdSuffix : baseId);
 }
 
+/** A reverse-DNS app id: two or more dot-separated parts of letters, digits, `_` and `-`. */
+const APP_ID = /^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)+$/;
+
+/**
+ * Refuse a flavor app id that is not reverse-DNS (`com.example.app.dev`). The id is written into
+ * build.gradle's double-quoted Groovy string, where `${…}` would run at Gradle time, and into the
+ * Xcode project.
+ *
+ * @param id The flavor's app id (`appId`, or the base id plus `appIdSuffix`).
+ * @throws {Error} When `id` is not reverse-DNS.
+ */
+export function assertFlavorAppId(id: string): void {
+  if (APP_ID.test(id)) return;
+  throw new Error(
+    `the flavor's app id ${JSON.stringify(id)} is not a reverse-DNS id (letters, digits, _ and ` +
+      "- in two or more dot-separated parts, such as com.example.app.dev): check the flavor's " +
+      "appId / appIdSuffix",
+  );
+}
+
+/** A version name: letters, digits, `.`, `+` and `-` (`1.4.0`, `2.0.0-beta.1+42`). */
+const VERSION_NAME = /^[0-9A-Za-z.+-]+$/;
+
+/**
+ * Refuse a `--version-name` outside {@linkcode VERSION_NAME}. It is written into build.gradle's
+ * double-quoted Groovy string, where `${…}` would run at Gradle time, and passed to xcodebuild as
+ * a build setting.
+ *
+ * @param version The version name.
+ * @throws {Error} When it carries anything else.
+ */
+export function assertVersionName(version: string): void {
+  if (VERSION_NAME.test(version)) return;
+  throw new Error(
+    `the version name ${JSON.stringify(version)} may only use letters, digits, ".", "+" and "-" ` +
+      "(such as 1.4.0 or 2.0.0-beta.1)",
+  );
+}
+
 const BACKUP_DIR = ".denext/mobile-build/backup";
 const BACKUP_INDEX = "index.json";
 
@@ -299,6 +338,7 @@ export async function applyFlavor(
     throw new Error(`${identity.file} has no literal appId to derive the flavor's id from`);
   }
   const appId = flavorAppId(baseId, flavor);
+  if (appId !== baseId) assertFlavorAppId(appId);
   const changes: string[] = [];
   const notes: string[] = [];
   if (appId !== baseId) {
@@ -365,6 +405,7 @@ export async function applyAndroidVersions(
   snapshot: NativeSnapshot | null,
 ): Promise<string[]> {
   if (build === undefined && version === undefined) return [];
+  if (version !== undefined) assertVersionName(version);
   const path = nativeJoin(root, NATIVE_FILES.gradle);
   const text = await Deno.readTextFile(path);
   const next = withAndroidVersions(text, build, version);

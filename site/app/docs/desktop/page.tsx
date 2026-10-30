@@ -1006,7 +1006,11 @@ denext desktop package --target-os windows --format msi,zip`}
 import { openAuthSession, runtimePlatform } from "denext/mobile";
 
 export async function signIn() {
-  const state = crypto.randomUUID(); // and a PKCE verifier + code_challenge
+  const state = crypto.randomUUID();
+  const verifier = crypto.randomUUID() + crypto.randomUUID();
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
   const desktop = runtimePlatform() === "desktop";
   const authorize = new URL("https://auth.example.com/authorize");
   authorize.searchParams.set(
@@ -1014,6 +1018,8 @@ export async function signIn() {
     desktop ? "http://127.0.0.1/auth/callback" : "myapp://auth/callback",
   );
   authorize.searchParams.set("state", state);
+  authorize.searchParams.set("code_challenge", challenge); // required: pkce_required otherwise
+  authorize.searchParams.set("code_challenge_method", "S256");
   // callbackScheme is required by the type, and ignored with a loopback redirect_uri.
   const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
   const params = new URL(url).searchParams;
@@ -1036,13 +1042,22 @@ export async function signIn() {
         </li>
         <li>
           <strong>
-            PKCE and <code>state</code> are your job,
+            PKCE S256 and <code>state</code> are required,
           </strong>{" "}
-          here more than anywhere. Any process on the machine can connect to the loopback port, and
-          the first request to the callback path wins, so a local program that finds the port can
-          race a forged redirect in before the real browser. Generate <code>state</code>{" "}
-          and re-check it on the callback, and use PKCE so an intercepted <code>code</code>{" "}
-          is useless without your verifier.
+          here more than anywhere. Any process on the machine can connect to the loopback port, so a
+          local program that finds it can race a forged redirect in before the real browser (RFC
+          8252 §8.1). The runtime listens on <code>127.0.0.1</code> and <code>::1</code>{" "}
+          alike, on one port (IPv4 alone on a host without IPv6), so no other program can hold the
+          address a browser tries first. When the authorization URL carries a{" "}
+          <code>state</code>, only a callback with that exact <code>state</code>{" "}
+          completes the session; any other gets an error page and the session keeps waiting. The
+          authorization URL must carry a <code>code_challenge</code> and{" "}
+          <code>code_challenge_method=S256</code>, so an intercepted <code>code</code>{" "}
+          is useless without your verifier; without them the runtime refuses the session with{" "}
+          <code>pkce_required</code>, as on every other platform. A provider that binds the code to
+          the client another way takes <code>pkce: "not-applicable"</code> with a{" "}
+          <code>reason</code>, and then the URL must carry a <code>state</code>. Generate{" "}
+          <code>state</code> and re-check it on the callback too.
         </li>
         <li>
           <strong>The browser reports no cancel, so denext shows one.</strong>{" "}
@@ -1073,10 +1088,11 @@ export async function signIn() {
   loopbackPort: 1455,      // redirect_uri: http://localhost:1455/auth/callback
 });`}
           </Code>
-          The listener binds <code>127.0.0.1</code> (<code>::1</code> for a <code>[::1]</code>{" "}
-          redirect; browsers reach a <code>localhost</code>{" "}
-          redirect over IPv4 when nothing answers on IPv6). If another program holds the port, the
-          call rejects <code>port_in_use</code>{" "}
+          The listener binds both <code>127.0.0.1</code> and <code>::1</code> on that port, so a
+          {" "}
+          <code>localhost</code>{" "}
+          redirect reaches it whichever address the browser tries (RFC 8252 §7.3). If another
+          program holds the port on either address, the call rejects <code>port_in_use</code>{" "}
           before the browser opens: ask the user to quit the other program (often another sign-in
           tool for the same provider) and retry. RFC 8252 allows a fixed port, but a known port is
           easier for a local program to take first, so <code>state</code>{" "}
@@ -1441,8 +1457,9 @@ try {
         </li>
         <li>
           <code>applyDesktopUpdate(version, config)</code>{" "}
-          re-verifies the staged files and flips the active pointer with an atomic rename. The page
-          that is running keeps running; the next launch serves the new UI.
+          re-verifies the staged files, the sequence and the expiry, flips the active pointer with
+          an atomic rename, and deletes any other staged version. The page that is running keeps
+          running; the next launch serves the new UI.
         </li>
         <li>
           <code>desktopUpdateStatus(config)</code> reports <code>current</code>,{" "}
@@ -1475,7 +1492,13 @@ try {
         is not strictly greater than the highest one accepted, or that has none after a sequenced
         release, is refused (<code>downgrade</code>), so every release needs a new sequence (the
         default Unix time does that). The bundled export's own manifest sequence is the floor before
-        any overlay was accepted, so an overlay older than the UI the app ships is refused.
+        any overlay was accepted, so an overlay older than the UI the app ships is refused. That is
+        why <code>denext desktop package</code> refuses an app with <code>desktop.update.ui</code>
+        {" "}
+        whose export has no <code>_denext/ota.json</code> with a{" "}
+        <code>sequence</code>: stamp a signed one with <code>spa.ota: true</code> and{" "}
+        <code>DENEXT_OTA_SIGNING_KEY</code>, or run{" "}
+        <code>denext ota manifest out --sign ota.key</code> after the export.
       </p>
       <p>
         <strong>Releases expire.</strong> <code>denext ota manifest --sign</code> stamps a signed
@@ -1498,11 +1521,42 @@ try {
         <code>{"createOtaHandler({ platforms })"}</code> feed serves each OS its own export.
       </p>
       <p>
+        <strong>The release is for this app.</strong> With <code>desktop.app.identifier</code>{" "}
+        set (which <code>desktop.update.ui</code> requires, and <code>runDesktop</code>{" "}
+        passes as the updater&apos;s <code>appId</code>), a manifest must name the app in its signed
+        {" "}
+        <code>appId</code> (its own{" "}
+        <code>appSignature</code>, payload v5): another app&apos;s release, or one that names no
+        app, is refused (<code>app_mismatch</code>), so a signing key shared by several apps cannot
+        move one app&apos;s UI onto another. A signed desktop <code>spa.ota</code> export stamps
+        {" "}
+        <code>desktop.app.identifier</code>; for a manifest written by{" "}
+        <code>denext ota manifest</code>, pass <code>--app-id &lt;identifier&gt; --sign</code>.
+      </p>
+      <p>
         <strong>Tied to the app it was installed over.</strong>{" "}
         The overlay folder records which bundled export the overlay belongs to (the export&apos;s
         stamped version, else its <code>index.html</code>{" "}
         hash). When the app itself is replaced (a full-app update, a reinstall), the next launch
         drops every overlay and staged version and serves the new app&apos;s own UI.
+      </p>
+      <p>
+        <strong>Verified on every launch and every read.</strong>{" "}
+        Each launch checks the active overlay again: its manifest&apos;s signature, every
+        file&apos;s SHA-256, and that the folder holds nothing else (an extra file or a symbolic
+        link fails). The window then reads each overlay file through the updater, which checks it
+        against the manifest when it is served: hashed the first time, and again whenever the
+        file&apos;s inode, size or change time moves. So a file another program adds or edits in the
+        overlay folder is never served, and the <code>desktop.preload</code>{" "}
+        comes only from a file the manifest lists. An overlay that fails is rolled back like one
+        that failed to boot (<code>rejected</code>, its folder deleted) and the bundled UI is
+        served; a read error (a permission, I/O) skips it for that launch only. The overlay folder,
+        a custom <code>dataDir</code> included, is out of reach of the page&apos;s <code>fs</code>,
+        {" "}
+        <code>shell</code> and <code>window</code>{" "}
+        capabilities. A server of your own takes the overlay from{" "}
+        <code>openDesktopUi(bundledOut, config)</code> and reads its files with{" "}
+        <code>overlay.read(path)</code>, not from its folder.
       </p>
       <p>
         <strong>Rollback.</strong> An applied version starts{" "}

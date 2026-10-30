@@ -8,6 +8,469 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.10.2] - 2026-10-30
+
+### Added
+
+- **`denext fastlane ios build unsigned:true`.** The Fastfile `denext mobile add fastlane` writes
+  takes `unsigned:true` on the iOS `build` lane: it builds with `denext mobile build ios --release
+  --unsigned` and skips match and `setup_ci`, so the lane runs with no certificate, profile or
+  Apple account (a CI check, or a build re-signed elsewhere). `beta` and `release` refuse it. An
+  unedited Fastfile picks it up on the next `denext mobile add fastlane`.
+- **The managed fastlane is checked on Apple silicon.** The native-plugins workflow's `ios` job,
+  which a release is gated on, now runs `denext toolchain install --with fastlane` on its macOS 15
+  arm64 runner (the pinned portable Ruby, its gems' C extensions built with the runner's Xcode)
+  and then `denext fastlane ios build unsigned:true` on the example app, failing on any step.
+- **`start.limits`: resource limits for the production server.**
+  `start: { limits: { memory, cpuSeconds, deadlineSeconds } }` in `denext.config.ts` caps the
+  server's JavaScript heap (`memory`: megabytes or `"512m"` / `"2g"`, at least 32 MB), its CPU time
+  and its wall-clock lifetime (whole seconds), through the `--max-memory` / `--max-cpu-time` /
+  `--max-time` flags of denext's Deno from runtime 3.0.0-rc.2; each ends the process with its own
+  exit code (137, 152, 124) for a supervisor to restart it. `denext start` puts them on the process
+  that serves and on no CLI re-run before it (the toolchain re-exec, a compiled `denext`'s pinned
+  child): those hand them down as data (`DENEXT_START_LIMITS`), so no hop's deadline ends before the
+  server's and no hop's own CPU or heap counts. The serving process re-runs itself once with them
+  when it was not started with them — `DENEXT_LIMITS_APPLIED` is compared with the flags its
+  runtime takes, so a stale value never counts — or warns when it may not re-run. `build --compile`
+  bakes them into the binary; the runtime reads them only from there and can't lift them, so the
+  binary's `job` and `db` run under them too and say so. `generate docker`, the `docker` / `fly`
+  presets and the `genericHost()` systemd unit write them onto the server's `deno run`; the fly
+  preset warns when the heap limit is not below the machine's memory. Never for `dev`, tests or
+  `denext job`; on stock Deno or an older toolchain they are not passed, and a warning says so. The config validator checks the values the runtime accepts, and the deploy
+  manifest records them as `server.limits`. See
+  [Deployment targets › Resource limits](https://denext.dev/docs/deployment-targets#resource-limits).
+- **`DENEXT_CHILD_PROBE=1`, a diagnostic for a build child that hangs.** The build's `deno info`
+  and `deno bundle` children, and the esbuild loader's own `deno info` children, then run with
+  Deno's debug log on, and one still running at its deadline is reported, in the retry warning
+  and the final error, with the log's last 80 lines and two CPU samples taken before the kill
+  (`Get-Process` with the threads' wait reasons on Windows, `ps` elsewhere); the killed child's
+  exit is awaited before the error is thrown (on Windows its pipes end first). Off by default:
+  without it the children run as before.
+- **`secureStore.set(key, value, { accessibility })`** picks the iOS Keychain class:
+  `"whenUnlocked"` (the default, unchanged), `"whenUnlockedThisDeviceOnly"`, `"afterFirstUnlock"`,
+  `"afterFirstUnlockThisDeviceOnly"` or `"whenPasscodeSetThisDeviceOnly"`, so a refresh token can
+  stay out of backups and off other devices. On Android the secure-storage plugin's Keystore key
+  is already device-bound and readable after the first unlock; on the web and in a Deno Desktop
+  window the option is accepted and has no effect. An unknown class, or one other than
+  `"whenPasscodeSetThisDeviceOnly"` beside `requireBiometric`, is a `TypeError`. The type is
+  exported as `SecureStoreAccessibility`.
+- **`expo-secure-store`'s `keychainAccessible` and `react-native-keychain`'s `accessible` choose
+  the iOS Keychain class.** They reach `secureStore.set`'s `accessibility` instead of being
+  ignored: `WHEN_UNLOCKED`, `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, `AFTER_FIRST_UNLOCK`,
+  `AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY` and `WHEN_PASSCODE_SET_THIS_DEVICE_ONLY` map one to one;
+  the deprecated `ALWAYS` and `ALWAYS_THIS_DEVICE_ONLY` take the `AFTER_FIRST_UNLOCK` classes, the
+  replacement both libraries and Apple recommend. A `requireAuthentication` value keeps its
+  `WHEN_PASSCODE_SET_THIS_DEVICE_ONLY` class. The constants themselves are unchanged.
+
+### Changed
+
+- **`migrate --enable-capacitor` runs the project's own code only on an opt-in.** The Capacitor
+  install (the package manager loads the project's configuration, such as a `.pnpmfile.cjs` or a
+  Yarn `yarnPath`), `denext export` (builds and renders the app) and `npx cap add` (loads
+  `capacitor.config.*` and runs the Capacitor CLI from the project's `node_modules`) now run only
+  with `--yes`, or after an interactive prompt that lists them. A non-interactive or `--json` run
+  without `--yes` prints each command with the reason instead, for you to run once you trust the
+  project.
+
+### Deprecated
+
+- **Stock Deno.** denext 5.0 drops stock Deno support: project code will run on denext's own Deno
+  only. Until then every path that still runs on stock Deno prints one notice per process tree
+  (never again from the processes it starts) naming 5.0 and the fix: `DENEXT_DENO=stock`,
+  `DENEXT_DESKTOP_RUNTIME=stock`, `desktop run` / `dev` falling back to the stock Deno Desktop
+  runtime, the npm esbuild fallback, and `createTestApp()` under a plain `deno test` / `deno task`
+  on stock Deno. `DENEXT_NO_DEPRECATION_WARNINGS=1` hides it. See the toolchain guide.
+  A `DENEXT_DENO=<path>` that points at a stock Deno binary (told apart from denext's Deno by its
+  identity marker, not its version) and a process that runs with `DENEXT_TOOLCHAIN_ACTIVE=path` on
+  a Deno that is not denext's (a start launched that way) get the same notice.
+
+### Fixed
+
+- **A `VirtualList` unmounted mid-batch leaves nothing scheduled.** With `progressive`, the next
+  batch of rows (and, with `initialNumToRender`, the overscan added after the first paint) waits
+  for a painted frame and then a task; an unmount in between left that frame or task armed, to run
+  once into the unmounted list. The unmount now cancels it, and a list mounted again schedules it
+  afresh.
+- **Contexts and class components inside `react-reconciler` renderers** (react-three-fiber,
+  react-konva, React Native Skia). A provider placed inside such a renderer's tree now reaches
+  `useContext`, `use` and `<Context.Consumer>` there: a context made with `react`'s
+  `createContext` has a React-shaped twin the renderer provides and reads. Providers above a react-three-fiber `<Canvas>` or a
+  react-konva `<Stage>` reach the components inside it, and a new value re-renders them: its-fine's
+  `useContextBridge()`, which both use, walks the fiber tree from a class component's
+  `this._reactInternals`, and a denext class now answers with a read-only, React-shaped view of
+  its fiber. A class component inside such a tree updates through `setState` / `forceUpdate`
+  (they went to denext's own scheduler and threw), and the development build of
+  `react-reconciler` that `denext dev` loads no longer fails on its first render: denext's `react`
+  carries React's development fields (`actQueue` and the rest). Remaining: a class's
+  `static contextType` inside such a tree reads nothing, and a provider inside it reaches it only
+  for a context made with `react`'s `createContext` (not `denext`'s own, which stays as it was, so
+  an app that never loads `react` ships none of this).
+- **A `denext job --history` child that hits its deadline says where it stopped.** `denext ui`'s
+  Cron page reported only "did not finish within N s"; it now adds the child's last meaningful
+  output line, or "(it printed nothing)", so a hang shows what the child was doing.
+- **`notFound()` / `forbidden()` / `unauthorized()` in a Server Action the browser calls render
+  the nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx`, as in Next.js.** The call
+  rejected with a plain `Error("notFound")`, so `error.tsx` rendered instead. The browser now
+  re-raises the reply's signal as the error `notFound()` throws (Next's
+  `NEXT_HTTP_ERROR_FALLBACK;<status>` digest; `isNotFound()` and `unstable_rethrow` recognise
+  it), and a Server Action's signal that reaches the client tree (an event handler's rejection, a
+  form action, `useActionState`) re-renders the current route on the server with the signal
+  raised at the page: the page level's nearest file renders in place under the
+  layouts, the URL stays, and nothing reloads. `redirect()` keeps working as before.
+- **`useActionState` rethrows an action's error into the nearest error boundary.** It threw from a
+  state updater, which the setter runs at once, so the error escaped as an unhandled rejection
+  and no boundary rendered.
+- **The Fragment-ref runtime chunk is loaded again after a failed load.** A failure left a no-op
+  for the page's life; the next `<Fragment ref>` now retries it once a backoff has passed (1 s,
+  doubling), up to five loads in a row.
+- **Unrelated work in one process no longer trips the lock order.** The order check counted every
+  lock the process held, so a task reading one cache, or locking a project's build directory, while
+  another task downloaded into a different cache stopped with "lock order violation". Neither
+  waits on the other, so nothing could deadlock. The check now follows each task: an install, a
+  cache prune and each locked build step count their own locks and the locks of the work that
+  started them, and a task that takes a lower-rank lock while it holds a higher one still fails as
+  before.
+- **Two `denext dev` rebuilds no longer write `.denext/` at the same time.** The startup's plugin
+  prepare steps, a request's typed-module emit (`.denext/routes.ts`, `.denext/api.ts`), a watched
+  edit's re-run of the prepare steps and a SPA's regeneration each lock the build directory, but two
+  of them in one process shared the lock instead of waiting: the file lock only kept other
+  processes out. They now take turns, in the order they asked, and the same holds for
+  `createTestApp` calls on one project. Work a locked step starts itself still runs at once.
+- **`denext doctor` probes a project with plugins again.** Doctor holds the build directory's lock
+  shared while it reads the last build, but its route probe runs the plugins' prepare steps, which
+  write `.denext/` under the lock exclusive. The route-conformance check failed with "this process
+  holds a shared lock on build directory .denext and asked for an exclusive one". Doctor now takes
+  the lock exclusive when the project has plugins (outside SPA mode), and shared otherwise.
+- **A `denext dev` request on stock Deno waits for a rebuild in progress.** Stock Deno leaves the
+  async context of a module's first `import()` active for the next task it starts, so a request
+  served while a plugin prepare step was importing could join that rebuild's hold on `.denext/`
+  and write the typed modules beside it. Requests, watched-edit batches and MCP tool calls now start
+  outside every rebuild and wait their turn. denext's own Deno toolchain was not affected.
+- **A dev rebuild stuck behind another says so.** A wait for another task of the same process
+  printed nothing and had no limit, so a hung prepare step queued every later rebuild in silence.
+  After a few seconds it now prints `Blocking waiting for file lock on build directory .denext (…)
+  — held by another task of this denext process`, and `DENEXT_LOCK_TIMEOUT` bounds it as it does a
+  wait for another process.
+- **`denext doctor` on a config that fails to load once takes the build directory exclusive.** It
+  chose the lock before loading the config for its checks; when only that first load failed, the
+  route probe later ran the plugins' prepare steps under a shared lock and failed with "not upgraded
+  in place".
+- **The esbuild loader's `deno info` children are bounded like the build's own.** The Deno loader
+  behind the server and dependency bundles learned each module graph from a `deno info` child that
+  had no deadline, ran beside the build's other Deno children instead of taking turns with them, and
+  was read until its pipes closed. On Windows such a child sometimes never exits, or a process
+  started meanwhile holds its pipe open, and the build waited forever after "bundling … server
+  module(s)". It now takes its turn with the module-graph crawl and `deno bundle`, is read until it
+  exits, and is killed and started once more past the same 120 s deadline
+  (`DENEXT_CHILD_DEADLINE_MS` replaces it); a second overrun fails the build with a
+  `ChildStallError` naming both pids.
+- **A page download's pause and cancel hold while a write is in flight.** On the web, where
+  `downloadToFile` streams into the origin private file system, a `cancelFileTransfer` (or the
+  caller's `signal`) that arrived during the last write (or while it was being committed) let the download finish: its promise
+  resolved and the file was kept, instead of rejecting with `CANCELLED`. A cancel that followed a
+  pause whose write was still landing ended paused instead of cancelled. Both now cancel, and `pauseFileTransfer` answers once the
+  request has stopped: `true` when it paused, `false` when the download finished, failed or was
+  cancelled first.
+- **A cancelled page download deletes its file.** On the web, `cancelFileTransfer` (or the
+  caller's `signal`) left the file the download was writing in the origin private file system,
+  though a cancel is documented to drop a download's partial file. The writes in flight are now
+  aborted rather than committed and the file is removed, including one a pause kept; a pause still
+  keeps it for the resume, and a cancel before the download opened its file leaves the file
+  already at that path alone.
+- **A page download replaces a file only once it is done.** On the web, `downloadToFile` wrote
+  straight into the file at its path, so a pause overwrote a file already there with the bytes so
+  far, and a cancel or a failure left it partial or removed it. The bytes now go to a part file
+  in OPFS's `cache/.denext-part/` folder, never beside the file, where it could take the name of
+  a file of the user's or show in `listDir` (which hides the folder), that is moved over the file
+  when the download is done (copied in where the browser has no `move` or refuses it, and always
+  for a picked item), as the iOS background download does. A pause keeps the part file for the resume; a cancel or a failure (a network error, an
+  HTTP error answering a resume) deletes only it, and its `failed` event is no longer `resumable`.
+- **A page download into a picked file works without OPFS.** Staging every page download in
+  OPFS's `cache/.denext-part/` left a download into a picked file or folder failing with "no
+  filesystem here" where there is no OPFS (no secure context). There it now writes through the
+  picked file's own `createWritable()` stream, which swaps the bytes in only once the download is
+  done, so a cancel or a failure still leaves the file as it was; such a download cannot pause
+  (`pauseFileTransfer` resolves `false`). A download into an app folder still needs OPFS.
+- **A tracked download cancelled while its pause settled stays cancelled.** A download another
+  engine runs (a Deno Desktop window's) that was cancelled after its engine accepted a pause but
+  before the run stopped ended paused, its promise pending. It now cancels and the engine drops
+  the bytes it kept.
+- **An Android download cancelled as it finished ends done.** A `cancelFileTransfer` that landed
+  after the transfer worker moved the downloaded file into place, but before it recorded the
+  transfer as done, answered `true` and left the transfer cancelled with the complete file still
+  at its path. The download is complete there and the file it replaced already gone (deleting it
+  would lose both), so that cancel now answers `false` and the transfer ends done with the new
+  file, as a pause then does. A cancel before the move still cancels and deletes only the partial
+  file, and an upload's file is never touched. File-transfer template generation 5: run
+  `denext mobile add file-transfer` again to upgrade an unedited copy, then ship a new binary.
+- **An Android download paused as it finished ends done, and a reused transfer id is left alone
+  by the old worker.** A `pauseFileTransfer` that landed after the worker moved the download into
+  place answered `true` and left the transfer paused with the complete file at its path (a later
+  cancel then left that file under a cancelled transfer). The download is complete there, so the
+  pause now answers `false` and the transfer ends done, as the web fallback's pause during the
+  last write does; a pause before that point still pauses. Each start and resume now gives the
+  transfer a new attempt token, kept in its saved record and in the worker's input, and a worker
+  whose token no longer matches changes nothing: an id cancelled, forgotten and started again
+  while its old worker was finishing could otherwise be marked done (or failed) by that worker.
+  An Android download's partial file is now named for its attempt (a resume renames it to the
+  new one, so a pause still resumes after the process is gone): an old worker that had not opened
+  its partial file yet writes into its own, never into the bytes of the transfer started again
+  under its id, and drops it once it stops. A cancel deletes the partial file under the same lock
+  as its state change, and a worker never deletes the downloaded file itself, so one stopped long
+  ago no longer removes a later transfer's file at the same path. A start deletes the partial
+  files that no live transfer to that path owns, matching only the `<name>.<8 hex>.denext-part`
+  form an attempt is named with, so a file of the user's that merely looks like one (in the
+  shared Documents folder, say) is kept.
+  Records and work from before attempts keep the old name and still finish. On iOS, a cancelled
+  upload's late response bytes no longer reach the body of a new transfer started under the same
+  id, and a cancelled pause's late resume data no longer lands in a new transfer's pause (or
+  ends its wait for its own). Both ship in file-transfer template generation 5.
+- **`denext mobile doctor` catches more release problems.** `server.allowNavigation` entries
+  with a wildcard over hosts you do not own (`*.com`, `app.*`) are errors, `*.example.com` a
+  warning, and an `http:` entry an error under `--release`; a network security config with
+  `cleartextTrafficPermitted="true"` is flagged like `usesCleartextTraffic`; and
+  `plugins.DenextBridge.frameGuard: false` over an `allowNavigation` origin is an error under
+  `--release`.
+
+### Security
+
+- **`deno task audit:npm` audits the examples too.** It runs `deno audit` over every example's own
+  `deno.lock` as well as the root one, and fails on a high or critical advisory in any of them;
+  `deno task precheck` also runs it when an example's `package.json` changes.
+- **The examples' lockfiles hold fixed releases.** `examples/clerk` resolves `electron` 45.0.0
+  ([GHSA-jr5w-w6x2-84p9](https://github.com/advisories/GHSA-jr5w-w6x2-84p9)) and `undici` 7.30.1
+  ([GHSA-4w7w-5xrc-9h26](https://github.com/advisories/GHSA-4w7w-5xrc-9h26),
+  [GHSA-2m5v-pch6-74hx](https://github.com/advisories/GHSA-2m5v-pch6-74hx),
+  [GHSA-qrxm-fqhp-jwvm](https://github.com/advisories/GHSA-qrxm-fqhp-jwvm),
+  [GHSA-xjj6-f33q-929c](https://github.com/advisories/GHSA-xjj6-f33q-929c) and four moderate
+  ones), and `@clerk/clerk-js` 6.40.1, which no longer brings in `@solana/web3.js` and with it the
+  vulnerable `stream-json` 1.9.1 and `uuid` 8.3.2; `@clerk/electron` stays 0.0.48, whose range
+  admits both. `examples/expo-app`'s `package-lock.json` moves `shell-quote` to 1.12.0
+  ([GHSA-pqg4-j6r4-53mv](https://github.com/advisories/GHSA-pqg4-j6r4-53mv), critical),
+  `node-forge` to 1.4.1 ([GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv))
+  and `@expo/config-plugins` to 57.0.11 (`xcode` 4, without `uuid`), and
+  `examples/scroll-bench/native`'s moves `shell-quote` to 1.12.0, `body-parser` to 2.4.0
+  ([GHSA-27r3-jxmh-p828](https://github.com/advisories/GHSA-27r3-jxmh-p828)), `launch-editor` to
+  2.14.2 ([GHSA-587h-7wmj-h5pm](https://github.com/advisories/GHSA-587h-7wmj-h5pm) and two
+  moderate ones) and `qs` to 6.17.0. Still open: `uuid` 7.0.3 (moderate,
+  [GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq)) through
+  `@capacitor/cli` 8.5.2's `xcode` 3, fixed by Capacitor 8.6.0 once it clears the dependency-age
+  hold (2026-10-30); `expo-app`'s `zod` 3.25.76 (GHSA-mrhx-c7xc-m3w5, through `@expo/cli`, which
+  requires zod 3 throughout Expo SDK 57); and `decode-uri-component` 0.2.2 (moderate, through
+  `expo-router` 57's `query-string` 7).
+- **Build-lock files are the user's alone.** A lock file under `.denext/`, an output directory or
+  the toolchain caches was created with the umask's mode (usually `0644`) and opened through a
+  symbolic link, so any local user who could reach the project or a shared `DENO_DIR` could open
+  it read-only and hold `flock(LOCK_EX)`, keeping every `denext build` / `dev` waiting forever
+  (`DENEXT_LOCK_TIMEOUT` is unset by default). Lock files are now created `0600`, an existing one
+  this user owns is narrowed to `0600`, and on macOS and Linux a lock path that is a symbolic link
+  or another user's file is refused with an error naming the path and the fix. On Windows the
+  directory's ACLs decide who can open it, unchanged.
+- **The OTA plugin's serve check, hardened** (`denext mobile add-ota` template generation 12; re-run
+  it and ship a new binary). The iOS and Android plugins check a manifest's platform stamp
+  themselves and refuse another target's signed export with `platform_mismatch`, as
+  `checkForUiUpdate` already did in the page. The check on served files fails closed: a base
+  other than the bundled UI or a downloaded version's directory is refused, where it used to
+  pass. A `/_capacitor_file_` request (`Capacitor.convertFileSrc`) for a file inside the
+  downloaded versions, however the path is spelled (`..`, a symbolic link, another case), now
+  gets the same manifest check as the router's requests, and a changed file quarantines the
+  version; files elsewhere are served as before. On iOS the bridge turns Capacitor's asset
+  handler into `DenextOtaFileGuard` for this, since Capacitor answers those requests without
+  the router. Valid updates are served exactly as before.
+  - A `/_capacitor_file_` path with a NUL or another control character is refused wherever it
+    points: on iOS a NUL turned the path Capacitor's handler reads into an empty URL, and the read
+    raised an exception that crashed the app (during a trial launch, a crash loop rolled the
+    update back). A path to a file that is not there is refused too, and the iOS check resolves
+    paths as the OS opens them (`/private/var` and `/var` alike), so a `..` spelling of a missing
+    file inside the versions root no longer passes as outside it.
+  - When the iOS bridge cannot install `DenextOtaFileGuard` (no asset handler, or one of the app's
+    own class), it serves no downloaded UI: the launch falls back to the bundled UI, `onOtaRejected`
+    fires with `code: "guard_unavailable"` (nothing is quarantined), and `download` / `activate` /
+    `apply` are refused with that code. An app with its own asset handler that accepts unchecked
+    `/_capacitor_file_` reads opts out with `plugins.DenextBridge.otaFileGuard: false`, which
+    `denext mobile doctor` now warns about (`ota-file-guard`), as it does for `frameGuard: false`.
+  - A request for a downloaded UI's file in another letter case (`APP.JS` for `app.js`), which a
+    case-insensitive volume opens as that same file, is refused (the request fails) on both
+    platforms, through the router and `/_capacitor_file_` alike. It used to count as a file
+    outside the signed manifest and quarantine the version, so any script in the page, a
+    third-party one included, could take the app's current UI out of service. A file the manifest
+    does not list under any spelling still quarantines it. On Android, a `/_capacitor_file_` path
+    that the volume's canonical path respells as the manifest's own file is refused too, as on iOS.
+  - **Breaking for signed deploys of a web export:** an app that embeds a public key now takes only
+    its own platform's stamped export, so a web export signed with the same key cannot install
+    itself on a phone (`platform_mismatch`). `denext mobile build` and `denext export --platform
+    ios|android` already stamp the export; for an unstamped one, `denext ota manifest <dir>
+    --platform ios|android --sign` stamps it before signing. Unsigned, pinned-origin apps still
+    take an unstamped export.
+  - A file verified once in a process is hashed again when its size, modification time, change
+    time or inode changes, so a file rewritten while the app runs is refused (and quarantines the
+    version) instead of being served from the first verdict.
+- **A Deno Desktop UI overlay serves only the files its signed manifest lists, each verified when
+  it is served** (`denext/desktop/updater`, `runDesktop({ updater })`, `desktop.update.ui`).
+  Re-verification at launch hashed the manifest's files but never looked for others, and the
+  window then read each file from the overlay folder on every request. Another program running as
+  the user could therefore add a file to `ui-updates/versions/<version>/`, such as a
+  `_denext/desktop-preload.js` that the runtime injects into every top-level page with the native
+  bridge, or change a file after launch, and the window would serve it, outside the app's code
+  signature. Affected: 2.10.0 through 4.10.1 (the preload path from 3.1.0).
+  - At launch an overlay folder holding anything its manifest does not list, or a symbolic link
+    anywhere, fails re-verification.
+  - Each overlay file is checked against the manifest when it is served: hashed the first time,
+    and again whenever its inode, size, mtime or ctime moves. The bytes served are the bytes
+    checked.
+  - The preload is read only from a file the manifest lists.
+  - An overlay that fails either check is rolled back like a version that failed to boot: it is
+    reported as `rejected` in `desktopUpdateStatus()`, its folder is deleted, the runtime logs why,
+    and the bundled UI is served. A read error (a permission, I/O) skips the overlay for that
+    launch only.
+  - An updater `dataDir` outside the app-support folder is now out of reach of the `fs`, `shell`
+    and `window` capabilities too, like `ui-updates`.
+  - `openDesktopUi(bundledOut, config)` is the new entry point for serving the overlay yourself.
+    `resolveDesktopUiDir` still returns the folder, but a server reading from it does not get the
+    per-file checks.
+- **`applyDesktopUpdate` re-checks the downgrade floor and the expiry.** A staged version is
+  applied only while it is still newer than every accepted sequence (and the bundled export's) and
+  unexpired, and an apply deletes every other staging folder. Before, page script able to call apply
+  could re-activate an older UI left staged. `denext desktop package` now refuses an app with
+  `desktop.update.ui` whose export carries no sequenced `_denext/ota.json` (the bundled UI's
+  sequence is the floor before any overlay is accepted). Stamp one with `spa.ota: true` and
+  `DENEXT_OTA_SIGNING_KEY`, or `denext ota manifest out --sign ota.key`. Affected: 2.10.0 through
+  4.10.1.
+- **The `next.config.*` evaluator can no longer read outside the project through a symlink.**
+  `denext migrate`, `migrate --check` and `denext ui`'s next.config panel evaluate the config in
+  a subprocess granted read access to the project directory, but Deno checks a read against the
+  path as written, not a symlink's target. A project that committed a link out of itself
+  (`home -> /Users`, `p -> /proc`) let its config read any file the user could, and place the
+  contents in a field migrate copies into `denext.config.ts` or prints in `migrate --check
+  --json`. The read grant now leaves out every symlink that resolves outside the project (or
+  nowhere), and every link into a directory that holds one: a directory with no such link is
+  granted whole, one with a link is granted entry by entry, so any other spelling of the path is
+  refused. An app that is a member of a workspace (a deno.json `workspace`, a package.json
+  `workspaces` or a `pnpm-workspace.yaml` that lists it) is contained in the workspace root
+  instead, so pnpm's `node_modules` links into the root's store and links to sibling packages keep
+  working. Deno reads a `require()` under `node_modules` without any permission check, so a link
+  there that leads out (directly or through a directory that holds one) refuses the evaluation
+  instead of only being left out of the grant. The evaluator's `--allow-sys` is narrowed to `cpus`, `osRelease` and
+  `systemMemoryInfo` (what `os.cpus()`, `os.totalmem()` and `os.release()` read); the hostname,
+  user and home directory are no longer readable. Affects 2.0.0 through 4.10.1.
+- **A signed OTA release names the app it is for.** The manifest `signature` never covered the app,
+  so with one signing key shared by several apps (as one key per publisher invites), a feed for one
+  app that was compromised or misrouted could serve another app a validly signed UI. A manifest now
+  carries the app's id (`appId`: the iOS bundle id / Android application id, or the Deno Desktop
+  `desktop.app.identifier`) and signs it in its own `appSignature` over a new payload format
+  (`denext-ota-v5`: every v4 field plus the id; `otaAppSignaturePayload` in `denext/mobile`). The
+  `signature` keeps covering the v1–v4 payload, so app binaries and desktop apps from before this
+  verify the same manifest unchanged and one feed serves old and new binaries alike.
+  - The iOS and Android plugins (template generation 12) refuse a manifest naming another app with
+    `app_mismatch`, and, when the binary embeds a public key, one that names no app (`app_mismatch`)
+    or whose `appSignature` does not verify (`signature`). `checkForUiUpdate` refuses another
+    app's manifest before the native side sees it (its new `appId` option, or the id the shell's
+    status now reports). The desktop overlay updater refuses the same with `app_mismatch` when its
+    `appId` is set, which `runDesktop` does from `desktop.app.identifier`. Unsigned, pinned-origin
+    apps take a manifest without an id as before.
+  - Publishing: a signed `spa.ota` export stamps the Capacitor `appId` for an `ios` / `android`
+    export and `desktop.app.identifier` for a desktop one, `denext mobile build` passes the build's
+    (a flavor's) id, and `denext ota manifest <dir> --sign` stamps the Capacitor `appId` of an
+    `ios` / `android` export. `--app-id <id>` or `DENEXT_OTA_APP_ID` names it outright; a signed
+    manifest that names no app prints a warning. Unsigned manifests get no id unless asked for.
+  - **Breaking for existing signed deploys:** a binary built with this plugin, and a desktop app
+    on this denext with `desktop.update.ui`, refuse a manifest signed without an app id. Re-sign
+    the release your feed serves before shipping them (`denext ota manifest out --app-id <id>
+    --sign <key>`, or export again with `DENEXT_OTA_SIGNING_KEY` set); the re-signed manifest still
+    installs on the binaries already in the field.
+- **`cors: { origins: ["*"] }` no longer lets any site call Server Actions or the API batch.** A
+  cookieless cross-origin call skipped the same-origin (CSRF) check whenever the app's `cors`
+  allowed its origin, and `["*"]` allows every origin, so any page could run an action (or a
+  batch) from the visitor's network position and read the reply: an intranet or VPN app,
+  `clientIp()` and per-address rate limits all saw the visitor. Only an origin the policy lists
+  exactly qualifies now, as the Live handshake already required, and a cross-origin Server Action
+  call must also carry the `x-denext-action: 1` marker denext's client sends (a custom header, so
+  the browser preflights it and a plain cross-site `<form>` post never qualifies). Same-origin
+  calls and exactly listed origins work as before.
+- **A live view resumes only for the viewer that parked it.** After a socket drop, a reconnect
+  from the same page resumed the parked model, here or from the shared view store, whoever the
+  socket now belonged to: a viewer who signed out or switched account without reloading got the
+  previous viewer's model. A parked view (and its sealed snapshot) now records the viewer — the
+  `denextAuth` user, or a digest of the `Cookie` header without `denextAuth` — and a different
+  viewer's resume runs `init`. The signed props a page carries now expire:
+  `live.limits.viewTokenMaxAgeSeconds` (default a day; an older token is `gone` and the browser
+  re-renders the route once). `DENEXT_LIVE_VIEW_SECRET` must be at least 16 characters, as
+  `DENEXT_ACTION_ID_SECRET` is, and `denext dev` warns once for a view with no `authorize`.
+- **Userinfo must name the id_token's subject.** An OIDC provider that also reads userinfo (the
+  Salesforce and Vipps `next-auth/providers/*` modules, or any `oidc()` provider with
+  `userinfoUrl`) signed in with the userinfo's `sub` and `email_verified` over the verified
+  id_token's. The sign-in now fails when the userinfo `sub` is not the id_token's (OIDC Core
+  §5.3.2), and the id_token's `email_verified` wins for the same address.
+- **`deno task gen:auth-providers` validates what it writes.** Upstream provider ids, export names,
+  display names and option names outside a safe shape fail the run instead of landing unescaped in
+  generated source or `deno.json`, and the task runs with read, repository write and `deno`
+  permissions instead of `-A`.
+- **Capacitor's CLI is never fetched from the registry.** Every `cap` command denext runs
+  (`denext mobile add`, `sync`, `dev` and `build`, and `denext migrate --enable-capacitor`'s
+  `cap add`) ran `npx cap …`, which falls back to downloading the unrelated npm package named
+  `cap` (with an install script) when `@capacitor/cli` is not installed, without asking when
+  stdin is not a terminal or CI is detected — inside a release build, beside its signing secrets.
+  denext now checks that `@capacitor/cli` resolves from the project and runs `npx --no cap …`; a
+  missing CLI stops with an install hint. The generated `mobile:ios` / `mobile:android` tasks
+  and migrate's next steps say `npx --no cap` too. Affected: 2.10.0-rc.1 through 4.10.1.
+- **`denext profile --android` validates the package.** The `--package` flag (or the Capacitor
+  config's `appId`) went to `adb shell pidof <package>`, which the device's shell parses, so a
+  crafted value ran commands on the attached device. Anything but a Java package name is now
+  refused before adb runs. Affected: 4.4.0 through 4.10.1.
+- **`denext mobile build` validates what it writes into the native projects.** `--version-name`
+  went into `build.gradle`'s double-quoted Groovy string, where `${…}` runs at Gradle time; it is
+  now letters, digits, `.`, `+` and `-` only. A flavor's `appId` / `appIdSuffix` must make a
+  reverse-DNS id, and the Apple team id (written into `ExportOptions.plist`) ten uppercase
+  letters and digits. Affected: 2.11.0-rc.1 through 4.10.1.
+- **Signing secrets stay out of the export and `cap sync`.** `denext mobile build` ran
+  `denext export` (the project's build plugins) and `cap sync` with the keystore passwords and
+  the App Store Connect variables in their environment. Those two steps now run without the
+  signing variables, fastlane's `MATCH_*`, `SUPPLY_*` and `FASTLANE_*`,
+  `APP_STORE_CONNECT_API_KEY_*` and `DENEXT_PLAY_SERVICE_ACCOUNT`; only Xcode and Gradle get them.
+- **`denext mobile add` pins exact versions under the dependency-age hold.** Plugins were added
+  as caret ranges, which a package manager resolves to the newest release, past the project's
+  minimum dependency age. Every plugin (and `create` / `migrate`'s Capacitor packages) is now one
+  exact version, saved exactly, and `mobile add` checks each pin's npm publish time against the
+  rule `create`, `migrate` and `upgrade` apply before installing, refusing one still held.
+- **`denext mobile build --release` runs the release checks.** After `cap sync` and before Xcode
+  or Gradle, it runs `denext mobile doctor --release` and stops on its release-security
+  findings: a LAN / loopback / `http` `server.url`, a wildcard or `http:` `allowNavigation`,
+  `frameGuard: false` over a foreign origin, cleartext (`server.cleartext`, the manifest's
+  `usesCleartextTraffic`, a network security config, a leftover `NSAllowsLocalNetworking`), a
+  debuggable WebView, `android:debuggable="true"` and the legacy bridge. Every other doctor error
+  (a missing CSP, a secret-shaped string in the export, `NSAllowsArbitraryLoads`, an insecure
+  ATS exception domain, mixed content, …) is printed as a warning with its fix, and the build
+  goes on. A flavor's
+  `serverUrl` that is not `https` is refused.
+- **The fastlane CI workflow pins its actions.** `denext mobile add fastlane --ci` writes every
+  action as a commit SHA with its tag in a comment, decodes the upload keystore with a private
+  umask, and deletes it in an `if: always()` step.
+- **Deno Desktop's loopback `openAuthSession` requires PKCE S256**, as every other platform has
+  since 4.9.0. An authorization URL without one `code_challenge` (a 43-character base64url SHA-256)
+  and one `code_challenge_method=S256` is refused with `pkce_required` before the system browser
+  opens, by `openAuthSession` in the page and again by the runtime's auth-session endpoint, unless
+  the call passes `pkce: "not-applicable"` with a `reason` (now forwarded to the runtime). Any
+  local process can connect to the loopback redirect port, so PKCE is what keeps an intercepted
+  `code` unredeemable (RFC 8252 §8.1, RFC 7636). The custom-scheme flow already required it; the
+  page now checks it there too, before the runtime does. An app whose loopback sign-in builds its
+  URL without PKCE must add it (or the documented waiver). Affected: the loopback flow since 2.10.0.
+- **Deno Desktop's loopback redirect listener binds `::1` as well as `127.0.0.1`**, on one port
+  (RFC 8252 §7.3; IPv4 alone where the host has no IPv6). Before, it bound IPv4 only, so with a
+  fixed `loopbackPort` and a `localhost` redirect another local program could listen on
+  `[::1]:<port>` and receive the redirect from a browser that tries IPv6 first. A fixed port held on
+  either address now rejects `port_in_use` before the browser opens. Affected: `loopbackPort` since
+  3.1.0.
+- **The loopback listener checks `state`.** When the authorization URL carries a `state`, only a
+  callback with exactly that `state` completes the session; a forged redirect gets an error page
+  and the session keeps waiting until its timeout. A PKCE waiver (`pkce: "not-applicable"`) now
+  needs a `state` in the URL, as the custom-scheme flow does.
+
+### Documentation
+
+- **The Deno Desktop runtime guide's releases table gains its `3.0.0-rc.6` row**, the runtime
+  reference no longer says upstream Deno releases a `3.0.0`, and the `.deno/npm-compat`
+  limitation names the runtimes that still leave it (through the pinned `3.0.0-denext.2`).
+
 ## [4.10.1] - 2026-10-29
 
 ### Added
@@ -19349,7 +19812,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.2...development
+[4.10.2]: https://jsr.io/@denext/denext@4.10.2
 [4.10.1]: https://jsr.io/@denext/denext@4.10.1
 [4.10.0]: https://jsr.io/@denext/denext@4.10.0
 [4.9.0]: https://jsr.io/@denext/denext@4.9.0

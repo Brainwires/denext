@@ -13,7 +13,12 @@ import {
   inMemoryChannelTransport,
   resetChannels,
 } from "../src/runtime/channel.ts";
-import { defineLiveView, signLiveViewToken } from "../src/runtime/live-view.ts";
+import {
+  defineLiveView,
+  liveViewSecret,
+  signLiveViewToken,
+  verifyLiveViewToken,
+} from "../src/runtime/live-view.ts";
 import { fx, type Next, subs } from "../src/runtime/mvu.ts";
 import { applyFlightOps } from "../src/runtime/flight-patch.ts";
 import type { StandardSchemaV1 } from "../src/runtime/define-action.ts";
@@ -78,6 +83,7 @@ function fakeHub(limits: Partial<ViewLimits> = {}, store?: LiveViewStore, bus?: 
       maxParkedViews: 10,
       maxSubscriptionInputBytes: 1024,
       channelAuthTtlSeconds: 300,
+      viewTokenMaxAgeSeconds: 86_400,
       ...limits,
     }),
     sendFrame: (conn, text) => push(conn, JSON.parse(text)),
@@ -193,14 +199,27 @@ defineLiveView<Model, Msg, { start: number }>({
   events: digits,
 });
 
-async function mountFrame(view: string, props: unknown, extra: Record<string, unknown> = {}) {
+/**
+ * When the page "rendered" every frame's token. Tokens carry their issue time in seconds, and the
+ * browser resumes with the token its page carried, so a resume frame must carry the same token as
+ * the mount it resumes: signing each frame at `Date.now()` would make a resume across a second
+ * boundary a different signed-props pair (a fresh `init`, not a resume).
+ */
+const SIGNED_AT = Date.now();
+
+async function mountFrame(
+  view: string,
+  props: unknown,
+  extra: Record<string, unknown> = {},
+  signedAt = SIGNED_AT,
+) {
   const json = JSON.stringify(props);
   return {
     type: "view-mount",
     vid: "v1",
     view,
     props: json,
-    token: await signLiveViewToken(view, json),
+    token: await signLiveViewToken(view, json, signedAt),
     ...extra,
   };
 }
@@ -228,7 +247,7 @@ Deno.test("defineLiveView: the page gets HTML for the first paint, the island an
   assertEquals(flight.i, "denext#LiveView");
   assertEquals(flight.p.view, "test-counter");
   assertEquals(flight.p.props, '{"start":5}');
-  assertEquals(flight.p.token, await signLiveViewToken("test-counter", '{"start":5}'));
+  assert(await verifyLiveViewToken("test-counter", '{"start":5}', flight.p.token));
   // The handlers travel as indexes; the messages stay on the server.
   const button = flight.c[0].c[1];
   assertEquals(button.p.onClick, { __dnxlv: 0 });
@@ -544,6 +563,106 @@ Deno.test("live views: a dropped connection's views resume on reconnect, else re
   assertEquals(hub.parked(), 0);
 });
 
+Deno.test("live views: a parked view resumes only for the viewer it was mounted for", async () => {
+  allowed.add("ok-other"); // a second signed-in viewer `authorize` admits
+  const { hub, conn } = fakeHub();
+  const a = conn("ok");
+  const first = await mounted(hub, a, 1);
+  const patched = next(a, isType("view-patch"));
+  hub.event(a, { type: "view-event", vid: "v1", rev: first.rev, h: 0 }); // n=2
+  await patched;
+  a.closed = true;
+  hub.drop(a);
+
+  // Another viewer on the same page (signed out and back in as someone else, no reload) names
+  // the parked id: it runs `init`, and the parked model stays parked.
+  const b = conn("ok-other");
+  const fresh = next(b, isType("view-render"));
+  await hub.mount(b, await mountFrame("test-counter", { start: 1 }, { resume: first.iid }));
+  const f = await fresh;
+  assertEquals(shown(f.flight), "n=1", "another viewer never gets the parked model");
+  assert(f.iid !== first.iid);
+  assertEquals(hub.parked(), 1);
+
+  // The viewer it belongs to still resumes it.
+  const c = conn("ok");
+  const resumed = next(c, isType("view-render"));
+  await hub.mount(c, await mountFrame("test-counter", { start: 1 }, { resume: first.iid }));
+  assertEquals(shown((await resumed).flight), "n=2");
+  hub.dispose();
+  allowed.delete("ok-other");
+});
+
+Deno.test("live views: a stored snapshot resumes only for the viewer that parked it", async () => {
+  allowed.add("ok-other");
+  const store = memoryLiveViewStore();
+  const instanceA = fakeHub({}, store);
+  const instanceB = fakeHub({}, store);
+  const a = instanceA.conn("ok");
+  const first = await mounted(instanceA.hub, a, 1);
+  const patched = next(a, isType("view-patch"));
+  instanceA.hub.event(a, { type: "view-event", vid: "v1", rev: first.rev, h: 0 }); // n=2
+  await patched;
+  a.closed = true;
+  instanceA.hub.drop(a);
+  await instanceA.hub.settled();
+
+  const b = instanceB.conn("ok-other");
+  const fresh = next(b, isType("view-render"));
+  await instanceB.hub.mount(
+    b,
+    await mountFrame("test-counter", { start: 1 }, { resume: first.iid }),
+  );
+  assertEquals(shown((await fresh).flight), "n=1", "another viewer runs init");
+  await Promise.all([instanceA.hub.settled(), instanceB.hub.settled()]);
+  instanceA.hub.dispose();
+  instanceB.hub.dispose();
+  allowed.delete("ok-other");
+});
+
+Deno.test("live views: a props token past viewTokenMaxAgeSeconds is refused (gone)", async () => {
+  const { hub, conn } = fakeHub({ viewTokenMaxAgeSeconds: 60 });
+  const c = conn("ok");
+  const gone = next(c, isError("gone"));
+  await hub.mount(c, await mountFrame("test-counter", { start: 1 }, {}, Date.now() - 120_000));
+  assertEquals((await gone).subId, "v1");
+  assertEquals(c.views.size, 0);
+  // One signed within the window mounts.
+  const rendered = next(c, isType("view-render"));
+  await hub.mount(c, await mountFrame("test-counter", { start: 1 }, {}, Date.now() - 30_000));
+  assertEquals(shown((await rendered).flight), "n=1");
+  // A token whose issue time is far ahead of the clock is refused too.
+  const json = '{"start":1}';
+  const ahead = await signLiveViewToken("test-counter", json, Date.now() + 3_600_000);
+  assert(!(await verifyLiveViewToken("test-counter", json, ahead, 60)));
+  // A token with no issue time (the old format) never verifies.
+  const bare = (await signLiveViewToken("test-counter", json)).split(".")[1];
+  assert(!(await verifyLiveViewToken("test-counter", json, bare, 60)));
+  hub.dispose();
+});
+
+Deno.test("live views: DENEXT_LIVE_VIEW_SECRET must be at least 16 characters", () => {
+  const before = Deno.env.get("DENEXT_LIVE_VIEW_SECRET");
+  let message = "";
+  let long = "";
+  // Synchronous set → read → restore: no other test can observe the short value.
+  try {
+    Deno.env.set("DENEXT_LIVE_VIEW_SECRET", "too-short");
+    try {
+      liveViewSecret();
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    Deno.env.set("DENEXT_LIVE_VIEW_SECRET", "x".repeat(16));
+    long = liveViewSecret();
+  } finally {
+    if (before === undefined) Deno.env.delete("DENEXT_LIVE_VIEW_SECRET");
+    else Deno.env.set("DENEXT_LIVE_VIEW_SECRET", before);
+  }
+  assertStringIncludes(message, "at least 16 characters");
+  assertEquals(long, "x".repeat(16));
+});
+
 Deno.test("live views: a channel subscription feeds messages after the channel's authorize", async () => {
   resetChannels();
   const ch = createChannel<{ n: number }>({ id: "lv-chan", authorize: (_ctx, key) => key === "k" });
@@ -680,6 +799,7 @@ Deno.test("live view snapshots: sealed, bound to their instance id, models must 
   const sealed = await sealViewSnapshot("iid-1", {
     view: "v",
     signed: "v\0tok",
+    identity: "anonymous",
     model: { secret: "hunter2", at: new Date(5), tags: new Set(["a"]) },
   });
   assert(!plainText(sealed).includes("hunter2"));
@@ -689,7 +809,12 @@ Deno.test("live view snapshots: sealed, bound to their instance id, models must 
   assertEquals(await openViewSnapshot("iid-1", sealed.slice(0, -4) + "AAAA"), null, "tampered");
   let threw = false;
   try {
-    await sealViewSnapshot("iid-1", { view: "v", signed: "s", model: { f: () => 1 } });
+    await sealViewSnapshot("iid-1", {
+      view: "v",
+      signed: "s",
+      identity: "anonymous",
+      model: { f: () => 1 },
+    });
   } catch {
     threw = true;
   }

@@ -7,6 +7,7 @@
 import type { LiveError, LiveServerMessage } from "../runtime/live-protocol.ts";
 import { verifyLiveViewToken } from "../runtime/live-view.ts";
 import { decodeWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { auth, peekActiveAuthConfig } from "./auth/mod.ts";
 
 /** The caps a view hub reads (a subset of `live.limits`). */
 export interface ViewLimits {
@@ -22,6 +23,8 @@ export interface ViewLimits {
   maxSubscriptionInputBytes: number;
   /** Seconds before `authorize` runs again. */
   channelAuthTtlSeconds: number;
+  /** Seconds a view's signed props token is accepted after the page rendered it. */
+  viewTokenMaxAgeSeconds: number;
 }
 
 /** What the Live hub lends a view half. */
@@ -161,7 +164,8 @@ async function admitView<C, D>(
     return refuse("limit", "view props too large");
   }
   const def = policy.lookup(view);
-  if (!def || !(await verifyLiveViewToken(policy.tokenName(view), props, token))) {
+  const maxAge = deps.limits().viewTokenMaxAgeSeconds;
+  if (!def || !(await verifyLiveViewToken(policy.tokenName(view), props, token, maxAge))) {
     return refuse("gone", "view unavailable");
   }
   const decoded = decodeProps(props, shape.enc);
@@ -201,6 +205,36 @@ export async function mountView<C, D>(
   await place(shape, admitted);
 }
 
+/**
+ * Who a connection's viewer is, for binding a parked view to it: `user:<id>` for a `denextAuth`
+ * session (`auth()`, run in the connection's session as `authorize` is), `anonymous` when signed
+ * out; without `denextAuth`, a digest of the connection's `Cookie` header (`anonymous` with none),
+ * so signing out or switching account changes it whatever session library the app uses. A failure
+ * to read it yields a value no other connection has: nothing resumes across it.
+ *
+ * @param deps The hub primitives.
+ * @param conn The connection.
+ * @returns The identity fingerprint.
+ */
+export async function viewerIdentity<C>(deps: ViewHubBaseDeps<C>, conn: C): Promise<string> {
+  try {
+    return await deps.withConnContext(conn, async () => {
+      if (peekActiveAuthConfig()) {
+        const session = await auth();
+        return session ? `user:${session.user.id}` : "anonymous";
+      }
+      const cookie = deps.connContext(conn).cookie;
+      if (!cookie) return "anonymous";
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(cookie));
+      return `cookie:${
+        Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("")
+      }`;
+    });
+  } catch {
+    return `unknown:${crypto.randomUUID()}`;
+  }
+}
+
 /** What a parked instance carries that a resume checks. */
 export interface Parkable {
   /** The instance id. */
@@ -209,6 +243,8 @@ export interface Parkable {
   readonly def: { readonly id: string };
   /** `view + "\0" + token`. */
   readonly signed: string;
+  /** The viewer it was mounted for ({@link viewerIdentity}): only the same viewer resumes it. */
+  readonly identity: string;
   /** Stopped for good. */
   stopped: boolean;
   /** The timer that stops it at the end of its resume window. */
@@ -216,13 +252,15 @@ export interface Parkable {
 }
 
 /**
- * The instance parked under `resume`, when it is this view with these signed props: taken out of
- * `parked`, its park timer cleared.
+ * The instance parked under `resume`, when it is this view with these signed props, mounted for
+ * the same viewer: taken out of `parked`, its park timer cleared. Another viewer's resume (signed
+ * out, or another account, on the same page) gets `undefined` and the instance stays parked.
  *
  * @param parked The parked instances by id.
  * @param resume The id the client resumes.
  * @param view The view id.
  * @param signed `view + "\0" + token`.
+ * @param identity The resuming connection's {@link viewerIdentity}.
  * @returns The instance, or `undefined`.
  */
 export function takeParked<I extends Parkable>(
@@ -230,9 +268,11 @@ export function takeParked<I extends Parkable>(
   resume: string | undefined,
   view: string,
   signed: string,
+  identity: string,
 ): I | undefined {
   const inst = resume === undefined ? undefined : parked.get(resume);
   if (!inst || inst.def.id !== view || inst.signed !== signed || inst.stopped) return undefined;
+  if (inst.identity !== identity) return undefined;
   parked.delete(inst.iid);
   clearTimeout(inst.parkTimer);
   inst.parkTimer = undefined;

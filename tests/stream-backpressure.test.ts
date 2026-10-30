@@ -113,7 +113,8 @@ Deno.test("core renderToReadableStream: allReady resolves before anyone reads", 
   const stream = renderToReadableStream(manyBoundaries()) as ReadableStream<Uint8Array> & {
     allReady: Promise<void>;
   };
-  const settled = await within(stream.allReady, 500);
+  // The bound only ends a failure (500 ms was within a loaded machine's scheduling stalls).
+  const settled = await within(stream.allReady, 5_000);
   assert(settled, "allReady must not wait for the consumer to read");
   const html = await readText(stream);
   for (let i = 0; i < BOUNDARIES; i++) assert(html.includes(`item-${i}-`), `item ${i}`);

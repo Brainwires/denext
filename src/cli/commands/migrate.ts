@@ -391,7 +391,7 @@ function expoNextSteps(e: NonNullable<MigrateResult["expo"]>, capacitor: boolean
     ...(e.missingPackages.length ? [`install ${e.missingPackages.join(" ")}`] : []),
     ...(capacitor ? [] : [
       "install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/android (^8)",
-      "deno task export && npx cap add ios && npx cap add android",
+      "deno task export && npx --no cap add ios && npx --no cap add android",
     ]),
     ...(e.mobile.command ? [e.mobile.command] : []),
   ];
@@ -650,7 +650,8 @@ function reportCapacitor(c: CapacitorMigrateInfo): void {
 function reportCapacitorSteps(outcome: CapacitorStepsOutcome): void {
   for (const line of outcome.ran) console.log(`    ran: ${line}`);
   if (outcome.failed) {
-    console.log(`    ✗ failed (exit ${outcome.failed.code}): ${outcome.failed.line}`);
+    const { code, line, reason } = outcome.failed;
+    console.log(`    ✗ failed (${reason ?? `exit ${code}`}): ${line}`);
   }
   if (outcome.pending.length) {
     console.log("    still to run:");
@@ -658,11 +659,30 @@ function reportCapacitorSteps(outcome: CapacitorStepsOutcome): void {
   }
 }
 
+/**
+ * Whether migrate may run the Capacitor steps, each of which runs the project's own code (its
+ * package manager's hooks, its build, its Capacitor config): `--yes`, or a confirmed prompt on
+ * an interactive human run. A `--json` run never prompts, so it needs `--yes`.
+ */
+function allowCapacitorProjectCode(
+  info: CapacitorMigrateInfo,
+  yes: boolean,
+  json: boolean,
+): boolean {
+  if (yes) return true;
+  const runnable = info.steps.filter((s) => !s.skip);
+  if (runnable.length === 0 || json || !Deno.stdin.isTerminal()) return false;
+  console.log("\n  These steps run the project's own code:");
+  for (const s of runnable) console.log(`    ${s.line}    # ${s.projectCode}`);
+  return confirm("  Run them now? Only do this for a project you trust.");
+}
+
 /** Run the Capacitor steps (human mode prints as it goes; JSON mode returns the outcome). */
 async function capacitorSteps(
   r: MigrateResult,
   run: CommandRunner,
   json: boolean,
+  yes: boolean,
 ): Promise<CapacitorStepsOutcome | undefined> {
   if (!r.capacitor) {
     if (r.capacitorSkipped && !json) {
@@ -671,7 +691,8 @@ async function capacitorSteps(
     return undefined;
   }
   if (!json) reportCapacitor(r.capacitor);
-  const outcome = await runCapacitorSteps(r.capacitor.steps, run);
+  const allowProjectCode = allowCapacitorProjectCode(r.capacitor, yes, json);
+  const outcome = await runCapacitorSteps(r.capacitor.steps, run, { allowProjectCode });
   if (!json) reportCapacitorSteps(outcome);
   return outcome;
 }
@@ -793,8 +814,8 @@ export function terminalRunner(toStderr: boolean): CommandRunner {
 
 /**
  * The `migrate` command. `run` runs the commands `--enable-capacitor` plans (the package
- * install, the export and `npx cap add`); tests pass a recorder. By default they run with the
- * terminal attached.
+ * install, the export and `npx cap add`) once the user opted in to running the project's own
+ * code; tests pass a recorder. By default they run with the terminal attached.
  */
 export function createMigrateCommand(run?: CommandRunner): CommandSpec {
   return {
@@ -823,7 +844,9 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
         name: "enable-capacitor",
         type: "boolean",
         help: "Also add an iOS/Android Capacitor target: capacitor.config.ts, the mobile:* tasks " +
-          "and config keys, and install the pinned Capacitor 8 packages (SPA, App Router, Expo)",
+          "and config keys, and install the pinned Capacitor 8 packages (SPA, App Router, Expo). " +
+          "The install, `denext export` and `npx cap add` run the project's own code, so they " +
+          "run only with --yes or after a prompt; otherwise migrate prints them to run yourself",
       },
       {
         name: "app-id",
@@ -859,7 +882,8 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
         name: "yes",
         alias: "y",
         type: "boolean",
-        help: "Apply the codemod without prompting",
+        help: "Answer yes to migrate's prompts: apply the codemod, and run --enable-capacitor's " +
+          "install, export and `cap add` (they run the project's own code: trusted projects only)",
       },
       {
         name: "prisma-adapter",
@@ -893,7 +917,12 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
         // Machine-readable: the result object only (no banner, no prompts). `--codemod`
         // applies with `--yes`, else reports its plan as a dry run. The Capacitor steps'
         // output goes to the terminal; their outcome is in the JSON.
-        const capacitorRun = await capacitorSteps(r, run ?? terminalRunner(true), true);
+        const capacitorRun = await capacitorSteps(
+          r,
+          run ?? terminalRunner(true),
+          true,
+          ctx.flags.yes === true,
+        );
         const codemod = ctx.flags.codemod === true
           ? await runCodemod(target, { write: ctx.flags.yes === true })
           : undefined;
@@ -907,7 +936,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       if (r.prisma) reportPrisma(r.prisma);
       if (r.nextAuth) reportNextAuth(r.nextAuth);
       if (r.jailScripts) reportJailScripts(r.jailScripts);
-      await capacitorSteps(r, run ?? terminalRunner(false), false);
+      await capacitorSteps(r, run ?? terminalRunner(false), false, ctx.flags.yes === true);
 
       if (r.denoJsonExists) {
         console.log(

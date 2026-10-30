@@ -121,10 +121,11 @@ export async function confineWithinRoots(abs: string, roots: readonly string[]):
  * Sub-directories of the app-support (`data`) directory the RUNTIME owns, which a page must never
  * read, list, write, delete, trash, open or drag out:
  *
- * - `ui-updates` holds the desktop updater's verified overlay and its pointer (`current.json`). The
- *   overlay is served at launch without re-verifying it, so a page that could write there would
- *   plant a UI that persists across relaunches and outlives any signed update; trashing it would
- *   roll the app back to the older bundled UI.
+ * - `ui-updates` holds the desktop updater's verified overlay and its state (`current.json`,
+ *   `state.json`). The overlay is re-verified at launch and each file again when it is served, so a
+ *   page that wrote there would take the overlay out of service (back to the older bundled UI)
+ *   rather than plant a script; this guard keeps the page from reaching it at all. An updater
+ *   `dataDir` elsewhere is reserved the same way ({@link reserveRuntimeDir}).
  * - `CEF`, `WebKitGTK` and `WebView2` are the web engine's profile (cookies, local storage, the
  *   HTTP cache, saved credentials): reading it hands the page every session the app holds, and
  *   writing it plants state the engine trusts.
@@ -156,10 +157,45 @@ function reservedSegment(dataDir: string, target: string): string | undefined {
 }
 
 /**
+ * Directories the runtime owns wherever they are — the desktop updater's `dataDir` when an app sets
+ * its own (`runDesktop({ updater: { dataDir } })`), which the reserved names under the data root do
+ * not cover. Absolute, as resolved when they were reserved.
+ */
+const reservedRuntimeDirs = new Set<string>();
+
+/**
+ * Reserve `dir` for the desktop runtime for the rest of the process: no capability path may reach
+ * it or anything under it ({@link refuseReservedDataPath}), however the page spells it.
+ *
+ * @param dir An absolute directory (it need not exist yet).
+ */
+export function reserveRuntimeDir(dir: string): void {
+  reservedRuntimeDirs.add(resolve(dir));
+}
+
+/**
+ * Whether `target` lies in (or is) a directory {@link reserveRuntimeDir} reserved: by the paths as
+ * given, then by their real paths.
+ */
+async function inReservedRuntimeDir(target: string): Promise<boolean> {
+  if (reservedRuntimeDirs.size === 0) return false;
+  const realTarget = await realPathOf(target);
+  for (const dir of reservedRuntimeDirs) {
+    if (isWithin(dir, target)) return true;
+    const realDir = await realPathOf(dir);
+    if (realDir !== undefined && realTarget !== undefined && isWithin(realDir, realTarget)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Refuse a path inside a runtime-owned sub-directory of `dataDir` (see
- * {@link RESERVED_DATA_SUBDIRS}), for EVERY operation. Checked on the path as given AND on its real
- * path against the real data directory, so neither another spelling of the data directory (a
- * symlinked ancestor, `/var` vs `/private/var`) nor a short (8.3) name on Windows reaches it.
+ * {@link RESERVED_DATA_SUBDIRS}) or a directory reserved with {@link reserveRuntimeDir}, for EVERY
+ * operation. Checked on the path as given AND on its real path against the real data directory, so
+ * neither another spelling of the data directory (a symlinked ancestor, `/var` vs `/private/var`)
+ * nor a short (8.3) name on Windows reaches it.
  *
  * @param dataDir The app-support directory.
  * @param target The already-confined absolute path.
@@ -175,5 +211,8 @@ export async function refuseReservedDataPath(dataDir: string, target: string): P
   }
   if (hit !== undefined) {
     throw forbidden(`"${hit}" is reserved for the desktop runtime`);
+  }
+  if (await inReservedRuntimeDir(resolve(target))) {
+    throw forbidden("the UI update folder is reserved for the desktop runtime");
   }
 }

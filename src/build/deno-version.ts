@@ -18,6 +18,7 @@
 // manifests is denext's by where it came from ({@linkcode isDenextReleaseVersion}).
 
 import toolchainPin from "./deno-toolchain-pin.json" with { type: "json" };
+import { runToExit } from "./exited-output.ts";
 
 /** The minimum supported Deno version. */
 export const MIN_DENO_VERSION = "2.9.0";
@@ -158,6 +159,23 @@ export function supportsIdleTrim(version: string): boolean {
   return compareDenoVersions(version, FIRST_IDLE_TRIM_RUNTIME) >= 0;
 }
 
+/**
+ * The first release of denext's Deno with the process resource limits (Brainwires/deno DENEXT.md
+ * item 92: `--max-memory`, `--max-cpu-time` and `--max-time` on `deno run` and `deno compile`).
+ */
+export const FIRST_RESOURCE_LIMITS_RUNTIME = "3.0.0-rc.2";
+
+/**
+ * Whether denext's Deno of `version` takes the resource-limit flags (from
+ * {@linkcode FIRST_RESOURCE_LIMITS_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A version of denext's Deno (`3.0.0-rc.N`, `3.0.0-denext.N`, `2.9.7-denext.N`).
+ * @returns Whether it accepts `--max-memory` / `--max-cpu-time` / `--max-time`.
+ */
+export function supportsResourceLimits(version: string): boolean {
+  return compareDenoVersions(version, FIRST_RESOURCE_LIMITS_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -230,6 +248,25 @@ export function parseDenoVersionOutput(text: string): DenoIdentity | null {
   if (!first) return null;
   const marker = MARKER_LINE.exec(text);
   return marker ? { deno: first[1], denext: marker[1] } : { deno: first[1] };
+}
+
+/**
+ * `<bin> --version`'s output.
+ *
+ * @param bin The Deno binary.
+ * @returns The output, or null (not runnable, or no answer within 10 s).
+ */
+export async function denoVersionOutput(bin: string): Promise<string | null> {
+  try {
+    const out = await runToExit(bin, {
+      args: ["--version"],
+      stderr: "null",
+      signal: AbortSignal.timeout(10_000),
+    });
+    return out.success ? new TextDecoder().decode(out.stdout) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

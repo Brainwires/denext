@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "4.10.1",
+  "version": "4.10.2",
   "license": "MIT",
   "workspace": [
     "./packages/photon",
@@ -316,7 +316,7 @@
     "example:tailwind": "cd examples/tailwind && deno task dev",
     "e2e:desktop-kitchen-sink": "cd examples/desktop-kitchen-sink && deno task test:window",
     "example:game": "deno run -A --config deno.json examples/game/serve.ts",
-    "gen:auth-providers": "deno run -A scripts/gen-auth-providers.ts",
+    "gen:auth-providers": "deno run --allow-read --allow-write=. --allow-run=deno scripts/gen-auth-providers.ts",
     "gen:config-schema": "deno run -A scripts/gen-config-schema.ts",
     "gen:command-table": "deno run -A scripts/gen-command-table.ts",
     "gen:native-templates": "deno run -A scripts/gen-native-templates.ts",
@@ -435,7 +435,7 @@
     "effect": "npm:effect@^3.22.0",
     "@prisma/driver-adapter-utils": "npm:@prisma/driver-adapter-utils@6.19.3",
     "@denext/lightningcss": "jsr:@denext/lightningcss@^1.0.0-rc.72",
-    "@denext/docs-corpus": "jsr:@denext/docs-corpus@4.10.1",
+    "@denext/docs-corpus": "jsr:@denext/docs-corpus@4.10.2",
     "sass": "npm:sass@^1.80.0",
     "@mdx-js/mdx": "npm:@mdx-js/mdx@^3",
     "@tanstack/router-plugin": "npm:@tanstack/router-plugin@1.168.42",

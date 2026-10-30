@@ -104,9 +104,9 @@ export default function Mobile() {
         <strong>1. Scaffold.</strong> <code>--capacitor</code> adds a{" "}
         <code>capacitor.config.ts</code>{" "}
         that bundles the export (<code>webDir: "out"</code>) into the native shells, a{" "}
-        <code>package.json</code> pinning Capacitor 8 (<code>^8.5.2</code>), an <code>export</code>
+        <code>package.json</code> pinning Capacitor 8 exactly (<code>8.5.2</code>), an{" "}
+        <code>export</code> task and the <code>mobile:*</code> tasks. Add <code>--desktop</code>
         {" "}
-        task and the <code>mobile:*</code> tasks. Add <code>--desktop</code>{" "}
         to scaffold the desktop target too. Change <code>appId</code> and <code>appName</code> in
         {" "}
         <code>capacitor.config.ts</code>{" "}
@@ -148,8 +148,8 @@ export default {
       <Code lang="bash">
         {`denext install                # Capacitor's CLI + platforms are npm packages
 denext task export            # out/
-denext run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add ios       # once
-denext run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add android   # once`}
+denext run -A --node-modules-dir npm:@capacitor/cli@8.5.2 add ios       # once
+denext run -A --node-modules-dir npm:@capacitor/cli@8.5.2 add android   # once`}
       </Code>
       <p>
         <strong>4. Run it on a phone.</strong>{" "}
@@ -274,7 +274,9 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
         (and the fastlane lanes, which run it) refuses while that backup is on disk, or while the
         Capacitor config's <code>server</code> names a LAN / loopback <code>http</code> URL or sets
         {" "}
-        <code>cleartext</code>, unless a flavor's <code>serverUrl</code> sets the server on purpose.
+        <code>cleartext</code>, unless a flavor's <code>serverUrl</code>{" "}
+        sets the server on purpose (an <code>https</code> one: a release flavor&apos;s{" "}
+        <code>http</code> <code>serverUrl</code> is refused).
       </p>
       <p>
         On iOS, <code>cleartext</code> does nothing (it is Android's{" "}
@@ -510,11 +512,38 @@ export default function RootLayout({ children }: { children: VNodeChildren }) {
         <code>npm_config_ignore_scripts</code> and <code>YARN_ENABLE_SCRIPTS</code> as{" "}
         <code>denext migrate</code>&apos;s does), declares any Android permissions they need, and
         runs{" "}
-        <code>npx cap sync</code>. The install runs in the Capacitor project folder. Before the web
-        export exists (no <code>index.html</code> in the config&apos;s{" "}
+        <code>npx --no cap sync</code>. The install runs in the Capacitor project folder. Before the
+        web export exists (no <code>index.html</code> in the config&apos;s{" "}
         <code>webDir</code>), sync would stop at the missing folder, so it runs{" "}
-        <code>npx cap update</code> instead (the native half of sync) and says what is left:{" "}
+        <code>npx --no cap update</code> instead (the native half of sync) and says what is left:
+        {" "}
         <code>denext export</code>, then <code>npx cap sync</code>.
+      </p>
+      <p>
+        Every plugin is pinned to one exact version and saved exactly (<code>--save-exact</code> /
+        {" "}
+        <code>--exact</code>), never a range a package manager would resolve to whatever was
+        published last. Before installing, <code>denext mobile add</code>{" "}
+        reads each pinned version&apos;s publish time from the npm registry and refuses one your
+        minimum dependency age does not let in yet (the rule <code>create</code>,{" "}
+        <code>migrate</code> and <code>upgrade</code> apply: <code>minimumDependencyAge</code> in
+        {" "}
+        <code>deno.json</code>, <code>min-release-age</code> in <code>.npmrc</code>,{" "}
+        <code>DENEXT_MIN_DEP_AGE</code>, else Deno&apos;s two days; an <code>npm:</code>{" "}
+        entry in its <code>exclude</code>{" "}
+        lifts it for that package). When the registry cannot be reached it installs the pins and
+        says their age was not checked.
+      </p>
+      <p>
+        Every <code>cap</code> command denext runs (<code>mobile add</code>, <code>sync</code>,{" "}
+        <code>dev</code>, <code>build</code>,{" "}
+        <code>migrate --enable-capacitor</code>) is the project&apos;s own{" "}
+        <code>@capacitor/cli</code>: denext checks that the package resolves from the project (its
+        {" "}
+        <code>node_modules</code> or one above it) and runs{" "}
+        <code>npx --no cap …</code>, so a missing CLI stops with &quot;install @capacitor/cli&quot;
+        instead of npx downloading the unrelated npm package named <code>cap</code> (which{" "}
+        <code>npm exec</code> does without asking when stdin is not a terminal or CI is detected).
       </p>
       <Code lang="bash">
         {`denext mobile add --list                    # the capabilities and their plugins
@@ -588,7 +617,26 @@ denext mobile add haptics share network secure-store`}
           with the option also reads it when the OS store answers with no value for the key (a value
           the OS store holds wins). A later keychain <code>set</code> of the key clears it,{" "}
           <code>delete</code> clears both, and <code>requireBiometric</code>{" "}
-          never falls back. Without the option a refusal still rejects.
+          never falls back. Without the option a refusal still rejects.{" "}
+          <code>{'{ accessibility: "afterFirstUnlockThisDeviceOnly" }'}</code> on <code>set</code>
+          {" "}
+          picks the iOS Keychain class (<code>kSecAttrAccessible…</code>):{" "}
+          <code>&quot;whenUnlocked&quot;</code> (the default, unchanged),{" "}
+          <code>&quot;whenUnlockedThisDeviceOnly&quot;</code>,{" "}
+          <code>&quot;afterFirstUnlock&quot;</code>,{" "}
+          <code>&quot;afterFirstUnlockThisDeviceOnly&quot;</code> or{" "}
+          <code>&quot;whenPasscodeSetThisDeviceOnly&quot;</code>. A <code>…ThisDeviceOnly</code>
+          {" "}
+          value is never in a backup and never moves to another device, which suits a refresh token;
+          an <code>afterFirstUnlock…</code>{" "}
+          value stays readable while the device is locked again, for background work. On Android the
+          plugin&apos;s Keystore key never leaves the device and needs no unlock, so every value
+          already behaves as{" "}
+          <code>&quot;afterFirstUnlockThisDeviceOnly&quot;</code>. On the web and in a Deno Desktop
+          window the option is accepted and has no effect. An unknown class is a{" "}
+          <code>TypeError</code> everywhere, and so is a class other than{" "}
+          <code>&quot;whenPasscodeSetThisDeviceOnly&quot;</code> beside{" "}
+          <code>requireBiometric</code>.
         </li>
         <li>
           <code>openSqlite(name)</code> (<code>sqlite</code>): a SQLite database with{" "}
@@ -2217,7 +2265,17 @@ audio.addEventListener("ended", () => clearNowPlaying());`}
         <li>
           otherwise (the browser) the page: <code>fetch</code>{" "}
           with the body streamed into the Origin Private File System, with progress, pause and
-          resume, for as long as the page lasts.
+          resume, for as long as the page lasts. The bytes go to a part file in OPFS&apos;s{" "}
+          <code>cache/.denext-part/</code> folder (never beside the file, and hidden from{" "}
+          <code>listDir</code>), which takes the file&apos;s place only once the download is done: a
+          file already at the path keeps its contents through a pause, a cancel or a failure. A
+          download a reload interrupted starts over, reusing that part file. Where there is no OPFS
+          (no secure context), a download into a picked file or folder writes through the picked
+          file&apos;s own <code>createWritable()</code>{" "}
+          stream, which swaps the bytes in only once the download is done, so a cancel or a failure
+          still leaves the file as it was; it cannot pause (<code>pauseFileTransfer</code> resolves
+          {" "}
+          <code>false</code>). A download into an app folder needs OPFS.
         </li>
       </ol>
       <p>
@@ -2306,29 +2364,38 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         <code>onFileTransfer(fn)</code> receives events whose <code>type</code> is{" "}
         <code>"started"</code>, <code>"progress"</code>, <code>"paused"</code>, <code>"done"</code>,
         {" "}
-        <code>"failed"</code> or <code>"cancelled"</code>. <code>pauseFileTransfer(id)</code> and
-        {" "}
-        <code>resumeFileTransfer(id)</code> resolve a <code>boolean</code>: <code>false</code>{" "}
-        for an upload (uploads cannot pause), a download that is not running (or, to resume, not
-        paused), or an id with no record. With the plugin, <code>resumeFileTransfer</code>{" "}
-        also retries a failed transfer.
+        <code>"failed"</code> or <code>"cancelled"</code>. <code>pauseFileTransfer(id)</code>{" "}
+        resolves a <code>boolean</code>: <code>false</code>{" "}
+        for an upload (uploads cannot pause), a download that is not running, or an id with no
+        record. A pause answers once the request has stopped, so it is also <code>false</code>{" "}
+        for a download that finished, failed or was cancelled first.{" "}
+        <code>resumeFileTransfer(id)</code>{" "}
+        continues a paused download everywhere. In the iOS / Android shell with the plugin it also
+        retries a failed transfer: a download from its bytes so far when it is{" "}
+        <code>resumable</code>, else anew, and an upload from the start. On the web and on Deno
+        Desktop only a paused download resumes, and a failed one resolves{" "}
+        <code>false</code>: start it again with <code>downloadToFile</code>{" "}
+        (on Deno Desktop the same URL to the same file continues from the kept partial file). A
+        failed web download is not <code>resumable</code>: its bytes so far are dropped.
       </p>
       <p>
         A download pauses with its bytes kept (resume data on iOS, a <code>.part</code>{" "}
-        file on Android and on Deno Desktop, the OPFS file on the web) and resumes with a range
+        file on Android and on Deno Desktop, the OPFS part file on the web) and resumes with a range
         request guarded by the response&apos;s <code>ETag</code> (or{" "}
         <code>Last-Modified</code>); a server that answers <code>200</code>{" "}
         to it starts the download over. Uploads cannot pause. <code>cancelFileTransfer(id)</code>
         {" "}
-        drops a download&apos;s partial file and rejects its promise with a{" "}
-        <code>FileTransferError</code> of code <code>"CANCELLED"</code> (an aborted{" "}
+        drops a download&apos;s partial file (on the web, the OPFS part file, even one a pause kept;
+        the file it was to replace is left as it was) and rejects its promise with a{" "}
+        <code>FileTransferError</code> of code <code>"CANCELLED"</code>; an aborted{" "}
         <code>signal</code>{" "}
-        rejects with the signal&apos;s reason). A non-2xx answer rejects with code{" "}
+        does the same, rejecting with the signal&apos;s reason. A non-2xx answer rejects with code
+        {" "}
         <code>"HTTP"</code>, its <code>status</code> and <code>body</code>; a network failure with
         {" "}
         <code>"NETWORK"</code>, <code>resumable</code>{" "}
-        when the bytes so far can be kept. On iOS, a transfer to a LAN host (RFC 1918, link-local,
-        {" "}
+        when the bytes so far can be kept (never on the web, where a failure drops them). On iOS, a
+        transfer to a LAN host (RFC 1918, link-local,{" "}
         <code>.local</code>) fails with &quot;The Internet connection appears to be offline&quot;
         until the user allows the app&apos;s Local Network access; that error&apos;s message then
         says where to allow it (the app needs an <code>NSLocalNetworkUsageDescription</code>{" "}
@@ -3526,7 +3593,15 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
           refuses an older <code>sequence</code> (code <code>downgrade</code>), a{" "}
           <code>minNative</code> above its build (code <code>native_too_old</code>), and a{" "}
           <code>nativeFingerprint</code> other than the one the binary embeds (code{" "}
-          <code>native_mismatch</code>; only when both carry one).
+          <code>native_mismatch</code>; only when both carry one);
+        </li>
+        <li>
+          refuses a manifest whose <code>appId</code>{" "}
+          names another app than its bundle id / application id (code{" "}
+          <code>app_mismatch</code>), and with a public key embedded one that names no app or whose
+          {" "}
+          <code>appSignature</code> does not verify (codes <code>app_mismatch</code> /{" "}
+          <code>signature</code>).
         </li>
       </ul>
       <p>
@@ -3602,7 +3677,42 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         <li>
           <code>platform_mismatch</code>: the manifest names another platform's export (
           <a href="/docs/platform-files#over-the-air-updates">platform-specific files</a>); checked
-          by <code>checkForUiUpdate</code> before the native side sees it.
+          by <code>checkForUiUpdate</code>{" "}
+          before the native side sees it, and by the native side too (from <code>add-ota</code>{" "}
+          template generation 12), so a call that skips the page's check is refused the same way. An
+          app that embeds a public key also refuses a manifest with no platform stamp (an unstamped
+          web export, which would otherwise install on any signed app sharing the key): sign the
+          export that <code>denext mobile build</code> or <code>denext export --platform ios</code>
+          {" "}
+          writes, or stamp one with{" "}
+          <code>denext ota manifest &lt;dir&gt; --platform ios --sign</code>. Unsigned apps (pinned
+          https origins) still take an unstamped export. The page cannot tell whether the binary
+          embeds a key, so only the native side refuses this one.
+        </li>
+        <li>
+          <code>app_mismatch</code>: the manifest&apos;s signed <code>appId</code>{" "}
+          names another app than this one (its iOS bundle id / Android application id). An app that
+          embeds a public key also refuses a manifest that names no app, so one signing key can
+          serve several apps without a feed for one installing its UI on another (from{" "}
+          <code>add-ota</code> template generation 12). <code>checkForUiUpdate</code>{" "}
+          refuses another app&apos;s manifest before the native side sees it (with{" "}
+          <code>appId</code> in its options, or the id the shell&apos;s status reports). A signed
+          {" "}
+          <code>spa.ota</code> export, <code>denext mobile build</code> and{" "}
+          <code>denext ota manifest &lt;dir&gt; --sign</code> stamp the Capacitor <code>appId</code>
+          {" "}
+          (a flavor&apos;s own under <code>mobile build --flavor</code>); otherwise pass{" "}
+          <code>--app-id &lt;id&gt;</code> or set{" "}
+          <code>DENEXT_OTA_APP_ID</code>. The id is signed in its own <code>appSignature</code>{" "}
+          (payload v5) beside the <code>signature</code>{" "}
+          older binaries verify, so one manifest serves both. Unsigned apps take a manifest without
+          one as before.
+        </li>
+        <li>
+          <code>guard_unavailable</code>: the iOS bridge could not install its check on{" "}
+          <code>/_capacitor_file_</code>{" "}
+          requests (see re-verification below), so this app serves no downloaded UI and refuses
+          every update.
         </li>
       </ul>
       <p>
@@ -3650,7 +3760,28 @@ v1: denext-ota-v1\\n<version>\\n<1|0>\\n<sha256hex(notes)>`}
         the embedded key, and its version recomputed from the file list), and the shell checks each
         file's SHA-256 and size the first time it serves it in a process (iOS: the bridge's router;
         Android: the bridge's route processor). Only the files a page actually loads are hashed, so
-        a large UI does not slow the launch. A file changed, added or removed on the device after
+        a large UI does not slow the launch. The same check covers a <code>/_capacitor_file_</code>
+        {" "}
+        request (<code>Capacitor.convertFileSrc</code>) for a file inside the downloaded versions,
+        however the path is spelled; files elsewhere are served as before, but a path with a control
+        character (a NUL would crash Capacitor's iOS handler) or to a file that is not there is
+        refused. So is a request for a UI file in another letter case (<code>APP.JS</code> for{" "}
+        <code>app.js</code>, which a case-insensitive volume opens as that file): it fails, and
+        never quarantines the version. On iOS that check is{" "}
+        <code>DenextOtaFileGuard</code>, which the bridge makes of Capacitor's own asset handler.
+        When it cannot (the web view's handler is the app's own class), the app serves no downloaded
+        UI: the launch runs the bundled UI, <code>onOtaRejected</code> fires with{" "}
+        <code>code: &quot;guard_unavailable&quot;</code>{" "}
+        (nothing is quarantined), and updates are refused with that code. An app whose own handler
+        does its own checks opts out with <code>plugins.DenextBridge.otaFileGuard: false</code>{" "}
+        in the Capacitor config; its downloaded UIs are then served with{" "}
+        <code>/_capacitor_file_</code>{" "}
+        reads of their files unchecked, so a file changed on the device can reach the page that way
+        (<code>denext mobile doctor</code>{" "}
+        warns while it is set). A file is hashed again whenever its size, modification or change
+        time, or inode differs from when it was last verified, so one rewritten while the app runs
+        is caught too. The shell serves only the bundled UI or a downloaded version's directory, and
+        refuses a request from any other base. A file changed, added or removed on the device after
         the download (another app on a rooted or jailbroken device, malware with storage access,
         corruption) is never served: the version is moved to{" "}
         <code>quarantine/</code>, the webview switches to the bundled UI (or the confirmed download,
@@ -3673,7 +3804,7 @@ import { onOtaRejected } from "denext/mobile";
 
 export function OtaWatch() {
   // Register early (the root layout): the event waits for its first listener.
-  useEffect(() => onOtaRejected(({ version, reason }) => report("ota-tampered", { version, reason })), []);
+  useEffect(() => onOtaRejected(({ version, reason, code }) => report(\`ota-\${code}\`, { version, reason })), []);
   return null;
 }`}
       </Code>
@@ -4114,7 +4245,9 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
           cleartext: <code>server.cleartext</code>, App Transport Security exceptions (<code>
             NSAllowsArbitraryLoads
           </code>, <code>NSAllowsLocalNetworking</code>, insecure exception domains), and{" "}
-          <code>usesCleartextTraffic</code>;
+          <code>usesCleartextTraffic</code>, and a network security config (the manifest&apos;s{" "}
+          <code>android:networkSecurityConfig</code>) whose <code>base-config</code> or a{" "}
+          <code>domain-config</code> sets <code>cleartextTrafficPermitted=&quot;true&quot;</code>;
         </li>
         <li>
           WebView debugging enabled for release (<code>
@@ -4130,7 +4263,10 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
         <li>a missing or invalid privacy manifest (the check above);</li>
         <li>missing app icons (iOS asset catalog, Android launcher) and launch screens;</li>
         <li>
-          <code>server.allowNavigation</code> containing <code>&quot;*&quot;</code>;
+          <code>server.allowNavigation</code> containing <code>&quot;*&quot;</code>{" "}
+          or a wildcard over hosts you do not own (<code>*.com</code>, <code>app.*</code>), an{" "}
+          <code>http:</code> entry (an error with <code>--release</code>), and{" "}
+          <code>*.example.com</code> (a warning: every subdomain);
         </li>
         <li>
           no Content-Security-Policy meta tag in the export&apos;s <code>index.html</code>;
@@ -4159,10 +4295,17 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
         mixed content (<code>android.allowMixedContent</code>), <code>allowNavigation *</code>,{" "}
         <code>android:debuggable</code>, <code>android.useLegacyBridge</code>{" "}
         (its bridge answers plugin calls from every frame), a missing CSP and secrets in the export
-        are errors, and <code>loggingBehavior: &quot;production&quot;</code>{" "}
-        is a warning. Run both after <code>denext export</code> and <code>npx cap sync</code>{" "}
-        (the CI recipe does). Both profiles also report a{" "}
-        <code>DenextBridgeViewController.swift</code>{" "}
+        are errors, and <code>loggingBehavior: &quot;production&quot;</code> is a warning, as is
+        {" "}
+        <code>plugins.DenextBridge.frameGuard: false</code> for a hosted app&apos;s own{" "}
+        <code>server.url</code> (an error once an <code>allowNavigation</code>{" "}
+        origin is among the pages it opens to the plugins). Run both after{" "}
+        <code>denext export</code> and <code>npx cap sync</code> (the CI recipe does);{" "}
+        <code>denext mobile build --release</code> runs the release profile itself after its{" "}
+        <code>cap sync</code>{" "}
+        and refuses on its release-security errors, printing the rest as warnings
+        (<a href="/docs/mobile-build#release-checks">release checks</a>). Both profiles also report
+        a <code>DenextBridgeViewController.swift</code>{" "}
         written before the main-frame guard: the one every <code>denext mobile add</code>{" "}
         of a denext native plugin now writes accepts native plugin calls from the page&apos;s main
         frame only, never from an iframe (Capacitor&apos;s own iOS handler answers every frame).

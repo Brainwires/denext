@@ -327,8 +327,10 @@ Deno.test("smtp: a server that never greets times out", async () => {
 
 Deno.test("smtp: a server that never answers the end of DATA times out", async () => {
   await withServer({ stallData: true }, async (server) => {
+    // The timeout bounds every step, so each one before DATA must finish inside it: 1 s leaves
+    // room for a loaded machine's scheduling stall, which 300 ms did not.
     await assertRejects(
-      () => mailerFor(server, { timeoutMs: 300 }).send(MESSAGE),
+      () => mailerFor(server, { timeoutMs: 1_000 }).send(MESSAGE),
       SmtpError,
       "the message timed out",
     );

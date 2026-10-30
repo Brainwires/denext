@@ -21,6 +21,7 @@ import {
 import { esbuildBinaryStatus } from "../../build/esbuild/binary.ts";
 import { toolchainRemove } from "./toolchain-prune.ts";
 import { ensureGleamToolchain, gleamToolchainStatus } from "../../build/gleam-toolchain.ts";
+import { warnStockDeprecation } from "../../build/stock-deprecation.ts";
 import {
   ensureFastlaneToolchain,
   fastlaneToolchainStatus,
@@ -80,6 +81,8 @@ export async function runDenoPassthrough(
   if (!forwarded && raw === "stock") {
     console.error(`denext: ${TOOLCHAIN_ENV}=stock — running stock Deno.`);
   }
+  // Deprecated (5.0 refuses it); once per process tree, so a gate that said it stays quiet here.
+  if (raw === "stock") warnStockDeprecation("deno-env");
   const chosen = await forwardedDeno();
   if (chosen.warning) console.error(chosen.warning);
   return await spawnDenoAndExit(args, cwd, chosen.env, chosen.deno);

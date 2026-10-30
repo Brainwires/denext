@@ -45,7 +45,7 @@ The policy covers every route handler (`route.ts`, `defineApi`), the native `den
 endpoints, pages, Server Actions, the `/_denext/api-batch` endpoint and the Live socket. The
 default `headers` are `authorization`, `content-type` and the markers denext's own client sends
 (`x-denext-wire`, `x-denext-action`, `x-denext-api-batch`, `x-denext-nav`, `x-denext-flight`,
-`x-denext-slot-state`, `x-denext-defer`, `x-denext-iso`). The rules:
+`x-denext-slot-state`, `x-denext-defer`, `x-denext-signal`, `x-denext-iso`). The rules:
 
 - **Exact origins.** An origin matches only when it is byte-identical to a configured one
   (scheme, host and port; the configured value is normalized once to the lower-case form a
@@ -67,7 +67,13 @@ default `headers` are `authorization`, `content-type` and the markers denext's o
   `Cookie`, and no `Authorization` but an explicit `Bearer` token it set itself — so it acts
   with exactly the credentials it presented (a native session's bearer token, or none). A
   cookie-carrying cross-origin request is refused as before (`403`), unless its origin is in
-  `allowedOrigins` (the trust list for cookie-carrying callers). A page's `GET` is a read: it
+  `allowedOrigins` (the trust list for cookie-carrying callers). The origin must be **listed
+  exactly**: `origins: ["*"]` lets no cross-origin call skip the check for a Server Action or the
+  API batch (or the Live socket), because even a credentialless call runs from the visitor's
+  network position — an intranet or VPN app, `clientIp()`, per-address rate limits. A
+  cross-origin Server Action call must also carry denext's `x-denext-action: 1` marker (the
+  batch its `x-denext-api-batch: 1`), a custom header, so the browser always preflights it and a
+  plain cross-site `<form>` post never qualifies; denext's client sends both. A page's `GET` is a read: it
   carries the CORS headers for an allowed origin whatever it holds, so list only origins you
   trust with what a page shows a signed-in user when `credentials` is on.
 - **Validated at boot.** A malformed origin, `"null"`, `"*"` with credentials or an

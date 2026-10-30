@@ -8,6 +8,7 @@ import { forgetTaggedClients } from "../../runtime/client-reference.ts";
 import { forgetTaggedServers } from "../../runtime/server-action.ts";
 import { getPluginPrepareWatchDirs, runMatchingPrepareSteps } from "../../plugin/mod.ts";
 import { withBuildDirLock } from "../project-locks.ts";
+import { outsideLockTasks } from "../file-lock.ts";
 import type { PluginPrepareContext } from "../../plugin/mod.ts";
 import { basename, extname, join, SEPARATOR } from "@std/path";
 import { typeCheck } from "./dev-endpoints.ts";
@@ -299,19 +300,22 @@ export async function watch(st: DevState): Promise<void> {
     if (paths.length === 0) return;
     changed.push(...paths);
     if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(() => {
-      const changedPaths = changed;
-      changed = [];
-      // Regenerate any plugin prepare outputs whose watch globs matched FIRST (awaited), so the
-      // reload the change set triggers serves freshly generated types/store — then apply the set.
-      // Under the build-dir lock: this is one dev rebuild's codegen into `.denext/`.
-      void withBuildDirLock(
-        st.paths.projectDir,
-        () => runMatchingPrepareSteps(prepareContext(st), changedPaths),
-      )
-        .catch(() => false)
-        .finally(() => handleChangeSet(st, configBasenames, changedPaths));
-    }, 60);
+    // Outside every lock task: a batch is its own rebuild, never part of one whose `import()`
+    // left its context behind (stock Deno).
+    debounce = setTimeout(() =>
+      outsideLockTasks(() => {
+        const changedPaths = changed;
+        changed = [];
+        // Regenerate any plugin prepare outputs whose watch globs matched FIRST (awaited), so the
+        // reload the change set triggers serves freshly generated types/store — then apply the
+        // set. Under the build-dir lock: this is one dev rebuild's codegen into `.denext/`.
+        void withBuildDirLock(
+          st.paths.projectDir,
+          () => runMatchingPrepareSteps(prepareContext(st), changedPaths),
+        )
+          .catch(() => false)
+          .finally(() => handleChangeSet(st, configBasenames, changedPaths));
+      }), 60);
   };
   // The project-wide watch (one walk's skip rules: dot-folders, node_modules, build output) also
   // delivers content edits outside the watched folders — `components/X.tsx` — as the same

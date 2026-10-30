@@ -72,6 +72,7 @@ async function inProject(
     "capacitor.config.ts": "export default { appId: 'com.example.app', webDir: 'out' };\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
     // The web export `cap sync` copies (without it the run falls back to `cap update`).
     "out/index.html": "<!doctype html>\n",
     ".git/HEAD": "ref: refs/heads/main\n",
@@ -109,8 +110,8 @@ Deno.test("mobile add keyboard: installs @capacitor/keyboard, no native edits", 
     const { run, lines } = fakeRunner();
     const report = await addMobileCapabilities({ capabilities: ["keyboard"], cwd: dir, run });
     assertEquals(lines(), [
-      "npm install --ignore-scripts @capacitor/keyboard@^8.0.5",
-      "npx cap sync",
+      "npm install --ignore-scripts --save-exact @capacitor/keyboard@8.0.5",
+      "npx --no cap sync",
     ]);
     assertEquals(report.written, []);
     assertStringIncludes(report.plan.notes.join("\n"), "useKeyboard()");
@@ -122,7 +123,10 @@ Deno.test("mobile add back: @capacitor/app, the manifest attribute, DenextBack +
   await inProject({}, async (dir) => {
     const { run, lines } = fakeRunner();
     const report = await addMobileCapabilities({ capabilities: ["back"], cwd: dir, run });
-    assertEquals(lines(), ["npm install --ignore-scripts @capacitor/app@^8.1.1", "npx cap sync"]);
+    assertEquals(lines(), [
+      "npm install --ignore-scripts --save-exact @capacitor/app@8.1.1",
+      "npx --no cap sync",
+    ]);
     assertEquals(report.written.sort(), [ACTIVITY_PATH, BACK_PLUGIN_PATH, MANIFEST_PATH].sort());
 
     const manifest = await read(dir, MANIFEST_PATH);

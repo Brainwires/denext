@@ -58,6 +58,7 @@ import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
 import { canSymlink, sha256Hex, tarGz, zip } from "./_archive-fixtures.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
 import { minGlibcFor } from "../src/build/linux-libc.ts";
+import { acquireCacheLock, withProjectLocks } from "../src/build/project-locks.ts";
 
 const TARGET = "x86_64-unknown-linux-gnu";
 const LIB = "libdenort.so";
@@ -244,7 +245,10 @@ Deno.test("ensureDesktopRuntime gives up on a stalled download: no headers, or n
     );
     assertStringIncludes(connect.message, "DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS");
     assertDownloadHint(connect.message);
-    // Headers and a first chunk, then nothing.
+    // Headers and a first chunk, then nothing. Only the idle deadline may end these attempts: the
+    // headers come at once, so the connect deadline is out of the way (5 s, not 200 ms, which a
+    // loaded machine's scheduling stall before the answer could pass).
+    Deno.env.set("DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS", "5000");
     f.setBody(() =>
       new Response(
         new ReadableStream({
@@ -357,6 +361,42 @@ Deno.test("ensureDesktopRuntime: an install started while another downloads wait
     assertEquals(a.dir, b.dir);
     assertEquals(f.hits(), 1);
   } finally {
+    await f.close();
+  }
+});
+
+Deno.test("ensureDesktopRuntime: an unrelated task takes lower-rank locks while it downloads", async () => {
+  const f = await fixture(await fixtureArchive());
+  const other = await Deno.makeTempDir();
+  try {
+    // The install holds the runtime cache's download lock (rank 4) while its fetch is held open.
+    let downloading!: () => void;
+    const started = new Promise<void>((r) => downloading = r);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => release = r);
+    const held: typeof fetch = async (input, init) => {
+      downloading();
+      await gate;
+      return await fetch(input, init);
+    };
+    const install = ensure(f, { fetch: held });
+    await started;
+    // Meanwhile another task of this process reads a different cache (rank 3) and locks a
+    // project's build directory (rank 1). Neither holds anything the install waits for, so
+    // neither is a lock order violation (the check used to be process-wide and threw).
+    try {
+      (await acquireCacheLock(join(other, "cache"), "shared", "other cache")).release();
+      const built = await withProjectLocks(
+        { projectDir: other, buildDir: "exclusive" },
+        () => Promise.resolve("built"),
+      );
+      assertEquals(built, "built");
+    } finally {
+      release();
+    }
+    assertEquals((await install).cached, false);
+  } finally {
+    await Deno.remove(other, { recursive: true });
     await f.close();
   }
 });
@@ -751,6 +791,19 @@ Deno.test("resolveDesktopRuntimeEnv: DENEXT_DESKTOP_RUNTIME=stock → no env, a 
   });
   assertEquals(r, { mode: "stock", env: {} });
   assertStringIncludes(logs.join("\n"), "deep links");
+  // Deprecated: the notice names 5.0 and the fix.
+  assertStringIncludes(logs.join("\n"), "denext 5.0 drops stock Deno support");
+  assertStringIncludes(logs.join("\n"), "Fix: unset DENEXT_DESKTOP_RUNTIME");
+  // DENEXT_NO_DEPRECATION_WARNINGS=1 hides it (the stock line itself stays).
+  const hushed: string[] = [];
+  await resolveDesktopRuntimeEnv({
+    projectDir: ".",
+    target: TARGET,
+    env: envOf({ DENEXT_DESKTOP_RUNTIME: "stock", DENEXT_NO_DEPRECATION_WARNINGS: "1" }),
+    log: (l) => hushed.push(l),
+  });
+  assertStringIncludes(hushed.join("\n"), "STOCK Deno Desktop runtime");
+  assert(!hushed.join("\n").includes("deprecated"), hushed.join("\n"));
   await assertRejects(
     () =>
       resolveDesktopRuntimeEnv({
@@ -1060,6 +1113,9 @@ Deno.test("resolveDesktopRuntimeEnv: onDenoMismatch stock warns (naming DENO_BIN
     assertStringIncludes(text, "DENO_BIN");
     assertStringIncludes(text, "STOCK runtime");
     assertStringIncludes(text, "packaging still requires Deno 9.9.9");
+    // Deprecated, after the fallback's own warning.
+    assertStringIncludes(logs.at(-1)!, "denext 5.0 drops stock Deno support");
+    assertStringIncludes(logs.at(-1)!, "`denext toolchain install`, and unset DENEXT_DENO");
     assertEquals(f.hits(), 0);
   } finally {
     await f.close();

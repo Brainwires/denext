@@ -66,7 +66,8 @@ emit correct denext instead of Next.js.
    `--desktop` adds a Deno Desktop target; `--enable-capacitor [--app-id <id>] [--platform
    ios,android]` adds an iOS / Android one (a SPA, App Router or Expo app): `capacitor.config.ts`,
    the `mobile:*` tasks, `spa.precompress: false` + `mobile.icon`, Capacitor 8 installed with the
-   app's package manager, and review items for what it can't know (a hosted-mode env switch, a
+   app's package manager (the install, export and `cap add` run the project's own code: only with
+   `--yes` or after a prompt, else printed to run by hand), and review items for what it can't know (a hosted-mode env switch, a
    backend URL a phone can reach, CORS for `capacitor://localhost` / `https://localhost`).
    `denext upgrade [--to <v>] [--dry-run | --check] [--allow-major] [--allow-downgrade]` moves
    the `jsr:@denext/denext` pin, the pinned CLI tasks and every first-party `@denext/*` package
@@ -293,9 +294,9 @@ export const Counter = defineLiveView({
 ```
 
 `send(msg)` sends only a handler index (the message stays on the server); a reconnect within
-`live.limits.viewResumeSeconds` resumes the model, else `init` re-runs. Set
-`DENEXT_LIVE_VIEW_SECRET` on every instance. Docs: https://denext.dev/docs/live-views,
-https://denext.dev/docs/mvu
+`live.limits.viewResumeSeconds` resumes the model for the same viewer, else `init` re-runs. Set
+`DENEXT_LIVE_VIEW_SECRET` (16+ characters) on every instance. Docs:
+https://denext.dev/docs/live-views, https://denext.dev/docs/mvu
 
 **A typed Server Action (the mutation side, also type-checked):** `defineAction` validates
 `FormData` into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its `Out`
@@ -496,7 +497,7 @@ to Capacitor through `window.Capacitor`, so no `@capacitor/*` import. iOS moment
 survives virtualized-list scroll corrections automatically (the runtime installs the shim on iOS
 WebKit; `momentumSafeScroll: false` opts out). Native capabilities with web fallbacks: `haptic`,
 `readClipboard`/`writeClipboard`, `share`, `deviceInfo`, `networkStatus`/`useNetworkStatus`,
-`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web), `readFile`/`writeFile`/
+`useKeepAwake`, `hideSplash`, `secureStore` (NOT secret on the web; `{ accessibility }` sets the iOS Keychain class), `readFile`/`writeFile`/
 `listDir`/`downloadToFile` (OPFS on the web), `pickImage`/`pickMedia` (several photos and
 videos)/`pickDocument`/`scanBarcode`/`pickContact` (`null` when cancelled), `setQuickActions`/`useQuickAction`
 (home-screen shortcuts), `openSqlite` (the
@@ -770,7 +771,10 @@ Docs: https://denext.dev/docs/desktop#desktop-capabilities
 Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <dir>`) stamps
 `_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it (a signed
 manifest expires: 30 days, `--expires-in <days>`; past it every shell refuses it, code `expired`,
-so re-sign the live release);
+so re-sign the live release; an app with a key embedded takes only its platform's stamped export,
+`denext export --platform ios` or `ota manifest --platform ios`, code `platform_mismatch`, and
+only a release signed for its own app: `--app-id <id>`, by default the Capacitor `appId` /
+`desktop.app.identifier`, code `app_mismatch`);
 `denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
 `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
 drive it; `createOtaHandler` from `denext/server` serves the export. A downloaded UI is
@@ -825,8 +829,10 @@ suggests them).
 https://denext.dev/docs/native-sdk-recipes. Unistyles 3 needs no setup (its wrapped components and
 `useVariants`; `reactNative: { unistyles: false }` turns it off), Tamagui runs on its runtime
 styles, and Metro's `require.context` with literal arguments is generated at build. Renderers built
-on `react-reconciler` load (React Native Skia's `<Canvas>`, react-three-fiber, react-konva; no
-context crosses into them): Skia imports CanvasKit's wasm with `?url`, and under a CSP needs
+on `react-reconciler` load (React Native Skia's `<Canvas>`, react-three-fiber, react-konva):
+contexts and class components work inside their trees, and the providers above reach a
+react-three-fiber `<Canvas>` / react-konva `<Stage>` (its-fine's bridge), not a Skia Canvas (as in
+React): Skia imports CanvasKit's wasm with `?url`, and under a CSP needs
 `'wasm-unsafe-eval'` in `scriptSrc` (React Native mode also needs `'unsafe-inline'` in `styleSrc`).
 Docs: https://denext.dev/docs/react-native
 
@@ -1012,6 +1018,11 @@ for example `export async function onShutdown() { await sql.end(); }`. The proce
 runs a full GC and `malloc_trim(0)` once its event loop has been idle for a second (glibc Linux;
 at most once per idle period, 10 s apart, then only after 16 MB of growth). Never for `dev`, tests
 or jobs. Opt out with `start: { idleTrim: false }` or `DENEXT_IDLE_TRIM=0`.
+`start: { limits: { memory: "384m", cpuSeconds, deadlineSeconds } }` caps the same processes
+(runtime 3.0.0-rc.2+; `--max-memory` / `--max-cpu-time` / `--max-time`, exit 137 / 152 / 124 for
+the supervisor to restart; only on the process that serves, never a CLI re-run before it; baked
+into a compiled binary, whose `job` / `db` then run under them too; never `dev` or tests; not
+applied on stock Deno, with a warning): https://denext.dev/docs/deployment-targets#resource-limits
 
 **Long-lived server work (supervised services):** `services/<name>.ts` default-exports
 `defineService({ start(ctx) })` from `denext/server` — `start`'s promise is the service's life (a
@@ -1191,14 +1202,17 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   2.9.8: `Deno.SQL`, Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
   `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced (every API, flag
   and env var it adds over Deno 2.9.8, by version: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
-  opts out, `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
+  opts out (deprecated: denext 5.0 drops stock Deno; every stock path — `DENEXT_DENO=stock`,
+  `DENEXT_DESKTOP_RUNTIME=stock`, the npm esbuild, `createTestApp()` under a stock `deno test` —
+  prints one notice per process tree with the fix, `DENEXT_NO_DEPRECATION_WARNINGS=1` hides it),
+  `DENEXT_DENO=<path>` uses a given binary; when the toolchain can't be had (offline on
   first use, no build for the host, a failed download) the command stops with the fix
   (`denext toolchain install`) — denext never runs another Deno on its own. Downloads of the
   toolchain and the Deno Desktop runtime give up on a stalled connection after 10 s with no response
   (`DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS`) or 20 s with no data (`DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS`;
   `0` removes either) and retry on a new connection (`DENEXT_DOWNLOAD_ATTEMPTS`, 4 in all; none
-  starts after `DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS`, 120 s), and `DENEXT_CHILD_DEADLINE_MS` replaces the build's `deno info` /
-  `deno bundle` deadlines (120 s / 300 s; `0`: none) for a cold cache on a slow link. Every other verb that
+  starts after `DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS`, 120 s), and `DENEXT_CHILD_DEADLINE_MS` replaces the build's `deno info` (the
+  esbuild loader's too) / `deno bundle` deadlines (120 s / 300 s; `0`: none) for a cold cache on a slow link. Every other verb that
   starts `deno` (`fmt`, `lint`, `add`, `ui`, `mcp`, `create`, …) hands it the toolchain too.
   `denext task <name>` is Deno's `deno task` on the toolchain, and every
   `deno` inside it (its own steps, and any a script it starts finds on PATH) is the toolchain too; a
@@ -1632,7 +1646,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.10.1` — The denext framework version.
+- `VERSION: 4.10.2` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -2442,6 +2456,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type StandardResult<Output> = object | object` — A Standard Schema validation result: a parsed value, or a list of issues.
 - `interface StandardSchemaV1<Output>` — The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.
 - `interface StartConfig` — The production server's settings (see DenextConfig.start).
+- `interface StartLimits` — The production server's resource limits (see StartConfig.limits).
 - `type StaticParamsGenerator = (context: object) => RouteParams[] | Promise<RouteParams[]>` — generateStaticParams — the param sets to pre-render. Called with the parent segments' params (from a layout's own generator, or {} at the root), Next.js style; a [...rest] value may be a string[].
 - `interface SubscriptionConfig<In, Out>` — The definition passed to defineSubscription.
 - `interface SubscriptionContext` — What a subscription's authorize / resolve receive besides the input.
@@ -2864,7 +2879,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface BuildMsiOptions` — What buildDesktopMsi builds.
 - `bundleDesktopVcRuntime(dir: string, arch: DesktopWindowsArch, deps?: DesktopVcRuntimeDeps): Promise<boolean>` — Ship the VC++ 2015-2022 runtime DLLs arch's deno desktop binaries import (DESKTOP_VC_RUNTIME_DLLS) next to the bundle's .exe, so the packaged app runs with NO redistributable installed on the target (otherwise it dies at launch with a silent 0xC0000135 DLL-not-found). Microsoft permits this app-local deployment. They come from System32 (the installed redist) when packaging on Windows for the host's architecture, and each one must be a PE image of arch — a Windows on Arm System32 holds x64 VC++ DLLs beside the Arm64 ones. All or nothing: when any is missing or another machine's (or packaging off Windows, or for the other architecture), none is copied and a warning names the redistributable the target needs.
 - `cefHelperEntitlements(path: string): Readonly<Record<string, boolean>> | undefined` — Chromium's default entitlements for the CEF helper app path lies in (… Helper (Renderer).app and its executable), or undefined for any other code.
-- `createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
+- `createDesktopHandler(options: RunDesktopOptions, outDir: string | DesktopUiFiles, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
 - `DEFAULT_DESKTOP_INSTALLERS: Readonly<Record<DesktopOs, typeOperator>>` — The formats built when neither --format nor desktop.installers.<os> names any.
 - `defineDesktopExtension<C>(capability: C): C` — Define a native desktop extension: a capability that runs in the desktop app's Deno process and that the page calls through denext/desktop/client's desktopExtension. Enable it in desktop.capabilities.extensions (a module path). This is an identity helper — it returns its argument unchanged so a typeof import("./ext.ts") keeps the exact method types the client's typed proxy reads — and it is not a place for side effects (nothing should run at import).
 - `defineSidecar<D>(definition: D): D` — Declare a sidecar with its type checked (an identity function, for runDesktop({ sidecars })).
@@ -2933,6 +2948,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopSlug(name: string): string` — A filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths.
 - `desktopToolGate(why: string | undefined, format: string, explicit: boolean): boolean` — Whether why (a reason the tool for format cannot run, or undefined when it can) still lets the format build: a default format is skipped with a warning, an asked-for one fails.
 - `type DesktopTrust = object | object | object` — The desktop world the app runs in (see the module docs).
+- `interface DesktopUiFiles` — The UI files a desktop window is served from.
 - `desktopVcRedistUrl(arch: DesktopWindowsArch): string` — The VC++ 2015-2022 redistributable installer for arch.
 - `interface DesktopVcRuntimeDeps` — What bundleDesktopVcRuntime reads the machine and files through (tests stub them).
 - `desktopVersionProblem(format: msi | deb | rpm, version: string | undefined): string | undefined` — Why version (deno.json version) cannot be the package version of format — MSI packs major.minor.build into 8/8/16 bits, Debian and RPM need a leading digit and a small character set — or undefined when it can (see msiProductVersion / linuxPackageVersion).
@@ -2988,14 +3004,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type StoreCommandRunner = (cmd: typeOperator, stdin: string) => Promise<StoreCommandResult>` — Runs cmd with stdin as its standard input (tests pass a fake).
 - `type StoreCommandRunnerSync = (cmd: typeOperator) => void` — Runs cmd to its exit, synchronously (a signal handler's cleanup; tests pass a fake).
 - `stripDesktopCredentials(request: Request): Request` — The request to forward to the dev server with the desktop credential removed: the per-launch x-denext-desktop-token header is dropped so it never reaches the dev server (invariant: the token gates the LOCAL endpoints only). A WebSocket upgrade is returned untouched — it cannot be reconstructed (Deno.upgradeWebSocket needs the original connection), a browser cannot set a custom header on a WS handshake, and proxyToBackend's WS bridge forwards only host/origin/cookie upstream, never the token. denext injects no desktop-specific cookie (the token lives in globalThis.__denext and this header only), so there is none to strip.
-- `syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport>` — syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop.
+- `syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport>` — syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop. With desktop.update.ui set it first requires the export to carry a sequenced OTA manifest (desktopUiUpdateFloorProblem), so no app ships its UI updater without a downgrade floor.
 - `V8_ENTITLEMENTS: Readonly<Record<string, boolean>>` — The entitlements the main executable is signed with by default: it hosts V8 (Deno). Deno signs its own release binary with these (cli/entitlements.plist in denoland/deno, applied by tools/release/promote_to_release.ts); its other two keys there, allow-dyld-environment-variables and disable-executable-page-protection, are left out: V8 needs neither, and both widen what can be injected into a signed app.
 - `interface WindowsTrustDeps` — Seams for the probes (tests stub them).
 - `writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string, options?: LaufeyLaunchWriteOptions): Promise<string | null>` — Write the packaged app's laufey-launch.json (packagedLaunchConfig) from the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes. On macOS call it BEFORE code-signing: both files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.
 
 ### `denext/desktop/updater`
 
-- `applyDesktopUpdate(version: string, config: DesktopUpdaterConfig): Promise<void>` — Promote the staged version to the active overlay and flip the "current" pointer atomically. Re-verifies the staged manifest (version + signature) and re-hashes every staged file BEFORE the swap. The previous version dir is kept for rollback, the accepted sequence is recorded, and the new version starts PENDING — desktopBooted must confirm it or the next resolveDesktopUiDir rolls it back.
+- `applyDesktopUpdate(version: string, config: DesktopUpdaterConfig): Promise<void>` — Promote the staged version to the active overlay and flip the "current" pointer atomically. Re-verifies the staged manifest (version + signature, the downgrade floor and the expiry) and re-hashes every staged file BEFORE the swap. The previous version dir is kept for rollback, the accepted sequence is recorded, every other staging folder is deleted, and the new version starts PENDING — desktopBooted must confirm it or the next resolveDesktopUiDir rolls it back.
 - `interface AppUpdateCheck` — The result of checkForAppUpdate.
 - `class AppUpdateError` — A refusal from the full-app updater, with a machine-readable AppUpdateErrorCode.
 - `type AppUpdateErrorCode = unsupported | not_configured | invalid_manifest | signature | wrong_app | downgrade | rejected | no_platform | expired | replayed | insecure_url | size_exceeded | integrity | unsafe_archive | bundle_mismatch | version_mismatch | os_signature | install_not_writable | unsupported_layout | not_staged | busy | io` — Why a full-app update step refused (the runtime's codes, plus unsupported).
@@ -3008,9 +3024,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `checkForDesktopUpdate(config: DesktopUpdaterConfig): Promise<DesktopUpdateCheck>` — Check the feed for a newer, fully-verified UI. Fetches ${feedUrl}/_denext/ota.json, validates its shape, RECOMPUTES the version and refuses a mismatch, VERIFIES the ECDSA signature, and refuses a non-monotonic sequence — all BEFORE reporting anything as available. A version equal to the active overlay resolves { available: false }.
 - `confirmAppUpdate(): boolean` — Confirm the running version after an update, once the app has shown it is healthy (its window loaded, its backend answered): the update is final, and the previous app is moved aside and deleted in the background (the call does not wait for the deletion). An update not confirmed by its next launch is rolled back and that version is refused from then on. A no-op (false) when no update is pending, so it is safe to call on every launch. runDesktop calls it once the window has loaded unless desktop.update.autoConfirm is false.
 - `desktopBooted(config: DesktopUpdaterConfig): Promise<void>` — Confirm that the active overlay booted. Call it once the app has served and rendered (the desktop runtime calls it behind a short delay after Deno.serve is up). It flips a PENDING pointer to confirmed and clears the watchdog marker, so a crash BEFORE this call leaves the version pending and the next resolveDesktopUiDir rolls it back. Best effort: it never throws.
+- `interface DesktopUi` — The UI a launch serves: the verified overlay, or the bundled export alone.
+- `interface DesktopUiOverlay` — The verified UI overlay a launch serves (see openDesktopUi).
+- `type DesktopUiRead = object | object | object` — What reading one file of the served overlay gives (DesktopUiOverlay.read).
 - `interface DesktopUpdateCheck` — The result of checkForDesktopUpdate.
 - `class DesktopUpdateError` — A refusal from the updater, carrying a machine-readable DesktopUpdateErrorCode.
-- `type DesktopUpdateErrorCode = network | invalid | integrity | unsigned | signature | downgrade | platform_mismatch | expired | not_staged | rejected` — The code on a DesktopUpdateError:
+- `type DesktopUpdateErrorCode = network | invalid | integrity | unsigned | signature | downgrade | platform_mismatch | app_mismatch | expired | not_staged | rejected` — The code on a DesktopUpdateError:
 - `interface DesktopUpdatePrepared` — The result of prepareDesktopUpdate.
 - `interface DesktopUpdaterConfig` — Configuration for the desktop UI self-updater.
 - `desktopUpdateReset(config: DesktopUpdaterConfig): Promise<void>` — Return to the bundled export: delete every overlay version, every staging dir, and all state (pointer, sequence, rejected, marker). A no-op when nothing is installed.
@@ -3018,10 +3037,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopUpdateStatus` — A snapshot of the overlay state, mirroring OtaStatus on mobile.
 - `downloadAppUpdate(config: AppUpdaterConfig, options?: object): Promise<AppUpdateStaged>` — Download the update checkForAppUpdate found (size-capped, SHA-256 checked) next to the install, extract it safely and run the OS code-signature check. When this resolves, the update is verified and staged; nothing at the install path has changed yet.
 - `installAppUpdateAndRelaunch(options?: object): object` — Install the staged update: start the swap helper and quit the app (Electron's quitAndInstall). The helper waits for this process to exit, swaps the install, and relaunches the new version, which runDesktop confirms once its window has loaded (or, with desktop.update.autoConfirm: false, the app's own confirmAppUpdate call).
+- `openDesktopUi(bundledOut: string, config: DesktopUpdaterConfig): Promise<DesktopUi>` — The UI the desktop runtime should serve this launch: the active overlay, re-verified, or only the bundled export (overlay: null). Serve the overlay's files through DesktopUiOverlay.read, which checks each one against the signed manifest when it is served, never straight from its folder; runDesktop({ updater }) does.
 - `interface OtaManifest` — The _denext/ota.json document: a version stamped over the sorted file list.
 - `interface OtaManifestFile` — One file of an OTA UI.
 - `prepareDesktopUpdate(config: DesktopUpdaterConfig): Promise<DesktopUpdatePrepared>` — Download and verify a newer UI into a STAGING directory WITHOUT switching to it. Files whose SHA-256 already matches the active overlay are copied (reused) instead of re-downloaded; every staged file is then re-hashed and refused if it does not match its manifest entry. The manifest version and signature are re-verified. Any failure discards the staging dir — nothing is ever partially applied. Switch with applyDesktopUpdate.
-- `resolveDesktopUiDir(bundledOut: string, config: DesktopUpdaterConfig): Promise<string>` — The directory the desktop runtime should serve: the active verified overlay, or bundledOut.
+- `resolveDesktopUiDir(bundledOut: string, config: DesktopUpdaterConfig): Promise<string>` — The directory of the UI openDesktopUi resolves: the active overlay's, re-verified at launch, or bundledOut. A server that serves it must check each file as it serves it (an overlay file can change after launch): prefer openDesktopUi and DesktopUiOverlay.read.
 
 ### `denext/desktop/client`
 
@@ -3205,7 +3225,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type BiometricType = face | fingerprint | iris` — A kind of biometric sensor.
 - `interface CalendarComponents` — The date components a calendar trigger matches.
 - `cancelAllNotifications(): Promise<void>` — Cancel every pending local notification. Outside the shell it does nothing.
-- `cancelFileTransfer(id: string): Promise<boolean>` — Cancel a running or paused transfer; a download's partial file is dropped. Its promise rejects with a FileTransferError of code "CANCELLED".
+- `cancelFileTransfer(id: string): Promise<boolean>` — Cancel a running or paused transfer; a download's partial file is dropped (on the web, the OPFS part file it was writing, what a pause kept included; a file it was to replace keeps its contents). Its promise rejects with a FileTransferError of code "CANCELLED".
 - `cancelNotification(ids: number | typeOperator): Promise<void>` — Cancel pending local notifications (and remove delivered ones with those ids on Android). An id that is not pending is ignored. Outside the shell it does nothing.
 - `checkForUiUpdate(options: OtaCheckOptions): Promise<OtaCheckResult>` — Check a server for a newer UI and, when it offers a different version, install it.
 - `checkPermission(name: PermissionName): Promise<PermissionState>` — The current status of a permission, without prompting (see PermissionState for what each status means).
@@ -3395,15 +3415,16 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Orientation = portrait-primary | portrait-secondary | landscape-primary | landscape-secondary` — The screen's orientation: portrait or landscape, and which way up.
 - `type OrientationLock = any | natural | portrait | landscape | Orientation` — What lockOrientation locks to: a family (portrait, landscape), one exact orientation, the device's natural one, or any (every orientation the app allows).
 - `type OtaApplyResult = object | object` — The outcome of applyUiUpdate when it settles. On success the webview reloads into the new UI, so the promise does not settle at all.
+- `otaAppSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint | expiresAt | appId>): Promise<Uint8Array>` — The bytes a manifest's appSignature covers: the v5 format, UTF-8 with \n separators and no trailing newline,
 - `otaBooted(): Promise<void>` — Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog (after 15 s of foreground time by default), and on the next launch if the app died twice before confirming. Harmless on the bundled UI or a confirmed one.
 - `interface OtaCheckOptions` — Options for checkForUiUpdate and prepareUiUpdate.
 - `type OtaCheckResult = object | object | object | object | object` — The outcome of checkForUiUpdate. It never throws; every failure is a value.
-- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch | platform_mismatch | expired` — The code of a native DenextOta refusal, carried on an error result:
+- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch | platform_mismatch | app_mismatch | expired | guard_unavailable` — The code of a native DenextOta refusal, carried on an error result:
 - `otaInstallId(): string` — This install's stable OTA id: a random base64url string made on first use and kept in localStorage (denext:ota-install-id), so a channels server (createOtaHandler({ channels })) puts the device in the same staged-rollout bucket on every check. It identifies nothing but the install; clearing the app's data makes a new one. Where storage is unavailable it lasts for the page's lifetime.
 - `interface OtaManifest` — The _denext/ota.json document: a version stamped over the sorted file list.
 - `interface OtaManifestFile` — One file of an OTA UI.
 - `type OtaPrepareResult = object | object | object | object | object` — The outcome of prepareUiUpdate. It never throws; every failure is a value.
-- `interface OtaRejectedEvent` — What onOtaRejected reports: a downloaded UI that failed re-verification.
+- `interface OtaRejectedEvent` — What onOtaRejected reports: a downloaded UI that failed re-verification, or one the shell did not serve because it could not check it.
 - `otaReset(): Promise<void>` — Return to the UI bundled with the app: delete every downloaded version (a staged one included), forget the rejected one, and reload the webview. A no-op on the web.
 - `otaSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint | expiresAt>): Promise<Uint8Array>` — The bytes an OTA manifest signature covers, as UTF-8 with \n (0x0A) separators and no trailing newline. A manifest with an expiresAt (and a sequence) uses the v4 format, else one with a nativeFingerprint (and a sequence) v3, one with a sequence but neither v2, one without a sequence v1:
 - `otaStatus(): Promise<OtaStatus | null>` — The native side's view of the UI versions on this device, or null on the web and when the shell has no DenextOta plugin.
@@ -3479,7 +3500,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `restorePurchases(): Promise<CustomerInfo>` — Restore the user's earlier purchases (the "Restore purchases" button App Review expects on a paywall).
 - `restoreRouteOnRelaunch(options?: RestoreRouteOptions): Promise<string | null>` — Opt in to returning to the last route after the OS killed the app in the background.
 - `interface RestoreRouteOptions` — Options for restoreRouteOnRelaunch.
-- `resumeFileTransfer(id: string): Promise<boolean>` — Resume a paused download, or retry a failed transfer (a download from its bytes so far when it is resumable).
+- `resumeFileTransfer(id: string): Promise<boolean>` — Continue a paused download from its bytes so far (a range request where the server allows one, else from the start).
 - `revealInFileManager(item: ShellItem): Promise<void>` — Show a file or folder selected in Finder, Explorer or the Linux file manager.
 - `type ReviewRequestResult = requested | unsupported` — What requestReview did: "requested" (the system was asked to show its review sheet; whether it did is the OS's call and is never reported) or "unsupported" (not in the native shell, or no review plugin installed).
 - `runBackgroundTask(name: string, details?: Record<string, unknown>): Promise<boolean>` — Run one background task now, from the page, in the runner's engine (for example after a sign-in, to warm the cache a later background run will extend). The task runs whatever its interval; its handler sees trigger: "dispatch" and details.
@@ -3501,6 +3522,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `scheduleNotification(notification: LocalNotificationInput): Promise<number>` — Schedule a local notification (or show it now, without a trigger). Scheduling an id that is already pending replaces it.
 - `secureStore: SecureStore` — A string key-value store for secrets.
 - `interface SecureStore` — The store secureStore implements.
+- `type SecureStoreAccessibility = whenUnlocked | whenUnlockedThisDeviceOnly | afterFirstUnlock | afterFirstUnlockThisDeviceOnly | whenPasscodeSetThisDeviceOnly` — The iOS Keychain accessibility classes SecureStoreSetOptions.accessibility takes (kSecAttrAccessibleWhenUnlocked, …WhenUnlockedThisDeviceOnly, …AfterFirstUnlock, …AfterFirstUnlockThisDeviceOnly, …WhenPasscodeSetThisDeviceOnly).
 - `type SecureStoreFallback = session` — The opt-in fallbacks of SecureStoreSetOptions.fallback.
 - `interface SecureStoreGetOptions` — Options for SecureStore.get.
 - `interface SecureStoreSetOptions` — Options for SecureStore.set.
@@ -5386,7 +5408,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `deleteItemAsync(key: string, options?: SecureStoreOptions): Promise<void>` — Delete key (a missing key is not an error).
 - `getItemAsync(key: string, options?: SecureStoreOptions): Promise<string | null>` — The value stored under key.
 - `isAvailableAsync(): Promise<boolean>` — Whether a secure store is available: the iOS Keychain / Android Keystore plugin in the shell, or the OS keychain in a Deno Desktop window. false on the web, where values would land in plain IndexedDB (Expo's web build has no secure store either).
-- `type KeychainAccessibilityConstant = number` — A Keychain accessibility class (accepted and ignored here).
+- `type KeychainAccessibilityConstant = number` — A Keychain accessibility class (keychainAccessible).
 - `interface SecureStoreOptions` — Options every call takes.
 - `setItemAsync(key: string, value: string, options?: SecureStoreOptions): Promise<void>` — Store value under key.
 - `WHEN_PASSCODE_SET_THIS_DEVICE_ONLY: KeychainAccessibilityConstant` — Only while a passcode is set, on this device.
