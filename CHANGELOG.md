@@ -15,6 +15,13 @@ and this project adheres to
   deadline is reported, in the retry warning and the final error, with the log's last 80 lines and
   two CPU samples taken before the kill (`Get-Process` with the threads' wait reasons on Windows,
   `ps` elsewhere). Off by default: without it the children run as before.
+- **`expo-secure-store`'s `keychainAccessible` and `react-native-keychain`'s `accessible` choose
+  the iOS Keychain class.** They reach `secureStore.set`'s `accessibility` instead of being
+  ignored: `WHEN_UNLOCKED`, `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, `AFTER_FIRST_UNLOCK`,
+  `AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY` and `WHEN_PASSCODE_SET_THIS_DEVICE_ONLY` map one to one;
+  the deprecated `ALWAYS` and `ALWAYS_THIS_DEVICE_ONLY` take the `AFTER_FIRST_UNLOCK` classes, the
+  replacement both libraries and Apple recommend. A `requireAuthentication` value keeps its
+  `WHEN_PASSCODE_SET_THIS_DEVICE_ONLY` class. The constants themselves are unchanged.
 
 ### Deprecated
 

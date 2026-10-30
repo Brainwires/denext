@@ -486,3 +486,33 @@ Deno.test("biometrics: sensor, simple prompt, and a WebCrypto signing key in sec
   });
   assertEquals((await new ReactNativeBiometrics().isSensorAvailable()).available, false, "web");
 });
+
+Deno.test("keychain: accessible reaches secureStore's Keychain class for generic and internet credentials", async () => {
+  const access: [string, unknown][] = [];
+  const storage = fakePlugin(["internalGetItem", "internalSetItem", "internalRemoveItem"]);
+  storage.plugin.internalGetItem = () => Promise.resolve({ data: null });
+  storage.plugin.internalSetItem = (a: Any) =>
+    Promise.resolve(void access.push([a.prefixedKey, a.access]));
+  // KeychainAccess: whenUnlocked 0, whenUnlockedThisDeviceOnly 1, afterFirstUnlock 2,
+  // afterFirstUnlockThisDeviceOnly 3, whenPasscodeSetThisDeviceOnly 4. ALWAYS takes AfterFirstUnlock.
+  const cases: [Keychain.ACCESSIBLE, number][] = [
+    [Keychain.ACCESSIBLE.WHEN_UNLOCKED, 0],
+    [Keychain.ACCESSIBLE.WHEN_UNLOCKED_THIS_DEVICE_ONLY, 1],
+    [Keychain.ACCESSIBLE.AFTER_FIRST_UNLOCK, 2],
+    [Keychain.ACCESSIBLE.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY, 3],
+    [Keychain.ACCESSIBLE.WHEN_PASSCODE_SET_THIS_DEVICE_ONLY, 4],
+    [Keychain.ACCESSIBLE.ALWAYS, 2],
+  ];
+  await inShell("ios", { SecureStorage: storage.plugin }, async () => {
+    await Keychain.setGenericPassword("u", "p", { service: "none" });
+    for (const [accessible] of cases) {
+      await Keychain.setGenericPassword("u", "p", { service: "g", accessible });
+      await Keychain.setInternetCredentials("x.dev", "u", "p", { accessible });
+    }
+  });
+  const of = (needle: string) => access.filter(([k]) => k.includes(needle)).map(([, a]) => a);
+  const want = cases.map(([, a]) => a);
+  assertEquals(of("generic:none"), [0]);
+  assertEquals(of("generic:g"), want);
+  assertEquals(of("internet:x.dev"), want);
+});
