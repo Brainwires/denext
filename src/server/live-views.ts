@@ -8,7 +8,8 @@
 // nothing); the props decode; the view's `authorize` in the viewer's session (a throw is a
 // deny); a post-await connected + cap re-check. Then a parked instance named by `resume` is
 // adopted (same view, same signed props, same viewer — `viewerIdentity`), or `init` runs. The
-// props token carries its issue time and is refused past `viewTokenMaxAgeSeconds`.
+// props token carries its issue time and is refused past `viewTokenMaxAgeSeconds`; a resume
+// matches the props it signs (`resumeKey`), not the token, so a re-signed page still resumes.
 //
 // Every `view-event`: frame shape; a bounded per-view inbox (events are processed one at a time,
 // in order — a flood past it is refused with `limit`, the inbound back-pressure); the handler
@@ -63,6 +64,7 @@ import {
   enqueueEvent,
   type MountShape,
   mountView,
+  resumeKey,
   str,
   takeParked as takeParkedFrom,
   viewerIdentity,
@@ -108,7 +110,7 @@ export interface ViewInstance {
   readonly def: LiveViewDef;
   /** The decoded props `init` ran with. */
   readonly props: unknown;
-  /** `view + "\0" + token`: a resume must present the same signed props. */
+  /** `resumeKey` (view-hub-common.ts): a resume must present the same signed props. */
   readonly signed: string;
   /** The viewer it was mounted for: a resume (here or from the store) must be the same viewer. */
   readonly identity: string;
@@ -725,7 +727,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     admitted: { def: LiveViewDef; props: unknown },
   ): Promise<void> => {
     const { vid } = shape;
-    const signed = `${shape.view}\0${shape.token}`;
+    const signed = await resumeKey(shape.view, shape.props);
     const identity = await viewerIdentity(deps, conn);
     if (!deps.isConnected(conn)) return;
     const { parked, restored } = await resumeOf(shape, signed, identity);

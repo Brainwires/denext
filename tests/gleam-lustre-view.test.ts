@@ -123,9 +123,15 @@ function counterView(extra: Partial<Parameters<typeof defineLustreView<number, A
 const SIGNED_AT = Date.now();
 
 /** The `lustre-mount` frame the island would send for `props`. */
-async function mountFrame(id: string, props: unknown, vid = "l1", resume?: string) {
+async function mountFrame(
+  id: string,
+  props: unknown,
+  vid = "l1",
+  resume?: string,
+  signedAt = SIGNED_AT,
+) {
   const json = JSON.stringify(props);
-  const token = await signLiveViewToken(lustreTokenName(id), json, SIGNED_AT);
+  const token = await signLiveViewToken(lustreTokenName(id), json, signedAt);
   return { type: "lustre-mount", vid, view: id, props: json, token, ...(resume ? { resume } : {}) };
 }
 
@@ -452,6 +458,45 @@ Deno.test("Lustre hub: a dropped connection parks the runtime; a resume reattach
   assertEquals([hub.running(), hub.parked()], [1, 1]);
   hub.dispose();
   assertEquals([hub.running(), hub.parked()], [0, 0]);
+});
+
+Deno.test("Lustre hub: a resume matches the props a fresh token signs, not the token", async () => {
+  const { hub, conn } = fakeHub({ viewResumeSeconds: 30, viewTokenMaxAgeSeconds: 600 });
+  const { id } = counterView();
+  // Parked under the token the page carried (two minutes old); the reconnects below carry a
+  // token issued when the page re-rendered (SIGNED_AT).
+  const a = conn("viewer");
+  await hub.mount(a, await mountFrame(id, { start: 1 }, "l1", undefined, SIGNED_AT - 120_000));
+  const { iid } = await next(a, isLustre(0));
+  hub.event(a, click());
+  await next(a, isLustre(1));
+  hub.drop(a);
+  assertEquals(hub.parked(), 1);
+
+  // Another viewer under a valid fresh token: init, and the runtime stays parked.
+  const b = conn("other");
+  await hub.mount(b, await mountFrame(id, { start: 1 }, "l1", iid));
+  const other = await next(b, isLustre(0));
+  assert(other.iid !== iid);
+  assertEquals([other.msg.vdom, hub.parked()], ["1", 1]);
+
+  // Other props under a valid fresh token: init, and the runtime stays parked.
+  const c = conn("viewer");
+  await hub.mount(c, await mountFrame(id, { start: 8 }, "l1", iid));
+  assertEquals([(await next(c, isLustre(0))).msg.vdom, hub.parked()], ["8", 1]);
+
+  // An expired token is `gone` before any resume.
+  const d = conn("viewer");
+  await hub.mount(d, await mountFrame(id, { start: 1 }, "l1", iid, SIGNED_AT - 3_600_000));
+  assertEquals((await next(d, isError("gone"))).subId, "l1");
+  assertEquals(hub.parked(), 1);
+
+  // The same viewer and props under the fresh token reattach the parked runtime.
+  const e = conn("viewer");
+  await hub.mount(e, await mountFrame(id, { start: 1 }, "l1", iid));
+  const resumed = await next(e, isLustre(0));
+  assertEquals([resumed.iid, resumed.msg.vdom, hub.parked()], [iid, "2", 0]);
+  hub.dispose();
 });
 
 Deno.test("Lustre hub: a parked runtime is shut down when its resume window ends", async () => {

@@ -7,6 +7,7 @@
 import type { LiveError, LiveServerMessage } from "../runtime/live-protocol.ts";
 import { verifyLiveViewToken } from "../runtime/live-view.ts";
 import { decodeWire, WIRE_ENC } from "../runtime/wire-codec.ts";
+import { sha256Hex } from "./auth/hash.ts";
 import { auth, peekActiveAuthConfig } from "./auth/mod.ts";
 
 /** The caps a view hub reads (a subset of `live.limits`). */
@@ -224,15 +225,27 @@ export async function viewerIdentity<C>(deps: ViewHubBaseDeps<C>, conn: C): Prom
         return session ? `user:${session.user.id}` : "anonymous";
       }
       const cookie = deps.connContext(conn).cookie;
-      if (!cookie) return "anonymous";
-      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(cookie));
-      return `cookie:${
-        Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("")
-      }`;
+      return cookie ? `cookie:${await sha256Hex(cookie)}` : "anonymous";
     });
   } catch {
     return `unknown:${crypto.randomUUID()}`;
   }
+}
+
+/**
+ * What a resume matches a parked or stored view on besides its viewer: the view id and a digest
+ * of the props text its token signs (`view + "\0" + SHA-256(props)`). Call it only after the
+ * mount's token verified (signature and age), so the props are ones the server signed. It leaves
+ * the token itself out: a page that re-rendered (a soft navigation back, an ISR re-render, a
+ * re-render after an expired token's `gone`) carries a freshly issued token over the same props,
+ * and still resumes its model.
+ *
+ * @param view The view id.
+ * @param props The props text the verified token signs.
+ * @returns The resume key.
+ */
+export async function resumeKey(view: string, props: string): Promise<string> {
+  return `${view}\0${await sha256Hex(props)}`;
 }
 
 /** What a parked instance carries that a resume checks. */
@@ -241,7 +254,7 @@ export interface Parkable {
   readonly iid: string;
   /** The view. */
   readonly def: { readonly id: string };
-  /** `view + "\0" + token`. */
+  /** {@link resumeKey}: the view and the props its verified token signs. */
   readonly signed: string;
   /** The viewer it was mounted for ({@link viewerIdentity}): only the same viewer resumes it. */
   readonly identity: string;
@@ -252,14 +265,14 @@ export interface Parkable {
 }
 
 /**
- * The instance parked under `resume`, when it is this view with these signed props, mounted for
- * the same viewer: taken out of `parked`, its park timer cleared. Another viewer's resume (signed
+ * The instance parked under `resume`, when it is this view with the same signed props (whatever
+ * token the page now carries over them), mounted for the same viewer: taken out of `parked`, its park timer cleared. Another viewer's resume (signed
  * out, or another account, on the same page) gets `undefined` and the instance stays parked.
  *
  * @param parked The parked instances by id.
  * @param resume The id the client resumes.
  * @param view The view id.
- * @param signed `view + "\0" + token`.
+ * @param signed The mount's {@link resumeKey}.
  * @param identity The resuming connection's {@link viewerIdentity}.
  * @returns The instance, or `undefined`.
  */

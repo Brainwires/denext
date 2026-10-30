@@ -641,6 +641,116 @@ Deno.test("live views: a props token past viewTokenMaxAgeSeconds is refused (gon
   hub.dispose();
 });
 
+/** The issue time of the token a page carried before it re-rendered (two minutes before SIGNED_AT). */
+const EARLIER = SIGNED_AT - 120_000;
+
+/** Mount `test-counter` (start 1) with a token signed at `signedAt`, step it to n=2, drop it. */
+async function parkedAtTwo(hub: Any, conn: Conn, signedAt: number) {
+  const rendered = next(conn, isType("view-render"));
+  await hub.mount(conn, await mountFrame("test-counter", { start: 1 }, {}, signedAt));
+  const first = await rendered;
+  const patched = next(conn, isType("view-patch"));
+  hub.event(conn, { type: "view-event", vid: "v1", rev: first.rev, h: 0 }); // n=2
+  await patched;
+  conn.closed = true;
+  hub.drop(conn);
+  return first;
+}
+
+Deno.test("live views: a resume matches the props a fresh token signs, not the token", async () => {
+  allowed.add("ok-other");
+  const { hub, conn } = fakeHub({ viewTokenMaxAgeSeconds: 600 });
+  // Parked under the token the page carried (T1); every reconnect below carries a token issued
+  // when the page re-rendered (T2, SIGNED_AT), as after a `gone`, a soft navigation or ISR.
+  const first = await parkedAtTwo(hub, conn("ok"), EARLIER);
+  assertEquals(hub.parked(), 1);
+
+  // A different viewer under a valid fresh token runs init; the model stays parked.
+  const b = conn("ok-other");
+  const other = next(b, isType("view-render"));
+  await hub.mount(b, await mountFrame("test-counter", { start: 1 }, { resume: first.iid }));
+  assertEquals(shown((await other).flight), "n=1");
+  assertEquals(hub.parked(), 1);
+
+  // Different props under a valid fresh token run init; the model stays parked.
+  const c = conn("ok");
+  const props = next(c, isType("view-render"));
+  await hub.mount(c, await mountFrame("test-counter", { start: 4 }, { resume: first.iid }));
+  assertEquals(shown((await props).flight), "n=4");
+  assertEquals(hub.parked(), 1);
+
+  // An expired token over the same props is refused before any resume.
+  const d = conn("ok");
+  const gone = next(d, isError("gone"));
+  await hub.mount(
+    d,
+    await mountFrame("test-counter", { start: 1 }, { resume: first.iid }, SIGNED_AT - 3_600_000),
+  );
+  assertEquals((await gone).subId, "v1");
+  assertEquals(hub.parked(), 1);
+
+  // The same viewer and props under the fresh token resume the parked model.
+  const e = conn("ok");
+  const resumed = next(e, isType("view-render"));
+  await hub.mount(e, await mountFrame("test-counter", { start: 1 }, { resume: first.iid }));
+  const r = await resumed;
+  assertEquals([r.iid, shown(r.flight)], [first.iid, "n=2"]);
+  assertEquals(hub.parked(), 0);
+  hub.dispose();
+  allowed.delete("ok-other");
+});
+
+Deno.test("live views: a stored snapshot resumes under a fresh token over the same props", async () => {
+  allowed.add("ok-other");
+  const store = memoryLiveViewStore();
+  const instanceA = fakeHub({ viewTokenMaxAgeSeconds: 600 }, store);
+  const instanceB = fakeHub({ viewTokenMaxAgeSeconds: 600 }, store);
+  const first = await parkedAtTwo(instanceA.hub, instanceA.conn("ok"), EARLIER);
+  await instanceA.hub.settled();
+  instanceA.hub.dispose(); // only the store holds it now
+
+  // An expired token is refused before the snapshot is taken.
+  const b = instanceB.conn("ok");
+  const gone = next(b, isError("gone"));
+  await instanceB.hub.mount(
+    b,
+    await mountFrame("test-counter", { start: 1 }, { resume: first.iid }, SIGNED_AT - 3_600_000),
+  );
+  await gone;
+
+  // The same viewer and props under a fresh token resume the stored model on another instance.
+  const resumed = next(b, isType("view-render"));
+  await instanceB.hub.mount(
+    b,
+    await mountFrame("test-counter", { start: 1 }, { resume: first.iid }),
+  );
+  const r = await resumed;
+  assertEquals(shown(r.flight), "n=2", "the model came over under the re-signed props");
+
+  // Parked again (under T2) and stored: another viewer, or other props, under fresh tokens run init.
+  b.closed = true;
+  instanceB.hub.drop(b);
+  await instanceB.hub.settled();
+  const c = fakeHub({ viewTokenMaxAgeSeconds: 600 }, store);
+  instanceB.hub.dispose();
+  const viewer = c.conn("ok-other");
+  const fresh = next(viewer, isType("view-render"));
+  await c.hub.mount(viewer, await mountFrame("test-counter", { start: 1 }, { resume: r.iid }));
+  assertEquals(shown((await fresh).flight), "n=1", "another viewer runs init");
+
+  const d = fakeHub({ viewTokenMaxAgeSeconds: 600 }, store);
+  const again = await parkedAtTwo(d.hub, d.conn("ok"), EARLIER);
+  await d.hub.settled();
+  d.hub.dispose();
+  const e = c.conn("ok");
+  const other = next(e, isType("view-render"));
+  await c.hub.mount(e, await mountFrame("test-counter", { start: 6 }, { resume: again.iid }));
+  assertEquals(shown((await other).flight), "n=6", "other props run init");
+  await c.hub.settled();
+  c.hub.dispose();
+  allowed.delete("ok-other");
+});
+
 Deno.test("live views: DENEXT_LIVE_VIEW_SECRET must be at least 16 characters", () => {
   const before = Deno.env.get("DENEXT_LIVE_VIEW_SECRET");
   let message = "";

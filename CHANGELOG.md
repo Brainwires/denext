@@ -60,6 +60,10 @@ and this project adheres to
   mid-document is never used: that child still ends at its deadline. `DENEXT_CHILD_EXIT_GRACE_MS`
   sets the grace (default 5000; `0` waits for the exit). The repository's `deno doc --json` /
   `deno info --json` children get the same treatment.
+- **A Live View resume matches the view, the props and the viewer, not the token.** A resume
+  compared the signed-props token itself, so a page that re-rendered with a freshly issued token
+  (after a `gone` token, a soft navigation back, an ISR re-render) ran `init` again. It now matches
+  the view, the props the verified token signs and the viewer, and resumes the model.
 
 ### Documentation
 
