@@ -113,10 +113,16 @@ function counterView(extra: Partial<Parameters<typeof defineLustreView<number, A
   return { id, View };
 }
 
+/**
+ * When the page "rendered" every frame's token: tokens carry their issue time in seconds, and a
+ * resume carries the token of the page it resumes, so every frame signs at the same instant.
+ */
+const SIGNED_AT = Date.now();
+
 /** The `lustre-mount` frame the island would send for `props`. */
 async function mountFrame(id: string, props: unknown, vid = "l1", resume?: string) {
   const json = JSON.stringify(props);
-  const token = await signLiveViewToken(lustreTokenName(id), json);
+  const token = await signLiveViewToken(lustreTokenName(id), json, SIGNED_AT);
   return { type: "lustre-mount", vid, view: id, props: json, token, ...(resume ? { resume } : {}) };
 }
 

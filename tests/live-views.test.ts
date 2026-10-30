@@ -199,11 +199,19 @@ defineLiveView<Model, Msg, { start: number }>({
   events: digits,
 });
 
+/**
+ * When the page "rendered" every frame's token. Tokens carry their issue time in seconds, and the
+ * browser resumes with the token its page carried, so a resume frame must carry the same token as
+ * the mount it resumes: signing each frame at `Date.now()` would make a resume across a second
+ * boundary a different signed-props pair (a fresh `init`, not a resume).
+ */
+const SIGNED_AT = Date.now();
+
 async function mountFrame(
   view: string,
   props: unknown,
   extra: Record<string, unknown> = {},
-  signedAt = Date.now(),
+  signedAt = SIGNED_AT,
 ) {
   const json = JSON.stringify(props);
   return {
