@@ -157,6 +157,12 @@ and this project adheres to
   deadlock (40P01) is a `TransactionWriteConflict`. The restated contract in
   `denext/prisma-adapter` follows `@prisma/driver-adapter-utils` 7.10.1 (the new kinds, `table` on
   a unique violation, optional savepoint methods on `Transaction`).
+- **`PrismaDenoSql` names the table of a unique-constraint violation.** A
+  `UniqueConstraintViolation` now carries `table`, as Prisma's own adapters fill it: on Postgres
+  from the server's `table` field (else from a default `<table>_<fields>_key` constraint name), and
+  on SQLite from the first `<table>.<column>` of `UNIQUE constraint failed: …`. On Postgres the
+  constraint is now reported by name (`{ index: "User_email_key" }`) when the server names it, as
+  `@prisma/adapter-pg` does, and by its `Key (…)` fields only when it does not.
 
 ### Security
 

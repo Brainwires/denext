@@ -415,6 +415,50 @@ Deno.test("sqlite: Prisma's arguments in the form SQLite binds", () => {
   assertEquals(map(7, "int"), 7);
 });
 
+Deno.test("postgres: a unique violation names its table and constraint, as adapter-pg does", () => {
+  const conv = (e: Record<string, unknown>) =>
+    fields(pg.convertPostgresError({ code: "23505", message: "m", severity: "ERROR", ...e }));
+  // What Deno.SQL reports: the server's `table` and `constraint` fields beside the detail.
+  const full = conv({
+    detail: "Key (email)=(x) already exists.",
+    schema: "public",
+    table: "User",
+    constraint: "User_email_key",
+  });
+  assertEquals([full.kind, full.constraint, full.table], [
+    "UniqueConstraintViolation",
+    { index: "User_email_key" },
+    "User",
+  ]);
+  // No `table` field: a default `<table>_<fields>_key` constraint name gives it.
+  const derived = conv({ detail: "Key (a, b)=(1, 2) already exists.", constraint: "Post_a_b_key" });
+  assertEquals([derived.constraint, derived.table], [{ index: "Post_a_b_key" }, "Post"]);
+  // A custom constraint name says nothing about the table.
+  const custom = conv({ detail: "Key (a)=(1) already exists.", constraint: "uniq_a" });
+  assertEquals([custom.constraint, "table" in custom], [{ index: "uniq_a" }, false]);
+  // Only the detail: the fields, and no table.
+  const detail = conv({ detail: "Key (a, b)=(1, 2) already exists." });
+  assertEquals([detail.constraint, "table" in detail], [{ fields: ["a", "b"] }, false]);
+});
+
+Deno.test("sqlite: a unique violation names its table, as adapter-better-sqlite3 does", () => {
+  const conv = (code: string, message: string) =>
+    fields(lite.convertSqliteError({ code, message }));
+  const one = conv("SQLITE_CONSTRAINT_UNIQUE", "UNIQUE constraint failed: User.email");
+  assertEquals([one.kind, one.constraint, one.table], [
+    "UniqueConstraintViolation",
+    { fields: ["email"] },
+    "User",
+  ]);
+  const pk = conv(
+    "SQLITE_CONSTRAINT_PRIMARYKEY",
+    "UNIQUE constraint failed: main.Post.a, main.Post.b",
+  );
+  assertEquals([pk.constraint, pk.table], [{ fields: ["a", "b"] }, "main.Post"]);
+  const odd = conv("SQLITE_CONSTRAINT_UNIQUE", "odd message");
+  assertEquals([odd.constraint, "table" in odd], [undefined, false]);
+});
+
 Deno.test("sqlite: errors as Prisma's kinds", () => {
   const conv = (code: string, message: string, errno?: number) =>
     fields(lite.convertSqliteError({ code, message, errno }));

@@ -171,18 +171,26 @@ function failedFields(message: string): { fields: string[] } | undefined {
   return list ? { fields: list.split(", ").map((f) => f.split(".").pop()!) } : undefined;
 }
 
+/**
+ * A unique / primary-key violation as `@prisma/adapter-better-sqlite3` reports it: the fields,
+ * and the table from the first `<table>.<column>` of `UNIQUE constraint failed: …`.
+ */
+function uniqueViolation(message: string): MappedError {
+  const first = message.split("constraint failed: ")[1]?.split(", ")[0];
+  const table = first?.split(".").slice(0, -1).join(".") || undefined;
+  return {
+    kind: "UniqueConstraintViolation",
+    constraint: failedFields(message),
+    ...(table !== undefined && { table }),
+  };
+}
+
 /** Prisma's error kind for each SQLite code it has one for. */
 const SQLITE_ERRORS: Record<string, (message: string) => MappedError> = {
   SQLITE_BUSY: () => ({ kind: "SocketTimeout" }),
   ERR_SQLITE_CONNECTION_TIMEOUT: () => ({ kind: "SocketTimeout" }),
-  SQLITE_CONSTRAINT_UNIQUE: (m) => ({
-    kind: "UniqueConstraintViolation",
-    constraint: failedFields(m),
-  }),
-  SQLITE_CONSTRAINT_PRIMARYKEY: (m) => ({
-    kind: "UniqueConstraintViolation",
-    constraint: failedFields(m),
-  }),
+  SQLITE_CONSTRAINT_UNIQUE: uniqueViolation,
+  SQLITE_CONSTRAINT_PRIMARYKEY: uniqueViolation,
   SQLITE_CONSTRAINT_NOTNULL: (m) => ({
     kind: "NullConstraintViolation",
     constraint: failedFields(m),
