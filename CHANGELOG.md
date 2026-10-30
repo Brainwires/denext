@@ -84,6 +84,11 @@ and this project adheres to
 
 ### Fixed
 
+- **A `VirtualList` unmounted mid-batch leaves nothing scheduled.** With `progressive`, the next
+  batch of rows (and, with `initialNumToRender`, the overscan added after the first paint) waits
+  for a painted frame and then a task; an unmount in between left that frame or task armed, to run
+  once into the unmounted list. The unmount now cancels it, and a list mounted again schedules it
+  afresh.
 - **Contexts and class components inside `react-reconciler` renderers** (react-three-fiber,
   react-konva, React Native Skia). A provider placed inside such a renderer's tree now reaches
   `useContext`, `use` and `<Context.Consumer>` there: a context made with `react`'s

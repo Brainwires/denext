@@ -863,6 +863,75 @@ Deno.test("progressive: placeholder sizes are never recorded as row sizes", asyn
   });
 });
 
+Deno.test("progressive: an unmount while a batch waits for its frame or task leaves nothing armed", async () => {
+  // Frames paint only when the test says so, so a batch is deterministically pending. The list's
+  // own timers are tracked: whether a left-over 0 ms timer fires before the test ends depends on
+  // the event loop's order (act settles on MessageChannel turns), so the test reads them right
+  // after the (synchronous) unmount instead of leaving it to the sanitizer.
+  const realSet = globalThis.setTimeout;
+  const realClear = globalThis.clearTimeout;
+  type Handle = ReturnType<typeof realSet>;
+  const armed = new Set<Handle>();
+  const setTimeout = (fn: () => void, ms?: number): Handle => {
+    const fromList = new Error().stack?.includes("/client/virtual/") === true;
+    const id: Handle = realSet(() => {
+      armed.delete(id);
+      fn();
+    }, ms);
+    if (fromList) armed.add(id);
+    return id;
+  };
+  const clearTimeout = (id?: Handle) => {
+    if (id !== undefined) armed.delete(id);
+    realClear(id);
+  };
+  const frames = new Map<number, () => void>();
+  let nextFrame = 0;
+  const globals = {
+    setTimeout,
+    clearTimeout,
+    requestAnimationFrame: (cb: () => void) => (frames.set(++nextFrame, cb), nextFrame),
+    cancelAnimationFrame: (id: number) => frames.delete(id),
+  };
+  const mountScrolled = async () => {
+    const screen = await render(list({
+      data: rows(1000),
+      estimatedItemSize: 40,
+      viewportSize: 400,
+      overscan: 0,
+      progressive: true,
+      renderItem: text,
+    }));
+    await measureAll(() => 90);
+    await scrollTo(screen, 20_000);
+    assert(
+      all(screen).some((e) => e.getAttribute("data-vl-placeholder") !== null),
+      "rows wait for a batch",
+    );
+    return screen;
+  };
+  await withTempGlobals(globals, () =>
+    withRO(async () => {
+      // The batch waits for its frame: the unmount cancels the frame.
+      const first = await mountScrolled();
+      assert(frames.size > 0, "a batch waits for its frame");
+      const firstGone = first.unmount(); // the unmount itself runs synchronously
+      assertEquals(frames.size, 0, "the unmount cancelled the frame");
+      await firstGone;
+
+      // The frame painted and the batch waits for its task: the unmount cancels the task.
+      const second = await mountScrolled();
+      assert(frames.size > 0, "a batch waits for its frame");
+      const due = [...frames.values()];
+      frames.clear();
+      for (const cb of due) cb();
+      assert(armed.size > 0, "the batch waits for its task");
+      const secondGone = second.unmount();
+      assertEquals(armed.size, 0, "the unmount cancelled the task");
+      await secondGone;
+    }));
+});
+
 // ---- typeahead + announcements (G2, G1) -----------------------------------------------------------------
 
 Deno.test("typeahead: a letter jumps to the next row starting with it, into rows not rendered (G2, T26)", async () => {
