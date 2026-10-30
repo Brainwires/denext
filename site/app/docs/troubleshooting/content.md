@@ -155,20 +155,27 @@ See the [changelog](/docs/changelog) for 2.4.2, which fixed two of these.
 
 ## Prisma: "driverAdapters preview not enabled" / a native engine binary is requested
 
-**Cause.** The schema is using the legacy `prisma-client-js` generator, which
-expects a native engine binary and rejects `{ adapter }` under Deno.
+**Cause.** The schema is using the legacy `prisma-client-js` generator, or a
+Prisma 6 client, which expects a native engine binary and rejects `{ adapter }`
+under Deno unless its `queryCompiler` and `driverAdapters` preview features are
+on.
 
-**Fix.** Use the Rust-free query compiler with driver adapters.
+**Fix.** Move to Prisma 7, whose `prisma-client` generator runs the Rust-free
+query compiler through a driver adapter with no preview features, and give the
+datasource URL to `prisma.config.ts` (Prisma 7 rejects a `url` in the schema).
 
 ```prisma
 generator client {
-  provider        = "prisma-client"
-  previewFeatures = ["queryCompiler", "driverAdapters"]
+  provider     = "prisma-client"
+  output       = "../generated/client"
+  runtime      = "deno"
+  moduleFormat = "esm"
 }
 ```
 
-`denext migrate` writes this generator block for you; run `deno task
-prisma:setup` once afterwards. See [Database](/docs/database) → Prisma.
+`denext migrate` writes this generator block and the `prisma.config.ts` for
+you; run `deno task prisma:setup` once afterwards. See
+[Database](/docs/database) → Prisma.
 
 ## `denext dev` answers on `localhost`, not `127.0.0.1`
 
