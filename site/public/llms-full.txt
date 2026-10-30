@@ -1892,9 +1892,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopSidecarRunConfig` — DesktopSidecarConfig.run: module (run in a worker of the app's own runtime; with nodeModules, external and entries for a Node backend) or exec (a program), not both.
 - `interface DesktopSidecarShutdownConfig` — DesktopSidecarConfig.shutdown.
 - `interface DesktopSize` — A window size in CSS pixels (DesktopConfig.minSize / DesktopConfig.maxSize).
+- `interface DesktopTrayConfig` — The backend-owned tray icon (DesktopConfig.tray).
+- `type DesktopTrayMenuItem = object | object | object | separator` — One entry of a DesktopTrayConfig menu (the shape of denext/desktop/app's menus).
+- `interface DesktopTrayPanelConfig` — The tray panel (DesktopTrayConfig.panel).
 - `interface DesktopUiUpdateConfig` — DesktopUpdateConfig.ui: the signed UI overlay's feed.
 - `interface DesktopUpdateConfig` — DesktopConfig.update: full-app self-update.
 - `interface DesktopWindowConfig` — The initial window (DesktopConfig.window), applied when the runtime adopts it.
+- `type DesktopWindowLevel = floating | status | pop-up-menu | screen-saver` — How far above other windows an always-on-top window floats (Electron's level names).
 - `interface DesktopWindowsConfig` — DesktopConfig.windows: Windows launch settings of the packaged app.
 - `detectLocale(request: Request, i18n: I18nConfig): string` — Pick the best supported locale for a request from the NEXT_LOCALE cookie (highest priority) then the Accept-Language header, falling back to the default locale. Matches on both exact tags and the primary subtag (fr-CA matches a supported fr).
 - `type Directive = client | server | null` — Which boundary a module declares, or null when it declares none.
@@ -2884,7 +2888,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface BuildMsiOptions` — What buildDesktopMsi builds.
 - `bundleDesktopVcRuntime(dir: string, arch: DesktopWindowsArch, deps?: DesktopVcRuntimeDeps): Promise<boolean>` — Ship the VC++ 2015-2022 runtime DLLs arch's deno desktop binaries import (DESKTOP_VC_RUNTIME_DLLS) next to the bundle's .exe, so the packaged app runs with NO redistributable installed on the target (otherwise it dies at launch with a silent 0xC0000135 DLL-not-found). Microsoft permits this app-local deployment. They come from System32 (the installed redist) when packaging on Windows for the host's architecture, and each one must be a PE image of arch — a Windows on Arm System32 holds x64 VC++ DLLs beside the Arm64 ones. All or nothing: when any is missing or another machine's (or packaging off Windows, or for the other architecture), none is copied and a warning names the redistributable the target needs.
 - `cefHelperEntitlements(path: string): Readonly<Record<string, boolean>> | undefined` — Chromium's default entitlements for the CEF helper app path lies in (… Helper (Renderer).app and its executable), or undefined for any other code.
-- `createDesktopHandler(options: RunDesktopOptions, outDir: string | DesktopUiFiles, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
+- `createDesktopHandler(options: RunDesktopOptions, outDir: string | DesktopUiFiles, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: (windowToken: string | null) => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string, windowBindings?: boolean): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>` — The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.
 - `DEFAULT_DESKTOP_INSTALLERS: Readonly<Record<DesktopOs, typeOperator>>` — The formats built when neither --format nor desktop.installers.<os> names any.
 - `defineDesktopExtension<C>(capability: C): C` — Define a native desktop extension: a capability that runs in the desktop app's Deno process and that the page calls through denext/desktop/client's desktopExtension. Enable it in desktop.capabilities.extensions (a module path). This is an identity helper — it returns its argument unchanged so a typeof import("./ext.ts") keeps the exact method types the client's typed proxy reads — and it is not a place for side effects (nothing should run at import).
 - `defineSidecar<D>(definition: D): D` — Declare a sidecar with its type checked (an identity function, for runDesktop({ sidecars })).
@@ -2898,7 +2902,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `DESKTOP_WS_URL_ENV: DENO_DESKTOP_WS_URL` — The env var the denext-pinned runtime publishes its WebSocket-only loopback relay in, per-launch token included (ws://127.0.0.1:<port>/.deno-desktop-relay/<64 hex>): the URL the page dials, with its own path appended, for a WebSocket to its own server. The runtime keeps it to its own process (child processes don't inherit it).
 - `interface DesktopAppDirs` — The three per-app storage roots a desktop app uses (absolute paths, not created here).
 - `desktopAppName(entryUrl?: string): Promise<string>` — The app's name for artifact paths: DENEXT_APP_NAME, else desktop.app.name in the project's denext.config.ts, else deno.json desktop.app.name, else "app".
+- `interface DesktopAppSettings` — The app-level settings of desktop.app that runDesktop applies at launch.
 - `interface DesktopAppSyncReport` — What syncDesktopAppConfig did.
+- `desktopAppUrl(trust: DesktopTrust, addr: unknown): (path: string) => string` — The URL a window loads for an app path (/settings): under the app origin in the memory world (the pinned runtime), else at the loopback address the server listens on.
 - `desktopAppVersion(root: string): Promise<string | undefined>` — The project's app version: deno.json version, else package.json version (undefined: neither). The installers, the executable's version resource and denext desktop publish-update all go by it.
 - `interface DesktopBridge` — The runtime bridge: a request handler for its two paths, and an event emitter.
 - `interface DesktopBuildFlagOptions` — Options for desktopBuildFlags.
@@ -2927,6 +2933,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopMsiProbe` — Seams for desktopMsiProblem.
 - `desktopMsiProblem(version: string | undefined, probe?: DesktopMsiProbe): Promise<string | undefined>` — Why the .msi cannot be built here, or undefined when it can: WiX runs on Windows only, the app version must fit an MSI ProductVersion, and wix must be WiX 5 (not just present).
 - `desktopNpmArgs(entryUrl: string): Promise<string[]>` — desktopNpmArgsFor for a packaging script: the project is the script's parent directory (scripts/package-*.ts → ../), as desktopIncludeArgs reads it.
+- `interface DesktopOpenWindowOptions` — The options of a window desktop.ts or a page opens (openWindow in denext/desktop/window).
 - `desktopOptionalInstaller<T>(format: string, explicit: boolean, build: () => Promise<T>): Promise<T | null>` — Build an installer whose failure must not sink the run when it is only a default: an asked-for one (explicit) rethrows, a default one warns and resolves null (the caller falls back).
 - `type DesktopOs = darwin | windows | linux` — The operating systems a Deno Desktop app ships for (Deno.build.os spelling).
 - `desktopPackageArches(arch: string): Array<x86_64 | arm64>` — The bundle arches a Linux / Windows run builds: both for both, the machine's own for host.
@@ -2952,18 +2959,28 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopSignWindowsDeps` — What desktopSignWindows runs commands and reads settings through (tests stub them).
 - `desktopSlug(name: string): string` — A filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths.
 - `desktopToolGate(why: string | undefined, format: string, explicit: boolean): boolean` — Whether why (a reason the tool for format cannot run, or undefined when it can) still lets the format build: a default format is skipped with a warning, an asked-for one fails.
+- `interface DesktopTrayHandle` — The backend tray, as DesktopRuntime.tray hands it to desktop.ts.
+- `type DesktopTrayIcon = Uint8Array | string` — A tray icon image: PNG bytes, or a PNG path in the export ("/tray.png").
+- `interface DesktopTrayOptions` — The backend tray's settings in runDesktop({ tray }), laid over desktop.tray.
+- `interface DesktopTrayPanelHandle` — The tray panel as the backend drives it.
+- `interface DesktopTrayPanelSettings` — The panel at the tray icon, resolved (desktop.tray.panel).
+- `interface DesktopTraySettings` — The backend-owned tray, resolved (desktop.tray).
+- `interface DesktopTrayUpdate` — What update changes on the backend tray (null removes the tooltip / menu / dark icon).
 - `type DesktopTrust = object | object | object` — The desktop world the app runs in (see the module docs).
 - `interface DesktopUiFiles` — The UI files a desktop window is served from.
 - `desktopVcRedistUrl(arch: DesktopWindowsArch): string` — The VC++ 2015-2022 redistributable installer for arch.
 - `interface DesktopVcRuntimeDeps` — What bundleDesktopVcRuntime reads the machine and files through (tests stub them).
 - `desktopVersionProblem(format: msi | deb | rpm, version: string | undefined): string | undefined` — Why version (deno.json version) cannot be the package version of format — MSI packs major.minor.build into 8/8/16 bits, Debian and RPM need a leading digit and a small character set — or undefined when it can (see msiProductVersion / linuxPackageVersion).
+- `type DesktopWindowLevel = floating | status | pop-up-menu | screen-saver` — How far above other windows an always-on-top window floats (Electron's level names).
+- `interface DesktopWindowRef` — One of the app's windows, as desktop.ts drives it (DesktopRuntime.windows).
+- `interface DesktopWindows` — The app's windows, as desktop.ts drives them (DesktopRuntime.windows).
 - `type DesktopWindowsArch = x86_64 | arm64` — A Windows bundle's architecture, as the package script names it.
 - `interface DesktopWindowSettings` — The resolved initial-window settings runDesktop applies (every key optional).
 - `interface DesktopWindowSize` — A window size in CSS pixels.
 - `desktopWindowsTargetNote(backend: string, noVcRuntime: typeOperator): string` — The closing note of a Windows package run: what the target machine needs for backend. A webview build renders through the Microsoft Edge WebView2 runtime the target must have; a CEF build ships Chromium in the bundle and needs none. Either needs the VC++ 2015-2022 redistributable for each arch in noVcRuntime (the runtime could not be bundled app-local).
 - `desktopWithAppVersion<T>(entryUrl: string, build: () => Promise<T>): Promise<T>` — Run build (a deno desktop packaging run) with deno.json carrying the app version: when deno.json has no version, package.json's is written into it for the run and taken out after (see stampDenoJsonVersion), so the bundle deno desktop compiles carries the version the installers and denext desktop publish-update go by (deno.json's, else package.json's).
 - `injectDesktopGlobal(html: string, token: string | null, beacon?: boolean, preload?: string, preloadKey?: string, page?: DesktopPageGlobals): Promise<string>` — Inject globalThis.__denext = { desktop: true, token } as an inline <script> immediately after the opening <head> (falling back to after <body>, then to a prepend). The value is JSON.stringify-escaped. When beacon is set, the boot-confirm beacon (BOOT_BEACON_JS) is appended to the SAME script so one CSP hash covers both. When the shell carries a hash-based CSP meta, its script-src is extended with this script's 'sha256-…' so the script survives a strict policy.
-- `installWindowCloseHandler(BrowserWindow?: unknown, exit?: (code: number) => void, intercept?: (event: Event) => boolean): unknown` — Closing the window (macOS red light / Cmd-W) quits the app. Deno.serve is a permanently-live task, so deno desktop won't auto-exit on close; adopt the initial window and exit on its close. Guarded so a non-desktop run is a no-op. Returns the adopted window (handed to capabilities as ctx.window), or undefined outside the desktop runtime.
+- `installWindowCloseHandler(BrowserWindow?: unknown, exit?: (code: number) => void, intercept?: (event: Event) => boolean): unknown` — Adopt the window the app started with, and act on its close (macOS red light / Cmd-W): by default that ends the process (Deno.serve is a permanently-live task, so deno desktop won't auto-exit on close); runDesktop passes an exit that quits only once the app's last window is gone and the app is not kept alive. Guarded so a non-desktop run is a no-op. Returns the adopted window (handed to capabilities as ctx.window), or undefined outside the desktop runtime.
 - `isDenoCliExecPath(execPath: string): boolean` — Whether execPath is the deno CLI (deno / deno.exe, case-insensitive) rather than a compiled/packaged app binary. A packaged app's execPath is its own binary; the window denext desktop dev builds is one too, and carries the dev-build mark instead (see desktopDevProxyDecision). Pure, so the packaged-vs-dev decision is testable without the real Deno.execPath.
 - `LAUFEY_LAUNCH_FILE: laufey-launch.json` — The webview backend's launch-settings file name.
 - `interface LaufeyLaunchWriteOptions` — Options for writeLaufeyLaunchConfig.
@@ -3082,9 +3099,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 ### `denext/desktop/window`
 
 - `type CloseRequestHandler = () => boolean | void | Promise<boolean | void>` — A close-request handler: return (or resolve) false to keep the window open.
-- `closeWindow(): Promise<void>` — Close the window now, without asking the onCloseRequested handlers (the app quits: a denext desktop app has one window).
+- `closeWindow(): Promise<void>` — Close the window now, without asking the onCloseRequested handlers. The app quits once its last window is gone, unless it is kept alive (desktop.app.keepAlive, a tray).
+- `currentWindowId(): Promise<string>` — The id of the window this page is in ("main" for the window the app started with, and where the runtime cannot tell windows apart).
 - `interface DesktopBridgeError` — A failed desktop bridge call. Narrow with isDesktopBridgeError.
 - `type DesktopErrorCode = unavailable | forbidden | validation | timeout | too_large | bridge_error | parenthesized` — Why a desktop call failed:
+- `interface DesktopWindowHandle` — One of the app's windows, by id (openWindow, windowHandle).
+- `interface DesktopWindowInfo` — One of the app's windows (getWindows).
 - `interface DraggableElement` — The slice of a DOM element makeWindowDraggable uses.
 - `interface DragOutItem` — A file to drag out of the window: a picked item ({ directory: { picked: handle } }, with path relative to a picked folder), or a file in the app's own folders.
 - `type DragOutResult = dropped | cancelled | failed` — What a drag-out ended with.
@@ -3093,6 +3113,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `focusWindow(): Promise<void>` — Bring the window to the front and focus it. @returns Once requested.
 - `getScreens(): Promise<WindowScreen[]>` — The connected displays, primary first.
 - `getTitleBarPreferences(): Promise<TitleBarPreferences>` — How the user set up title bars: the window buttons' side and order, the double-click action, the colour scheme and accent colour. For a page that hides the title bar (desktop.titleBar: "hidden") and draws its own; windows with the OS's frame already follow these settings. On Linux it is the desktop's own setting (Plasma's button order, GNOME's button-layout), read by the runtime from xdg-desktop-portal; makeWindowDraggable uses the double-click action.
+- `getWindows(): Promise<DesktopWindowInfo[]>` — The app's open windows.
 - `getWindowState(): Promise<WindowState>` — The window's state: maximized / minimized / fullscreen / visible, its bounds, and its display.
 - `hideWindow(): Promise<void>` — Hide the window (the app keeps running). @returns Once hidden.
 - `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
@@ -3103,17 +3124,26 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `onDisplayChanged(handler: (screens: WindowScreen[]) => void): () => void` — Call handler with the displays whenever one is added, removed, rearranged or rescaled.
 - `onFileDrop(handler: (drop: FileDrop) => void): () => void` — Call handler when files or folders are dropped on the window, with a READ-ONLY handle for each (the dropped item is untrusted input: the page reads it through the handle, never by path). The page still gets its own DOM dragenter / dragover / drop events (with File objects, for a hover style); this is where the native handles are. Needs denext's pinned runtime (fileDrop in windowCapabilities).
 - `onTitleBarPreferencesChange(handler: (preferences: TitleBarPreferences) => void): () => void` — Call handler with the new preferences whenever the user changes them (moves the window buttons, picks another double-click action, colour scheme or accent colour). Needs runtime 2.9.7-denext.12; earlier the handler is never called.
+- `onWindowBlur(handler: () => void): () => void` — Call handler when the window loses the keyboard focus (the user clicked another window or app): where a panel hides itself.
+- `onWindowFocus(handler: () => void): () => void` — Call handler when the window gains the keyboard focus.
 - `onWindowStateChange(handler: (state: WindowState) => void): () => void` — Call handler with the window's state whenever it is maximized, unmaximized, minimized, restored, or enters or leaves fullscreen.
+- `openWindow(options: OpenWindowOptions): Promise<DesktopWindowHandle>` — Open another window of the app on one of its pages (Electron's new BrowserWindow() + loadURL, Tauri's WebviewWindow): a settings window, a document, a frameless overlay. Its page is a page of the same app, with the same desktop capabilities (or the capabilities subset), and its denext/desktop/window calls act on itself. The app stays up while any window is open. At most 8 windows at once besides the main one and the tray panel.
+- `interface OpenWindowOptions` — The options of a window to open (openWindow).
 - `quitApp(): Promise<boolean>` — Quit the app, like Electron's app.quit(): the onCloseRequested handlers are asked first, so a guarded close keeps it running.
 - `restoreWindow(): Promise<void>` — Bring the window back from minimized. @returns Once requested.
-- `setAlwaysOnTop(alwaysOnTop: boolean): Promise<void>` — Keep the window above other windows.
+- `setAlwaysOnTop(alwaysOnTop: boolean, level?: WindowLevel): Promise<void>` — Keep the window above other windows.
 - `setFullScreen(fullscreen: boolean): Promise<void>` — Enter or leave fullscreen.
+- `setHitRegion(rects: typeOperator | null): Promise<void>` — Catch clicks only inside these rectangles (page CSS pixels, as getBoundingClientRect() gives them); everywhere else they go through to what is under the window. null catches them on the whole window again. For a character on a transparent window: pass its element's rectangle, and again whenever it moves or resizes. Needs a runtime with it (hitRegion in windowCapabilities).
+- `setIgnoreMouseEvents(ignore: boolean, options?: object): Promise<void>` — Let clicks go through the window to what is under it (Electron's setIgnoreMouseEvents). With forward, pointer moves still reach the page where the runtime can (clickThroughForward), so it can turn clicks back on over its own content. Without forward the window can never be clicked again, so that is refused (validation) unless the app has a tray icon to come back through. Needs a runtime with it (clickThrough in windowCapabilities).
 - `setMaximumWindowSize(width: number, height: number): Promise<void>` — Limit how large the window can get (0 = no limit on that axis).
 - `setMinimumWindowSize(width: number, height: number): Promise<void>` — Limit how small the window can get (0 = no limit on that axis).
+- `setSkipTaskbar(skip: boolean): Promise<void>` — Keep the window off the taskbar (Windows, Linux; macOS has no per-window entry: see setDockVisible in denext/desktop/app). Needs a runtime with it (skipTaskbar in windowCapabilities); a focusable: false window is off it on every runtime.
 - `setTitleBarStyle(style: TitleBarStyle): Promise<boolean>` — Change the title bar style (macOS only): "hidden" / "hiddenInset" draw the page under a transparent title bar with the traffic lights on top — give the page a drag region (makeWindowDraggable).
+- `setVisibleOnAllWorkspaces(visible: boolean, options?: object): Promise<void>` — Show the window on every Space / virtual desktop (Electron's setVisibleOnAllWorkspaces), and with visibleOnFullScreen over full-screen apps too (macOS). Needs a runtime with it (visibleOnAllWorkspaces in windowCapabilities); on macOS a focusable: false window already joins every Space.
 - `setWindowBackdrop(backdrop: WindowBackdrop, options?: object): Promise<boolean>` — Put a backdrop behind the page: Mica / Acrylic / tabbed Mica on Windows 11, vibrancy on macOS. It shows where the page's background is transparent; "none" removes it.
 - `setWindowBounds(bounds: Partial<WindowBounds>): Promise<void>` — Move and / or resize the frame; missing fields keep their value. To reopen a window where the user left it, save normalBounds (and maximized / fullscreen) from getWindowState, then restore them here on the next launch.
 - `setWindowButtonPosition(position: object | null): Promise<boolean>` — Move the macOS traffic lights (the close button's top-left corner, in points from the window's top-left); null puts them back.
+- `setWindowOpacity(opacity: number): Promise<void>` — Fade the whole window, page and chrome alike (CSS opacity for the window).
 - `setWindowPosition(x: number, y: number): Promise<void>` — Move the window's frame (see the module docs for the units).
 - `setWindowResizable(resizable: boolean): Promise<void>` — Allow or forbid resizing by the user.
 - `setWindowSize(width: number, height: number): Promise<void>` — Resize the window's page area.
@@ -3131,6 +3161,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface WindowBounds` — A rectangle in screen coordinates (see the module docs for the units).
 - `windowCapabilities(): Promise<WindowCapabilities>` — What this OS and backend support.
 - `interface WindowCapabilities` — What this OS and backend support (Deno.desktop.windowCapabilities() plus closeGuard). A call for a feature reported false changes nothing (or rejects unsupported).
+- `windowHandle(id: string): DesktopWindowHandle` — The handle of one of the app's windows by id ("main", "panel", or an id openWindow or getWindows gave). Nothing is checked until a call: a closed window's calls reject not_found.
+- `type WindowLevel = floating | status | pop-up-menu | screen-saver` — How far above other windows an always-on-top window floats (Electron's level names).
 - `interface WindowScreen` — A display.
 - `interface WindowShareData` — What shareFromWindow shares: at least one of text, url or files.
 - `interface WindowShareResult` — How a share sheet ended: "completed" (a target was chosen; target names it where the OS says), "shown" (the sheet opened and this OS reports nothing more: Windows), "cancelled", "not_supported" (Linux has no share sheet) or "failed" (reason).
@@ -3153,11 +3185,14 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopBridgeError` — A failed desktop bridge call. Narrow with isDesktopBridgeError.
 - `type DesktopErrorCode = unavailable | forbidden | validation | timeout | too_large | bridge_error | parenthesized` — Why a desktop call failed:
 - `getLaunchAtLogin(): Promise<LaunchAtLoginState>` — Whether the app starts when the user logs in. Needs denext desktop add launch-at-login and denext's pinned runtime.
+- `getTray(): Promise<AppTray | null>` — The tray icon the app's backend owns (desktop.tray in denext.config.ts, or runDesktop({ tray })): every window's page gets the same one, and a page load never removes it (its destroy rejects validation). Clicks reach every window.
+- `hideTrayPanel(): Promise<boolean>` — Hide the backend tray's panel.
 - `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
 - `type LaunchAtLoginState = enabled | disabled | requires-approval | not-supported` — Whether the app starts at login. requires-approval: registered, but the user has to allow it in the system settings (macOS Login Items, or a Windows startup entry the user turned off).
 - `listShortcuts(): Promise<string[]>` — The shortcuts this app holds, canonical, in registration order.
 - `onAppCapabilitiesChanged(handler: (capabilities: AppCapabilities) => void): () => void` — Call handler with fresh appCapabilities whenever the runtime says what the session provides may have changed (runtime 2.9.7-denext.10 and later, Linux: a tray host started or went away, as when the GNOME AppIndicator extension is enabled while the app runs). Create the tray icon again when tray turns true. Older runtimes never call it.
 - `onAppMenuItem(handler: (id: string) => void): () => void` — Call handler with the id of each application-menu item the user chooses (by click or accelerator).
+- `onDockReopen(handler: (event: object) => void): () => void` — Call handler when the user clicks the app's macOS Dock icon (Electron's activate). With no window showing, the main window is shown again first; hasVisibleWindows says whether one was.
 - `onUserActivityContinued(handler: (activity: ContinuedUserActivity) => void): () => void` — Call handler with each user activity the user continues: Handoff from another device, or a Spotlight result (macOS, runtime 2.9.7-denext.20). The one that launched the app is delivered to the first handler. Treat its fields as untrusted input, as a deep link's.
 - `type PlatformUnknown = unknown` — A session fact the runtime could not report (a runtime before 2.9.7-denext.10, or no answer).
 - `interface RegisteredShortcut` — A registered shortcut (registerShortcut).
@@ -3165,10 +3200,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SecretServiceState = available | locked | activatable | absent | no-session-bus | os` — The Secret Service's state, as the runtime reads it without starting or unlocking it: "os" on macOS and Windows (Keychain, DPAPI); on Linux "locked" also covers a missing default keyring and "activatable" is installed but not running.
 - `setAppMenu(menu: typeOperator): Promise<void>` — Replace the application menu: the macOS menu bar, the window's menu bar on Windows and Linux. Chosen items reach onAppMenuItem; roles are handled by the OS.
 - `setBadge(badge: string | number | null): Promise<void>` — Show a badge: on the Dock icon on macOS, and as a "(N) " prefix of the window titles on Windows. On Linux a count shows on the app's launcher where a dock reads launcher badges (runtime 2.9.7-denext.11: Ubuntu's dock, Dash to Dock, Plasma's task manager), else as the same title prefix; appCapabilities().badgeShows says which. null, "" or 0 removes it.
+- `setDockVisible(visible: boolean): Promise<boolean>` — Show or hide the app's icon in the macOS Dock (the activation policy: hidden, the app is an accessory with no Dock icon or menu bar, as a menu-bar app or a desktop companion). Give the app a tray icon first so the user can reach it. desktop.app.dock: false hides it at launch.
 - `setLaunchAtLogin(enabled: boolean): Promise<LaunchAtLoginState>` — Start the app when the user logs in (or stop): a macOS login item, a Windows Run value, a Linux XDG autostart entry. Turn it on only when the user asks.
 - `setUserActivity(activity: UserActivity): Promise<boolean>` — Make activity the app's current user activity, for Handoff (the user's other devices offer to continue it) and Spotlight (searchable: true indexes it). macOS only, under denext's pinned runtime 2.9.7-denext.20 or later; elsewhere (Windows, Linux, an older runtime) it resolves false and nothing happens.
 - `shortcutCapabilities(): Promise<ShortcutCapabilities>` — What global shortcuts can do on this OS and runtime.
 - `interface ShortcutCapabilities` — What global shortcuts can do here (shortcutCapabilities).
+- `showTrayPanel(): Promise<boolean>` — Show the backend tray's panel (desktop.tray.panel) at the tray icon, as a click on the icon does.
+- `toggleTrayPanel(): Promise<boolean>` — Show the backend tray's panel when hidden, hide it when shown.
 - `interface TrayBounds` — Where a tray icon is on screen.
 - `type TrayIcon = Uint8Array | string` — A tray icon's image: PNG bytes, or base64 PNG.
 - `interface TrayOptions` — The settings of a tray icon (createTray).
@@ -3556,6 +3594,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SocialSignInError` — A failed native sign-in.
 - `type SocialSignInErrorCode = cancelled | no_id_token | unsupported | failed` — Why a native sign-in failed, as SocialSignInError's code reports it.
 - `interface SocialSignInResult` — What a native sign-in sheet returns: pass it to signInWithIdToken(provider, result).
+- `speak(text: string, options?: SpeakOptions): Promise<void>` — Say text aloud, after anything already being spoken.
+- `interface SpeakOptions` — How to speak.
 - `type SqliteBackend = native | opfs | memory` — Where a database lives: the native plugin, OPFS in the browser, or memory.
 - `type SqliteBindValue = string | number | boolean | null | Uint8Array | ArrayBuffer` — A value a statement binds: booleans bind as 1/0, an ArrayBuffer as a blob.
 - `interface SqliteDatabase` — An open database (openSqlite).
@@ -3572,6 +3612,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `startLiveActivity(name: string, attributes: LiveActivityValues, state: LiveActivityValues, options?: StartLiveActivityOptions): Promise<string>` — Start a Live Activity rendered by the UI denext mobile add live-activity --name <name> generated (<name>LiveActivity.swift, which reads context.attributes and context.state).
 - `interface StartLiveActivityOptions` — Options for startLiveActivity.
 - `stopBackgroundLocation(): Promise<void>` — Stop background location, whichever watch started it. Resolves once the plugin has stopped (at once without the plugin: stop a foreground fallback with the function watchPositionInBackground returned).
+- `stopSpeaking(): Promise<void>` — Stop speaking, and drop what is queued.
 - `interface StoreListingOptions` — Where openStoreReview sends the user.
 - `type SystemBar = status | navigation` — One of the system bars: the top status bar, or the navigation / gesture bar at the bottom.
 - `interface SystemBarsOptions` — What setSystemBars changes; a field left out is left as it is.
@@ -3856,7 +3897,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class DriverAdapterError` — The error an adapter throws so Prisma reports a typed database error instead of a generic one. Prisma recognizes it by name and cause (no instanceof), so this class needs no import from Prisma.
 - `type ErrorConstraint = object | object | object` — A constraint a database error names (fields, an index, or a foreign key).
 - `type IsolationLevel = READ UNCOMMITTED | READ COMMITTED | REPEATABLE READ | SNAPSHOT | SERIALIZABLE` — The transaction isolation levels Prisma may ask for.
-- `type MappedError = object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object` — A database error in the form Prisma turns into its own P20xx errors. Each kind is one Prisma knows; postgres / sqlite carry an error it has no dedicated kind for.
+- `type MappedError = object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object` — A database error in the form Prisma turns into its own P20xx errors. Each kind is one Prisma knows; postgres / sqlite carry an error it has no dedicated kind for.
 - `postgresConnection(url: string, schemaOption: string | undefined): object` — A Postgres URL with Prisma's own parameters read into Deno.SQL options and removed, as PrismaDenoSql does before it connects. schema becomes the search_path, connection_limit the pool's max, connect_timeout (or pool_timeout) the connectionTimeout, and pgbouncer=true turns prepared statements off; Prisma-only parameters a server would refuse (socket_timeout, statement_cache_size, sslaccept, …) are dropped. Use it to open a Deno.SQL client of your own from a Prisma DATABASE_URL.
 - `class PrismaDenoSql` — The Prisma driver adapter factory over Deno.SQL, for Postgres and SQLite. Pass it to new PrismaClient({ adapter }).
 - `interface PrismaDenoSqlOptions` — Options of PrismaDenoSql.

@@ -56,7 +56,8 @@
  *   {@linkcode haptic}, {@linkcode readClipboard} / {@linkcode writeClipboard} /
  *   {@linkcode clipboardFormats},
  *   {@linkcode share}, {@linkcode deviceInfo}, {@linkcode networkStatus} /
- *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash} and
+ *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash},
+ *   {@linkcode speak} / {@linkcode stopSpeaking} (the OS engine, else Web Speech) and
  *   {@linkcode secureStore} (Keychain / Keystore natively; NOT secret on the web).
  * - Files and media: {@linkcode readFile} / {@linkcode writeFile} / {@linkcode deleteFile} /
  *   {@linkcode listDir} (app storage natively, OPFS on the web); {@linkcode downloadToFile} /
@@ -243,6 +244,7 @@ export {
   otaSignaturePayload,
 } from "./ota-manifest.ts";
 export { haptic, type HapticKind } from "./haptics.ts";
+export { speak, type SpeakOptions, stopSpeaking } from "./speech.ts";
 export {
   type ClipboardContent,
   type ClipboardFormat,

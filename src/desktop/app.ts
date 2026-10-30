@@ -47,6 +47,7 @@
 import { bytesToBase64 } from "../mobile/base64.ts";
 import { desktopRpc, subscribeDesktopEvent } from "./bridge-client.ts";
 import { onAppAction } from "./app-actions.ts";
+import { menuWire } from "./menu-wire.ts";
 import { pullQueue } from "./pull.ts";
 
 export {
@@ -221,25 +222,12 @@ export interface AppCapabilities {
   readonly bounce: boolean;
   /** `setQuickActions` (in `denext/mobile`) sets the Dock menu (macOS). */
   readonly dockMenu: boolean;
-}
-
-/** The wire form of a menu (`submenu` → `children`). */
-function menuWire(menu: readonly AppMenuItem[]): unknown[] {
-  return menu.map((entry) => {
-    if (entry === "separator") return "separator";
-    if ("submenu" in entry) return { label: entry.label, children: menuWire(entry.submenu) };
-    if ("role" in entry) return { role: entry.role };
-    return {
-      id: entry.id,
-      label: entry.label,
-      enabled: entry.disabled !== true,
-      ...(entry.checked ? { checked: true } : {}),
-      ...(entry.accelerator !== undefined ? { accelerator: entry.accelerator } : {}),
-      ...(entry.tooltip !== undefined ? { tooltip: entry.tooltip } : {}),
-      ...(entry.icon !== undefined ? { icon: entry.icon } : {}),
-      ...(entry.destructive ? { destructive: true } : {}),
-    };
-  });
+  /** {@linkcode setDockVisible} shows and hides the Dock icon (macOS). */
+  readonly dockVisibility: boolean;
+  /** The app has a backend tray ({@linkcode getTray}). */
+  readonly backendTray: boolean;
+  /** The backend tray has a panel ({@linkcode toggleTrayPanel}). */
+  readonly trayPanel: boolean;
 }
 
 /** `raw[key]` when it is one of `allowed`, else `"unknown"`. */
@@ -305,6 +293,9 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     passkeysReason: text(raw, "passkeysReason"),
     bounce: flag("bounce"),
     dockMenu: flag("dockMenu"),
+    dockVisibility: flag("dockVisibility"),
+    backendTray: flag("backendTray"),
+    trayPanel: flag("trayPanel"),
   };
 }
 
@@ -372,6 +363,34 @@ export async function setBadge(badge: string | number | null): Promise<void> {
  */
 export async function bounce(options: { readonly critical?: boolean } = {}): Promise<void> {
   await desktopRpc("app", "bounce", { critical: options.critical === true });
+}
+
+/**
+ * Show or hide the app's icon in the macOS Dock (the activation policy: hidden, the app is an
+ * accessory with no Dock icon or menu bar, as a menu-bar app or a desktop companion). Give the app
+ * a tray icon first so the user can reach it. `desktop.app.dock: false` hides it at launch.
+ *
+ * @param visible Whether the Dock shows the icon.
+ * @returns Whether it applied: `false` on Windows and Linux, which have no app-level icon.
+ */
+export async function setDockVisible(visible: boolean): Promise<boolean> {
+  const out = await desktopRpc<{ applied?: unknown }>("app", "setDockVisible", { visible });
+  return out?.applied === true;
+}
+
+/**
+ * Call `handler` when the user clicks the app's macOS Dock icon (Electron's `activate`). With no
+ * window showing, the main window is shown again first; `hasVisibleWindows` says whether one was.
+ *
+ * @param handler Called with `{ hasVisibleWindows }`.
+ * @returns A function that unsubscribes.
+ */
+export function onDockReopen(
+  handler: (event: { readonly hasVisibleWindows: boolean }) => void,
+): () => void {
+  return onAppAction((a) => {
+    if (a.source === "dockReopen") handler({ hasVisibleWindows: a.hasVisibleWindows });
+  });
 }
 
 /** A tray icon's image: PNG bytes, or base64 PNG. */
@@ -460,7 +479,66 @@ function trayWire(options: Partial<TrayOptions>): Record<string, unknown> {
  */
 export async function createTray(options: TrayOptions): Promise<AppTray> {
   const out = await desktopRpc<{ id?: unknown }>("app", "createTray", trayWire(options));
-  const id = String(out?.id ?? "");
+  return trayById(String(out?.id ?? ""));
+}
+
+/**
+ * The tray icon the app's backend owns (`desktop.tray` in `denext.config.ts`, or `runDesktop({
+ * tray })`): every window's page gets the same one, and a page load never removes it (its
+ * `destroy` rejects `validation`). Clicks reach every window.
+ *
+ * @returns The tray, or `null` when the app has none (or the session has no tray host).
+ * @example
+ * ```ts
+ * import { getTray } from "denext/desktop/app";
+ * import { openWindow } from "denext/desktop/window";
+ *
+ * const tray = await getTray();
+ * tray?.onClick((e) => e === "doubleClick" && openWindow({ url: "/" }));
+ * await tray?.update({ tooltip: "3 VMs running" });
+ * ```
+ */
+export async function getTray(): Promise<AppTray | null> {
+  const out = await desktopRpc<{ id?: unknown }>("app", "backendTray", {});
+  return typeof out?.id === "string" ? trayById(out.id) : null;
+}
+
+/** Show, hide or toggle the backend tray's panel; whether it is showing after. */
+async function trayPanel(action: "show" | "hide" | "toggle"): Promise<boolean> {
+  const out = await desktopRpc<{ visible?: unknown }>("app", "panel", { action });
+  return out?.visible === true;
+}
+
+/**
+ * Show the backend tray's panel (`desktop.tray.panel`) at the tray icon, as a click on the icon
+ * does.
+ *
+ * @returns Whether it is showing. Rejects `unsupported` when the app's tray has no panel.
+ */
+export async function showTrayPanel(): Promise<boolean> {
+  return await trayPanel("show");
+}
+
+/**
+ * Hide the backend tray's panel.
+ *
+ * @returns Whether it is showing (`false`). Rejects `unsupported` when the tray has no panel.
+ */
+export async function hideTrayPanel(): Promise<boolean> {
+  return await trayPanel("hide");
+}
+
+/**
+ * Show the backend tray's panel when hidden, hide it when shown.
+ *
+ * @returns Whether it is showing after. Rejects `unsupported` when the tray has no panel.
+ */
+export async function toggleTrayPanel(): Promise<boolean> {
+  return await trayPanel("toggle");
+}
+
+/** The page-side handle of the tray `id`. */
+function trayById(id: string): AppTray {
   return {
     id,
     update: async (next) => {

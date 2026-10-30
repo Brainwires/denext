@@ -14,6 +14,8 @@
  * @module
  */
 
+import type { DesktopWindowLevel } from "../server/config.ts";
+
 /** A window size in CSS pixels. */
 export interface DesktopWindowSize {
   /** Width (at least 1). */
@@ -21,6 +23,14 @@ export interface DesktopWindowSize {
   /** Height (at least 1). */
   readonly height: number;
 }
+
+/** The always-on-top levels, lowest first. */
+export const WINDOW_LEVELS: readonly DesktopWindowLevel[] = [
+  "floating",
+  "status",
+  "pop-up-menu",
+  "screen-saver",
+];
 
 /** The resolved initial-window settings `runDesktop` applies (every key optional). */
 export interface DesktopWindowSettings {
@@ -40,6 +50,49 @@ export interface DesktopWindowSettings {
   readonly minSize?: DesktopWindowSize;
   /** The largest window size (`desktop.maxSize`). */
   readonly maxSize?: DesktopWindowSize;
+  /** Show the window at launch (`desktop.window.show`, default `true`). */
+  readonly show?: boolean;
+  /** No title bar or chrome (`desktop.window.frameless`, creation-time). */
+  readonly frameless?: boolean;
+  /** A transparent background (`desktop.window.transparent`, creation-time). */
+  readonly transparent?: boolean;
+  /** `false`: a non-activating panel (`desktop.window.focusable`, the runtime's `noActivate`). */
+  readonly focusable?: boolean;
+  /** Float above other windows, at this level (`desktop.window.alwaysOnTop`). */
+  readonly alwaysOnTop?: DesktopWindowLevel | false;
+  /** The window's opacity, 0–1 (`desktop.window.opacity`). */
+  readonly opacity?: number;
+  /** Off the taskbar (`desktop.window.skipTaskbar`). */
+  readonly skipTaskbar?: boolean;
+  /** On every Space / virtual desktop (`desktop.window.visibleOnAllWorkspaces`). */
+  readonly visibleOnAllWorkspaces?: boolean;
+}
+
+/** The app-level settings of `desktop.app` that `runDesktop` applies at launch. */
+export interface DesktopAppSettings {
+  /** Keep running with no window (`desktop.app.keepAlive`; unset: on with a tray). */
+  readonly keepAlive?: boolean;
+  /** Show the macOS Dock icon (`desktop.app.dock`, default `true`). */
+  readonly dock?: boolean;
+}
+
+/**
+ * The `initialWindow` creation flags `.deno-desktop/app.json` carries for the window the runtime
+ * starts with (the shape of deno.json's `desktop.initialWindow`).
+ */
+export interface DesktopInitialWindow {
+  /** Initial width. */
+  readonly width?: number;
+  /** Initial height. */
+  readonly height?: number;
+  /** No chrome. */
+  readonly frameless?: boolean;
+  /** A non-activating panel. */
+  readonly noActivate?: boolean;
+  /** A transparent background. */
+  readonly transparent?: boolean;
+  /** `false`: do not reveal the window once the app's first page loads. */
+  readonly showOnFirstLoad?: boolean;
 }
 
 /** The macOS vibrancy material `desktop.backdrop: "vibrancy"` puts behind the page. */
@@ -84,27 +137,132 @@ function oneOf<T extends string>(
   return value as T;
 }
 
+/** The boolean keys of `desktop.window`. */
+const WINDOW_FLAGS = [
+  "resizable",
+  "show",
+  "frameless",
+  "transparent",
+  "focusable",
+  "skipTaskbar",
+  "visibleOnAllWorkspaces",
+] as const;
+
+/**
+ * The first problem with `desktop.window`'s keys beyond width / height / title, as
+ * `[key, message]` (the key relative to `desktop.`), or `null`. Shared with the config validator.
+ *
+ * @param w The `desktop.window` object.
+ * @returns The problem, or `null`.
+ */
+export function desktopWindowKeyProblem(w: Record<string, unknown>): [string, string] | null {
+  for (const key of WINDOW_FLAGS) {
+    if (w[key] !== undefined && typeof w[key] !== "boolean") {
+      return [`window.${key}`, "must be a boolean"];
+    }
+  }
+  const top = w.alwaysOnTop;
+  if (
+    top !== undefined && typeof top !== "boolean" && !WINDOW_LEVELS.includes(top as never)
+  ) {
+    return ["window.alwaysOnTop", `must be a boolean or one of ${WINDOW_LEVELS.join(", ")}`];
+  }
+  const o = w.opacity;
+  if (o !== undefined && (typeof o !== "number" || !Number.isFinite(o) || o < 0 || o > 1)) {
+    return ["window.opacity", "must be a number from 0 to 1"];
+  }
+  return null;
+}
+
+/** `desktop.window`'s boolean flags that are set. */
+function windowFlags(w: Record<string, unknown>): Partial<Record<string, boolean>> {
+  const out: Partial<Record<string, boolean>> = {};
+  for (const key of WINDOW_FLAGS) if (w[key] !== undefined) out[key] = w[key] as boolean;
+  return out;
+}
+
 /** `desktop.window`'s own keys. */
-function windowKeys(raw: unknown): Pick<
+function windowKeys(raw: unknown): Omit<
   DesktopWindowSettings,
-  "width" | "height" | "title" | "resizable"
+  "titleBar" | "backdrop" | "minSize" | "maxSize"
 > {
   if (raw === undefined) return {};
   if (typeof raw !== "object" || raw === null) throw bad("window", "must be an object");
-  const w = raw as { width?: unknown; height?: unknown; title?: unknown; resizable?: unknown };
+  const w = raw as Record<string, unknown>;
   if (w.title !== undefined && typeof w.title !== "string") {
     throw bad("window.title", "must be a string");
   }
-  if (w.resizable !== undefined && typeof w.resizable !== "boolean") {
-    throw bad("window.resizable", "must be a boolean");
-  }
+  const problem = desktopWindowKeyProblem(w);
+  if (problem) throw bad(problem[0], problem[1]);
+  return {
+    ...windowSize(w),
+    ...(w.title !== undefined ? { title: w.title as string } : {}),
+    ...windowFlags(w),
+    ...levelSetting(w.alwaysOnTop),
+    ...(w.opacity !== undefined ? { opacity: w.opacity as number } : {}),
+  };
+}
+
+/** `desktop.window`'s width / height, when set. */
+function windowSize(w: Record<string, unknown>): { width?: number; height?: number } {
   const width = pixels(w.width, "window.width");
   const height = pixels(w.height, "window.height");
   return {
     ...(width !== undefined ? { width } : {}),
     ...(height !== undefined ? { height } : {}),
-    ...(w.title !== undefined ? { title: w.title as string } : {}),
-    ...(w.resizable !== undefined ? { resizable: w.resizable as boolean } : {}),
+  };
+}
+
+/** `desktop.window.alwaysOnTop` (checked) as a level: `true` floats, `false` turns it off. */
+function levelSetting(top: unknown): { alwaysOnTop?: DesktopWindowLevel | false } {
+  if (top === undefined) return {};
+  if (typeof top === "boolean") return { alwaysOnTop: top ? "floating" : false };
+  return { alwaysOnTop: top as DesktopWindowLevel };
+}
+
+/**
+ * Resolve `desktop.app`'s launch-time settings (`keepAlive`, `dock`), throwing on a bad value.
+ *
+ * @param desktop The config's `desktop` block (or `undefined`).
+ * @returns The settings (empty when none are set).
+ */
+export function resolveDesktopAppSettings(desktop: unknown): DesktopAppSettings {
+  const app = (desktop as { app?: unknown } | null | undefined)?.app;
+  if (typeof app !== "object" || app === null) return {};
+  const a = app as { keepAlive?: unknown; dock?: unknown };
+  const out: { keepAlive?: boolean; dock?: boolean } = {};
+  for (const key of ["keepAlive", "dock"] as const) {
+    if (a[key] === undefined) continue;
+    if (typeof a[key] !== "boolean") throw bad(`app.${key}`, "must be a boolean");
+    out[key] = a[key] as boolean;
+  }
+  return out;
+}
+
+/**
+ * The `initialWindow` block of `.deno-desktop/app.json` for these settings, or `undefined` when
+ * the window needs none: written only when the window is hidden at launch, frameless, transparent
+ * or non-activating (the creation-time settings), then with its configured size so it opens at
+ * that size. A size above the runtime's 65535 limit is left to `runDesktop` to apply.
+ *
+ * @param settings The resolved window settings.
+ * @returns The block, or `undefined`.
+ */
+export function desktopInitialWindow(
+  settings: DesktopWindowSettings,
+): DesktopInitialWindow | undefined {
+  const flags = {
+    ...(settings.frameless === true ? { frameless: true } : {}),
+    ...(settings.focusable === false ? { noActivate: true } : {}),
+    ...(settings.transparent === true ? { transparent: true } : {}),
+    ...(settings.show === false ? { showOnFirstLoad: false } : {}),
+  };
+  if (Object.keys(flags).length === 0) return undefined;
+  const fits = (n: number | undefined) => n !== undefined && n <= 65535;
+  return {
+    ...(fits(settings.width) ? { width: settings.width } : {}),
+    ...(fits(settings.height) ? { height: settings.height } : {}),
+    ...flags,
   };
 }
 
@@ -153,7 +311,17 @@ interface ConfigurableWindow {
   setTitleBarStyle?(style: string): boolean;
   setBackgroundMaterial?(material: string): boolean;
   setVibrancy?(material: string | null): boolean;
+  setAlwaysOnTop?(flag: boolean, level?: string): void;
+  setOpacity?(opacity: number): void;
+  setSkipTaskbar?(skip: boolean): void;
+  setVisibleOnAllWorkspaces?(visible: boolean, options?: { visibleOnFullScreen?: boolean }): void;
 }
+
+/** The window methods no runtime has yet: a missing one names the method, not the pinned runtime. */
+const FUTURE_METHODS = new Set<keyof ConfigurableWindow>([
+  "setSkipTaskbar",
+  "setVisibleOnAllWorkspaces",
+]);
 
 /** Call `window[name](...args)` when the runtime has it; `false` (and a warning) when it hasn't. */
 function tryCall(
@@ -165,7 +333,11 @@ function tryCall(
 ): unknown {
   const fn = window[name] as ((...a: unknown[]) => unknown) | undefined;
   if (typeof fn !== "function") {
-    warn(`desktop.${key} needs denext's pinned Deno Desktop runtime; ignored`);
+    warn(
+      FUTURE_METHODS.has(name)
+        ? `desktop.${key} needs a Deno Desktop runtime with BrowserWindow.${name}; ignored`
+        : `desktop.${key} needs denext's pinned Deno Desktop runtime; ignored`,
+    );
     return false;
   }
   try {
@@ -277,4 +449,49 @@ export function applyDesktopWindowSettings(
     tryCall(win, "setTitleBarStyle", "titleBar", warn, settings.titleBar);
   }
   if (settings.backdrop !== undefined) applyBackdrop(win, settings.backdrop, warn);
+  applyOverlaySettings(win, settings, warn);
+}
+
+/**
+ * Apply the always-on-top level, opacity, taskbar and workspace settings to a window (the adopted
+ * one, or one `openWindow` made). A setting the runtime cannot apply is skipped with a warning.
+ *
+ * @param win The `Deno.BrowserWindow`.
+ * @param settings The settings (only those four keys are read).
+ * @param warn Where warnings go.
+ */
+export function applyWindowOverlaySettings(
+  win: unknown,
+  settings: DesktopWindowSettings,
+  warn: (message: string) => void = (m) => console.warn(`desktop: ${m}`),
+): void {
+  if (typeof win !== "object" || win === null) return;
+  applyOverlaySettings(win as ConfigurableWindow, settings, warn);
+}
+
+/** Apply `desktop.window`'s always-on-top, opacity, taskbar and workspace settings. */
+function applyOverlaySettings(
+  win: ConfigurableWindow,
+  settings: DesktopWindowSettings,
+  warn: (message: string) => void,
+): void {
+  const level = settings.alwaysOnTop;
+  if (level !== undefined) {
+    // The runtime ignores the level argument until it has levels (`alwaysOnTopLevels`).
+    if (level === false || level === "floating") {
+      tryCall(win, "setAlwaysOnTop", "window.alwaysOnTop", warn, level !== false);
+    } else tryCall(win, "setAlwaysOnTop", "window.alwaysOnTop", warn, true, level);
+  }
+  if (settings.opacity !== undefined) {
+    tryCall(win, "setOpacity", "window.opacity", warn, settings.opacity);
+  }
+  if (settings.skipTaskbar !== undefined) {
+    tryCall(win, "setSkipTaskbar", "window.skipTaskbar", warn, settings.skipTaskbar);
+  }
+  if (settings.visibleOnAllWorkspaces !== undefined) {
+    const visible = settings.visibleOnAllWorkspaces;
+    tryCall(win, "setVisibleOnAllWorkspaces", "window.visibleOnAllWorkspaces", warn, visible, {
+      visibleOnFullScreen: visible,
+    });
+  }
 }

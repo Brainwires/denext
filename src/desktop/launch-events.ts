@@ -312,6 +312,30 @@ export interface DesktopAppApi {
   };
   /** The native clipboard. */
   readonly clipboard?: DesktopNativeClipboard;
+  /**
+   * Whether the app quits when its last window closes (default `true`; creating a `Deno.Tray`
+   * turns it off unless the app set it). `desktop.app.keepAlive` sets it.
+   */
+  quitOnLastWindowClosed?: boolean;
+  /**
+   * The OS's text to speech, when the runtime has it (none does yet; the `textToSpeech` capability and
+   * `speak()` in `denext/mobile` light up once it does): AVSpeechSynthesizer, SAPI / WinRT,
+   * speech-dispatcher.
+   */
+  readonly speech?: DesktopSpeechApi;
+}
+
+/** The runtime's text to speech (`Deno.desktop.speech`), as denext expects it. */
+export interface DesktopSpeechApi {
+  /** Speak `text`; resolves when it has been spoken (or stopped). */
+  speak(
+    text: string,
+    options?: { voice?: string; lang?: string; rate?: number; pitch?: number; volume?: number },
+  ): Promise<void>;
+  /** Stop speaking and drop what is queued. */
+  stop(): void;
+  /** The voices the OS has. */
+  voices?(): Promise<readonly { id: string; name: string; lang: string }[]>;
 }
 
 /** `Deno.desktop` when the runtime has it (denext's pinned runtime), else `undefined`. */
