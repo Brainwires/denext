@@ -756,7 +756,7 @@ export function setDoctorRunner(runner: DoctorRunner | null): void {
 async function runDoctorSubprocess(dir: string, offline: boolean): Promise<DoctorCheck[]> {
   const run = await runDeno(
     [...cliInvocation({ offline, dir }), "doctor", "--json", "--cwd", dir],
-    { cwd: dir, signal: AbortSignal.timeout(120_000) },
+    { cwd: dir, signal: AbortSignal.timeout(120_000), jsonDocument: {} },
   );
   const parsed = run.json();
   if (!Array.isArray(parsed)) {

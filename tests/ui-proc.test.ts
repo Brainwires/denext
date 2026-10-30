@@ -3,10 +3,12 @@
 // child whose pipes outlive it (a process it left running, or on Windows one spawned elsewhere at
 // the same moment, holds them) is read until it exits, not until they close.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { cliConfigArgs, cliInvocation, runDeno } from "../src/ui/proc.ts";
+import { parseJsonDocument } from "../src/ui/child-json.ts";
 import { exited, spawnsOf } from "./helpers/spawns.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 Deno.test("runDeno: output with no newline arrives in bounded pieces", async () => {
   const lines: string[] = [];
@@ -182,3 +184,131 @@ Deno.test("cliConfigArgs: a remote CLI child is told the project's config; a che
     await Deno.remove(root, { recursive: true });
   }
 });
+
+// ── a `--json` child that prints its document and never exits ────────────────
+//
+// On Windows a child has been seen to write its complete JSON document, then spin at 100% CPU in
+// its teardown and never exit (`denext job --history --json` under the Cron panel ran into its
+// 300 s deadline that way). With `jsonDocument`, a complete document followed by silence is used;
+// a partial one never is.
+
+/** A pretty-printed document, as the `--json` verbs write it. */
+const DOC = { available: true, windowDays: 14, recent: [{ name: "cleanup", ok: true }] };
+
+/** A `deno eval` program: Deno-style chatter on stderr, `print` on stdout, then `then`. */
+function docProgram(print: string, then: string): string {
+  return `console.error("Check file:///app/denext.config.ts");
+Deno.stdout.writeSync(new TextEncoder().encode(${print}));
+${then}`;
+}
+
+/** The pretty-printed {@linkcode DOC}, as a JS expression. */
+const PRETTY = `JSON.stringify(${JSON.stringify(DOC)}, null, 2) + "\\n"`;
+
+/** Busy-loops forever: the spin seen after the output. */
+const SPIN = "for (;;) {}";
+
+/** Whether `pid` is gone (a kill of it fails). */
+function gone(pid: number): boolean {
+  try {
+    Deno.kill(pid, "SIGKILL");
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+Deno.test("runDeno jsonDocument: a child that prints its whole document and then spins is killed and its output used", async () => {
+  const notices: string[] = [];
+  const lines: string[] = [];
+  const started = performance.now();
+  const result = await runDeno(["eval", docProgram(PRETTY, SPIN)], {
+    cwd: Deno.cwd(),
+    onLine: (line) => void lines.push(line),
+    signal: AbortSignal.timeout(60_000),
+    jsonDocument: { graceMs: 500, onSettled: (line) => notices.push(line) },
+  });
+  const took = performance.now() - started;
+  assertEquals(result.code, 0, `settled, not killed at the deadline (took ${took} ms)`);
+  assert(took < 45_000, `took ${took} ms`);
+  assertEquals(parseJsonDocument(lines.join("\n")), DOC);
+  assertEquals(notices.length, 1, notices.join("\n"));
+  assertMatch(
+    notices[0],
+    /^warning: deno child \(pid \d+\): output complete; the process did not exit 0\.5 s after/,
+  );
+  const pid = Number(/\(pid (\d+)\)/.exec(notices[0])![1]);
+  assert(gone(pid), `pid ${pid} still running`);
+});
+
+Deno.test("runDeno jsonDocument: a spinning grandchild that wrote the document is killed with the child", async () => {
+  // The CLI re-execs itself, so the process that prints the document (and spins) may be a
+  // descendant of the one runDeno spawned, holding the same pipes.
+  const cwd = await Deno.makeTempDir({ prefix: "denext-proc-json-" });
+  const pidFile = join(cwd, "pid");
+  const notices: string[] = [];
+  try {
+    const grandchild = docProgram(PRETTY, SPIN);
+    const program = `const g = new Deno.Command(Deno.execPath(), {
+  args: ["eval", ${
+      JSON.stringify(grandchild)
+    }], stdin: "null", stdout: "inherit", stderr: "inherit",
+}).spawn();
+Deno.writeTextFileSync(${JSON.stringify(pidFile)}, String(g.pid));
+await g.status;`;
+    const result = await runDeno(["eval", program], {
+      cwd,
+      signal: AbortSignal.timeout(60_000),
+      jsonDocument: { graceMs: 500, onSettled: (line) => notices.push(line) },
+    });
+    assertEquals(result.code, 0, result.stderr);
+    assertEquals(result.json(), DOC);
+    assertEquals(notices.length, 1, notices.join("\n"));
+    const pid = Number((await Deno.readTextFile(pidFile)).trim());
+    // taskkill / the pgrep walk ended it; give the OS a moment to reap it.
+    for (let i = 0; i < 50 && !gone(pid); i++) await new Promise((r) => setTimeout(r, 100));
+    assert(gone(pid), `grandchild ${pid} still running`);
+  } finally {
+    await removeTempDir(cwd);
+  }
+});
+
+Deno.test("runDeno jsonDocument: a child that stops mid-document and spins is never settled", async () => {
+  const notices: string[] = [];
+  const started = performance.now();
+  const result = await runDeno(
+    ["eval", docProgram(`'{\\n  "available": true,\\n  "recent": [\\n'`, SPIN)],
+    {
+      cwd: Deno.cwd(),
+      signal: AbortSignal.timeout(2_000),
+      jsonDocument: { graceMs: 300, onSettled: (line) => notices.push(line) },
+    },
+  );
+  assert(performance.now() - started >= 2_000, "it ran to its deadline");
+  assert(result.code !== 0, "the deadline killed it");
+  assertEquals(notices, []);
+});
+
+Deno.test("runDeno jsonDocument: a bare value is not a document", async () => {
+  const notices: string[] = [];
+  const result = await runDeno(["eval", docProgram(`"12"`, SPIN)], {
+    cwd: Deno.cwd(),
+    signal: AbortSignal.timeout(1_500),
+    jsonDocument: { graceMs: 300, onSettled: (line) => notices.push(line) },
+  });
+  assert(result.code !== 0);
+  assertEquals(notices, []);
+});
+
+for (const code of [0, 3]) {
+  Deno.test(`runDeno jsonDocument: a child that exits ${code} after its document keeps its status`, async () => {
+    const notices: string[] = [];
+    const result = await runDeno(["eval", docProgram(PRETTY, `Deno.exit(${code});`)], {
+      cwd: Deno.cwd(),
+      jsonDocument: { graceMs: 60_000, onSettled: (line) => notices.push(line) },
+    });
+    assertEquals(result.code, code);
+    assertEquals(result.json(), DOC);
+    assertEquals(notices, []);
+  });
+}
