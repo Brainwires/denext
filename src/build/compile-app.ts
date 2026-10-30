@@ -52,6 +52,7 @@ import {
 } from "./compile-sign.ts";
 import { childToolchainMarker, toolchainRuntimeFlags } from "../cli/self-exec.ts";
 import { idleTrimCompileFlags, readEnv } from "./idle-trim.ts";
+import { tlsCompileFlags } from "./start-tls-deploy.ts";
 import { compileLimitFlags } from "./resource-limits.ts";
 import {
   carryNpmrc,
@@ -787,6 +788,9 @@ export async function compileApp(
     "--unstable-sloppy-imports",
     ...(options.deno ? [] : [...toolchainCompileFlags(toolchainVersion()), ...trimFlags]),
     ...limitFlags,
+    // start.tls with several certificates needs the unstable net APIs, and the compile config
+    // above carries no `unstable` from the project's deno.json.
+    ...tlsCompileFlags(paths.config?.start?.tls),
     ...permissions,
     ...minDepAgeArgs(),
     "--config",

@@ -25,6 +25,16 @@ and this project adheres to
   certificates list. `denext/server` exports the `StartTls`, `StartTlsCertificate`, `ServeTls` and
   `CertifiedKeyPem` types (`serveWithPortFallback` takes a `tls` option). See
   https://denext.dev/docs/deployment-targets#https-without-a-proxy.
+- **The generated deploy files carry `start.tls`.** `denext generate docker` (and the `docker` /
+  `fly` presets) mounts `./certs` read-only at `/certs`, keeps it out of the image
+  (`.dockerignore`), requires each certificate's and key's variable in the compose file and lists
+  them empty in `.env.example`, adds `/certs` to a start task's scoped `--allow-read`, and probes
+  health over `https://localhost`. `genericHost()` writes a unit whose server faces clients itself
+  (every interface, port 443 by default with `CAP_NET_BIND_SERVICE`, no `DENEXT_TRUST_PROXY`), no
+  nginx or Caddy snippet, and the variables in `env.example`; `fly()` passes TLS through as raw TCP;
+  `denoDeploy()` warns. The deploy manifest's `server.tls` lists the certificates' host names and
+  variable names (`null` for plain HTTP). The generators warn about several certificates without
+  `"unstable": ["net"]` in deno.json and a health probe no certificate serves.
 - **`denext patch create` registers npm patches in deno.json's `patchedDependencies`.** When
   the project runs on denext's Deno from runtime 3.0.0-denext.3 (the pinned toolchain, not
   `DENEXT_DENO=stock`), an npm patch is also written as a package-relative copy under
@@ -52,6 +62,9 @@ and this project adheres to
 
 ### Fixed
 
+- **`build --compile` with several `start.tls` certificates bakes `--unstable-net`.** The compile
+  runs with a config of its own, which carries no `unstable` from the project's `deno.json`, so the
+  executable refused to serve several certificates ("needs the unstable net APIs").
 - **A SPA shell's inline script that writes a `<script>` tag keeps working under
   `nextScriptWorkers`.** The per-response nonce stamp put `nonce="…"` into every `<script` it
   found, a script's string literal included (`"<script src=…><\/script>"`), which ended the string

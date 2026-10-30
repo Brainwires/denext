@@ -231,17 +231,30 @@ export function compileLimitFlags(
   return baked;
 }
 
-/** `text` with its line and block comments blanked (string contents are not parsed). */
-function withoutComments(text: string): string {
+/**
+ * `text` with its line and block comments blanked (string contents are not parsed).
+ *
+ * @param text A config file's text.
+ * @returns The text without comments.
+ */
+export function withoutComments(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:\\])\/\/.*$/gm, "$1");
 }
 
-/** The body of the object literal that opens at `text[open]` (`{`), braces balanced. */
-function objectBody(text: string, open: number): string {
+/**
+ * The body of the literal that opens at `text[open]` (`{`, or `[` with `close` `]`), balanced.
+ *
+ * @param text The text.
+ * @param open Where the literal opens.
+ * @param close The closing bracket (`}` by default; `]` for an array).
+ * @returns Its body, without the brackets.
+ */
+export function objectBody(text: string, open: number, close = "}"): string {
+  const opener = text[open];
   let depth = 0;
   for (let i = open; i < text.length; i++) {
-    if (text[i] === "{") depth++;
-    else if (text[i] === "}" && --depth === 0) return text.slice(open + 1, i);
+    if (text[i] === opener) depth++;
+    else if (text[i] === close && --depth === 0) return text.slice(open + 1, i);
   }
   return text.slice(open + 1);
 }

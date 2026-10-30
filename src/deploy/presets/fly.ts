@@ -9,6 +9,7 @@ import type { DeployManifest } from "../manifest.ts";
 import { writeDockerFiles } from "./docker.ts";
 import { memoryLimitBytes } from "../../server/config-validate/limits.ts";
 import { appName, drainMsOf, header, marker, requiredSecrets, stopTimeoutSec } from "./shared.ts";
+import { tlsEnvNames } from "../../build/start-tls-deploy.ts";
 
 /** Options for {@linkcode fly}. */
 export interface FlyPresetOptions {
@@ -89,12 +90,24 @@ ${
 [env]
   PORT = "${port}"
   DENEXT_LOG = "json"
-  # fly-proxy connects from a private address: trust it, and key the per-address limits
+${manifest.server.tls ? "" : PROXY_ENV}  ${manifest.server.drain.env} = "${options.drain}"
+${manifest.server.tls ? tlsService(manifest, port, on) : httpService(manifest, port, on)}
+[[vm]]
+  memory = ${toml(options.memory ?? DEFAULT_VM_MEMORY)}
+`;
+}
+
+/** Behind Fly's HTTP proxy: trust it, and key the per-address limits on the address it sends. */
+const PROXY_ENV =
+  `  # fly-proxy connects from a private address: trust it, and key the per-address limits
   # (rateLimit(), auth's per-IP budgets, Live's per-IP cap) on the client address it sends.
   DENEXT_TRUST_PROXY = "1"
   DENEXT_RATE_LIMIT_HEADER = "fly-client-ip"
-  ${manifest.server.drain.env} = "${options.drain}"
+`;
 
+/** Fly's HTTP service: its edge terminates TLS and checks `/_denext/health`. */
+function httpService(manifest: DeployManifest, port: number, on: boolean): string {
+  return `
 [http_service]
   internal_port = ${port}
   force_https = true
@@ -113,9 +126,33 @@ ${
     method = "GET"
     path = "${manifest.server.healthPath}"
     timeout = "3s"
+`;
+}
 
-[[vm]]
-  memory = ${toml(options.memory ?? DEFAULT_VM_MEMORY)}
+/**
+ * With `start.tls` the server terminates TLS itself, so Fly passes the connection through as
+ * TCP (no handlers: no HTTP proxy, no forwarded headers) on 443, and checks the port is open.
+ */
+function tlsService(manifest: DeployManifest, port: number, on: boolean): string {
+  const names = manifest.server.tls ? tlsEnvNames(manifest.server.tls) : [];
+  return `
+# start.tls: the server serves HTTPS itself, so Fly passes TLS through untouched (raw TCP). Put
+# the PEM files on the machine (a [[files]] entry from a secret, or a volume) and set
+# ${names.join(", ")} to their paths.
+[[services]]
+  protocol = "tcp"
+  internal_port = ${port}
+  auto_stop_machines = "${on ? "off" : "stop"}"
+  auto_start_machines = true
+  min_machines_running = ${on ? 1 : 0}
+
+  [[services.ports]]
+    port = 443
+
+  [[services.tcp_checks]]
+    grace_period = "15s"
+    interval = "15s"
+    timeout = "3s"
 `;
 }
 
