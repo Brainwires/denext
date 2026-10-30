@@ -29,7 +29,7 @@ export declare enum CalendarPermissionScope {
      * | Platform  | Required |
      * |-----------|---------------------|
      * | iOS 17+   | `NSRemindersFullAccessUsageDescription` |
-     * | iOS 13-16 | `NSRemindersUsageDescription` |
+     * | iOS 10-16 | `NSRemindersUsageDescription` |
      * @platform iOS
      * @since 7.1.0
      */

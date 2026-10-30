@@ -151,16 +151,22 @@ export function effectiveRule(inputs: DepAgeInputs): DepAgeRule {
 }
 
 /**
- * Whether the rule lifts the hold for a JSR package (an exact or `*`-prefix `exclude` entry).
+ * Whether the rule lifts the hold for a package (an exact or `*`-prefix `exclude` entry).
  *
  * @param rule The rule.
  * @param name The package (`@denext/denext`).
+ * @param registry Which registry's entries apply: `jsr` (`jsr:@scope/name`) or `npm`
+ *   (`npm:name`).
  * @returns `true` when Deno would not hold it.
  */
-export function isExcluded(rule: DepAgeRule, name: string): boolean {
+export function isExcluded(
+  rule: DepAgeRule,
+  name: string,
+  registry: "jsr" | "npm" = "jsr",
+): boolean {
   return rule.exclude.some((entry) => {
-    if (!entry.startsWith("jsr:")) return false;
-    const pattern = entry.slice(4);
+    if (!entry.startsWith(`${registry}:`)) return false;
+    const pattern = entry.slice(registry.length + 1);
     if (!pattern.endsWith("*")) return pattern === name;
     const prefix = pattern.slice(0, -1);
     return prefix !== "" && name.startsWith(prefix);

@@ -33,6 +33,7 @@ import {
   fastfileTemplate,
   FASTLANE_VERSION,
   rubyString,
+  WORKFLOW_ACTIONS,
   workflowTemplate,
 } from "../src/build/fastlane-templates.ts";
 import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
@@ -342,7 +343,20 @@ Deno.test("add fastlane --ci: the workflow at the repository root, secrets by na
     assertStringIncludes(yml, 'run: $DENEXT_CLI fastlane ios "$LANE"');
     // The managed fastlane's install is cached per runner OS / arch, keyed on the pin.
     const key = `key: denext-fastlane-\${{ runner.os }}-\${{ runner.arch }}-${fastlanePinHash()}`;
-    assertEquals(yml.split("uses: actions/cache@v4").length - 1, 2);
+    assertEquals(yml.split(`uses: ${WORKFLOW_ACTIONS.cache}`).length - 1, 2);
+    // Every action is pinned to a full commit SHA (the tag only in a comment).
+    const uses = yml.split("\n").filter((l) => l.trim().startsWith("- uses:"));
+    assert(uses.length >= 6, uses.join("\n"));
+    for (const line of uses) {
+      assertMatch(line, /- uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
+    }
+    assertStringIncludes(yml, `uses: ${WORKFLOW_ACTIONS.pnpm}`);
+    // The decoded upload keystore is deleted whatever the job's outcome.
+    assertMatch(
+      yml,
+      /- name: Remove the upload keystore\n\s+if: always\(\)\n\s+run: rm -f "\$RUNNER_TEMP\/upload\.jks"\n/,
+    );
+    assertStringIncludes(yml, "(umask 077 && echo");
     assertEquals(yml.split(key).length - 1, 2);
     assertStringIncludes(yml, "path: ~/.cache/deno/denext-deno/fastlane\n");
     assertStringIncludes(yml, "path: ~/Library/Caches/deno/denext-deno/fastlane\n");

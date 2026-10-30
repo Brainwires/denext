@@ -629,23 +629,23 @@ Deno.test("scaffoldFiles: capacitor wires config, package.json, and mobile tasks
   const pkg = JSON.parse(files.find((f) => f.path === "package.json")!.content);
   // Capacitor 8: the CLI, core and both native platforms on one release range.
   for (const name of ["cli", "core", "ios", "android"]) {
-    assertEquals(pkg.devDependencies[`@capacitor/${name}`], "^8.5.2", `@capacitor/${name}`);
+    assertEquals(pkg.devDependencies[`@capacitor/${name}`], "8.5.2", `@capacitor/${name}`);
   }
   const dj = JSON.parse(files.find((f) => f.path === "deno.json")!.content);
-  assertEquals(dj.imports["@capacitor/cli"], "npm:@capacitor/cli@^8.5.2");
+  assertEquals(dj.imports["@capacitor/cli"], "npm:@capacitor/cli@8.5.2");
   // mobile:sync exports first, then syncs `out/` with the pinned CLI.
   assert(dj.tasks["mobile:sync"].startsWith("deno task export && "), dj.tasks["mobile:sync"]);
-  assertStringIncludes(dj.tasks["mobile:sync"], "npm:@capacitor/cli@^8.5.2 sync");
+  assertStringIncludes(dj.tasks["mobile:sync"], "npm:@capacitor/cli@8.5.2 sync");
   // …stamping the export's OTA manifest in between, so the bundled UI knows its version.
   assertStringIncludes(dj.tasks["mobile:sync"], "/cli ota manifest out && ");
   assert(
     dj.tasks["mobile:sync"].indexOf("ota manifest out") <
-      dj.tasks["mobile:sync"].indexOf("cli@^8.5.2 sync"),
+      dj.tasks["mobile:sync"].indexOf("cli@8.5.2 sync"),
   );
   // Over-the-air UI updates install into the committed native projects on demand.
   assertStringIncludes(dj.tasks["mobile:add-ota"], "/cli mobile add-ota .");
-  assertStringIncludes(dj.tasks["mobile:ios"], "@capacitor/cli@^8.5.2 open ios");
-  assertStringIncludes(dj.tasks["mobile:android"], "@capacitor/cli@^8.5.2 open android");
+  assertStringIncludes(dj.tasks["mobile:ios"], "@capacitor/cli@8.5.2 open ios");
+  assertStringIncludes(dj.tasks["mobile:android"], "@capacitor/cli@8.5.2 open android");
   const gi = files.find((f) => f.path === ".gitignore")!.content.split("\n");
   assert(gi.includes("node_modules/"));
   // Capacitor 8 (Swift Package Manager) native projects are committed: only their build

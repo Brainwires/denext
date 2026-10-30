@@ -211,6 +211,12 @@ and this project adheres to
   upload's late response bytes no longer reach the body of a new transfer started under the same
   id, and a cancelled pause's late resume data no longer lands in a new transfer's pause (or
   ends its wait for its own). Both ship in file-transfer template generation 5.
+- **`denext mobile doctor` catches more release problems.** `server.allowNavigation` entries
+  with a wildcard over hosts you do not own (`*.com`, `app.*`) are errors, `*.example.com` a
+  warning, and an `http:` entry an error under `--release`; a network security config with
+  `cleartextTrafficPermitted="true"` is flagged like `usesCleartextTraffic`; and
+  `plugins.DenextBridge.frameGuard: false` over an `allowNavigation` origin is an error under
+  `--release`.
 
 ### Security
 
@@ -384,6 +390,46 @@ and this project adheres to
   display names and option names outside a safe shape fail the run instead of landing unescaped in
   generated source or `deno.json`, and the task runs with read, repository write and `deno`
   permissions instead of `-A`.
+- **Capacitor's CLI is never fetched from the registry.** Every `cap` command denext runs
+  (`denext mobile add`, `sync`, `dev` and `build`, and `denext migrate --enable-capacitor`'s
+  `cap add`) ran `npx cap …`, which falls back to downloading the unrelated npm package named
+  `cap` (with an install script) when `@capacitor/cli` is not installed, without asking when
+  stdin is not a terminal or CI is detected — inside a release build, beside its signing secrets.
+  denext now checks that `@capacitor/cli` resolves from the project and runs `npx --no cap …`; a
+  missing CLI stops with an install hint. The generated `mobile:ios` / `mobile:android` tasks
+  and migrate's next steps say `npx --no cap` too. Affected: 2.10.0-rc.1 through 4.10.1.
+- **`denext profile --android` validates the package.** The `--package` flag (or the Capacitor
+  config's `appId`) went to `adb shell pidof <package>`, which the device's shell parses, so a
+  crafted value ran commands on the attached device. Anything but a Java package name is now
+  refused before adb runs. Affected: 4.4.0 through 4.10.1.
+- **`denext mobile build` validates what it writes into the native projects.** `--version-name`
+  went into `build.gradle`'s double-quoted Groovy string, where `${…}` runs at Gradle time; it is
+  now letters, digits, `.`, `+` and `-` only. A flavor's `appId` / `appIdSuffix` must make a
+  reverse-DNS id, and the Apple team id (written into `ExportOptions.plist`) ten uppercase
+  letters and digits. Affected: 2.11.0-rc.1 through 4.10.1.
+- **Signing secrets stay out of the export and `cap sync`.** `denext mobile build` ran
+  `denext export` (the project's build plugins) and `cap sync` with the keystore passwords and
+  the App Store Connect variables in their environment. Those two steps now run without the
+  signing variables, fastlane's `MATCH_*`, `SUPPLY_*` and `FASTLANE_*`,
+  `APP_STORE_CONNECT_API_KEY_*` and `DENEXT_PLAY_SERVICE_ACCOUNT`; only Xcode and Gradle get them.
+- **`denext mobile add` pins exact versions under the dependency-age hold.** Plugins were added
+  as caret ranges, which a package manager resolves to the newest release, past the project's
+  minimum dependency age. Every plugin (and `create` / `migrate`'s Capacitor packages) is now one
+  exact version, saved exactly, and `mobile add` checks each pin's npm publish time against the
+  rule `create`, `migrate` and `upgrade` apply before installing, refusing one still held.
+- **`denext mobile build --release` runs the release checks.** After `cap sync` and before Xcode
+  or Gradle, it runs `denext mobile doctor --release` and stops on its release-security
+  findings: a LAN / loopback / `http` `server.url`, a wildcard or `http:` `allowNavigation`,
+  `frameGuard: false` over a foreign origin, cleartext (`server.cleartext`, the manifest's
+  `usesCleartextTraffic`, a network security config, a leftover `NSAllowsLocalNetworking`), a
+  debuggable WebView, `android:debuggable="true"` and the legacy bridge. Every other doctor error
+  (a missing CSP, a secret-shaped string in the export, `NSAllowsArbitraryLoads`, an insecure
+  ATS exception domain, mixed content, …) is printed as a warning with its fix, and the build
+  goes on. A flavor's
+  `serverUrl` that is not `https` is refused.
+- **The fastlane CI workflow pins its actions.** `denext mobile add fastlane --ci` writes every
+  action as a commit SHA with its tag in a comment, decodes the upload keystore with a private
+  umask, and deletes it in an `if: always()` step.
 
 ### Documentation
 

@@ -15,6 +15,7 @@ import {
 import {
   type AdbRunner,
   adbRunner,
+  assertAndroidPackage,
   CdpConnection,
   devtoolsSockets,
   type DevtoolsTarget,
@@ -227,6 +228,36 @@ Deno.test("profileAndroid: device and WebView selection errors say what to do", 
     "has no debuggable WebView",
   );
   await assertRejects(() => run({ procNetUnix: "" }), Error, "no debuggable WebView is running");
+});
+
+Deno.test("profileAndroid: a package that is not a Java package name is refused before any adb call", async () => {
+  // `adb shell pidof <package>` hands one command line to the device's sh: `;`, `$(…)` or a
+  // space in a Capacitor appId (or --package) would run there.
+  for (
+    const pkg of [
+      "com.example.app;reboot",
+      "com.example.$(id)",
+      "com.example.app rm",
+      "app",
+      "1com.example",
+      "com..example",
+      "",
+    ]
+  ) {
+    const calls: string[][] = [];
+    const run: AdbRunner = (args) => {
+      calls.push([...args]);
+      return Promise.resolve({ code: 0, stdout: "", stderr: "" });
+    };
+    await assertRejects(
+      () => profileAndroid({ timeoutMs: 1_000, package: pkg }, { run }),
+      Error,
+      "is not an Android package name",
+      pkg,
+    );
+    assertEquals(calls, [], `${JSON.stringify(pkg)}: no adb call`);
+  }
+  assertEquals(assertAndroidPackage("dev.example.app_2"), undefined);
 });
 
 Deno.test("profileAndroid: a failed adb forward names the command", async () => {
