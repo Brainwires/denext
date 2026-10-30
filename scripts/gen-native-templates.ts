@@ -6,7 +6,8 @@
 // `publish.exclude`): packed, the templates are a quarter of their size. The pack itself ships in
 // `@denext/docs-corpus` (packages/docs-corpus/native-templates.ts), which denext pins at exactly
 // its own version, to keep it out of the 20 MiB @denext/denext package; the layout (each record's
-// keys) stays in src/build/native-templates.packed.ts, which imports the pack.
+// keys) stays in src/build/native-templates.packed.ts, which loads the pack: from the same
+// checkout when denext runs from one, so a checkout never waits on a docs-corpus release.
 //
 //   deno task gen:native-templates
 //
@@ -47,7 +48,7 @@ export async function templateGroups(): Promise<TextGroups> {
   return groups;
 }
 
-/** The two modules' sources: the layout in denext, the pack in `@denext/docs-corpus`. */
+/** The two modules' sources: the layout (and loader) in denext, the pack in `@denext/docs-corpus`. */
 export async function generate(): Promise<{ text: string; pack: string; bytes: number }> {
   const { layout, packed, bytes } = packTexts(await templateGroups());
   const text = await denoFmt(
@@ -55,15 +56,25 @@ export async function generate(): Promise<{ text: string; pack: string; bytes: n
 // the templates' readable sources are src/build/native-templates/*.ts (not published). Their
 // records as Brotli-compressed JSON in base64, decoded on first read (src/build/packed-text.ts).
 // The pack ships in @denext/docs-corpus (packages/docs-corpus/native-templates.ts), out of the
-// 20 MiB @denext/denext package; this module lays its records out.
+// 20 MiB @denext/denext package; this module loads it and lays its records out.
 
-import { NATIVE_TEMPLATES_BROTLI_BASE64 } from "@denext/docs-corpus/native-templates";
 import { packedRecords } from "./packed-text.ts";
+
+/**
+ * The pack's module. From a published @denext/denext, \`@denext/docs-corpus\` at exactly denext's
+ * version (every release publishes it first). From a checkout — the repository, a checkout an app
+ * links by path, a \`deno compile\` binary built from one — the same commit's file, read by path:
+ * the docs-corpus release with that commit's pack may not exist yet, or be younger than Deno's
+ * minimum dependency age.
+ */
+const pack: { NATIVE_TEMPLATES_BROTLI_BASE64: string } = import.meta.url.startsWith("file:")
+  ? await import(new URL("../../packages/docs-corpus/native-templates.ts", import.meta.url).href)
+  : await import("@denext/docs-corpus/native-templates");
 
 /** Every native template record, by source module and export name. */
 export const NATIVE_TEMPLATES = packedRecords(
   ${JSON.stringify(layout)},
-  NATIVE_TEMPLATES_BROTLI_BASE64,
+  pack.NATIVE_TEMPLATES_BROTLI_BASE64,
 );
 `,
     ROOT,

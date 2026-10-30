@@ -307,16 +307,19 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   // 2026-10-30 for the 4.10-d train (19.79 → 19.85 MiB: workspace globs, desktop transfer
   // records, the child-exit grace, React Router render middleware). Lowered to 19.75 MiB for the
   // 4.10-e train (20.03 MiB with its merges, the revoked-runtimes list, start.tls and the Prisma
-  // 7 migration among them, → 19.61 MiB): four generated data files moved into
+  // 7 migration among them, → 19.70 MiB): the packed native templates moved into
   // @denext/docs-corpus, which denext pins at exactly its own version and every release publishes
-  // first (the packed native templates, the config schema, the CLI's verb descriptions, the
-  // Google Fonts families; scripts/lib/docs-corpus-package.ts CORPUS_DATA_MODULES). Raise it only
-  // with the reason.
+  // first (scripts/lib/docs-corpus-package.ts CORPUS_DATA_MODULES; a checkout reads its own copy),
+  // and the config schema, the CLI's verb descriptions and the Google Fonts families ship
+  // Brotli-packed. Those three moved to docs-corpus first, which broke the CLI run from a checkout
+  // outside its workspace: it resolved the corpus from JSR, where the commit's modules were not
+  // published yet, or not past Deno's minimum dependency age. Raise it only with the reason.
   const files = await publishedFiles();
   if (!files) return; // not a git checkout: nothing to measure
   const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
   assert(mib < 19.75, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
-  // The data @denext/docs-corpus carries for denext stays out of it.
+  // The data @denext/docs-corpus carries for denext stays out of it, and the plain-text copies of
+  // what ships packed stay unpublished.
   for (
     const file of [
       "denext.config.schema.json",
@@ -329,6 +332,13 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   ) {
     assert((files.get(file) ?? 0) < 16 * 1024, `${file} carries its data again`);
   }
+  for (
+    const file of [
+      "src/cli/command-meta.packed.ts",
+      "src/ui/form/config-schema.packed.ts",
+      "src/compat/next/font/google-families.packed.ts",
+    ]
+  ) assert(files.has(file), `${file} is not published`);
 });
 
 /** Published generated files over 50 KiB that may ship uncompressed, and why. */

@@ -6,11 +6,9 @@ for, and `@denext/denext` X.Y.Z imports exactly `@denext/docs-corpus` X.Y.Z (see
 
 ## Unreleased
 
-- Carries generated data `@denext/denext` used to ship itself, to keep it clear of JSR's 20 MiB
-  package cap: `./native-templates` (the packed native templates), `./config-schema` (the
-  `denext.config.ts` JSON Schema), `./cli-commands` (the CLI's verb descriptions) and
-  `./google-font-families` (the Google Fonts family list). Nothing about `@denext/denext`'s own
-  API changes.
+- Carries the packed native templates `denext mobile add` writes (`./native-templates`), which
+  `@denext/denext` used to ship itself, to keep it clear of JSR's 20 MiB package cap. Nothing
+  about `@denext/denext`'s own API changes.
 
 ## 4.3.0
 

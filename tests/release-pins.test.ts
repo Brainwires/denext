@@ -131,6 +131,45 @@ Deno.test("docs-corpus version: it is denext's version, and denext imports exact
   assertEquals(root.imports[CORPUS_PACKAGE], `jsr:${CORPUS_PACKAGE}@${root.version}`);
 });
 
+/**
+ * Where src/ may name `@denext/docs-corpus`, and why. denext run from a checkout outside its
+ * workspace (an app linking it by path, CI running the checkout's CLI elsewhere) resolves the
+ * corpus from JSR, where the checkout's commit may have no release yet, or one younger than Deno's
+ * minimum dependency age: only a path that can do without it, or reads the checkout's own copy
+ * there, may import it, and only through `import()`.
+ */
+const CORPUS_IMPORTERS: Readonly<Record<string, string>> = {
+  "src/mcp/rag/corpus.ts": "the MCP docs tools, on their first search or read",
+  "src/build/native-templates.packed.ts":
+    "the native templates: a published denext only; a checkout reads packages/docs-corpus/ by path",
+};
+
+Deno.test("docs-corpus: denext imports it only where a checkout does not need a corpus release", async () => {
+  const src = new URL("../src/", import.meta.url);
+  const found: Record<string, string[]> = {};
+  const walk = async (dir: URL, rel: string): Promise<void> => {
+    for await (const entry of Deno.readDir(dir)) {
+      const path = `${rel}${entry.name}`;
+      if (entry.isDirectory) await walk(new URL(`${entry.name}/`, dir), `${path}/`);
+      else if (/\.(ts|tsx|js|mjs)$/.test(entry.name)) {
+        const text = await Deno.readTextFile(new URL(entry.name, dir));
+        const uses = [
+          ...text.matchAll(/(import\s*\(|\bfrom)\s*["']@denext\/docs-corpus[^"']*["']/g),
+        ]
+          .map((m) => m[0]);
+        if (uses.length) found[`src/${path}`] = uses;
+      }
+    }
+  };
+  await walk(src, "");
+  assertEquals(Object.keys(found).sort(), Object.keys(CORPUS_IMPORTERS).sort());
+  for (const [file, uses] of Object.entries(found)) {
+    for (const use of uses) {
+      assert(use.startsWith("import"), `${file} imports the corpus statically`);
+    }
+  }
+});
+
 Deno.test("docs-corpus: every module it publishes besides the corpus is a data module the release checks", async () => {
   // A resumed release compares each data module with JSR's copy (corpusReleaseState); one left
   // off CORPUS_DATA_MODULES could differ from what denext was tested against and still ship.

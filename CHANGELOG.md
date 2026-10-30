@@ -128,23 +128,32 @@ and this project adheres to
   that reads the same variables through `process.env`, with a relative SQLite path rebased so the
   CLI and the app keep opening the same file; the generator drops the `queryCompiler` /
   `driverAdapters` preview features (other preview features stay); the injected SQLite adapter is
-  `PrismaBetterSqlite3`; the `better-sqlite3` link advertises 12.6.2; and `prisma:setup` runs
+  `PrismaBetterSqlite3`; the `better-sqlite3` link advertises 12.6.2, and an app's own
+  `better-sqlite3` dependency is pinned to that version too (Deno takes a link only for a range
+  its version satisfies: an app on `^11` would otherwise install the native package, whose addon
+  its server bundle cannot load); and `prisma:setup` runs
   `prisma generate` and then a plain `db push` or `migrate deploy`, passing the app's `.env` with
   `--env-file`. A Prisma 7 app keeps its own `prisma.config.ts` datasource, the output directory
   of its `prisma-client` generator and any adapter it already passes to `new PrismaClient()`;
   before, it was pinned back to Prisma 6, whose CLI rejected its schema without a `url`. The
   seed is written to `prisma.config.ts`'s `migrations.seed`, where Prisma 7 reads it.
-- **The `@denext/denext` package is 0.42 MiB smaller** than it would be (19.61 MiB with this
-  release's additions, against JSR's 20 MiB cap; 4.10.3 was 19.86 MiB). Four generated data files
-  it read moved into `@denext/docs-corpus`, which denext already
-  pins at exactly its own version and which every release publishes first: the packed native
-  templates `denext mobile add` writes, the `denext.config.ts` JSON Schema the project UI renders
-  its forms from, the CLI's verb descriptions and the Google Fonts family list behind
-  `next/font/google`. No import path or behaviour changes; the repository keeps
+- **The `@denext/denext` package is 0.33 MiB smaller** than it would be (19.70 MiB with this
+  release's additions, against JSR's 20 MiB cap; 4.10.3 was 19.86 MiB). The packed native
+  templates `denext mobile add` writes moved into `@denext/docs-corpus`, which denext already pins
+  at exactly its own version and which every release publishes first; denext run from a checkout
+  of its repository reads the checkout's own copy, so it never waits for a docs-corpus release.
+  The `denext.config.ts` JSON Schema the project UI renders its forms from, the CLI's verb
+  descriptions and the Google Fonts family list behind `next/font/google` now ship
+  Brotli-compressed. No import path or behaviour changes; the repository keeps
   `denext.config.schema.json`, which the JSR package no longer carries.
 
 ### Fixed
 
+- **A paused desktop download that is cancelled rejects once its partial file is gone.** In a
+  Deno Desktop window, `cancelFileTransfer` on a paused `downloadToFile` rejected its promise
+  with `CANCELLED` straight away, while the runtime was still dropping the kept partial file and
+  its record; code that acted on the rejection could still find them. It now rejects once both
+  are gone, as on the web, and so does a cancel that lands while a pause is settling.
 - **`spa.tanstackRouter` builds no longer fail with `EXDEV` when the project and the working
   directory are on different file systems.** TanStack's route generator writes the route tree to
   its scratch directory and renames it into place, and it resolved that directory

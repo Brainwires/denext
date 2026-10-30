@@ -19,16 +19,14 @@ export const CORPUS_PACKAGE_JSON: string = join(ROOT, "packages", "docs-corpus",
 /** Its generated module (the corpus). */
 export const CORPUS_MODULE: string = join(ROOT, "packages", "docs-corpus", "mod.ts");
 /**
- * The package's other modules: generated data `@denext/denext` imports from here to stay under
+ * The package's other modules: generated data `@denext/denext` loads from here to stay under
  * JSR's 20 MiB cap (packages/docs-corpus/<file>). A resumed release compares each whole with the
- * copy JSR serves, as it compares the corpus by its source hash.
+ * copy JSR serves, as it compares the corpus by its source hash. Only data denext reads on a
+ * path that can wait for it belongs here: denext run from a checkout reads the checkout's copy
+ * (src/build/native-templates.packed.ts), never a docs-corpus release; the data every CLI start,
+ * the project UI or a build reads ships in @denext/denext itself, packed.
  */
-export const CORPUS_DATA_MODULES: readonly string[] = [
-  "native-templates.ts",
-  "config-schema.ts",
-  "cli-commands.ts",
-  "google-font-families.ts",
-];
+export const CORPUS_DATA_MODULES: readonly string[] = ["native-templates.ts"];
 
 /** The version in packages/docs-corpus/deno.json. */
 export async function corpusVersion(manifest: string = CORPUS_PACKAGE_JSON): Promise<string> {
