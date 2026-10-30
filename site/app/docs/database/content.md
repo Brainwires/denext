@@ -735,8 +735,8 @@ export default defineConfig({
 
 ### Prisma: `db push` (verified) vs `migrate deploy`
 
-`examples/prisma` runs `deno run -A npm:prisma@^6.7.0 db push --skip-generate`
-in its setup script, so **`db push`** — schema straight to the database, no
+`examples/prisma` runs `deno run -A npm:prisma@7.10.1 db push` (after
+`prisma generate`) in its setup script, so **`db push`** — schema straight to the database, no
 migration files — is the verified path over the driver adapter.
 **`prisma migrate
 dev` / `migrate deploy`** use the same CLI and the same schema

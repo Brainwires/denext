@@ -99,7 +99,7 @@ Deno.test("npm audit: the precheck inputs are the lockfiles, the configs and the
   assert(isNpmAuditInput("examples/clerk/deno.json"));
   assert(isNpmAuditInput("examples/clerk/package.json"));
   assertFalse(isNpmAuditInput("examples/expo-app/package-lock.json"));
-  assertFalse(isNpmAuditInput("examples/scroll-bench/web/deno.lock"));
+  assert(isNpmAuditInput("examples/scroll-bench/web/deno.lock"));
   assertFalse(isNpmAuditInput("packages/graphql/mod.ts"));
 });
 
@@ -110,8 +110,9 @@ Deno.test("npm audit: it covers the root lock, then every example's own lock", a
   assert(locks.includes("examples/mobile/deno.lock"));
   const examples = locks.slice(1);
   assertEquals(examples, [...examples].sort());
-  assert(examples.every((l) => /^examples\/[^/]+\/deno\.lock$/.test(l)));
-  // A directory without a deno.lock is skipped, not an error.
+  assert(locks.includes("examples/offline-sync/backend/deno.lock"));
+  assert(examples.every((l) => /^examples\/(?:[^/]+\/)+deno\.lock$/.test(l)));
+  // Outside a git checkout the filesystem is walked: a directory without a deno.lock is skipped.
   const root = await Deno.makeTempDir();
   try {
     await Deno.mkdir(`${root}/examples/a`, { recursive: true });
@@ -119,6 +120,48 @@ Deno.test("npm audit: it covers the root lock, then every example's own lock", a
     await Deno.writeTextFile(`${root}/examples/b/deno.lock`, "{}");
     assertEquals(await auditedLocks(root), ["deno.lock", "examples/b/deno.lock"]);
   } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("npm audit: in a git checkout only tracked locks count, nested ones included", async () => {
+  const root = await Deno.makeTempDir();
+  // A git hook runs the tests with GIT_DIR / GIT_INDEX_FILE set for the real repository; the
+  // fixture's own git commands (and the gate's `git ls-files`) must not see them.
+  const leaked = Deno.env.toObject();
+  const gitVars = Object.keys(leaked).filter((k) => k.startsWith("GIT_"));
+  for (const k of gitVars) Deno.env.delete(k);
+  const git = async (...args: string[]) => {
+    const { code } = await new Deno.Command("git", {
+      args,
+      cwd: root,
+      stdout: "null",
+      stderr: "null",
+    }).output();
+    assertEquals(code, 0);
+  };
+  try {
+    await git("init", "-q");
+    for (const d of ["a", "b", "c/web"]) {
+      await Deno.mkdir(`${root}/examples/${d}`, { recursive: true });
+    }
+    for (const d of ["a", "b", "c/web"]) {
+      await Deno.writeTextFile(`${root}/examples/${d}/deno.lock`, "{}");
+    }
+    await Deno.writeTextFile(`${root}/.gitignore`, "examples/b/deno.lock\n");
+    await git("add", "-A");
+    await git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x");
+    // An untracked, unignored lock is skipped too.
+    await Deno.writeTextFile(`${root}/examples/a/extra.txt`, "");
+    await Deno.mkdir(`${root}/examples/d`);
+    await Deno.writeTextFile(`${root}/examples/d/deno.lock`, "{}");
+    assertEquals(await auditedLocks(root), [
+      "deno.lock",
+      "examples/a/deno.lock",
+      "examples/c/web/deno.lock",
+    ]);
+  } finally {
+    for (const k of gitVars) Deno.env.set(k, leaked[k]);
     await Deno.remove(root, { recursive: true });
   }
 });

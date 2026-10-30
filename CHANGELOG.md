@@ -64,6 +64,27 @@ and this project adheres to
   compared the signed-props token itself, so a page that re-rendered with a freshly issued token
   (after a `gone` token, a soft navigation back, an ISR re-render) ran `init` again. It now matches
   the view, the props the verified token signs and the viewer, and resumes the model.
+- **The npm audit gate audits only git-tracked lockfiles, and all of them.** `deno task audit:npm`
+  picked lockfiles from the filesystem, so a gitignored `examples/<name>/deno.lock` left by a local
+  run (never shipped) could fail a release push, while tracked locks one level deeper
+  (`examples/<name>/<sub>/deno.lock`) were never audited. It now takes the root lock plus every
+  tracked `deno.lock` under `examples/`, at any depth. Outside a git checkout it falls back to
+  walking the filesystem and says so.
+
+### Security
+
+- **The prisma example moves to Prisma 7, so a fresh install has no high advisory.** Every
+  Prisma 6 release's `@prisma/config` pins `deepmerge-ts` 7.1.5
+  ([GHSA-ggr8-5vv4-36mx](https://github.com/advisories/GHSA-ggr8-5vv4-36mx), fixed in 8), so the
+  example's `^6.7.0` ranges could not reach the fix. `prisma`, `@prisma/client` and
+  `@prisma/adapter-better-sqlite3` are now pinned at 7.10.1 (`deepmerge-ts` 8.0.2), the
+  datasource URL moved to `prisma.config.ts`, the adapter class is `PrismaBetterSqlite3`, the
+  `links` package advertises `better-sqlite3` 12.6.2, and setup runs `prisma generate` and a plain
+  `prisma db push`.
+- **The drizzle example's `drizzle-orm` range reaches the fix for GHSA-gpj5-g38j-94v9.** A 0.x
+  caret pins the minor version, so `^0.44.7` could not resolve to 0.45.2, the release that fixes
+  SQL injection through improperly escaped identifiers. `package.json` and `deno.json` now ask for
+  `^0.45.2`.
 
 ### Documentation
 

@@ -19,7 +19,12 @@ denext task dev      # http://localhost:3000   (or: denext task build && denext 
 
 `denext task setup` is required first (and again whenever the schema changes).
 It's also network + codegen heavy — it installs `@prisma/*` and runs the
-`prisma` CLI.
+`prisma` CLI. The example pins Prisma 7 (`prisma`, `@prisma/client` and
+`@prisma/adapter-better-sqlite3` at `7.10.1`); following the
+[Prisma 7 upgrade guide](https://www.prisma.io/docs/orm/more/upgrade-guides/upgrading-to-prisma-7),
+the datasource URL lives in `prisma.config.ts`, the adapter class is
+`PrismaBetterSqlite3`, and `db push` no longer runs `prisma generate` (setup
+runs both).
 
 ## Why the extra setup (vs. the Drizzle example)
 
@@ -30,8 +35,9 @@ pieces bridge that:
 
 1. **`links`** ([`deno.json`](./deno.json)) substitutes a local package for the
    adapter's nested `better-sqlite3` dependency. Its `package.json` `version`
-   (`11.10.0`) satisfies the adapter's `^11.9.0` range (use `^12` for
-   `@prisma/adapter-better-sqlite3@7.x` — the same compat serves both majors).
+   (`12.6.2`) satisfies the `^12.6.0` range of
+   `@prisma/adapter-better-sqlite3@7.10.1` (Prisma 6's adapter wants `^11.9.0`;
+   the same compat serves both majors).
 2. A **bundled** shim. The `links` package is loaded as an npm package, and an
    npm-internal import of the compat's `.ts` fails ("Loading unprepared
    module"). So [`scripts/setup.ts`](./scripts/setup.ts) `deno bundle`s the
@@ -46,6 +52,8 @@ the Drizzle / Postgres variants.
 
 - [`prisma/schema.prisma`](./prisma/schema.prisma) — models + the ESM/Deno
   generator.
+- [`prisma.config.ts`](./prisma.config.ts) — Prisma 7's CLI config: the schema
+  path and the datasource URL `prisma db push` writes to.
 - [`lib/db.ts`](./lib/db.ts) — the Prisma client wired to the adapter + compat.
 - [`app/page.tsx`](./app/page.tsx) — Server Component: awaits the query, renders
   rows + the form.

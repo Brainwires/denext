@@ -86,6 +86,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/next-compat-build.test.ts",
   // Deno.chdir into a fixture: next/font/local resolves its files against the cwd.
   "tests/next-font-local-fallback.test.ts",
+  "tests/npm-audit.test.ts",
   "tests/ota-app-binding.test.ts",
   "tests/ota-manifest.test.ts",
   // Both set and restore DENEXT_BOOT_DDL around each case (the boot-DDL opt-out every Postgres
