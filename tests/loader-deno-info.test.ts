@@ -10,7 +10,7 @@ import { join } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import { denoLoaderPlugins } from "../src/build/deno-loader-plugins.ts";
 import { DENO_CHILD_LOG } from "../src/build/child-probe.ts";
-import { withBoundedDenoInfo } from "../src/build/loader-deno-info.ts";
+import { settlesOnJson, withBoundedDenoInfo } from "../src/build/loader-deno-info.ts";
 import { ChildStallError, serialChildTurns } from "../src/build/serial-child.ts";
 
 /** Each `deno info` attempt's deadline here: well past a warm `deno info`, short for a test. */
@@ -229,4 +229,11 @@ Deno.test("withBoundedDenoInfo: under DENEXT_CHILD_PROBE a stalled deno info rep
     if (previous === undefined) Deno.env.delete("DENEXT_CHILD_PROBE");
     else Deno.env.set("DENEXT_CHILD_PROBE", previous);
   }
+});
+
+Deno.test("withBoundedDenoInfo: a `deno info --json` is read as one JSON document, others are not", () => {
+  // The loader's every call is `info --json …`: one that wrote its whole graph and then never
+  // exits is killed after a grace and its output used (child-probe.ts `jsonStdout`).
+  assertEquals(settlesOnJson(["info", "--json", "file:///a.ts"]), true);
+  assertEquals(settlesOnJson(["info", "file:///a.ts"]), false);
 });

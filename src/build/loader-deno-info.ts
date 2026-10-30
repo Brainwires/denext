@@ -14,8 +14,10 @@
 // {@linkcode boundedSpawn} instead: the module-graph crawl's deadline
 // ({@linkcode DENO_INFO_DEADLINE_MS}, or `DENEXT_CHILD_DEADLINE_MS`), one retry, then a
 // `ChildStallError` naming the pids. Under `DENEXT_CHILD_PROBE` a stall reports the child's debug
-// log and CPU samples, as the module-graph crawl's and `deno bundle`'s do (child-probe.ts). Every
-// other command, and every call outside such a scope, is the stock `Deno.Command`.
+// log and CPU samples, as the module-graph crawl's and `deno bundle`'s do (child-probe.ts). A
+// `--json` child whose output is complete and that then stays silent without exiting is killed
+// after a grace (`DENEXT_CHILD_EXIT_GRACE_MS`) and its output used. Every other command, and every
+// call outside such a scope, is the stock `Deno.Command`.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type * as esbuild from "./esbuild/mod.ts";
@@ -44,6 +46,18 @@ function isDenoInfo(cmd: string | URL, options: Deno.CommandOptions): boolean {
 }
 
 /**
+ * Whether a `deno info` with `args` writes one JSON document on stdout (`--json`), so that a child
+ * which wrote all of it and then never exits can be killed and its output used (child-probe.ts
+ * `boundedSpawn`'s `jsonStdout`).
+ *
+ * @param args Its arguments, `info` first.
+ * @returns Whether its output is one JSON document.
+ */
+export function settlesOnJson(args: readonly string[]): boolean {
+  return args.includes("--json");
+}
+
+/**
  * Run one `deno info` the way `Deno.Command#output` would, but read until it exits, killed at
  * `deadlineMs` and retried once (one child at a time per process); probed under
  * `DENEXT_CHILD_PROBE` ({@linkcode boundedSpawn}).
@@ -69,6 +83,10 @@ function boundedInfo(
         { ...options, stdin: "null", stdout, stderr },
         deadline,
         "deno info",
+        undefined,
+        // `--json` (the loader's every call): one JSON document, so a child that wrote all of it
+        // and then never exits is killed after a grace and its output used.
+        settlesOnJson(args) ? {} : undefined,
       ),
     deadlineMs,
   );

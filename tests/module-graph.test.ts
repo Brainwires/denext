@@ -578,6 +578,56 @@ Deno.test({
 });
 
 Deno.test({
+  name:
+    "denoInfoGraph: a `deno info` that writes its whole graph and then spins is killed and the graph used",
+  // The stand-in `deno` is a shell script.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.makeTempDir({ prefix: "denext_graph_spin_" });
+    const pidFile = join(dir, "pid");
+    const entry = join(dir, "entry.ts");
+    await Deno.writeTextFile(entry, "export {};\n");
+    // Writes a complete graph, then busy-loops: the teardown spin seen on Windows.
+    const fake = join(dir, "fake-deno");
+    await Deno.writeTextFile(
+      fake,
+      `#!/bin/sh\necho $$ > '${pidFile}'\n` +
+        `printf '%s' '{"roots":[],"modules":[{"specifier":"x"}],"redirects":{}}'\n` +
+        `while :; do :; done\n`,
+    );
+    await Deno.chmod(fake, 0o755);
+    try {
+      const t0 = Date.now();
+      const { value, stderr } = await inChild<{ modules: number; roots: string[] }>({
+        imports: `import { denoInfoGraph } from "@repo/src/build/module-graph.ts";`,
+        body: `const g = await denoInfoGraph([${JSON.stringify(entry)}], ` +
+          `{ cache: false, deadlineMs: 120_000 });\n` +
+          `return { modules: g.info.modules.length, roots: g.roots };`,
+        env: { DENO_BIN: fake, DENEXT_CHILD_EXIT_GRACE_MS: "500" },
+        timeoutMs: 60_000,
+      });
+      assertEquals(value, { modules: 1, roots: [toFileUrl(entry).href] });
+      assert(Date.now() - t0 < 60_000, `took ${Date.now() - t0} ms`);
+      const pid = Number((await Deno.readTextFile(pidFile)).trim());
+      assert(
+        stderr.includes(`deno info (pid ${pid}): output complete; the process did not exit`),
+        stderr,
+      );
+      assert(!stderr.includes("retrying once"), stderr);
+      let alive = true;
+      try {
+        Deno.kill(pid, "SIGKILL");
+      } catch {
+        alive = false;
+      }
+      assert(!alive, `pid ${pid} still running`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
+
+Deno.test({
   name: "denoInfoGraph: concurrent crawls run one `deno info` at a time",
   // The stand-in `deno` is a shell script.
   ignore: Deno.build.os === "windows",

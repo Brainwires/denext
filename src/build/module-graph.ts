@@ -502,11 +502,22 @@ async function spawnDenoInfo(
     // discarded unless the crawl fails (see quietThenExplain): a quiet stderr pipe held for the
     // crawl's whole life is what starves other children's reads on Windows. Under
     // DENEXT_CHILD_PROBE a stall reports the crawl's debug log and CPU samples (child-probe.ts).
+    // A crawl whose JSON is complete and that then stays silent without exiting (seen on Windows:
+    // a spin in the process's teardown) is killed after a grace and its output used.
     const output = await quietThenExplain((mode) =>
       retryOnStall(
         "deno info",
         args,
-        (deadline) => boundedSpawn(denoExecutable(), spawnOptions(mode), deadline, "deno info"),
+        (deadline) =>
+          boundedSpawn(
+            denoExecutable(),
+            spawnOptions(mode),
+            deadline,
+            "deno info",
+            undefined,
+            // One JSON document: a crawl that wrote all of it and then never exits is not waited on.
+            {},
+          ),
         deadlineMs,
       )
     );

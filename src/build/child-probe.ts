@@ -9,11 +9,19 @@
 // child blocked on a lock, a pipe or the network reads differently from one that spins. A child
 // that finishes costs only that tail, and its stderr comes back without the debug records.
 //
+// A child whose whole result is one JSON document on stdout (`deno info --json`, `deno doc --json`)
+// can be read with `jsonStdout`: on Windows such a child has been seen to write its complete
+// output and its last debug line, then spin at 100% CPU in its teardown and never exit. Once its
+// stdout parses as a complete JSON object or array and it has been silent on both pipes for a grace
+// (`DENEXT_CHILD_EXIT_GRACE_MS`, 5 s), it is killed and its output used as a success, after one
+// line naming its pid (with the probe's report when probed). A partial document never parses, so a
+// child that stopped mid-output still ends at its deadline.
+//
 // The build's own children are probed only under `DENEXT_CHILD_PROBE=1` (a diagnostic: off by
 // default); the repository's scripts and tests (scripts/deno-doc.ts) always probe theirs.
 
 import { drainUntilExit } from "./exited-output.ts";
-import { boundedOutput, ChildStallError } from "./serial-child.ts";
+import { boundedOutput, childExitGraceMs, ChildStallError } from "./serial-child.ts";
 
 /** How many of a stalled child's last stderr lines its report carries. */
 const TAIL_LINES = 80;
@@ -166,86 +174,246 @@ function streamGetter(name: string, bytes: Uint8Array | null): () => Uint8Array 
   };
 }
 
+/** `status` with `stdout` / `stderr` as a {@linkcode Deno.CommandOutput} (`null`: not piped). */
+function commandOutput(
+  status: Deno.CommandStatus,
+  stdout: Uint8Array | null,
+  stderr: Uint8Array | null,
+): Deno.CommandOutput {
+  return Object.defineProperties({ ...status } as Deno.CommandOutput, {
+    stdout: { get: streamGetter("stdout", stdout), enumerable: true },
+    stderr: { get: streamGetter("stderr", stderr), enumerable: true },
+  });
+}
+
 /**
- * Read a probed `child` (spawned with stderr piped, and {@linkcode DENO_CHILD_LOG} in its
- * `DENO_LOG`) until it exits; one still running after `deadlineMs` is sampled, killed, and
- * {@linkcode ChildStallError} thrown with the report (pid, CPU samples, output progress, the
- * debug log's tail) as its `probe`.
- *
- * @param child The spawned child; its stderr must be piped.
- * @param stdoutPiped Whether its stdout was spawned `"piped"`.
- * @param deadlineMs How long it may run.
- * @param label The command, for the error.
- * @param denoLog The child's `DENO_LOG`, for the report.
- * @returns Its status and output; stderr without the debug log's records.
+ * Whether `chunks` (a child's stdout so far) hold one complete JSON object or array: a document
+ * cut off anywhere inside it never parses, so a child that stopped mid-document is never taken
+ * for a finished one.
  */
-async function probedOutput(
+function completeJson(chunks: readonly Uint8Array[]): boolean {
+  if (chunks.length === 0) return false;
+  const text = new TextDecoder().decode(joined(chunks)).trim();
+  if (!text.startsWith("{") && !text.startsWith("[")) return false;
+  try {
+    JSON.parse(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function writeStderr(line: string): void {
+  try {
+    Deno.stderr.writeSync(new TextEncoder().encode(`${line}\n`));
+  } catch { /* stderr closed */ }
+}
+
+/**
+ * For a child whose whole result is one JSON document on stdout (`deno info --json`,
+ * `deno doc --json`): don't wait on its exit once that document is complete.
+ */
+export interface JsonStdout {
+  /**
+   * How long the child must have been silent on both pipes, with its stdout parsing as a complete
+   * JSON object or array, before it is killed and that output used as a success (default
+   * `DENEXT_CHILD_EXIT_GRACE_MS`, else 5 s; `Infinity`: wait for the exit).
+   */
+  readonly graceMs?: number;
+  /** Where the line naming the killed child goes (default: stderr). */
+  readonly onSettled?: (line: string) => void;
+}
+
+/** How {@linkcode watchedOutput} reads a child. */
+interface Watch {
+  /** Whether its stdout was spawned `"piped"`. */
+  readonly stdoutPiped: boolean;
+  /** Whether its stderr was spawned `"piped"`. */
+  readonly stderrPiped: boolean;
+  /** How long it may run. */
+  readonly deadlineMs: number;
+  /** The command, for the error and the notice. */
+  readonly label: string;
+  /** The child's `DENO_LOG` when it is probed; `undefined`: not probed. */
+  readonly denoLog: string | undefined;
+  /** The finished-JSON grace (`Infinity`: none). */
+  readonly graceMs: number;
+  /** Where the finished-JSON notice goes. */
+  readonly onSettled: (line: string) => void;
+}
+
+/**
+ * A watched child's pipes, read as they arrive. Each chunk on either pipe restarts the silence
+ * window; when it runs out, the stdout so far is parsed once, and {@linkcode settled} resolves
+ * when it is one complete JSON object or array. A child still writing, or one that stopped
+ * mid-document, never settles.
+ */
+class WatchedPipes {
+  readonly stdout: Uint8Array[] = [];
+  /** When the last stdout chunk came (`performance.now()`; 0: none). */
+  stdoutAt = 0;
+  readonly stderr = new StderrTail();
+  readonly #stderrRaw: Uint8Array[] = [];
+  readonly #w: Watch;
+  #quiet: ReturnType<typeof setTimeout> | undefined;
+  #watching: boolean;
+  #settle: (v: "settled") => void = () => {};
+  /** Resolves once the child's complete JSON output has been followed by the grace's silence. */
+  readonly settled = new Promise<"settled">((r) => this.#settle = r);
+  /** Settles once both pipes are read (to their end, or a grace after the exit). */
+  readonly reads: Promise<unknown>;
+
+  constructor(child: Deno.ChildProcess, w: Watch) {
+    this.#w = w;
+    this.#watching = w.stdoutPiped && Number.isFinite(w.graceMs);
+    const probed = w.denoLog !== undefined;
+    this.reads = Promise.all([
+      w.stdoutPiped
+        ? drainUntilExit(child.stdout, child.status, (chunk) => {
+          this.stdout.push(chunk);
+          this.stdoutAt = performance.now();
+          this.#activity();
+        })
+        : undefined,
+      w.stderrPiped
+        ? drainUntilExit(child.stderr, child.status, (chunk) => {
+          this.stderr.push(chunk);
+          if (!probed) this.#stderrRaw.push(chunk);
+          this.#activity();
+        })
+        : undefined,
+    ]);
+  }
+
+  #activity(): void {
+    if (!this.#watching) return; // no grace, or decided: a chunk read after that starts no timer
+    clearTimeout(this.#quiet);
+    this.#quiet = setTimeout(() => {
+      if (completeJson(this.stdout)) this.#settle("settled");
+    }, this.#w.graceMs);
+  }
+
+  /** Stop watching for silence (the outcome is decided). */
+  stop(): void {
+    this.#watching = false;
+    clearTimeout(this.#quiet);
+  }
+
+  /** stdout as read (`null`: not piped). */
+  stdoutBytes(): Uint8Array | null {
+    return this.#w.stdoutPiped ? joined(this.stdout) : null;
+  }
+
+  /** stderr as read, a probed child's without its debug records (`null`: not piped). */
+  stderrBytes(): Uint8Array | null {
+    if (!this.#w.stderrPiped) return null;
+    return this.#w.denoLog !== undefined
+      ? new TextEncoder().encode(this.stderr.plain())
+      : joined(this.#stderrRaw);
+  }
+}
+
+/**
+ * How `child` ended: its status, `"late"` at `deadlineMs`, or `"settled"` once `pipes` settled
+ * while it was still running (one that settled in the same turn as its exit gets its status).
+ */
+async function outcome(
   child: Deno.ChildProcess,
-  stdoutPiped: boolean,
+  pipes: WatchedPipes,
   deadlineMs: number,
-  label: string,
-  denoLog: string,
-): Promise<Deno.CommandOutput> {
-  const started = performance.now();
-  const stdout: Uint8Array[] = [];
-  let stdoutAt = 0;
-  const stderr = new StderrTail();
-  const reads = Promise.all([
-    stdoutPiped
-      ? drainUntilExit(child.stdout, child.status, (chunk) => {
-        stdout.push(chunk);
-        stdoutAt = performance.now();
-      })
-      : undefined,
-    drainUntilExit(child.stderr, child.status, (chunk) => stderr.push(chunk)),
-  ]);
+): Promise<Deno.CommandStatus | "late" | "settled"> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const late = new Promise<"late">((resolve) => {
     if (Number.isFinite(deadlineMs)) timer = setTimeout(() => resolve("late"), deadlineMs);
   });
-  const ended = await Promise.race([child.status, late]);
+  const ended = await Promise.race([child.status, late, pipes.settled]);
+  pipes.stop();
   clearTimeout(timer);
-  if (ended !== "late") {
-    await reads;
-    return Object.defineProperties({ ...ended } as Deno.CommandOutput, {
-      stdout: {
-        get: streamGetter("stdout", stdoutPiped ? joined(stdout) : null),
-        enumerable: true,
-      },
-      stderr: {
-        get: streamGetter("stderr", new TextEncoder().encode(stderr.plain())),
-        enumerable: true,
-      },
-    });
-  }
-  // Still running: sample it BEFORE the kill, then kill it and stop reading.
-  const sample = await sampleProcess(child.pid);
+  if (ended !== "settled") return ended;
+  return await Promise.race([child.status, Promise.resolve("settled" as const)]);
+}
+
+/**
+ * Kill `child` and wait for its exit and `reads`, at most 10 s: on Windows the pipes end before
+ * the killed child's exit is reported, and an error thrown in between leaves that wait pending (a
+ * leaked op).
+ *
+ * @returns When it was killed (`performance.now()`).
+ */
+async function killAndWait(child: Deno.ChildProcess, reads: Promise<unknown>): Promise<number> {
   const killedAt = performance.now();
   try {
     child.kill("SIGKILL");
   } catch { /* exited meanwhile */ }
   let grace: ReturnType<typeof setTimeout> | undefined;
-  // Its exit too, not only its pipes: on Windows the pipes end before the killed child's exit is
-  // reported, and a stall error thrown in between leaves that wait pending (a leaked op).
   await Promise.race([
     Promise.all([reads, child.status]),
     new Promise((r) => grace = setTimeout(r, 10_000)),
   ]);
   clearTimeout(grace);
-  const ago = (t: number) =>
-    t === 0 ? "never" : `${((killedAt - t) / 1000).toFixed(1)} s before the kill`;
-  const bytes = stdout.reduce((n, c) => n + c.length, 0);
-  const report = [
-    `  pid ${child.pid}, killed ${((killedAt - started) / 1000).toFixed(1)} s after its start`,
-    `    cpu: ${sample}`,
-    `    stdout: ${stdoutPiped ? `${bytes} bytes, last ${ago(stdoutAt)}` : "not piped"}; ` +
-    `stderr: ${stderr.lines} lines, last ${ago(stderr.lastAt)}`,
-    `    its last stderr lines (DENO_LOG=${denoLog}):`,
-    ...stderr.tail().map((l) => `      ${l}`),
-  ].join("\n");
-  throw new ChildStallError(label, child.pid, deadlineMs, stderr.plain(), report);
+  return killedAt;
 }
 
+/** A probed child's report: pid, CPU samples, output progress and the debug log's tail. */
+function probeReport(
+  pid: number,
+  pipes: WatchedPipes,
+  w: Watch,
+  times: { started: number; killedAt: number; sample: string },
+): string {
+  const { started, killedAt, sample } = times;
+  const ago = (t: number) =>
+    t === 0 ? "never" : `${((killedAt - t) / 1000).toFixed(1)} s before the kill`;
+  const bytes = pipes.stdout.reduce((n, c) => n + c.length, 0);
+  return [
+    `  pid ${pid}, killed ${((killedAt - started) / 1000).toFixed(1)} s after its start`,
+    `    cpu: ${sample}`,
+    `    stdout: ${w.stdoutPiped ? `${bytes} bytes, last ${ago(pipes.stdoutAt)}` : "not piped"}; ` +
+    `stderr: ${pipes.stderr.lines} lines, last ${ago(pipes.stderr.lastAt)}`,
+    `    its last stderr lines (DENO_LOG=${w.denoLog}):`,
+    ...pipes.stderr.tail().map((l) => `      ${l}`),
+  ].join("\n");
+}
+
+/**
+ * Read `child` until it exits; one still running after `deadlineMs` is killed (sampled first when
+ * probed) and {@linkcode ChildStallError} thrown, with the report (pid, CPU samples, output
+ * progress, the debug log's tail) as its `probe` when probed. With a finite `graceMs`, a child
+ * whose stdout parses as a complete JSON object or array after `graceMs` of silence on both pipes
+ * is killed instead, one line naming it goes to `onSettled` (with the probe's report when
+ * probed), and its output is returned as a success.
+ *
+ * @param child The spawned child; its stderr must be piped when probed.
+ * @param w How to read it.
+ * @returns Its status and output; a probed child's stderr without the debug log's records.
+ */
+async function watchedOutput(child: Deno.ChildProcess, w: Watch): Promise<Deno.CommandOutput> {
+  const started = performance.now();
+  const pipes = new WatchedPipes(child, w);
+  const ended = await outcome(child, pipes, w.deadlineMs);
+  if (ended !== "late" && ended !== "settled") {
+    await pipes.reads;
+    return commandOutput(ended, pipes.stdoutBytes(), pipes.stderrBytes());
+  }
+  // Still running: sample it BEFORE the kill (when probed), then kill it and stop reading.
+  const probed = w.denoLog !== undefined;
+  const sample = probed ? await sampleProcess(child.pid) : "";
+  const killedAt = await killAndWait(child, pipes.reads);
+  const report = probed
+    ? probeReport(child.pid, pipes, w, { started, killedAt, sample })
+    : undefined;
+  if (ended === "settled") {
+    w.onSettled(
+      `    warning: ${w.label} (pid ${child.pid}): output complete; the process did not exit ` +
+        `${w.graceMs / 1000} s after its last output and was killed; its output is used ` +
+        `(DENEXT_CHILD_EXIT_GRACE_MS sets the grace)` + (report === undefined ? "" : `\n${report}`),
+    );
+    const ok = { success: true, code: 0, signal: null };
+    return commandOutput(ok, pipes.stdoutBytes(), pipes.stderrBytes());
+  }
+  const stderrText = new TextDecoder().decode(pipes.stderrBytes() ?? new Uint8Array());
+  throw new ChildStallError(w.label, child.pid, w.deadlineMs, stderrText, report);
+}
 /**
  * Spawn `program` with `options` and read it until it exits, killing it at `deadlineMs`
  * ({@linkcode boundedOutput}): the attempt {@linkcode retryOnStall} runs. With `probe` (by default
@@ -254,11 +422,18 @@ async function probedOutput(
  * carrying the debug log's tail and two CPU samples as its `probe`; a child that finishes returns
  * its stderr without the debug records. Without it the child runs exactly as `options` say.
  *
+ * With `jsonStdout` (a child whose whole result is one JSON document on stdout, piped), the child
+ * is not waited on past its output: once its stdout parses as a complete JSON object or array and
+ * it has been silent on both pipes for `jsonStdout.graceMs`, it is killed, one line naming its pid
+ * goes to `jsonStdout.onSettled` (with the probe's report when probed), and its output is returned
+ * with exit code 0. A child that exits first is returned as it exited, its exit code included.
+ *
  * @param program The executable.
  * @param options How to spawn it (`stdout` / `stderr`: `"piped"`, `"null"` or `"inherit"`).
  * @param deadlineMs How long it may run.
  * @param label The command, for the error.
  * @param probe Whether to probe it.
+ * @param jsonStdout Settle on a complete JSON document on stdout; `undefined`: wait for the exit.
  * @returns Its {@linkcode Deno.CommandOutput}.
  */
 export async function boundedSpawn(
@@ -267,17 +442,31 @@ export async function boundedSpawn(
   deadlineMs: number,
   label: string,
   probe: boolean = childProbeEnabled(),
+  jsonStdout?: JsonStdout,
 ): Promise<Deno.CommandOutput> {
   const stdoutPiped = options.stdout === "piped";
+  const graceMs = jsonStdout && stdoutPiped ? jsonStdout.graceMs ?? childExitGraceMs() : Infinity;
+  const watch = {
+    stdoutPiped,
+    deadlineMs,
+    label,
+    graceMs,
+    onSettled: jsonStdout?.onSettled ?? writeStderr,
+  };
   if (!probe) {
-    return await boundedOutput(
-      new Deno.Command(program, options).spawn(),
-      { stdout: stdoutPiped, stderr: options.stderr === "piped" },
-      deadlineMs,
-      label,
-    );
+    const stderrPiped = options.stderr === "piped";
+    const child = new Deno.Command(program, options).spawn();
+    if (!Number.isFinite(graceMs)) {
+      return await boundedOutput(
+        child,
+        { stdout: stdoutPiped, stderr: stderrPiped },
+        deadlineMs,
+        label,
+      );
+    }
+    return await watchedOutput(child, { ...watch, stderrPiped, denoLog: undefined });
   }
   const env = { DENO_LOG: DENO_CHILD_LOG, ...options.env };
   const child = new Deno.Command(program, { ...options, env, stderr: "piped" }).spawn();
-  return await probedOutput(child, stdoutPiped, deadlineMs, label, env.DENO_LOG);
+  return await watchedOutput(child, { ...watch, stderrPiped: true, denoLog: env.DENO_LOG });
 }
