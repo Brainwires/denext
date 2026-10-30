@@ -66,6 +66,8 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/jail-scripts.test.ts",
   "tests/job-discovery.test.ts",
   "tests/legacy-migrate-job.test.ts",
+  // Sets and restores DENEXT_CHILD_PROBE around one case (the probed loader `deno info`).
+  "tests/loader-deno-info.test.ts",
   "tests/mcp-dev-logs-spa.test.ts",
   "tests/mcp-devtools.test.ts",
   "tests/migrate-check.test.ts",

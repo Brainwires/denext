@@ -5,10 +5,11 @@
 // local socket that accepts and never answers: unbounded, the build waits forever (this file's
 // bound fails it); bounded, it is killed at a short deadline and retried once.
 
-import { assert, assertEquals, assertRejects } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import { denoLoaderPlugins } from "../src/build/deno-loader-plugins.ts";
+import { DENO_CHILD_LOG } from "../src/build/child-probe.ts";
 import { withBoundedDenoInfo } from "../src/build/loader-deno-info.ts";
 import { ChildStallError, serialChildTurns } from "../src/build/serial-child.ts";
 
@@ -192,4 +193,40 @@ Deno.test("withBoundedDenoInfo: only a deno info inside a loader callback is bou
   }).output();
   assert(outside.success);
   assertEquals(serialChildTurns(), turns);
+});
+
+Deno.test("withBoundedDenoInfo: under DENEXT_CHILD_PROBE a stalled deno info reports its probe", async () => {
+  const exec = Deno.execPath();
+  const previous = Deno.env.get("DENEXT_CHILD_PROBE");
+  Deno.env.set("DENEXT_CHILD_PROBE", "1");
+  try {
+    let inside: Promise<Deno.CommandOutput> | undefined;
+    const plugin = withBoundedDenoInfo({
+      name: "probe",
+      setup(build) {
+        build.onStart(async () => {
+          // Killed at the deadline (before it can finish), retried, killed again.
+          inside = new Deno.Command(exec, {
+            args: ["info", "--json"],
+            stdout: "piped",
+            stderr: "null", // piped anyway when probed
+          }).output();
+          await inside.catch(() => {});
+        });
+      },
+    }, 1);
+    const starts: Array<() => unknown> = [];
+    await plugin.setup({
+      onStart: (cb: () => unknown) => starts.push(cb),
+    } as unknown as esbuild.PluginBuild);
+    await starts[0]();
+    const err = await assertRejects(() => inside!, ChildStallError);
+    assert(err.probe !== undefined, "the stall carries the probe's report");
+    assertStringIncludes(err.probe, `DENO_LOG=${DENO_CHILD_LOG}`);
+    assertStringIncludes(err.message, "stalled twice");
+    assertStringIncludes(err.message, "cpu: ");
+  } finally {
+    if (previous === undefined) Deno.env.delete("DENEXT_CHILD_PROBE");
+    else Deno.env.set("DENEXT_CHILD_PROBE", previous);
+  }
 });

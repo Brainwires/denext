@@ -38,10 +38,11 @@ and this project adheres to
   manifest records them as `server.limits`. See
   [Deployment targets › Resource limits](https://denext.dev/docs/deployment-targets#resource-limits).
 - **`DENEXT_CHILD_PROBE=1`, a diagnostic for a build child that hangs.** The build's `deno info`
-  and `deno bundle` children then run with Deno's debug log on, and one still running at its
-  deadline is reported, in the retry warning and the final error, with the log's last 80 lines and
-  two CPU samples taken before the kill (`Get-Process` with the threads' wait reasons on Windows,
-  `ps` elsewhere). Off by default: without it the children run as before.
+  and `deno bundle` children, and the esbuild loader's own `deno info` children, then run with
+  Deno's debug log on, and one still running at its deadline is reported, in the retry warning
+  and the final error, with the log's last 80 lines and two CPU samples taken before the kill
+  (`Get-Process` with the threads' wait reasons on Windows, `ps` elsewhere). Off by default:
+  without it the children run as before.
 - **`secureStore.set(key, value, { accessibility })`** picks the iOS Keychain class:
   `"whenUnlocked"` (the default, unchanged), `"whenUnlockedThisDeviceOnly"`, `"afterFirstUnlock"`,
   `"afterFirstUnlockThisDeviceOnly"` or `"whenPasscodeSetThisDeviceOnly"`, so a refresh token can

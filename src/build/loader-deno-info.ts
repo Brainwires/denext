@@ -11,19 +11,16 @@
 // either way the build waits forever. The loader takes no hook for its child, so while one of its
 // plugin callbacks runs (an async scope that follows its awaits and timers), `Deno.Command#output`
 // for a `deno info` of this executable goes through {@linkcode retryOnStall} +
-// {@linkcode boundedOutput} instead: the module-graph crawl's deadline
+// {@linkcode boundedSpawn} instead: the module-graph crawl's deadline
 // ({@linkcode DENO_INFO_DEADLINE_MS}, or `DENEXT_CHILD_DEADLINE_MS`), one retry, then a
-// `ChildStallError` naming the pids. Every other command, and every call outside such a scope, is
-// the stock `Deno.Command`.
+// `ChildStallError` naming the pids. Under `DENEXT_CHILD_PROBE` a stall reports the child's debug
+// log and CPU samples, as the module-graph crawl's and `deno bundle`'s do (child-probe.ts). Every
+// other command, and every call outside such a scope, is the stock `Deno.Command`.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import type * as esbuild from "./esbuild/mod.ts";
-import {
-  boundedOutput,
-  childDeadlineMs,
-  DENO_INFO_DEADLINE_MS,
-  retryOnStall,
-} from "./serial-child.ts";
+import { boundedSpawn } from "./child-probe.ts";
+import { childDeadlineMs, DENO_INFO_DEADLINE_MS, retryOnStall } from "./serial-child.ts";
 
 /** What a scope knows: its deadline (`undefined`: the default, read when the child starts). */
 interface InfoScope {
@@ -48,10 +45,10 @@ function isDenoInfo(cmd: string | URL, options: Deno.CommandOptions): boolean {
 
 /**
  * Run one `deno info` the way `Deno.Command#output` would, but read until it exits, killed at
- * `deadlineMs` and retried once (one child at a time per process).
+ * `deadlineMs` and retried once (one child at a time per process); probed under
+ * `DENEXT_CHILD_PROBE` ({@linkcode boundedSpawn}).
  */
 function boundedInfo(
-  Command: typeof Deno.Command,
   cmd: string | URL,
   options: Deno.CommandOptions,
   deadlineMs: number,
@@ -59,14 +56,17 @@ function boundedInfo(
   const stdout = options.stdout ?? "piped";
   const stderr = options.stderr ?? "piped";
   const args = (options.args ?? []).map(String);
+  // `boundedSpawn` spawns through `Deno.Command`, here the scoped subclass: only its `output()`
+  // is replaced, so `spawn()` is the stock one.
   return retryOnStall(
     "deno info",
     args.slice(1),
     (deadline) =>
-      boundedOutput(
+      boundedSpawn(
+        // `isDenoInfo` matched it to `Deno.execPath()`: a path.
+        String(cmd),
         // stdin: nothing to read, and no handle of ours for it to hold.
-        new Command(cmd, { ...options, stdin: "null", stdout, stderr }).spawn(),
-        { stdout: stdout === "piped", stderr: stderr === "piped" },
+        { ...options, stdin: "null", stdout, stderr },
         deadline,
         "deno info",
       ),
@@ -91,7 +91,7 @@ function install(): void {
       const scope = scopes.getStore();
       if (!scope || !isDenoInfo(this.#cmd, this.#options)) return super.output();
       const deadlineMs = scope.deadlineMs ?? childDeadlineMs(DENO_INFO_DEADLINE_MS);
-      return boundedInfo(Original, this.#cmd, this.#options, deadlineMs);
+      return boundedInfo(this.#cmd, this.#options, deadlineMs);
     }
   }
   (Deno as unknown as { Command: typeof Deno.Command }).Command = ScopedCommand;
@@ -100,7 +100,7 @@ function install(): void {
 /**
  * `plugin` (the esbuild loader) with every `deno info` it starts — from `setup` or from any
  * onStart / onResolve / onLoad / onEnd callback, across their awaits — run through
- * {@linkcode retryOnStall} and {@linkcode boundedOutput}: serialized with denext's other
+ * {@linkcode retryOnStall} and {@linkcode boundedSpawn}: serialized with denext's other
  * `deno info` / `deno bundle` children, read until it exits, killed at the deadline and retried
  * once; a second stall rejects with a `ChildStallError`.
  *
