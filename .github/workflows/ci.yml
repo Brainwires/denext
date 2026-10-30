@@ -828,3 +828,6 @@ jobs:
 
       - name: The deno-loader resolves package.json dependencies on Windows
         run: deno test -A tests/deno-loader-plugins.test.ts
+
+      - name: The deno-loader's own deno info children are bounded on Windows
+        run: deno test -A tests/loader-deno-info.test.ts

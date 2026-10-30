@@ -87,6 +87,14 @@ export async function boundedOutput(
   }
 }
 
+/**
+ * How long one `deno info` attempt may run, by default, before it is killed and retried once
+ * ({@linkcode retryOnStall}): well past a warm crawl, and a cold npm install's crawl that overruns
+ * it resumes from the cache it filled on the retry. Module-graph crawls and the esbuild loader's
+ * `deno info` children both use it.
+ */
+export const DENO_INFO_DEADLINE_MS = 120_000;
+
 /** The tail of this isolate's queue: settles when the last queued child's turn is over. */
 let tail: Promise<unknown> = Promise.resolve();
 
