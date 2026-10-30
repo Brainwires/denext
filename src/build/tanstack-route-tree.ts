@@ -48,6 +48,29 @@ export async function generatedRouteTreePath(root: string, inline: TreeSettings)
   return settings.disableTypes === true ? path.replace(/\.(ts|tsx)$/, ".js") : path;
 }
 
+/**
+ * The generator's scratch directory when denext must name it: `.tanstack/tmp` under `root`. The
+ * generator writes each file there and renames it into place, and it resolves its default against
+ * the process's working directory, which a denext build need not share with the project (a
+ * monorepo root, a test): the rename then fails with `EXDEV` across file systems (a `/tmp` tmpfs)
+ * and the scratch directory lands outside the project. A `tmpDir` in `tsr.config.json` or a
+ * `TSR_TMP_DIR` variable is the generator's to resolve, so this returns `undefined` for them.
+ *
+ * @param root The generator's root (the project directory).
+ * @returns The absolute scratch directory to pass the plugin, or `undefined` to leave it unset.
+ */
+export async function generatorTmpDir(root: string): Promise<string | undefined> {
+  const config = await tsrConfig(root) as { tmpDir?: unknown };
+  if (typeof config.tmpDir === "string" && config.tmpDir !== "") return undefined;
+  let env: string | undefined;
+  try {
+    env = Deno.env.get("TSR_TMP_DIR");
+  } catch {
+    env = undefined; // no env permission: the generator cannot read it either
+  }
+  return env ? undefined : resolve(root, ".tanstack", "tmp");
+}
+
 /** One line with its style removed: indentation, a trailing `;`, and the quote character. */
 const normalizeLine = (line: string): string => line.trim().replace(/;$/, "").replaceAll('"', "'");
 
