@@ -27,7 +27,7 @@ import { runMobileDoctor } from "../src/build/mobile-doctor.ts";
 import { writtenOtaTemplatesAt } from "./_release-templates.ts";
 import { IGNORE_WITHOUT_JDK, requireJdk } from "./_jdk.ts";
 import { renderMarkedTemplate } from "../src/build/native-template-marker.ts";
-import { otaSignaturePayload } from "../src/mobile/ota-manifest.ts";
+import { otaAppSignaturePayload, otaSignaturePayload } from "../src/mobile/ota-manifest.ts";
 import { SETTINGS_IOS_FILES } from "../src/build/settings-native-templates.ts";
 import { PRINT_IOS_FILES } from "../src/build/expo-sdk-native-templates.ts";
 
@@ -135,6 +135,33 @@ Deno.test("OTA serve hardening: generation 12 checks the platform stamp, /_capac
     process,
   );
   assertStringIncludes(process, "store.admitCapacitorFile(path, files ? served : null)");
+});
+
+Deno.test("OTA app binding: both shells check the signed appId between the platform and release checks", () => {
+  // iOS: the request parse checks the app after the platform stamp, before the release policy,
+  // against the bundle identifier, and stores appId + appSignature with the files.
+  const request = IOS_STORE.slice(IOS_STORE.indexOf("struct ApplyRequest: Sendable {"));
+  const platform = request.indexOf("try DenextOtaStore.checkPlatform(");
+  const app = request.indexOf("try DenextOtaStore.checkApp(");
+  assert(platform >= 0 && app > platform, "iOS: checkApp after checkPlatform");
+  assert(app < request.indexOf("try DenextOtaStore.checkRelease("), "iOS: before checkRelease");
+  assertStringIncludes(IOS_STORE, "static let ownAppId: String? = Bundle.main.bundleIdentifier");
+  assertStringIncludes(IOS_STORE, 'Data("denext-ota-v5\\n');
+  assertStringIncludes(IOS_STORE, 'manifest["appSignature"] = appSignature');
+  assertStringIncludes(IOS_PLUGIN, '"appId": DenextOtaStore.ownAppId ?? NSNull()');
+  // Android: the same in the plugin's parse, against the application id.
+  const parse = ANDROID_PLUGIN.slice(ANDROID_PLUGIN.indexOf("parseApplyRequest(PluginCall call"));
+  const androidPlatform = parse.indexOf("DenextOtaStore.checkPlatform(");
+  const androidApp = parse.indexOf("store.checkApp(");
+  assert(
+    androidPlatform >= 0 && androidApp > androidPlatform,
+    "Android: checkApp after checkPlatform",
+  );
+  assert(androidApp < parse.indexOf("store.checkRelease("), "Android: before checkRelease");
+  assertStringIncludes(ANDROID_STORE, "return context.getPackageName();");
+  assertStringIncludes(ANDROID_STORE, 'String text = "denext-ota-v5\\n"');
+  assertStringIncludes(ANDROID_STORE, 'manifest.put("appSignature", request.appSignature);');
+  assertStringIncludes(ANDROID_PLUGIN, 'result.put("appId", orNull(store.ownAppId()));');
 });
 
 Deno.test("OTA serve hardening: the review's follow-ups are in both templates", () => {
@@ -609,6 +636,13 @@ const IOS_SERVE_HARDENING_CHECKS = [
   "no file guard: a launch of the bundled UI keeps it, with no notice",
 ];
 
+/** The app checks only the Swift harness drives (through `ApplyRequest` and an unknown own id). */
+const IOS_APP_CHECKS = [
+  "app: a binary that does not know its id takes a release that names no app",
+  "app: an appId without a sequence is invalid",
+  "app: an appId that is not an app id is invalid",
+];
+
 /** The generation-12 checks only the Java harness runs (through the route processor). */
 const ANDROID_SERVE_HARDENING_CHECKS = [
   "fail closed: a served directory outside the versions root is refused",
@@ -620,6 +654,39 @@ const ANDROID_SERVE_HARDENING_CHECKS = [
   "platform: an iOS stamp without the field is refused",
 ];
 
+/**
+ * The app binding both harnesses check: a manifest's signed `appId` (`appSignature`, the v5
+ * payload) must name this app, and an app that embeds a public key requires it, so a feed for
+ * another app that shares the signing key cannot install its UI.
+ */
+const APP_CHECKS = [
+  "app: a signed app takes a release signed for it",
+  "app: a signed app refuses another app's validly signed release (app_mismatch)",
+  "app: a signed app refuses a release that names no app (app_mismatch)",
+  "app: a signed app refuses an appId its appSignature does not cover (signature)",
+  "app: a signed app refuses an appId without an appSignature (signature)",
+  "app: a signed app refuses an appSignature by another key (signature)",
+  "app: an unsigned app takes a release that names no app",
+  "app: an unsigned app refuses another app's release (app_mismatch)",
+  "app: the stored manifest keeps appId and appSignature",
+];
+
+/** Asserts that a harness's `payload-v5` line is byte for byte denext's otaAppSignaturePayload. */
+async function assertAppPayload(output: string, platform: string): Promise<void> {
+  const [, version, base64] = /^payload-v5 ([0-9a-f]{64}) (\S+)$/m.exec(output) ?? [];
+  assert(version !== undefined, `${platform}: no payload-v5 line\n${output}`);
+  const expected = await otaAppSignaturePayload({
+    version,
+    required: true,
+    notes: "n",
+    sequence: 7,
+    minNative: 3,
+    expiresAt: 1_800_000_000,
+    appId: "com.example.app",
+  });
+  assertEquals(atob(base64), new TextDecoder().decode(expected), platform);
+}
+
 /** Asserts a harness's output: every line ok, the shared checks all present, a clean tally. */
 function assertHarness(output: string, platform: string): void {
   const lines = output.trim().split(/\r?\n/);
@@ -628,6 +695,7 @@ function assertHarness(output: string, platform: string): void {
   const passed = new Set(lines.filter((l) => l.startsWith("ok ")).map((l) => l.slice(3)));
   for (const name of SHARED_CHECKS) assert(passed.has(name), `${platform}: no "${name}"`);
   for (const name of SERVE_HARDENING_CHECKS) assert(passed.has(name), `${platform}: no "${name}"`);
+  for (const name of APP_CHECKS) assert(passed.has(name), `${platform}: no "${name}"`);
   if (!IS_ROOT) {
     for (const name of UNREADABLE_CHECKS) assert(passed.has(name), `${platform}: no "${name}"`);
   }
@@ -666,6 +734,8 @@ Deno.test({
         assertStringIncludes(out, `ok ${name}`);
       }
       assertStringIncludes(out, "ok the bundled assets are answered as Capacitor does");
+      assertStringIncludes(out, "ok app: status reports the app's id");
+      await assertAppPayload(out, "android");
       assertStringIncludes(
         out,
         "ok the stored manifest keeps the signed fields and verifies again",
@@ -745,6 +815,8 @@ Deno.test({
         expiresAt: 1_800_000_000,
       });
       assertEquals(atob(base64), new TextDecoder().decode(expected));
+      await assertAppPayload(out, "ios");
+      for (const name of IOS_APP_CHECKS) assertStringIncludes(out, `ok ${name}`);
     } finally {
       await Deno.remove(dir, { recursive: true });
     }

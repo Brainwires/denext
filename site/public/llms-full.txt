@@ -772,7 +772,9 @@ Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <d
 `_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it (a signed
 manifest expires: 30 days, `--expires-in <days>`; past it every shell refuses it, code `expired`,
 so re-sign the live release; an app with a key embedded takes only its platform's stamped export,
-`denext export --platform ios` or `ota manifest --platform ios`, code `platform_mismatch`);
+`denext export --platform ios` or `ota manifest --platform ios`, code `platform_mismatch`, and
+only a release signed for its own app: `--app-id <id>`, by default the Capacitor `appId` /
+`desktop.app.identifier`, code `app_mismatch`);
 `denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
 `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
 drive it; `createOtaHandler` from `denext/server` serves the export. A downloaded UI is
@@ -3022,7 +3024,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopBooted(config: DesktopUpdaterConfig): Promise<void>` — Confirm that the active overlay booted. Call it once the app has served and rendered (the desktop runtime calls it behind a short delay after Deno.serve is up). It flips a PENDING pointer to confirmed and clears the watchdog marker, so a crash BEFORE this call leaves the version pending and the next resolveDesktopUiDir rolls it back. Best effort: it never throws.
 - `interface DesktopUpdateCheck` — The result of checkForDesktopUpdate.
 - `class DesktopUpdateError` — A refusal from the updater, carrying a machine-readable DesktopUpdateErrorCode.
-- `type DesktopUpdateErrorCode = network | invalid | integrity | unsigned | signature | downgrade | platform_mismatch | expired | not_staged | rejected` — The code on a DesktopUpdateError:
+- `type DesktopUpdateErrorCode = network | invalid | integrity | unsigned | signature | downgrade | platform_mismatch | app_mismatch | expired | not_staged | rejected` — The code on a DesktopUpdateError:
 - `interface DesktopUpdatePrepared` — The result of prepareDesktopUpdate.
 - `interface DesktopUpdaterConfig` — Configuration for the desktop UI self-updater.
 - `desktopUpdateReset(config: DesktopUpdaterConfig): Promise<void>` — Return to the bundled export: delete every overlay version, every staging dir, and all state (pointer, sequence, rejected, marker). A no-op when nothing is installed.
@@ -3407,10 +3409,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type Orientation = portrait-primary | portrait-secondary | landscape-primary | landscape-secondary` — The screen's orientation: portrait or landscape, and which way up.
 - `type OrientationLock = any | natural | portrait | landscape | Orientation` — What lockOrientation locks to: a family (portrait, landscape), one exact orientation, the device's natural one, or any (every orientation the app allows).
 - `type OtaApplyResult = object | object` — The outcome of applyUiUpdate when it settles. On success the webview reloads into the new UI, so the promise does not settle at all.
+- `otaAppSignaturePayload(manifest: Pick<OtaManifest, version | required | notes | sequence | minNative | nativeFingerprint | expiresAt | appId>): Promise<Uint8Array>` — The bytes a manifest's appSignature covers: the v5 format, UTF-8 with \n separators and no trailing newline,
 - `otaBooted(): Promise<void>` — Confirm to the native side that the running UI booted. Call it once after the app's first render: a UI on its trial launch that never calls it is rolled back by the native watchdog (after 15 s of foreground time by default), and on the next launch if the app died twice before confirming. Harmless on the bundled UI or a confirmed one.
 - `interface OtaCheckOptions` — Options for checkForUiUpdate and prepareUiUpdate.
 - `type OtaCheckResult = object | object | object | object | object` — The outcome of checkForUiUpdate. It never throws; every failure is a value.
-- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch | platform_mismatch | expired | guard_unavailable` — The code of a native DenextOta refusal, carried on an error result:
+- `type OtaErrorCode = invalid | busy | rejected | download | integrity | not_staged | signature | insecure | downgrade | native_too_old | native_mismatch | platform_mismatch | app_mismatch | expired | guard_unavailable` — The code of a native DenextOta refusal, carried on an error result:
 - `otaInstallId(): string` — This install's stable OTA id: a random base64url string made on first use and kept in localStorage (denext:ota-install-id), so a channels server (createOtaHandler({ channels })) puts the device in the same staged-rollout bucket on every check. It identifies nothing but the install; clearing the app's data makes a new one. Where storage is unavailable it lasts for the page's lifetime.
 - `interface OtaManifest` — The _denext/ota.json document: a version stamped over the sorted file list.
 - `interface OtaManifestFile` — One file of an OTA UI.
@@ -3491,7 +3494,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `restorePurchases(): Promise<CustomerInfo>` — Restore the user's earlier purchases (the "Restore purchases" button App Review expects on a paywall).
 - `restoreRouteOnRelaunch(options?: RestoreRouteOptions): Promise<string | null>` — Opt in to returning to the last route after the OS killed the app in the background.
 - `interface RestoreRouteOptions` — Options for restoreRouteOnRelaunch.
-- `resumeFileTransfer(id: string): Promise<boolean>` — Resume a paused download, or retry a failed transfer (a download from its bytes so far when it is resumable).
+- `resumeFileTransfer(id: string): Promise<boolean>` — Continue a paused download from its bytes so far (a range request where the server allows one, else from the start).
 - `revealInFileManager(item: ShellItem): Promise<void>` — Show a file or folder selected in Finder, Explorer or the Linux file manager.
 - `type ReviewRequestResult = requested | unsupported` — What requestReview did: "requested" (the system was asked to show its review sheet; whether it did is the OS's call and is never reported) or "unsupported" (not in the native shell, or no review plugin installed).
 - `runBackgroundTask(name: string, details?: Record<string, unknown>): Promise<boolean>` — Run one background task now, from the page, in the runner's engine (for example after a sign-in, to warm the cache a later background run will extend). The task runs whatever its interval; its handler sees trigger: "dispatch" and details.

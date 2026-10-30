@@ -768,7 +768,9 @@ Over-the-air UI updates (Capacitor): `spa.ota: true` (or `denext ota manifest <d
 `_denext/ota.json`; `denext ota keygen` + `--sign` / `DENEXT_OTA_SIGNING_KEY` sign it (a signed
 manifest expires: 30 days, `--expires-in <days>`; past it every shell refuses it, code `expired`,
 so re-sign the live release; an app with a key embedded takes only its platform's stamped export,
-`denext export --platform ios` or `ota manifest --platform ios`, code `platform_mismatch`);
+`denext export --platform ios` or `ota manifest --platform ios`, code `platform_mismatch`, and
+only a release signed for its own app: `--app-id <id>`, by default the Capacitor `appId` /
+`desktop.app.identifier`, code `app_mismatch`);
 `denext mobile add-ota [--public-key <file>]` installs the native plugin (and embeds the key);
 `checkForUiUpdate` / `prepareUiUpdate` / `applyUiUpdate` / `otaBooted` from `denext/mobile`
 drive it; `createOtaHandler` from `denext/server` serves the export. A downloaded UI is

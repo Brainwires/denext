@@ -285,6 +285,30 @@ public final class OtaReverifyHarness {
         return (Bridge.CAPACITOR_FILE_START + file).equals(capacitorFile(store, file));
     }
 
+    /** The v5 payload of the harness's manifest for {@code appId}, signed with {@code signer}. */
+    static String appSignature(KeyPair signer, String version, String appId) throws Exception {
+        if (!has("appSignaturePayload")) return null;
+        byte[] payload = (byte[]) call(null, "appSignaturePayload", version, false, "hello", 7L, null, null, null, appId);
+        return sign(signer, payload);
+    }
+
+    /**
+     * The app check's refusal code for that appId and appSignature, or null; "missing" when the
+     * template has no app check.
+     */
+    static String appRefusal(DenextOtaStore store, String version, String appId, String appSignature) throws Exception {
+        if (!has("checkApp") || !has("appSignaturePayload")) return "missing";
+        Object payload = appId == null
+            ? null
+            : call(null, "appSignaturePayload", version, false, "hello", 7L, null, null, null, appId);
+        try {
+            call(store, "checkApp", appId, appSignature, payload);
+            return null;
+        } catch (IllegalStateException ex) {
+            return ex.getCause() instanceof DenextOtaStore.OtaException ? ((DenextOtaStore.OtaException) ex.getCause()).code : ex.toString();
+        }
+    }
+
     /**
      * The platform check's refusal code for a manifest with that stamp and field, or null, in an app
      * that embeds a public key ({@code signed}) or not.
@@ -547,6 +571,59 @@ public final class OtaReverifyHarness {
         check("platform: a signed app takes its own platform's export", platformRefusal("android", "android", true) == null);
         check("platform: a signed app refuses another platform's export", "platform_mismatch".equals(platformRefusal("ios", "ios", true)));
         check("platform: an unsigned app takes an unstamped export", platformRefusal(null, null, false) == null);
+
+        // ---- the app the release is for: a signed appId (appSignature, the v5 payload) -------
+        // A feed for another app that shares the signing key cannot install its UI here. The
+        // harness app's id is com.example.app.
+        {
+            String ownId = "com.example.app";
+            DenextOtaStore keyed = launch(new App(new File(work, "app-signed"), publicKey));
+            DenextOtaStore keyless = launch(new App(new File(work, "app-unsigned"), null));
+            String ownSignature = appSignature(key, version, ownId);
+            String otherSignature = appSignature(key, version, "com.example.other");
+            check("app: a signed app takes a release signed for it", appRefusal(keyed, version, ownId, ownSignature) == null);
+            check(
+                "app: a signed app refuses another app's validly signed release (app_mismatch)",
+                "app_mismatch".equals(appRefusal(keyed, version, "com.example.other", otherSignature))
+            );
+            check("app: a signed app refuses a release that names no app (app_mismatch)", "app_mismatch".equals(appRefusal(keyed, version, null, null)));
+            check(
+                "app: a signed app refuses an appId its appSignature does not cover (signature)",
+                "signature".equals(appRefusal(keyed, version, ownId, otherSignature))
+            );
+            check("app: a signed app refuses an appId without an appSignature (signature)", "signature".equals(appRefusal(keyed, version, ownId, null)));
+            check(
+                "app: a signed app refuses an appSignature by another key (signature)",
+                "signature".equals(appRefusal(keyed, version, ownId, appSignature(other, version, ownId)))
+            );
+            check("app: an unsigned app takes a release that names no app", appRefusal(keyless, version, null, null) == null);
+            check(
+                "app: an unsigned app refuses another app's release (app_mismatch)",
+                "app_mismatch".equals(appRefusal(keyless, version, "com.example.other", null))
+            );
+            check("app: status reports the app's id", ownId.equals(call(keyed, "ownAppId")));
+            boolean kept = false;
+            Constructor<?> withApp = null;
+            for (Constructor<?> c : DenextOtaStore.ApplyRequest.class.getDeclaredConstructors()) {
+                if (c.getParameterCount() == 13) withApp = c;
+            }
+            if (withApp != null) {
+                Object request = withApp.newInstance("http://127.0.0.1/ui", new HashMap<String, String>(), version, manifestFiles(), 7L, false, "hello", null, null, signature, null, ownId, ownSignature);
+                File appDir = new File(work, "roundtrip-app");
+                Method write = DenextOtaStore.class.getDeclaredMethod("writeManifest", DenextOtaStore.ApplyRequest.class, File.class);
+                write.setAccessible(true);
+                write.invoke(null, request, appDir);
+                String text = new String(Files.readAllBytes(new File(appDir, "_denext/ota.json").toPath()), StandardCharsets.UTF_8);
+                kept = text.contains("\"appId\":\"" + ownId + "\"") &&
+                    (text.contains(ownSignature) || text.contains(ownSignature.replace("/", "\\/")));
+                kept = kept && call(null, "verifyInstalled", appDir, version, publicKey) != null;
+            }
+            check("app: the stored manifest keeps appId and appSignature", kept);
+            Object v5 = has("appSignaturePayload")
+                ? call(null, "appSignaturePayload", version, true, "n", 7L, 3L, null, 1_800_000_000L, ownId)
+                : null;
+            if (v5 != null) System.out.println("payload-v5 " + version + " " + Base64.getEncoder().encodeToString((byte[]) v5));
+        }
 
         // ---- the stored manifest changed: refused at launch, before any page ---------------------
         app = new App(new File(work, "manifest"), publicKey);

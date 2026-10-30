@@ -252,6 +252,31 @@ and this project adheres to
   - A file verified once in a process is hashed again when its size, modification time, change
     time or inode changes, so a file rewritten while the app runs is refused (and quarantines the
     version) instead of being served from the first verdict.
+- **A signed OTA release names the app it is for.** The manifest `signature` never covered the app,
+  so with one signing key shared by several apps (as one key per publisher invites), a feed for one
+  app that was compromised or misrouted could serve another app a validly signed UI. A manifest now
+  carries the app's id (`appId`: the iOS bundle id / Android application id, or the Deno Desktop
+  `desktop.app.identifier`) and signs it in its own `appSignature` over a new payload format
+  (`denext-ota-v5`: every v4 field plus the id; `otaAppSignaturePayload` in `denext/mobile`). The
+  `signature` keeps covering the v1–v4 payload, so app binaries and desktop apps from before this
+  verify the same manifest unchanged and one feed serves old and new binaries alike.
+  - The iOS and Android plugins (template generation 12) refuse a manifest naming another app with
+    `app_mismatch`, and, when the binary embeds a public key, one that names no app (`app_mismatch`)
+    or whose `appSignature` does not verify (`signature`). `checkForUiUpdate` refuses another
+    app's manifest before the native side sees it (its new `appId` option, or the id the shell's
+    status now reports). The desktop overlay updater refuses the same with `app_mismatch` when its
+    `appId` is set, which `runDesktop` does from `desktop.app.identifier`. Unsigned, pinned-origin
+    apps take a manifest without an id as before.
+  - Publishing: a signed `spa.ota` export stamps the Capacitor `appId` for an `ios` / `android`
+    export and `desktop.app.identifier` for a desktop one, `denext mobile build` passes the build's
+    (a flavor's) id, and `denext ota manifest <dir> --sign` stamps the Capacitor `appId` of an
+    `ios` / `android` export. `--app-id <id>` or `DENEXT_OTA_APP_ID` names it outright; a signed
+    manifest that names no app prints a warning. Unsigned manifests get no id unless asked for.
+  - **Breaking for existing signed deploys:** a binary built with this plugin, and a desktop app
+    on this denext with `desktop.update.ui`, refuse a manifest signed without an app id. Re-sign
+    the release your feed serves before shipping them (`denext ota manifest out --app-id <id>
+    --sign <key>`, or export again with `DENEXT_OTA_SIGNING_KEY` set); the re-signed manifest still
+    installs on the binaries already in the field.
 
 ### Added
 

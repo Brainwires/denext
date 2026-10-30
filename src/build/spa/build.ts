@@ -23,6 +23,7 @@ import { prodMinify } from "../minify.ts";
 import { precompressDir } from "../precompress.ts";
 import { writeOtaManifest, writePlatformStamp } from "../ota-manifest.ts";
 import { loadOtaSigningKey } from "../ota-signing.ts";
+import { otaAppIdFor } from "../ota-app-id.ts";
 import { stashSourceMapsIfHidden } from "../hidden-sourcemaps.ts";
 import {
   assertEntryExists,
@@ -238,7 +239,7 @@ export async function exportSpa(
     if (platform !== "web") await writePlatformStamp(staging, platform);
     // `--sourcemaps hidden`: the maps leave the web root before anything hashes it.
     await stashSourceMapsIfHidden(staging, paths.outDir);
-    await writeExportManifests(staging, spa, viteManifest);
+    await writeExportManifests(staging, spa, viteManifest, { paths, platform });
   });
   await prepareDesktopExport(paths.projectDir, paths.config);
   return { outDir, pages: 1, skipped: [] };
@@ -249,6 +250,7 @@ async function writeExportManifests(
   staging: string,
   spa: SpaConfig,
   viteManifest: ViteManifest | null,
+  target: { readonly paths: ProjectPaths; readonly platform: Platform },
 ): Promise<void> {
   // `spa.viteManifest`: `.vite/manifest.json` listing the content-hashed client files, for a
   // server that reads Vite's manifest to serve them as immutable.
@@ -262,16 +264,38 @@ async function writeExportManifests(
   // tree (`*.gz` siblings excluded), so nothing may be written after it.
   // With DENEXT_OTA_SIGNING_KEY set (a CI secret), the manifest is signed too, and stamped
   // with a `sequence` (the Unix time) so installed apps refuse an older signed release.
-  if (spa.ota === true) {
-    const { version, files, signature, sequence } = await writeOtaManifest(
-      staging,
-      {},
-      await loadOtaSigningKey(),
-    );
-    console.log(
-      `  OTA manifest: _denext/ota.json (version ${version.slice(0, 12)}…, ${files.length} files${
-        signature ? `, signed, sequence ${sequence}` : ""
-      })`,
+  if (spa.ota === true) await writeSpaOtaManifest(staging, target);
+}
+
+/**
+ * The export's OTA manifest (`spa.ota`), signed with `DENEXT_OTA_SIGNING_KEY` when set. A signed
+ * one also names the app it is for (`appId`, signed by `appSignature`): the Capacitor `appId` for
+ * an ios / android export, `desktop.app.identifier` for a desktop one.
+ */
+async function writeSpaOtaManifest(
+  staging: string,
+  target: { readonly paths: ProjectPaths; readonly platform: Platform },
+): Promise<void> {
+  const signingKey = await loadOtaSigningKey();
+  const appId = signingKey
+    ? await otaAppIdFor(target.paths.projectDir, target.platform, target.paths.config)
+    : undefined;
+  const { version, files, signature, sequence } = await writeOtaManifest(
+    staging,
+    appId === undefined ? {} : { appId },
+    signingKey,
+  );
+  console.log(
+    `  OTA manifest: _denext/ota.json (version ${version.slice(0, 12)}…, ${files.length} files${
+      signature ? `, signed, sequence ${sequence}` : ""
+    }${appId === undefined ? "" : `, app ${appId}`})`,
+  );
+  if (signature && appId === undefined) {
+    console.warn(
+      "  warning: the signed OTA manifest names no app (no Capacitor appId / " +
+        "desktop.app.identifier found): app binaries that embed the public key refuse it " +
+        "(code app_mismatch). Set DENEXT_OTA_APP_ID, or re-stamp with `denext ota manifest " +
+        "--app-id <id> --sign`.",
     );
   }
 }

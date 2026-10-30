@@ -422,6 +422,58 @@ do {
     check("platform: an unsigned app takes an unstamped export", platformRefusal(nil, platform: nil, signed: false) == nil)
     check("platform: an app without a key does not sign updates", !DenextOtaStore.signsUpdates)
 
+    // ---- the app the release is for: a signed appId (appSignature, the v5 payload) -----------
+    // A feed for another app that shares the signing key cannot install its UI here.
+    func appPayload(_ appId: String) -> Data {
+        DenextOtaStore.appSignaturePayload(version: version, required: false, notes: "hello", sequence: 7, minNative: nil, nativeFingerprint: nil, expiresAt: nil, appId: appId)
+    }
+    func appSignature(_ appId: String, by signer: P256.Signing.PrivateKey = key) -> String {
+        (try! signer.signature(for: appPayload(appId))).rawRepresentation.base64EncodedString()
+    }
+    func appRefusal(_ appId: String?, _ signature: String?, own: String?, key config: DenextOtaStore.PublicKeyConfig) -> String? {
+        do {
+            try DenextOtaStore.checkApp(appId, appSignature: signature, payload: appId.map(appPayload), own: own, key: config)
+            return nil
+        } catch let error as DenextOtaStore.OtaError {
+            return error.code
+        } catch {
+            return "\(error)"
+        }
+    }
+    let ownId = "com.example.app"
+    check("app: a signed app takes a release signed for it", appRefusal(ownId, appSignature(ownId), own: ownId, key: signed) == nil)
+    check(
+        "app: a signed app refuses another app's validly signed release (app_mismatch)",
+        appRefusal("com.example.other", appSignature("com.example.other"), own: ownId, key: signed) == "app_mismatch"
+    )
+    check("app: a signed app refuses a release that names no app (app_mismatch)", appRefusal(nil, nil, own: ownId, key: signed) == "app_mismatch")
+    check(
+        "app: a signed app refuses an appId its appSignature does not cover (signature)",
+        appRefusal(ownId, appSignature("com.example.other"), own: ownId, key: signed) == "signature"
+    )
+    check("app: a signed app refuses an appId without an appSignature (signature)", appRefusal(ownId, nil, own: ownId, key: signed) == "signature")
+    check(
+        "app: a signed app refuses an appSignature by another key (signature)",
+        appRefusal(ownId, appSignature(ownId, by: otherKey), own: ownId, key: signed) == "signature"
+    )
+    check("app: an unsigned app takes a release that names no app", appRefusal(nil, nil, own: ownId, key: .unset) == nil)
+    check("app: an unsigned app refuses another app's release (app_mismatch)", appRefusal("com.example.other", nil, own: ownId, key: .unset) == "app_mismatch")
+    check("app: a binary that does not know its id takes a release that names no app", appRefusal(nil, nil, own: nil, key: signed) == nil)
+    check("app: an appId without a sequence is invalid", refusal(manifest(["appId": ownId], sequence: false)) == "invalid")
+    check("app: an appId that is not an app id is invalid", refusal(manifest(["appId": "com.example/app"])) == "invalid")
+    let ownAppSignature = appSignature(ownId)
+    let appRequest = try DenextOtaStore.ApplyRequest(
+        baseUrl: "http://127.0.0.1/ui",
+        headers: nil,
+        manifest: manifest(["appId": ownId, "appSignature": ownAppSignature])
+    )
+    let storedApp = try JSONSerialization.jsonObject(with: DenextOtaStore.storedManifest(appRequest)) as! [String: Any]
+    check(
+        "app: the stored manifest keeps appId and appSignature",
+        storedApp["appId"] as? String == ownId && storedApp["appSignature"] as? String == ownAppSignature
+    )
+    print("payload-v5 \(version) \(DenextOtaStore.appSignaturePayload(version: version, required: true, notes: "n", sequence: 7, minNative: 3, nativeFingerprint: nil, expiresAt: 1_800_000_000, appId: "com.example.app").base64EncodedString())")
+
     let folders = try device("folders", manifest: storedManifest(signature: sign(key)))
     store = folders.launch(key: signed)
     _ = store.prepareLaunch()
