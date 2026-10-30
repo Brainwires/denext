@@ -152,8 +152,8 @@ Deno.test("maybeReexecToolchain: a leaked marker or a stale -denext.N build re-e
 });
 
 Deno.test("maybeReexecToolchain: upstream Deno of the pinned version is not the toolchain", async () => {
-  // Upstream Deno releases a 3.0.0-rc.N / 3.0.0 too: from 3.0.0-rc.3 the toolchain says it is
-  // denext's with Deno.build.denext, and a Deno without it re-execs onto the pin.
+  // There is no upstream Deno 3.0, so denext tells its runtime apart by the identity marker: from
+  // 3.0.0-rc.3 the toolchain says it is denext's with Deno.build.denext, and a Deno without it re-execs onto the pin.
   const pinned: DenoToolchainChoice = {
     kind: "toolchain",
     deno: "/cache/deno",

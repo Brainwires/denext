@@ -51,6 +51,13 @@ and this project adheres to
   dot folders and symlinks out of the root. A `pnpm-workspace.yaml`'s `packages` now count for the
   jail settings as well.
 
+### Documentation
+
+- **The `shell` capability's printed note names every launcher it bakes** (`osascript`, `rundll32.exe`,
+  `powershell.exe`, `gio`, `dbus-send` as well as `open` / `explorer.exe` / `xdg-open`), and the
+  native-menu limitation says what the Deno Desktop menu really draws (red destructive items and
+  icons; Windows draws a destructive item as a normal one).
+
 ## [4.10.2] - 2026-10-30
 
 ### Added
