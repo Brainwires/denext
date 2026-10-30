@@ -23,6 +23,16 @@ and this project adheres to
   replacement both libraries and Apple recommend. A `requireAuthentication` value keeps its
   `WHEN_PASSCODE_SET_THIS_DEVICE_ONLY` class. The constants themselves are unchanged.
 
+### Changed
+
+- **`migrate --enable-capacitor` runs the project's own code only on an opt-in.** The Capacitor
+  install (the package manager loads the project's configuration, such as a `.pnpmfile.cjs` or a
+  Yarn `yarnPath`), `denext export` (builds and renders the app) and `npx cap add` (loads
+  `capacitor.config.*` and runs the Capacitor CLI from the project's `node_modules`) now run only
+  with `--yes`, or after an interactive prompt that lists them. A non-interactive or `--json` run
+  without `--yes` prints each command with the reason instead, for you to run once you trust the
+  project.
+
 ### Deprecated
 
 - **Stock Deno.** denext 5.0 drops stock Deno support: project code will run on denext's own Deno
@@ -175,6 +185,23 @@ and this project adheres to
   sequence is the floor before any overlay is accepted). Stamp one with `spa.ota: true` and
   `DENEXT_OTA_SIGNING_KEY`, or `denext ota manifest out --sign ota.key`. Affected: 2.10.0 through
   4.10.1.
+- **The `next.config.*` evaluator can no longer read outside the project through a symlink.**
+  `denext migrate`, `migrate --check` and `denext ui`'s next.config panel evaluate the config in
+  a subprocess granted read access to the project directory, but Deno checks a read against the
+  path as written, not a symlink's target. A project that committed a link out of itself
+  (`home -> /Users`, `p -> /proc`) let its config read any file the user could, and place the
+  contents in a field migrate copies into `denext.config.ts` or prints in `migrate --check
+  --json`. The read grant now leaves out every symlink that resolves outside the project (or
+  nowhere), and every link into a directory that holds one: a directory with no such link is
+  granted whole, one with a link is granted entry by entry, so any other spelling of the path is
+  refused. An app that is a member of a workspace (a deno.json `workspace`, a package.json
+  `workspaces` or a `pnpm-workspace.yaml` that lists it) is contained in the workspace root
+  instead, so pnpm's `node_modules` links into the root's store and links to sibling packages keep
+  working. Deno reads a `require()` under `node_modules` without any permission check, so a link
+  there that leads out (directly or through a directory that holds one) refuses the evaluation
+  instead of only being left out of the grant. The evaluator's `--allow-sys` is narrowed to `cpus`, `osRelease` and
+  `systemMemoryInfo` (what `os.cpus()`, `os.totalmem()` and `os.release()` read); the hostname,
+  user and home directory are no longer readable. Affects 2.0.0 through 4.10.1.
 
 ### Documentation
 

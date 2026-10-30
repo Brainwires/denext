@@ -66,7 +66,8 @@ emit correct denext instead of Next.js.
    `--desktop` adds a Deno Desktop target; `--enable-capacitor [--app-id <id>] [--platform
    ios,android]` adds an iOS / Android one (a SPA, App Router or Expo app): `capacitor.config.ts`,
    the `mobile:*` tasks, `spa.precompress: false` + `mobile.icon`, Capacitor 8 installed with the
-   app's package manager, and review items for what it can't know (a hosted-mode env switch, a
+   app's package manager (the install, export and `cap add` run the project's own code: only with
+   `--yes` or after a prompt, else printed to run by hand), and review items for what it can't know (a hosted-mode env switch, a
    backend URL a phone can reach, CORS for `capacitor://localhost` / `https://localhost`).
    `denext upgrade [--to <v>] [--dry-run | --check] [--allow-major] [--allow-downgrade]` moves
    the `jsr:@denext/denext` pin, the pinned CLI tasks and every first-party `@denext/*` package

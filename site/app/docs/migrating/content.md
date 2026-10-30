@@ -56,8 +56,12 @@ address (see §7).
 `denext migrate --check` runs the migration as a dry run and writes nothing: it lists the files
 `denext migrate` would create, modify, move or delete, what won't migrate and why, and a verdict
 (`ready`, `review` or `blocked`). It needs read access to the project, run access to evaluate
-your `next.config.*` (in a `deno` subprocess that can only read the project) and jsr.io when run
-from JSR; add `--json` for a machine-readable report. Without `--allow-run` the report says the
+your `next.config.*` and jsr.io when run from JSR; add `--json` for a machine-readable report.
+The config runs in a `deno` subprocess that can read only the project (a workspace member's
+whole workspace root, so pnpm's store and sibling packages resolve), never through a symlink
+that leads out of it, and the machine's CPU, memory and OS release but not its hostname, user or
+home directory. A symlink in `node_modules` that leads out stops the evaluation, since Deno reads
+a `require()` there without a permission check. Without `--allow-run` the report says the
 config couldn't be evaluated, instead of listing its keys as not migrating. A config that
 never finishes is killed after 15 seconds (`DENEXT_NEXT_EVAL_TIMEOUT_MS` changes it), and the
 evaluator is also killed when the `migrate` that started it dies:
@@ -319,10 +323,15 @@ pick a manager for you: it prints the command. With `--platform ios,android` it
 also exports once and runs `npx cap add` for each platform that has no folder yet;
 without it, `cap add` is yours to run.
 
-`--platform` runs the project's own code by design: the export builds the app
-(its `vite.config.ts`, plugins and build-time imports) and `npx cap add` runs the
-installed Capacitor CLI, which reads `capacitor.config.ts`. Use it only on a
-checkout you would build anyway; `--check` lists the commands without running them.
+**These commands run the project's own code**, so migrate runs them only when you opt in.
+The install loads the package manager's project configuration (a `.pnpmfile.cjs`, a Yarn
+`yarnPath`), the export builds the app (its `vite.config.ts`, plugins and build-time imports)
+and `npx cap add` runs the Capacitor CLI from the project's `node_modules`, which loads
+`capacitor.config.ts`. On an untrusted clone that is arbitrary code execution. An interactive
+run lists the commands and asks before running them; a non-interactive run (CI, a script,
+`--json`) runs none of them unless you pass `--yes`, and prints each one with the reason
+instead, for you to run once you trust the project. `--check` lists the commands without
+running them.
 
 What migrate cannot know is listed for review: a build-time switch the phone build
 may need set differently (an env key such as `VITE_HOSTED_APP_CHANNEL`), backend

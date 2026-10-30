@@ -1404,7 +1404,7 @@
         {
           "name": "enable-capacitor",
           "type": "boolean",
-          "description": "Also add an iOS/Android Capacitor target: capacitor.config.ts, the mobile:* tasks and config keys, and install the pinned Capacitor 8 packages (SPA, App Router, Expo)"
+          "description": "Also add an iOS/Android Capacitor target: capacitor.config.ts, the mobile:* tasks and config keys, and install the pinned Capacitor 8 packages (SPA, App Router, Expo). The install, `denext export` and `npx cap add` run the project's own code, so they run only with --yes or after a prompt; otherwise migrate prints them to run yourself"
         },
         {
           "name": "app-id",
@@ -1439,7 +1439,7 @@
           "name": "yes",
           "alias": "y",
           "type": "boolean",
-          "description": "Apply the codemod without prompting"
+          "description": "Answer yes to migrate's prompts: apply the codemod, and run --enable-capacitor's install, export and `cap add` (they run the project's own code: trusted projects only)"
         },
         {
           "name": "prisma-adapter",
