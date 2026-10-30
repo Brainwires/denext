@@ -59,7 +59,9 @@ function next(conn: Conn, pred: (f: Any) => boolean): Promise<Any> {
 const isError = (code: string) => (f: Any) => f.type === "error" && f.code === code;
 const isLustre = (kind: number) => (f: Any) => f.type === "lustre" && f.msg?.kind === kind;
 
-function fakeHub(limits: Partial<ViewLimits> = {}) {
+type HubDeps = Parameters<typeof createLustreViewHub<Conn>>[0];
+
+function fakeHub(limits: Partial<ViewLimits> = {}, overrides: Partial<HubDeps> = {}) {
   const hub = createLustreViewHub<Conn>({
     limits: () => ({
       maxViewsPerConnection: 4,
@@ -83,6 +85,7 @@ function fakeHub(limits: Partial<ViewLimits> = {}) {
     isConnected: (conn) => !conn.closed,
     backPressured: (conn) => conn.pressured === true,
     armRecover: (conn) => void (conn.armed = true),
+    ...overrides,
   });
   let n = 0;
   const conn = (cookie = ""): Conn => ({
@@ -464,6 +467,122 @@ Deno.test("Lustre hub: a parked runtime is shut down when its resume window ends
   fakeRuntimes.onShutdown = null;
   assertEquals([hub.running(), hub.parked()], [0, 0]);
   assertEquals(fakeRuntimes.live.size, before - 1, "the Lustre runtime itself shut down");
+});
+
+Deno.test("Lustre hub: a malformed mount (wire encoding, props that are not JSON) is bad-message", async () => {
+  const { hub, conn } = fakeHub();
+  const { id } = counterView();
+  const c = conn();
+  await hub.mount(c, { ...(await mountFrame(id, { start: 1 })), enc: "no-such-encoding" });
+  assertEquals((await next(c, isError("bad-message"))).reason, "malformed view mount");
+  // A token over exactly these bytes, which are not JSON: the token holds, the decode refuses.
+  const props = "{not json";
+  const token = await signLiveViewToken(lustreTokenName(id), props, SIGNED_AT);
+  await hub.mount(c, { type: "lustre-mount", vid: "l2", view: id, props, token });
+  const refused = await next(c, isError("bad-message"));
+  assertEquals([refused.subId, refused.reason], ["l2", "malformed view props"]);
+  assertEquals(hub.running(), 0, "nothing started");
+});
+
+Deno.test("Lustre hub: the connection and the view cap are checked again after each await", async () => {
+  // Every await of a mount (authorize, the viewer's identity) holds until the test lets it go.
+  const held: Array<() => void> = [];
+  let hold = false;
+  const { hub, conn } = fakeHub({ maxViewsPerConnection: 1 }, {
+    withConnContext: async (_conn, fn) => {
+      if (hold) await new Promise<void>((resolve) => held.push(resolve));
+      return await fn();
+    },
+  });
+  const waitHeld = async (n: number) => {
+    while (held.length < n) await new Promise((r) => setTimeout(r, 0));
+  };
+  const release = async (n: number) => {
+    await waitHeld(n);
+    held.splice(0, n).forEach((go) => go());
+  };
+
+  // authorize (the view has one) is the first await: a second view placed meanwhile fills the cap.
+  const { id } = counterView();
+  const c = conn();
+  hold = true;
+  const first = hub.mount(c, await mountFrame(id, { start: 1 }, "l1"));
+  await waitHeld(1);
+  hold = false;
+  await hub.mount(c, await mountFrame(id, { start: 2 }, "l2"));
+  await next(c, isLustre(0));
+  await release(1);
+  await first;
+  assertEquals((await next(c, isError("limit"))).subId, "l1", "re-checked after authorize");
+  assertEquals(hub.running(), 1);
+  hub.dispose();
+
+  // Without authorize, the viewer's identity is the await: two mounts race for the one slot.
+  const { id: open } = counterView({ authorize: undefined });
+  const d = conn();
+  hold = true;
+  const a = hub.mount(d, await mountFrame(open, { start: 1 }, "l1"));
+  const b = hub.mount(d, await mountFrame(open, { start: 2 }, "l2"));
+  await release(2);
+  await Promise.all([a, b]);
+  assertEquals((await next(d, isLustre(0))).vid, "l1");
+  assertEquals((await next(d, isError("limit"))).subId, "l2", "re-checked after the identity");
+  assertEquals(hub.running(), 1);
+  hub.dispose();
+
+  // The socket closed while the identity was read: nothing is placed.
+  const e = conn();
+  const closing = hub.mount(e, await mountFrame(open, { start: 1 }, "l1"));
+  await waitHeld(1);
+  e.closed = true;
+  await release(1);
+  hold = false;
+  await closing;
+  assertEquals([hub.running(), e.lustreViews.size, e.frames.length], [0, 0, 0]);
+});
+
+Deno.test("Lustre hub: an unreadable viewer identity resumes nothing", async () => {
+  // Reading the viewer (the session, in the connection's context) throws: the view still mounts,
+  // bound to an identity no other connection has, so no resume can take it.
+  const { hub, conn } = fakeHub({ viewResumeSeconds: 30 }, {
+    withConnContext: () => Promise.reject(new Error("session store down")),
+  });
+  const { id } = counterView({ authorize: undefined });
+  const a = conn("session=1");
+  await hub.mount(a, await mountFrame(id, { start: 1 }));
+  const { iid } = await next(a, isLustre(0));
+  hub.event(a, click());
+  await next(a, isLustre(1));
+  hub.drop(a);
+  assertEquals(hub.parked(), 1);
+  const b = conn("session=1");
+  await hub.mount(b, await mountFrame(id, { start: 1 }, "l1", iid));
+  const fresh = await next(b, isLustre(0));
+  assert(fresh.iid !== iid, "init ran again");
+  assertEquals(fresh.msg.vdom, "1");
+  assertEquals(hub.parked(), 1, "the parked runtime stays parked");
+  hub.dispose();
+});
+
+Deno.test("Lustre hub: resync re-mounts, discard stops without parking, array event data", async () => {
+  const { hub, conn } = fakeHub();
+  const { id } = counterView();
+  const c = conn();
+  await hub.mount(c, await mountFrame(id, { start: 3 }));
+  await next(c, isLustre(0));
+  hub.event(c, {
+    type: "lustre-event",
+    vid: "l1",
+    msg: { kind: 1, path: "0", name: "click", event: { keys: [1, "a", [true]] } },
+  });
+  assertEquals((await next(c, isLustre(1))).msg.patch, { text: "4" });
+  hub.resync(c, "l1");
+  assertEquals((await next(c, isLustre(0))).msg.vdom, "4", "the whole view, sent again");
+  hub.resync(c, 7); // not a view id: ignored
+  hub.unmount(c, null);
+  assertEquals(hub.running(), 1);
+  hub.discard(c);
+  assertEquals([hub.running(), hub.parked(), c.lustreViews.size], [0, 0, 0]);
 });
 
 Deno.test("Lustre hub: many sessions opened and closed leave no runtime, timer or parked view", async () => {

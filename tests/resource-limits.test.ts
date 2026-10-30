@@ -6,7 +6,7 @@
 // The systemd unit and fly.toml are in tests/deploy-presets.test.ts.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { fromFileUrl, join } from "@std/path";
+import { fromFileUrl, join, toFileUrl } from "@std/path";
 import {
   currentDenoIdentity,
   FIRST_RESOURCE_LIMITS_RUNTIME,
@@ -38,6 +38,7 @@ import {
   type ReexecToolchainDeps,
 } from "../src/cli/self-exec.ts";
 import { entrySource } from "../src/build/compile-app.ts";
+import { inChild } from "./helpers/isolated.ts";
 import type { DenoToolchainChoice } from "../src/build/deno-toolchain.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
@@ -549,5 +550,133 @@ Deno.test({
     } finally {
       await Deno.remove(dir, { recursive: true });
     }
+  },
+});
+
+/**
+ * `runVerb` for a core `start` whose run records the hand-off variables, in a child (it may exit,
+ * and it re-runs the CLI entry, here `entry.ts`, which records what it was started with).
+ */
+async function startThroughRunVerb(
+  env: Record<string, string | undefined>,
+  { prelude = "", config }: { prelude?: string; config?: string } = {},
+) {
+  const dir = await Deno.makeTempDir({ prefix: "denext-limits-gate-" });
+  try {
+    if (config) await Deno.writeTextFile(join(dir, "denext.config.ts"), config);
+    const out = join(dir, "entry.json");
+    const entry = join(dir, "entry.ts");
+    await Deno.writeTextFile(
+      entry,
+      `await Deno.writeTextFile(${JSON.stringify(out)}, JSON.stringify({
+  applied: Deno.env.get(${JSON.stringify(LIMITS_APPLIED_ENV)}),
+  handed: Deno.env.get(${JSON.stringify(START_LIMITS_ENV)}),
+  reranFor: Deno.env.get("DENEXT_RUNTIME_FLAGS_FOR"),
+}));
+Deno.exit(7);
+`,
+    );
+    const { value } = await inChild<{
+      exits: number[];
+      ran: Record<string, string | null> | null;
+    }>({
+      imports: `import { runVerb } from "@repo/src/cli/run-verb.ts";`,
+      body: `
+const exits: number[] = [];
+// The limits re-run ends the CLI with its child's code: kept here instead.
+Object.defineProperty(Deno, "exit", { value: (code: number) => void exits.push(code) });
+${prelude}
+let ran: Record<string, string | null> | null = null;
+const read = (name: string) => Deno.env.get(name) ?? null;
+await runVerb(${JSON.stringify(toFileUrl(entry).href)}, {
+  name: "start",
+  summary: "",
+  run: () => {
+    ran = { applied: read(${JSON.stringify(LIMITS_APPLIED_ENV)}), handed: read(${
+        JSON.stringify(START_LIMITS_ENV)
+      }) };
+  },
+}, {
+  positionals: [],
+  flags: {},
+  global: { cwd: ${JSON.stringify(dir)}, json: false, verbose: false, quiet: false },
+  rest: [],
+}, ${JSON.stringify(dir)});
+return { exits, ran };
+`,
+      env,
+      cwd: dir,
+    });
+    let entryRun: Record<string, string | undefined> | null = null;
+    try {
+      entryRun = JSON.parse(await Deno.readTextFile(out));
+    } catch { /* not re-run */ }
+    return { ...value, entryRun };
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+Deno.test({
+  name: "resource limits: `denext start`'s last gate serves with them, else re-runs the CLI once",
+  ignore: !onLimitsRuntime,
+  async fn() {
+    const wanted = limitFlagsFor(runtime.deno, ["--max-memory=512m"]).join(" ");
+    assert(wanted.length > 0);
+    // Started with them (the marker names exactly them): it serves, and neither hand-off variable
+    // is left for what the server starts.
+    const serving = await startThroughRunVerb({
+      [START_LIMITS_ENV]: "--max-memory=512m",
+      [LIMITS_APPLIED_ENV]: wanted,
+    });
+    assertEquals(serving.exits, []);
+    assertEquals(serving.ran, { applied: null, handed: null });
+    assertEquals(serving.entryRun, null, "no re-run");
+    // Handed them as data (a hop before it): the CLI re-runs once with them and exits with its
+    // child's code; the child is the one that serves.
+    for (const moduleActive of [undefined, "1"]) {
+      const hop = await startThroughRunVerb({
+        [START_LIMITS_ENV]: "--max-memory=512m",
+        [LIMITS_APPLIED_ENV]: undefined,
+        DENEXT_MODULE_ACTIVE: moduleActive,
+      });
+      assertEquals(hop.exits, [7], "the child's exit code");
+      assertEquals(hop.ran, null, "the verb ran in the child, not here");
+      assertEquals(hop.entryRun?.applied, wanted);
+      assertEquals(hop.entryRun?.handed, "--max-memory=512m");
+      assert(hop.entryRun?.reranFor, "its toolchain gate does not re-run it again");
+    }
+    // Run with less than every permission (no --allow-ffi): the re-run gets the grants this
+    // process holds, not -A.
+    const scoped = await startThroughRunVerb({
+      [START_LIMITS_ENV]: "--max-memory=512m",
+      [LIMITS_APPLIED_ENV]: undefined,
+    }, { prelude: `await Deno.permissions.revoke({ name: "ffi" });` });
+    assertEquals(scoped.exits, [7]);
+    assertEquals(scoped.entryRun?.applied, wanted);
+    // Without the env grant for the hand-off variables they read as absent: the limits come from
+    // the project's config, and the server still runs under them.
+    const unreadable = await startThroughRunVerb({
+      [START_LIMITS_ENV]: "--max-memory=1m",
+      [LIMITS_APPLIED_ENV]: undefined,
+    }, {
+      config: "export default { start: { limits: { memory: 512 } } };\n",
+      prelude: `const get = Deno.env.get.bind(Deno.env);
+Deno.env.get = (name: string) => {
+  if (name === ${JSON.stringify(START_LIMITS_ENV)} || name === ${
+        JSON.stringify(LIMITS_APPLIED_ENV)
+      }) {
+    throw new Deno.errors.NotCapable(\`Requires env access to "\${name}"\`);
+  }
+  return get(name);
+};`,
+    });
+    assertEquals(unreadable.exits, [7]);
+    assertEquals(unreadable.entryRun?.applied, wanted);
+    assertEquals(
+      unreadable.entryRun?.handed,
+      "--max-memory=512m",
+      "the config's, not the variable's",
+    );
   },
 });
