@@ -355,6 +355,28 @@ const bridgeOriginGuard: Check = {
     }),
 };
 
+/**
+ * `plugins.DenextBridge.otaFileGuard: false`: the iOS shell serves downloaded over-the-air UIs
+ * even where `DenextOtaFileGuard` cannot be installed, so Capacitor answers `/_capacitor_file_`
+ * requests for their files without the signed manifest's check.
+ */
+const otaFileGuard: Check = {
+  id: "ota-file-guard",
+  profiles: ["store", "release"],
+  run: (p) =>
+    p.configs.flatMap(({ label, config }) => {
+      if (at(config, "plugins", "DenextBridge", "otaFileGuard") !== false) return [];
+      return [{
+        check: "ota-file-guard",
+        level: "warning" as const,
+        message: `${label}: plugins.DenextBridge.otaFileGuard is false, so a page can read a ` +
+          "downloaded UI's files through /_capacitor_file_ without the signed manifest's check " +
+          "wherever the guard cannot be installed",
+        fix: "remove otaFileGuard: false (without the guard the app then serves its bundled UI)",
+      }];
+    }),
+};
+
 /** The bridge view controller denext generates, and the guard every current one carries. */
 const BRIDGE_VIEW_CONTROLLER = "ios/App/App/DenextBridgeViewController.swift";
 const FRAME_GUARD_CLASS = "DenextMainFrameBridgeGuard";
@@ -1463,6 +1485,7 @@ const CHECKS: readonly Check[] = [
   mixedContent,
   legacyBridge,
   bridgeOriginGuard,
+  otaFileGuard,
   allowNavigation,
   bridgeFrameGuard,
   exportRoutes,

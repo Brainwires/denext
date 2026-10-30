@@ -146,6 +146,45 @@ and this project adheres to
 
 ## [4.10.1] - 2026-10-29
 
+- **The OTA plugin's serve check, hardened** (`denext mobile add-ota` template generation 12; re-run
+  it and ship a new binary). The iOS and Android plugins check a manifest's platform stamp
+  themselves and refuse another target's signed export with `platform_mismatch`, as
+  `checkForUiUpdate` already did in the page. The check on served files fails closed: a base
+  other than the bundled UI or a downloaded version's directory is refused, where it used to
+  pass. A `/_capacitor_file_` request (`Capacitor.convertFileSrc`) for a file inside the
+  downloaded versions, however the path is spelled (`..`, a symbolic link, another case), now
+  gets the same manifest check as the router's requests, and a changed file quarantines the
+  version; files elsewhere are served as before. On iOS the bridge turns Capacitor's asset
+  handler into `DenextOtaFileGuard` for this, since Capacitor answers those requests without
+  the router. Valid updates are served exactly as before.
+  - A `/_capacitor_file_` path with a NUL or another control character is refused wherever it
+    points: on iOS a NUL turned the path Capacitor's handler reads into an empty URL, and the read
+    raised an exception that crashed the app (during a trial launch, a crash loop rolled the
+    update back). A path to a file that is not there is refused too, and the iOS check resolves
+    paths as the OS opens them (`/private/var` and `/var` alike), so a `..` spelling of a missing
+    file inside the versions root no longer passes as outside it.
+  - When the iOS bridge cannot install `DenextOtaFileGuard` (no asset handler, or one of the app's
+    own class), it serves no downloaded UI: the launch falls back to the bundled UI, `onOtaRejected`
+    fires with `code: "guard_unavailable"` (nothing is quarantined), and `download` / `activate` /
+    `apply` are refused with that code. An app with its own asset handler that accepts unchecked
+    `/_capacitor_file_` reads opts out with `plugins.DenextBridge.otaFileGuard: false`, which
+    `denext mobile doctor` now warns about (`ota-file-guard`), as it does for `frameGuard: false`.
+  - A request for a downloaded UI's file in another letter case (`APP.JS` for `app.js`), which a
+    case-insensitive volume opens as that same file, is refused (the request fails) on both
+    platforms, through the router and `/_capacitor_file_` alike. It used to count as a file
+    outside the signed manifest and quarantine the version, so any script in the page, a
+    third-party one included, could take the app's current UI out of service. A file the manifest
+    does not list under any spelling still quarantines it.
+  - **Breaking for signed deploys of a web export:** an app that embeds a public key now takes only
+    its own platform's stamped export, so a web export signed with the same key cannot install
+    itself on a phone (`platform_mismatch`). `denext mobile build` and `denext export --platform
+    ios|android` already stamp the export; for an unstamped one, `denext ota manifest <dir>
+    --platform ios|android --sign` stamps it before signing. Unsigned, pinned-origin apps still
+    take an unstamped export.
+  - A file verified once in a process is hashed again when its size, modification time, change
+    time or inode changes, so a file rewritten while the app runs is refused (and quarantines the
+    version) instead of being served from the first verdict.
+
 ### Added
 
 - **`start.limits`: resource limits for the production server.**
@@ -224,6 +263,15 @@ and this project adheres to
   which a release is gated on, now runs `denext toolchain install --with fastlane` on its macOS 15
   arm64 runner (the pinned portable Ruby, its gems' C extensions built with the runner's Xcode)
   and then `denext fastlane ios build unsigned:true` on the example app, failing on any step.
+
+- **`secureStore.set(key, value, { accessibility })`** picks the iOS Keychain class:
+  `"whenUnlocked"` (the default, unchanged), `"whenUnlockedThisDeviceOnly"`, `"afterFirstUnlock"`,
+  `"afterFirstUnlockThisDeviceOnly"` or `"whenPasscodeSetThisDeviceOnly"`, so a refresh token can
+  stay out of backups and off other devices. On Android the secure-storage plugin's Keystore key
+  is already device-bound and readable after the first unlock; on the web and in a Deno Desktop
+  window the option is accepted and has no effect. An unknown class, or one other than
+  `"whenPasscodeSetThisDeviceOnly"` beside `requireBiometric`, is a `TypeError`. The type is
+  exported as `SecureStoreAccessibility`.
 
 ### Changed
 

@@ -156,6 +156,41 @@ Deno.test("mobile doctor --release: OTA installed without a public key is an err
   }
 });
 
+Deno.test("mobile doctor: plugins.DenextBridge.otaFileGuard: false is a warning in both profiles", async () => {
+  const dir = await project(cleanFiles());
+  const doctor = async (profile: "store" | "release", denextBridge?: Record<string, unknown>) => {
+    await Deno.writeTextFile(
+      join(dir, "capacitor.config.json"),
+      JSON.stringify({
+        appId: "dev.example",
+        appName: "Example",
+        webDir: "out",
+        ...(denextBridge ? { plugins: { DenextBridge: denextBridge } } : {}),
+      }),
+    );
+    const report = await runMobileDoctor({ root: dir, profile });
+    assert(report.checks.includes("ota-file-guard"), profile);
+    return report.findings.filter((f) => f.check === "ota-file-guard");
+  };
+  try {
+    for (const profile of ["store", "release"] as const) {
+      assertEquals(await doctor(profile), [], profile);
+      assertEquals(await doctor(profile, { otaFileGuard: true }), [], profile);
+      const off = await doctor(profile, { otaFileGuard: false });
+      assertEquals(off.length, 1, profile);
+      assertEquals(off[0].level, "warning");
+      assertStringIncludes(
+        off[0].message,
+        "capacitor.config.json: plugins.DenextBridge.otaFileGuard is false, so ",
+      );
+      assertStringIncludes(off[0].message, "/_capacitor_file_");
+      assertStringIncludes(off[0].fix, "remove otaFileGuard: false");
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("mobile doctor --store flags every planted App Review problem, each with a fix", async () => {
   const files: Record<string, string | null> = {
     ...cleanFiles(),

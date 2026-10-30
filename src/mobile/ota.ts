@@ -63,8 +63,15 @@ import {
  *   `android`): it is that platform's export (`denext export --platform`), with that platform's
  *   files. Checked here, before the native side sees it. The manifest's `platform` field is not
  *   signed; the export's stamp file is (the version covers it), so a stamped export is refused
- *   by another target whether or not the field is present. Only a manifest with neither (a `web`
- *   export) fits every shell.
+ *   by another target whether or not the field is present. A manifest with neither (a `web`
+ *   export) fits a shell without a public key only: an app that embeds one (`denext mobile add-ota
+ *   --public-key`) takes only its own platform's stamped export (`denext export --platform ios`,
+ *   or `denext ota manifest --platform ios` over the export), so a web export signed with the same
+ *   key cannot install itself on a phone. The page cannot tell whether the binary embeds a key, so
+ *   that refusal comes from the native side.
+ * - `guard_unavailable`: the iOS shell could not install the check on Capacitor's
+ *   `/_capacitor_file_` requests (an app whose web view uses its own asset handler class), so it
+ *   serves no downloaded UI in this process and refuses every update: see {@linkcode onOtaRejected}.
  *
  * The trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,
  * `native_mismatch`, `expired`, and
@@ -84,7 +91,8 @@ export type OtaErrorCode =
   | "native_too_old"
   | "native_mismatch"
   | "platform_mismatch"
-  | "expired";
+  | "expired"
+  | "guard_unavailable";
 
 // An array literal, not a `new Set(...)`: bundlers keep a module-level constructor call,
 // which would pin this module into every bundle that imports `denext/mobile`.
@@ -102,6 +110,7 @@ const OTA_ERROR_CODES: readonly string[] = [
   "native_mismatch",
   "platform_mismatch",
   "expired",
+  "guard_unavailable",
 ] satisfies readonly OtaErrorCode[];
 
 /** The native plugin's name: `window.Capacitor.Plugins.DenextOta`. */
@@ -132,13 +141,22 @@ export interface OtaStatus {
 }
 
 /**
- * What {@linkcode onOtaRejected} reports: a downloaded UI that failed re-verification.
+ * What {@linkcode onOtaRejected} reports: a downloaded UI that failed re-verification, or one the
+ * shell did not serve because it could not check it.
  */
 export interface OtaRejectedEvent {
-  /** The version that was quarantined. */
+  /** The version that was quarantined (or, with `guard_unavailable`, not served). */
   readonly version: string;
   /** The native side's reason, e.g. `"assets/app.js does not match the signed manifest."`. */
   readonly reason: string;
+  /**
+   * `tampered`: the UI changed on the device after the download and was quarantined.
+   * `guard_unavailable`: the iOS shell could not install its check on Capacitor's
+   * `/_capacitor_file_` requests, so this launch served the bundled UI instead; nothing was
+   * quarantined, and updates are refused with that code until the app ships a binary that can
+   * install it (or opts out with `plugins.DenextBridge.otaFileGuard: false`).
+   */
+  readonly code: "tampered" | "guard_unavailable";
 }
 
 /** The JS face of the native `DenextOta` plugin (Capacitor seeds a stub per method). */
@@ -880,6 +898,11 @@ export async function otaStatus(): Promise<OtaStatus | null> {
  * kept until a listener is added, so register early (in the root layout); {@linkcode otaStatus}
  * reports the same version as `tampered`. The version may be downloaded again.
  *
+ * It also fires, with `code: "guard_unavailable"`, when the iOS shell did not serve a downloaded
+ * UI because it could not install its check on Capacitor's `/_capacitor_file_` requests (the web
+ * view's asset handler is the app's own class): the bundled UI runs instead, nothing is
+ * quarantined, and updates are refused with that code in this process.
+ *
  * On the web, and in a shell whose `DenextOta` plugin predates this check, it never fires and
  * the returned function does nothing.
  *
@@ -889,7 +912,7 @@ export async function otaStatus(): Promise<OtaStatus | null> {
  * ```ts
  * import { onOtaRejected } from "denext/mobile";
  *
- * onOtaRejected(({ version, reason }) => reportToServer("ota-tampered", { version, reason }));
+ * onOtaRejected(({ version, reason, code }) => reportToServer(`ota-${code}`, { version, reason }));
  * ```
  */
 export function onOtaRejected(listener: (event: OtaRejectedEvent) => void): () => void {
@@ -900,6 +923,7 @@ export function onOtaRejected(listener: (event: OtaRejectedEvent) => void): () =
     listener({
       version: event.version,
       reason: typeof event.reason === "string" ? event.reason : "",
+      code: event.code === "guard_unavailable" ? "guard_unavailable" : "tampered",
     });
   }));
 }

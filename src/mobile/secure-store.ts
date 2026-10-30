@@ -38,7 +38,37 @@ export interface SecureStoreSetOptions {
    * promises a protection it cannot give.
    */
   readonly fallback?: SecureStoreFallback;
+  /**
+   * When the iOS Keychain lets the app read the value (its `kSecAttrAccessible` class), for the
+   * shell's secure-storage plugin. The default stays `"whenUnlocked"`: readable while the device is
+   * unlocked, and carried to a new device by an encrypted backup. `"…ThisDeviceOnly"` keeps a
+   * value (a refresh token, say) out of every backup and off any other device;
+   * `"afterFirstUnlock…"` keeps it readable while the device is locked again after its first
+   * unlock (background work); `"whenPasscodeSetThisDeviceOnly"` also needs a device passcode and is
+   * deleted when the passcode is removed. A value already stored keeps its class until it is set
+   * again.
+   *
+   * Android: the plugin's Android Keystore key never leaves the device and needs no unlock, so
+   * every value there behaves as `"afterFirstUnlockThisDeviceOnly"`, whatever is passed. On the
+   * web and in a Deno Desktop window the option is accepted and has no effect (the OS store there
+   * has no such classes). A `requireBiometric` value is always `"whenPasscodeSetThisDeviceOnly"`;
+   * another class beside it is refused. Checked on every platform: an unknown value is a
+   * `TypeError`.
+   */
+  readonly accessibility?: SecureStoreAccessibility;
 }
+
+/**
+ * The iOS Keychain accessibility classes {@linkcode SecureStoreSetOptions.accessibility} takes
+ * (`kSecAttrAccessibleWhenUnlocked`, `…WhenUnlockedThisDeviceOnly`, `…AfterFirstUnlock`,
+ * `…AfterFirstUnlockThisDeviceOnly`, `…WhenPasscodeSetThisDeviceOnly`).
+ */
+export type SecureStoreAccessibility =
+  | "whenUnlocked"
+  | "whenUnlockedThisDeviceOnly"
+  | "afterFirstUnlock"
+  | "afterFirstUnlockThisDeviceOnly"
+  | "whenPasscodeSetThisDeviceOnly";
 
 /** Where {@linkcode SecureStore.set} put the value. */
 export interface SecureStoreSetResult {
@@ -108,10 +138,42 @@ interface SecureStoragePlugin {
  * `SecureStorage.getItem`/`setItem` read and write.
  */
 const NATIVE_PREFIX = "capacitor-storage_";
-/** `KeychainAccess.whenUnlocked`, the plugin's default. */
-const WHEN_UNLOCKED = 0;
+/**
+ * The accessibility classes in the order of the plugin's `KeychainAccess` enum: a class's index is
+ * the `access` number its `internalSetItem` takes (`whenUnlocked`, 0, is the plugin's default).
+ */
+const KEYCHAIN_ACCESS: readonly SecureStoreAccessibility[] = [
+  "whenUnlocked",
+  "whenUnlockedThisDeviceOnly",
+  "afterFirstUnlock",
+  "afterFirstUnlockThisDeviceOnly",
+  "whenPasscodeSetThisDeviceOnly",
+];
 /** `KeychainAccess.whenPasscodeSetThisDeviceOnly`, for a biometric-gated value. */
 const WHEN_PASSCODE_SET_THIS_DEVICE_ONLY = 4;
+
+/**
+ * The plugin's `access` number for `options` (default `whenUnlocked`; a `requireBiometric` value
+ * `whenPasscodeSetThisDeviceOnly`), refusing an unknown class or one that contradicts
+ * `requireBiometric`.
+ */
+function keychainAccess(options: SecureStoreSetOptions | undefined): number {
+  const wanted = options?.accessibility;
+  const gated = options?.requireBiometric === true;
+  if (wanted === undefined) return gated ? WHEN_PASSCODE_SET_THIS_DEVICE_ONLY : 0;
+  const access = KEYCHAIN_ACCESS.indexOf(wanted);
+  if (access < 0) {
+    throw new TypeError(
+      `secureStore.set: accessibility must be one of ${KEYCHAIN_ACCESS.join(", ")}`,
+    );
+  }
+  if (gated && access !== WHEN_PASSCODE_SET_THIS_DEVICE_ONLY) {
+    throw new TypeError(
+      "secureStore.set: a requireBiometric value is always whenPasscodeSetThisDeviceOnly",
+    );
+  }
+  return access;
+}
 /**
  * The prefix a biometric-gated value is stored with, so a later `get` knows to ask first. It
  * starts with a NUL, which no ordinary string value is refused for except this exact prefix.
@@ -497,11 +559,7 @@ async function osGet(key: string): Promise<string | null | undefined> {
 }
 
 /** Write `data` to the OS store; `false` when there is none here (the caller takes the web path). */
-async function osSet(
-  key: string,
-  data: string,
-  options: SecureStoreSetOptions | undefined,
-): Promise<boolean> {
+async function osSet(key: string, data: string, access: number): Promise<boolean> {
   if (onDesktop() && await viaDesktop("secureStore", (d) => d.secureSet(key, data), true)) {
     return true;
   }
@@ -512,9 +570,7 @@ async function osSet(
       prefixedKey: NATIVE_PREFIX + key,
       data,
       sync: false,
-      access: options?.requireBiometric === true
-        ? WHEN_PASSCODE_SET_THIS_DEVICE_ONLY
-        : WHEN_UNLOCKED,
+      access,
     })
   );
   return true;
@@ -556,6 +612,10 @@ async function afterOsSet(key: string, options: SecureStoreSetOptions | undefine
  * once and `set` resolves `{ stored: "session" }`. `get` also answers from that copy when the OS
  * store resolves with no value for the key (its own value, when present, wins). A successful OS
  * `set` clears the copy and `delete` clears both. That copy is NOT secret and ends with the tab.
+ *
+ * `set(key, value, { accessibility: "afterFirstUnlockThisDeviceOnly" })` picks the iOS Keychain
+ * class (default `"whenUnlocked"`; see {@linkcode SecureStoreSetOptions.accessibility}): a
+ * `"…ThisDeviceOnly"` value never leaves the device in a backup.
  *
  * `set(key, value, { requireBiometric: true })` gates the value: every `get` asks for Face ID /
  * Touch ID / a fingerprint first (`denext mobile add biometrics`) and rejects with a
@@ -612,10 +672,11 @@ export const secureStore: SecureStore = {
     if (typeof value !== "string") {
       throw new TypeError("secureStore.set: the value must be a string (JSON.stringify it)");
     }
+    const access = keychainAccess(options);
     const data = stored(value, options);
     if (await gatedSet(key, value, options)) return { stored: "keychain" };
     try {
-      if (await osSet(key, data, options)) {
+      if (await osSet(key, data, access)) {
         await afterOsSet(key, options);
         return { stored: "keychain" };
       }

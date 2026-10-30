@@ -228,6 +228,13 @@ public final class OtaReverifyHarness {
         return null;
     }
 
+    static boolean hasArity(String name, int arity) {
+        for (Method method : DenextOtaStore.class.getDeclaredMethods()) {
+            if (method.getName().equals(name) && method.getParameterCount() == arity) return true;
+        }
+        return false;
+    }
+
     static boolean has(String name) {
         for (Method method : DenextOtaStore.class.getDeclaredMethods()) {
             if (method.getName().equals(name)) return true;
@@ -265,6 +272,38 @@ public final class OtaReverifyHarness {
     static boolean refused(DenextOtaStore store, File dir, String path) {
         ProcessedRoute route = serve(store, "", path);
         return route != null && !route.isAsset() && route.getPath().equals(dir.getAbsolutePath());
+    }
+
+    /** What the local server reads for a {@code /_capacitor_file_} request of {@code file}. */
+    static String capacitorFile(DenextOtaStore store, String file) {
+        ProcessedRoute route = serve(store, "", Bridge.CAPACITOR_FILE_START + file);
+        return route == null ? null : route.getPath();
+    }
+
+    /** Whether a {@code /_capacitor_file_} request of {@code file} reads that file. */
+    static boolean fileServed(DenextOtaStore store, String file) {
+        return (Bridge.CAPACITOR_FILE_START + file).equals(capacitorFile(store, file));
+    }
+
+    /**
+     * The platform check's refusal code for a manifest with that stamp and field, or null, in an app
+     * that embeds a public key ({@code signed}) or not.
+     */
+    static String platformRefusal(String stamp, Object platform, boolean signed) throws Exception {
+        List<DenextOtaStore.ManifestFile> files = manifestFiles();
+        if (stamp != null) {
+            byte[] bytes = stamp.getBytes(StandardCharsets.UTF_8);
+            files.add(new DenextOtaStore.ManifestFile("_denext/platform.txt", sha256(bytes), bytes.length));
+        }
+        if (!has("checkPlatform")) return "missing";
+        try {
+            if (call(null, "checkPlatform", platform, files, signed) == null && !hasArity("checkPlatform", 3)) {
+                return "missing";
+            }
+            return null;
+        } catch (IllegalStateException ex) {
+            return ex.getCause() instanceof DenextOtaStore.OtaException ? ((DenextOtaStore.OtaException) ex.getCause()).code : ex.toString();
+        }
     }
 
     public static void main(String[] args) throws Exception {
@@ -353,7 +392,39 @@ public final class OtaReverifyHarness {
         check("a path that climbs out is refused without quarantining", refused(store, dir, "/../secret") && app.prefs.getString("tampered", null) == null);
         ProcessedRoute file = serve(store, "", "/_capacitor_file_/data/x.png");
         check("Capacitor's file paths pass through", file != null && file.getPath().equals("/_capacitor_file_/data/x.png"));
+        File root = dir.getParentFile();
+        check("capacitor file: a file outside the versions root passes through", fileServed(store, "/tmp/photo.jpg"));
+        check("capacitor file: an untampered file of a downloaded UI is served", fileServed(store, dir.getAbsolutePath() + "/app.js"));
+        Files.write(new File(root, "stray.txt").toPath(), "x".getBytes(StandardCharsets.UTF_8));
+        check(
+            "capacitor file: a file outside a version directory is refused",
+            !fileServed(store, root.getAbsolutePath() + "/stray.txt") && call(store, "tampered") == null
+        );
+        check(
+            "capacitor file: a path that climbs into the versions root is checked",
+            !fileServed(store, dir.getAbsolutePath() + "/../" + version + "/nope.js") && call(store, "tampered") == null
+        );
+        File link = new File(root.getParentFile(), "ota-link");
+        Files.createSymbolicLink(link.toPath(), root.getAbsoluteFile().toPath());
+        check(
+            "capacitor file: a symlinked spelling of the versions root is checked",
+            !fileServed(store, link.getAbsolutePath() + "/stray.txt") && fileServed(store, link.getAbsolutePath() + "/" + version + "/app.js")
+        );
+        // No file Capacitor names has a control character; a NUL cuts a path short in native code.
+        check("capacitor file: a NUL that cuts the path short is refused", !fileServed(store, "/tmp/photo.jpg\0.png"));
+        check("capacitor file: a control character is refused", !fileServed(store, "/tmp/photo\u0001.jpg"));
+        check(
+            "capacitor file: a NUL is refused inside the versions root too",
+            !fileServed(store, dir.getAbsolutePath() + "/app.js\0") && call(store, "tampered") == null
+        );
+        String refusedFile = capacitorFile(store, root.getAbsolutePath() + "/stray.txt");
+        check("capacitor file: a refused file reads a directory (the request fails)", refusedFile != null && new File(refusedFile.replace(Bridge.CAPACITOR_FILE_START, "")).isDirectory());
+        bridge.served = "/elsewhere";
+        check("fail closed: a served directory outside the versions root is refused", "/elsewhere".equals(serve(store, "", "/app.js").getPath()));
+        bridge.served = root.getAbsolutePath();
+        check("fail closed: the versions root itself is refused as a base", root.getAbsolutePath().equals(serve(store, "", "/app.js").getPath()));
         bridge.served = "public";
+        check("capacitor file: checked while the bundled assets are served too", !fileServed(store, root.getAbsolutePath() + "/stray.txt"));
         ProcessedRoute asset = serve(store, "", "/app.js");
         ProcessedRoute assetIndex = serve(store, "public", "/index.html");
         check(
@@ -377,6 +448,105 @@ public final class OtaReverifyHarness {
         check("the plugin is told while it is being served", events.equals(List.of(version + " true")));
         check("nothing else of it is served afterwards", refused(store, dir, "/index.html"));
         check("the next launch serves the bundled UI", launch(app).startDirectory() == null);
+
+        // ---- a changed file read through /_capacitor_file_ -----------------------------------------
+        app = new App(new File(work, "capacitor-file"), publicKey);
+        launch(app).startDirectory();
+        dir = install(app, version, storedManifest(version, "hello", signature));
+        Files.write(new File(dir, "app.js").toPath(), "steal(document.cookie)".getBytes(StandardCharsets.UTF_8));
+        app.prefs.values.put("current", version);
+        events.clear();
+        store = launch(app);
+        store.startDirectory();
+        bridge = attach(store);
+        bridge.served = dir.getAbsolutePath();
+        check(
+            "capacitor file: a changed file is refused and quarantines the UI",
+            !fileServed(store, Bridge.CAPACITOR_FILE_START + dir.getAbsolutePath() + "/app.js") && version.equals(call(store, "tampered"))
+        );
+        check("capacitor file: the plugin is told while the version is being served", events.equals(List.of(version + " true")));
+
+        // ---- another case of a UI file's path ------------------------------------------------------
+        // On a case-insensitive volume APP.JS opens app.js; any page script can ask for one, so it is
+        // refused and never quarantines. On a case-sensitive volume (Android's app storage) a hard
+        // link stands in for that second spelling of the same file.
+        app = new App(new File(work, "case"), publicKey);
+        launch(app).startDirectory();
+        dir = install(app, version, storedManifest(version, "hello", signature));
+        String[][] variants = { { "app.js", "APP.JS" }, { "assets/logo.svg", "Assets/Logo.svg" }, { "_denext/ota.json", "_DENEXT/OTA.JSON" } };
+        for (String[] variant : variants) {
+            File to = new File(dir, variant[1]);
+            if (!to.exists()) {
+                to.getParentFile().mkdirs();
+                Files.createLink(to.toPath(), new File(dir, variant[0]).toPath());
+            }
+        }
+        app.prefs.values.put("current", version);
+        events.clear();
+        store = launch(app);
+        store.startDirectory();
+        bridge = attach(store);
+        bridge.served = dir.getAbsolutePath();
+        check(
+            "case: another case of a UI file is refused without quarantining",
+            refused(store, dir, "/APP.JS") && refused(store, dir, "/Assets/Logo.svg") && call(store, "tampered") == null
+        );
+        check(
+            "case: another case of the stored manifest is refused without quarantining",
+            refused(store, dir, "/_DENEXT/OTA.JSON") && call(store, "tampered") == null
+        );
+        check(
+            "capacitor file: another case of a UI file is refused without quarantining",
+            !fileServed(store, dir.getAbsolutePath() + "/APP.JS") && call(store, "tampered") == null
+        );
+        check(
+            "case: the UI is still served after it",
+            served(store, dir, "/app.js") && fileServed(store, dir.getAbsolutePath() + "/app.js") &&
+                version.equals(app.prefs.getString("current", null)) && events.isEmpty()
+        );
+        // A file of the UI under a name that is not another case of its own (a hard link) was added.
+        Files.createLink(new File(dir, "copy.js").toPath(), new File(dir, "app.js").toPath());
+        check(
+            "case: a UI file under another name still quarantines the UI",
+            refused(store, dir, "/copy.js") && version.equals(call(store, "tampered"))
+        );
+
+        // ---- a verified file rewritten while the process runs ---------------------------------------
+        // The same size and modification time: only the change time (and the bytes) tell it apart.
+        app = new App(new File(work, "rewritten"), publicKey);
+        launch(app).startDirectory();
+        dir = install(app, version, storedManifest(version, "hello", signature));
+        app.prefs.values.put("current", version);
+        store = launch(app);
+        store.startDirectory();
+        bridge = attach(store);
+        bridge.served = dir.getAbsolutePath();
+        check("rewrite: a verified file is served", served(store, dir, "/app.js"));
+        File rewritten = new File(dir, "app.js");
+        long modified = rewritten.lastModified();
+        // Android's stat reports the change time in whole seconds: rewrite in a later second.
+        Thread.sleep(1_100);
+        Files.write(rewritten.toPath(), "console.log('xx')".getBytes(StandardCharsets.UTF_8));
+        rewritten.setLastModified(modified);
+        check(
+            "rewrite: a verified file rewritten in place is refused and quarantines the UI",
+            refused(store, dir, "/app.js") && version.equals(call(store, "tampered"))
+        );
+
+        // ---- the platform stamp, checked natively too ----------------------------------------------
+        check("platform: an Android export is accepted", platformRefusal("android", "android", false) == null);
+        check("platform: an Android stamp without the field is accepted", platformRefusal("android", null, false) == null);
+        check("platform: an iOS export is refused (platform_mismatch)", "platform_mismatch".equals(platformRefusal("ios", "ios", false)));
+        check("platform: an iOS stamp without the field is refused", "platform_mismatch".equals(platformRefusal("ios", null, false)));
+        check("platform: the field without a matching stamp is refused", "platform_mismatch".equals(platformRefusal(null, "android", false)));
+        check("platform: a field that disagrees with the stamp is refused", "platform_mismatch".equals(platformRefusal("ios", "android", false)));
+        check("platform: a field that is not a string is invalid", "invalid".equals(platformRefusal("android", 1, false)));
+        // An app that embeds a public key takes only its own platform's stamped export: a web export
+        // signed with the same key is not an Android UI. Unsigned (pinned-origin) apps take it as before.
+        check("platform: a signed app refuses an unstamped export (platform_mismatch)", "platform_mismatch".equals(platformRefusal(null, null, true)));
+        check("platform: a signed app takes its own platform's export", platformRefusal("android", "android", true) == null);
+        check("platform: a signed app refuses another platform's export", "platform_mismatch".equals(platformRefusal("ios", "ios", true)));
+        check("platform: an unsigned app takes an unstamped export", platformRefusal(null, null, false) == null);
 
         // ---- the stored manifest changed: refused at launch, before any page ---------------------
         app = new App(new File(work, "manifest"), publicKey);
