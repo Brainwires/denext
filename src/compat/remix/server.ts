@@ -568,7 +568,7 @@ export async function runLoaderResponse(
     return await composeMiddleware(
       chainFunctions(middleware),
       { request, params, context },
-      () => resourceResult(() => loader({ request, params, context })),
+      () => resourceResult(() => loader({ request, params, context }), !!middleware?.length),
     );
   } catch (thrown) {
     return thrownToResourceResponse(thrown); // a thrown redirect/Response IS the response
@@ -595,7 +595,7 @@ export async function runActionResponse(
     return await composeMiddleware(
       chainFunctions(middleware),
       { request, params, context },
-      () => resourceResult(() => action({ request, params, context })),
+      () => resourceResult(() => action({ request, params, context }), !!middleware?.length),
     );
   } catch (thrown) {
     return thrownToResourceResponse(thrown); // a thrown redirect/Response IS the response
@@ -605,14 +605,22 @@ export async function runActionResponse(
 /**
  * A resource route's handler result as its `Response`; a thrown `Response` (a redirect, or
  * `throw new Response(…, { status })`) is the response too, so it reaches the middleware's
- * `next()`.
+ * `next()`. With `wrapped` (the route has middleware) a thrown error reaches `next()` as React
+ * Router's last-resort 500 (`returnLastResortErrorResponse`: `Unexpected Server Error`, as
+ * plain text), logged, so a middleware can replace it; without middleware it rethrows to the
+ * pipeline's 500 as before.
  */
-async function resourceResult(handler: () => unknown): Promise<Response> {
+async function resourceResult(handler: () => unknown, wrapped: boolean): Promise<Response> {
   try {
     return toResourceResponse(await handler());
   } catch (thrown) {
     if (isResponse(thrown)) return thrown;
-    throw thrown;
+    if (!wrapped) throw thrown;
+    console.error(thrown);
+    return new Response("Unexpected Server Error", {
+      status: 500,
+      headers: { "Content-Type": "text/plain" },
+    });
   }
 }
 

@@ -156,7 +156,9 @@ export default { plugins: [reactRouter({ getLoadContext: () => ({ db }) })] };`}
         answers as that route's loader throwing it would: a redirect, or the nearest error boundary
         at its status. On a resource route, a plain (no-JavaScript) POST to a page's action and an
         action submitted from the page, <code>next()</code>{" "}
-        runs the handler and resolves to its response.
+        runs the handler and resolves to its response; on a resource route an error the handler
+        throws reaches <code>next()</code>{" "}
+        as React Router's 500 response, which a middleware can replace.
       </p>
 
       <h2>Limitations</h2>

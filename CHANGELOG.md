@@ -19,7 +19,8 @@ and this project adheres to
   a render error reaches `next()` as the error response at its status. The chain runs outermost
   route first with one shared `context`, and a throw before `next()` answers as that route's
   loader throwing it would. Around an action submitted from the page, `next()` now runs the
-  action and resolves to its response; on a resource route a thrown `Response` reaches `next()`.
+  action and resolves to its response; on a resource route a thrown `Response` reaches `next()`, and a thrown error does as React
+  Router's 500 response (`Unexpected Server Error`), which a middleware can replace.
 
 ## [4.10.1] - 2026-10-29
 

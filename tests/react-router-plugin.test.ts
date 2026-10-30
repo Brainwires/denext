@@ -640,6 +640,7 @@ export default [
     route("teams/:id", "routes/team.tsx"),
     route("boom", "routes/boom.tsx"),
   ]),
+  route("api/boom", "routes/api-boom.ts"),
 ];
 `,
   "routes/shell.tsx": `import { Outlet } from "react-router";
@@ -667,6 +668,10 @@ export function loader({ context, params }) {
 }
 export default function Team({ loaderData }: { loaderData: { id: string } }) {
   return <p id="team">team {loaderData.id}</p>;
+}
+`,
+  "routes/api-boom.ts": `export function loader() {
+  throw new Error("resource failed");
 }
 `,
   "routes/boom.tsx": `export function loader() {
@@ -730,5 +735,14 @@ Deno.test("react-router plugin: a middleware's own Response without next() short
     const short = await app(new Request("http://localhost/teams/9?short"));
     assertEquals(short.status, 418);
     assertEquals(await short.text(), "short-circuited");
+  });
+});
+
+Deno.test("react-router plugin: a resource route's thrown error reaches next() as a 500 a middleware can replace", async () => {
+  await withWrappingApp(async (app) => {
+    const res = await app(new Request("http://localhost/api/boom"));
+    // The root middleware sees a 500 Response from next() (not a rethrow) and answers 503.
+    assertEquals(res.status, 503);
+    assertEquals(await res.text(), "replaced");
   });
 });
