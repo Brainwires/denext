@@ -213,6 +213,9 @@ export interface ProcResult {
  * @returns The exit code and captured output.
  */
 export async function runDeno(args: string[], opts: RunDenoOptions): Promise<ProcResult> {
+  // A child whose tree may be killed leads its own process group (POSIX), so the kill reaches
+  // every descendant by the group's id, which stays reserved while any member lives.
+  const grouped = opts.jsonDocument !== undefined && Deno.build.os !== "windows";
   const child = new Deno.Command(opts.deno ?? denoExecutable(), {
     args,
     cwd: opts.cwd,
@@ -221,7 +224,20 @@ export async function runDeno(args: string[], opts: RunDenoOptions): Promise<Pro
     stdout: "piped",
     stderr: "piped",
     signal: opts.signal,
+    ...(grouped ? { detached: true } : {}),
   }).spawn();
+  // Out of the terminal's process group, the group no longer gets its Ctrl-C: an abort ends it.
+  const abortGroup = () => killGroup(child.pid);
+  if (grouped) opts.signal?.addEventListener("abort", abortGroup, { once: true });
+  try {
+    return await runChild(child, opts);
+  } finally {
+    opts.signal?.removeEventListener("abort", abortGroup);
+  }
+}
+
+/** {@linkcode runDeno} once `child` is spawned. */
+async function runChild(child: Deno.ChildProcess, opts: RunDenoOptions): Promise<ProcResult> {
   if (opts.stdin !== undefined) await writeStdin(child, opts.stdin);
   const streaming = opts.onLine !== undefined;
   const stdout = sinkOf(streaming);
@@ -311,19 +327,20 @@ function completeDocument(stdout: string): boolean {
 
 /**
  * Kill `child` and everything it started (a CLI child re-execs itself, and the process that spins
- * may be a descendant): `taskkill /T /F` by its exact pid on Windows; elsewhere each descendant
- * `pgrep -P` finds, deepest first; then the child itself. Waits for its exit and `reads`, at most
- * 10 s.
+ * may be a descendant). Elsewhere than Windows the child leads its own process group (see
+ * {@linkcode runDeno}), so one `SIGKILL` to the group reaches every descendant still in it with no
+ * pid listing to go stale. On Windows, `taskkill /T /F` (by its absolute path, never through PATH
+ * or the working directory) by the child's pid, at once and only while its status is unsettled:
+ * Deno holds the child's process handle until then, so Windows cannot reuse that pid. Waits for
+ * its exit and `reads`, at most 10 s.
  */
 async function killTree(child: Deno.ChildProcess, reads: Promise<unknown>): Promise<void> {
   if (Deno.build.os === "windows") {
-    await quietly("taskkill", ["/PID", String(child.pid), "/T", "/F"]);
-  } else {
-    for (const pid of (await descendants(child.pid)).reverse()) {
-      try {
-        Deno.kill(pid, "SIGKILL");
-      } catch { /* exited meanwhile */ }
+    if (!await settledNow(child.status)) {
+      await quietly(taskkillPath(), ["/PID", String(child.pid), "/T", "/F"]);
     }
+  } else {
+    killGroup(child.pid);
   }
   try {
     child.kill("SIGKILL");
@@ -333,18 +350,40 @@ async function killTree(child: Deno.ChildProcess, reads: Promise<unknown>): Prom
   clearTimeout(grace);
 }
 
-/** Every descendant of `pid` (`pgrep -P`, breadth first); none when `pgrep` is missing. */
-async function descendants(pid: number): Promise<number[]> {
-  const found: number[] = [];
-  for (let i = -1; i < found.length; i++) {
-    const parent = i < 0 ? pid : found[i];
-    const out = await quietly("pgrep", ["-P", String(parent)]);
-    for (const line of out.split("\n")) {
-      const n = Number(line.trim());
-      if (Number.isInteger(n) && n > 0 && !found.includes(n)) found.push(n);
-    }
+/** `SIGKILL` the process group `pgid` leads (best effort: it may be gone). */
+function killGroup(pgid: number): void {
+  try {
+    Deno.kill(-pgid, "SIGKILL");
+  } catch { /* the group is gone */ }
+}
+
+/** Whether `promise` has already settled (checked within the current turn). */
+async function settledNow(promise: Promise<unknown>): Promise<boolean> {
+  const pending = Symbol("pending");
+  // `promise` first: when it has settled, its reaction runs before the marker's.
+  return await Promise.race([promise, Promise.resolve(pending)]).catch(() => null) !== pending;
+}
+
+/**
+ * Windows' own `taskkill.exe`: `%SystemRoot%\System32\taskkill.exe`, never a `taskkill` found
+ * through PATH or the working directory.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`).
+ * @returns The absolute path.
+ */
+export function taskkillPath(env: (name: string) => string | undefined = envOf): string {
+  const root = (env("SystemRoot") ?? "").replace(/[\\/]+$/, "");
+  // Only an absolute drive path counts; anything else falls back to the default install.
+  const base = /^[A-Za-z]:\\/.test(root) ? root : "C:\\Windows";
+  return `${base}\\System32\\taskkill.exe`;
+}
+
+function envOf(name: string): string | undefined {
+  try {
+    return Deno.env.get(name);
+  } catch {
+    return undefined;
   }
-  return found;
 }
 
 /** Run `cmd` with `args` and return its stdout ("" when it cannot run). */

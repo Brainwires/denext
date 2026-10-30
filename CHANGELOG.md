@@ -29,18 +29,19 @@ and this project adheres to
 - **React Router route `middleware` now wraps the render.** Its `next()` resolved at once to a
   stand-in response on a page, ahead of the loaders; it now resolves to the response the browser
   gets, as React Router's server middleware does for a document or `.data` request: the rendered
-  document, or a client navigation's payload, after every loader and the render ran. A
-  middleware can read the status, set headers on the document, time the render or return its own
-  `Response`; one returning a `Response` without calling `next()` short-circuits the render, and
-  a render error reaches `next()` as the error response at its status. The chain runs outermost
-  route first with one shared `context`, and a throw before `next()` answers as that route's
-  loader throwing it would. Around an action submitted from the page, `next()` now runs the
-  action and resolves to its response; on a resource route a thrown `Response` reaches `next()`, and a thrown error does as React
-  Router's 500 response (`Unexpected Server Error`), which a middleware can replace. A response a middleware builds after `next()` (a fresh one, a copy of the
-  rendered one, or a `redirect()` thrown after `next()`) still carries the app's `headers` rules,
-  `middleware.ts`'s headers and the cookies `cookies().set()` queued during the render, each added
-  only where the response lacks it (a Set-Cookie is never repeated); before, only a response made
-  without calling `next()` got them, so such a redirect dropped a sign-in cookie.
+  document, or a client navigation's payload, after every loader and the render ran. A middleware
+  can read the status, set headers on the document, time the render or return its own `Response`;
+  one returning a `Response` without calling `next()` short-circuits the render, and a render error
+  reaches `next()` as the error response at its status. The chain runs outermost route first with
+  one shared `context`, and a throw before `next()` answers as that route's loader throwing it
+  would. Around an action submitted from the page, `next()` now runs the action and resolves to its
+  response; on a resource route a thrown `Response` reaches `next()`, and a thrown error does as
+  React Router's 500 response (`Unexpected Server Error`), which a middleware can replace. A
+  response a middleware builds after `next()` (a fresh one, a copy of the rendered one, or a
+  `redirect()` thrown after `next()`) still carries the app's `headers` rules, `middleware.ts`'s
+  headers and the cookies `cookies().set()` queued during the render, each added only where the
+  response lacks it (a Set-Cookie is never repeated); before, only a response made without calling
+  `next()` got them, so such a redirect dropped a sign-in cookie.
 - **`@denext/backend`: a realtime re-read's statement is assembled from its parts.** The filters of
   a shared re-read were spliced into the finished statement with a text replacement, which
   rewrote a filter column whose catalog type is spelled with `$'`, `$&` or `$$`. Values were
@@ -58,18 +59,22 @@ and this project adheres to
   deadline.** On a loaded Windows machine such a child has been seen to write its complete JSON
   output and then spin at full CPU without exiting, until the build killed it at its 120 s deadline
   and ran it again. A `deno info --json` child of the build (its module-graph crawl and the esbuild
-  loader's) whose output parses as one complete JSON document, and which has then written nothing
-  on either pipe for a grace, is now killed and its output used, with one stderr line naming its pid
+  loader's) whose output parses as one complete JSON document, and which has then written nothing on
+  either pipe for a grace, is now killed and its output used, with one stderr line naming its pid
   (and, under `DENEXT_CHILD_PROBE=1`, its CPU samples and debug log's tail). Output that stopped
   mid-document is never used: that child still ends at its deadline. `DENEXT_CHILD_EXIT_GRACE_MS`
-  sets the grace (default 5000; `0` waits for the exit). The repository's `deno doc --json` /
-  `deno info --json` children get the same treatment. So do `denext ui`'s listing children (`denext commands --json`,
-  `denext job --list` / `--history` / `--clear-history --json`), which print their document as
-  their last act; their document must end the output, so a JSON value printed earlier and followed
-  by more output is never taken for it. The Database section's `denext db-admin` child (its
-  statements and migrations write) and the Setup page's `denext doctor --json` (its route probes)
-  are always waited for to their exit or deadline: project code there may print JSON of its own
-  before a long silent stretch of work.
+  sets the grace (default 5000; `0` waits for the exit). The repository's `deno doc --json` / `deno
+  info --json` children get the same treatment. So do `denext ui`'s listing children (`denext
+  commands --json`, `denext job --list` / `--history` / `--clear-history --json`), which print their
+  document as their last act; their document must end the output, so a JSON value printed earlier
+  and followed by more output is never taken for it. Such a child leads its own process group
+  outside Windows, so the kill (or the caller's abort) reaches every descendant by the group's id
+  rather than by a list of pids that may have been reused meanwhile; on Windows it is ended with
+  `%SystemRoot%\System32\taskkill.exe` by its own pid, never a `taskkill` found through `PATH` or
+  the working directory. The Database section's `denext db-admin` child (its statements and
+  migrations write) and the Setup page's `denext doctor --json` (its route probes) are always waited
+  for to their exit or deadline: project code there may print JSON of its own before a long silent
+  stretch of work.
 - **A Live View resume matches the view, the props and the viewer, not the token.** A resume
   compared the signed-props token itself, so a page that re-rendered with a freshly issued token
   (after a `gone` token, a soft navigation back, an ISR re-render) ran `init` again. It now matches
