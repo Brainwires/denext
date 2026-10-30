@@ -2269,7 +2269,13 @@ audio.addEventListener("ended", () => clearNowPlaying());`}
           <code>cache/.denext-part/</code> folder (never beside the file, and hidden from{" "}
           <code>listDir</code>), which takes the file&apos;s place only once the download is done: a
           file already at the path keeps its contents through a pause, a cancel or a failure. A
-          download a reload interrupted starts over, reusing that part file.
+          download a reload interrupted starts over, reusing that part file. Where there is no OPFS
+          (no secure context), a download into a picked file or folder writes through the picked
+          file&apos;s own <code>createWritable()</code>{" "}
+          stream, which swaps the bytes in only once the download is done, so a cancel or a failure
+          still leaves the file as it was; it cannot pause (<code>pauseFileTransfer</code> resolves
+          {" "}
+          <code>false</code>). A download into an app folder needs OPFS.
         </li>
       </ol>
       <p>

@@ -177,6 +177,12 @@ and this project adheres to
   when the download is done (copied in where the browser has no `move` or refuses it, and always
   for a picked item), as the iOS background download does. A pause keeps the part file for the resume; a cancel or a failure (a network error, an
   HTTP error answering a resume) deletes only it, and its `failed` event is no longer `resumable`.
+- **A page download into a picked file works without OPFS.** Staging every page download in
+  OPFS's `cache/.denext-part/` left a download into a picked file or folder failing with "no
+  filesystem here" where there is no OPFS (no secure context). There it now writes through the
+  picked file's own `createWritable()` stream, which swaps the bytes in only once the download is
+  done, so a cancel or a failure still leaves the file as it was; such a download cannot pause
+  (`pauseFileTransfer` resolves `false`). A download into an app folder still needs OPFS.
 - **A tracked download cancelled while its pause settled stays cancelled.** A download another
   engine runs (a Deno Desktop window's) that was cancelled after its engine accepted a pause but
   before the run stopped ended paused, its promise pending. It now cancels and the engine drops

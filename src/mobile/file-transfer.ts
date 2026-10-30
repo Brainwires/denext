@@ -460,12 +460,20 @@ function throttled(ms: number, fn: (bytes: number, total: number | null) => void
  * until then.
  */
 export interface DownloadSink {
+  /**
+   * The writes go straight into the file, staged by the writer until it is finished (a picked
+   * file in a browser without OPFS): the download cannot pause, and a stop before the end drops
+   * the staged writes, so the file keeps its contents.
+   */
+  readonly direct?: boolean;
   open(at: number): Promise<{
     write(chunk: Uint8Array<ArrayBuffer>): Promise<void>;
-    /** Keep what was written (a pause, a failure, the end). */
+    /** Keep what was written (a pause, a failure, the end, unless the writer has `finish`). */
     close(): Promise<void>;
     /** Let go without keeping this opening's writes (a cancel); else it is closed. */
     abort?(): Promise<void>;
+    /** Commit the writes once the whole body has arrived (in place of `close`). */
+    finish?(): Promise<void>;
   }>;
   /** Put the finished download in place of the file (once its writer has closed). */
   commit?(): Promise<void>;
@@ -711,9 +719,11 @@ class PageDownload extends SettlingDownload<number> {
 
   /**
    * Pause: abort the request, and answer once it has stopped (a write in flight lands first):
-   * `false` when it finished, failed or was cancelled instead.
+   * `false` when it finished, failed or was cancelled instead, and at once for a
+   * {@linkcode DownloadSink.direct} sink, which keeps no partial bytes to resume from.
    */
   pause(): Promise<boolean> {
+    if (this.sink.direct) return Promise.resolve(false);
     if (!this.#pausing) {
       this.#pausing = new Promise((resolve) => (this.#onPaused = resolve));
       this.abort("pause");
@@ -756,6 +766,8 @@ class PageDownload extends SettlingDownload<number> {
     const writer = await writing(() => this.sink.open(start));
     this.#opened = true;
     let bytes = start;
+    let ended = false;
+    let finished = false;
     try {
       this.#progress.flush(bytes, total);
       const chunks = (res.body ?? []) as AsyncIterable<Uint8Array<ArrayBuffer>>;
@@ -765,13 +777,19 @@ class PageDownload extends SettlingDownload<number> {
         this.info = { ...this.info, bytes };
         this.#progress.report(bytes, total);
       }
+      ended = true;
     } finally {
-      // A cancel lets go without committing; a pause or a failure keeps the bytes written.
-      await (this.cancelled && writer.abort ? writer.abort() : writer.close());
+      // A cancel lets go without committing; a pause or a failure keeps the bytes written (a
+      // direct sink's writer drops them on close); the whole body is finished where it can be.
+      if (this.cancelled && writer.abort) await writer.abort();
+      else if (ended && writer.finish) {
+        await writer.finish();
+        finished = true;
+      } else await writer.close();
     }
     // A cancel landing during the last write or the close errored nothing (the body had all
-    // arrived): it still cancels.
-    if (this.cancelled) throw this.why;
+    // arrived): it still cancels, unless the writer had already finished (committed) the file.
+    if (this.cancelled && !finished) throw this.why;
     // Once the bytes are moving into place a cancel is too late: the download finishes.
     await writing(() => this.sink.commit?.() ?? Promise.resolve());
     this.#opened = false;
@@ -1319,7 +1337,8 @@ export async function fileTransfers(): Promise<FileTransferInfo[]> {
  *
  * @param id The transfer's id.
  * @returns Whether it paused: `false` too for a download that finished, failed or was cancelled
- * before the pause landed.
+ * before the pause landed, and for a page download into a picked file without OPFS (it writes
+ * straight through the picked file's stream, which keeps no partial bytes to resume from).
  */
 export async function pauseFileTransfer(id: string): Promise<boolean> {
   const page = pageTransfers.get(id);

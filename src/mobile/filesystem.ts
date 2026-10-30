@@ -582,6 +582,7 @@ async function movePart(
  * writable whose `close()` swaps them in, and the part file is removed.
  */
 function webSink(directory: FileDirectory, rel: string): DownloadSink {
+  if (isPicked(directory) && !opfsSupported()) return pickedDirectSink(directory, rel);
   let part: WebFile | undefined;
   return {
     async open(at) {
@@ -612,6 +613,31 @@ function webSink(directory: FileDirectory, rel: string): DownloadSink {
       await from.remove().catch(() => {});
     },
     remove: () => part?.remove() ?? Promise.resolve(),
+  };
+}
+
+/**
+ * A page download into a picked file or folder where there is no OPFS to stage it in (no secure
+ * context, no `navigator.storage.getDirectory`): the bytes go through the picked file's own
+ * `createWritable()`, whose stream stages them and swaps them in only on `close()`. A cancel or a
+ * failure `abort()`s the stream, so the file keeps its contents; with no partial bytes kept, the
+ * download cannot pause ({@linkcode DownloadSink.direct}). (An app-folder download needs OPFS and
+ * still fails without it.)
+ */
+function pickedDirectSink(directory: PickedDirectory, rel: string): DownloadSink {
+  return {
+    direct: true,
+    async open() {
+      const { handle } = await webFile("downloadToFile", directory, rel, true, true, true);
+      const writable = await handle.createWritable();
+      return {
+        write: (chunk) => writable.write(chunk),
+        // A stop before the end: drop the staged writes, the file keeps its contents.
+        close: () => writable.abort(),
+        abort: () => writable.abort(),
+        finish: () => writable.close(),
+      };
+    },
   };
 }
 
@@ -677,9 +703,14 @@ function urlOf(fn: string, url: string): string {
  *   with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range
  *   request (a server that answers 200 starts it over). The bytes go to a part file in OPFS's
  *   `cache/.denext-part/` folder (hidden from `listDir`) that replaces the file only once the
- *   download is done, so a file already at `path` keeps its contents until then. {@linkcode cancelFileTransfer}, aborting `signal` or a failure ends it
- *   and deletes the part file, never the file it would have replaced. A reload forgets the
- *   transfer: downloading to the same file again starts over in the same part file.
+ *   download is done, so a file already at `path` keeps its contents until then.
+ *   {@linkcode cancelFileTransfer}, aborting `signal` or a failure ends it and deletes the part
+ *   file, never the file it would have replaced. A reload forgets the transfer: downloading to
+ *   the same file again starts over in the same part file. Without OPFS (no secure context), a
+ *   download into a picked file or folder writes through the picked file's own writable stream,
+ *   which swaps the bytes in only when the download is done (a cancel or a failure leaves the
+ *   file as it was); such a download cannot pause ({@linkcode pauseFileTransfer} resolves
+ *   `false`). An app-folder download needs OPFS.
  *
  * @param url The `http(s)` URL to fetch.
  * @param path The file's path inside `directory`; no `..` segments.

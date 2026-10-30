@@ -4,7 +4,13 @@
 // settling on its events); on the web it runs in the page against a fake OPFS, a streaming fake
 // `fetch` (pause, then a range-request resume) and a fake XMLHttpRequest (upload progress).
 
-import { assert, assertEquals, assertInstanceOf, assertRejects } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertInstanceOf,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import {
   cancelFileTransfer,
   downloadToFile,
@@ -932,6 +938,62 @@ Deno.test("downloadToFile (web): a picked file keeps its contents until done; it
     assertEquals(picked.bytes, pattern(2048));
     assertEquals(await namesIn(".denext-part", "cache"), []);
   }, { fetch: server.fetch });
+});
+
+Deno.test("downloadToFile (web): without OPFS a picked file is written through its own stream; no pause", async () => {
+  // No secure context: no `navigator.storage.getDirectory`, so nothing to stage a part file in.
+  const noOpfs = async (fetch: unknown, fn: () => Promise<void>) => {
+    await withGlobals({ navigator: {}, isSecureContext: false, fetch }, async () => {
+      try {
+        await fn();
+      } finally {
+        writeLatency = macrotask;
+        landed = 0;
+        resetFileTransfersForTesting();
+      }
+    });
+  };
+  const picked = new FakeFile("picked.bin");
+  picked.bytes = new TextEncoder().encode("earlier");
+  const directory = { picked: registerWebHandle(picked as Any) };
+  const text = () => new TextDecoder().decode(picked.bytes);
+  // Cancelled while running: the stream is aborted and the file keeps its contents.
+  const first = streamingFetch(3 * 1024);
+  await noOpfs(first.fetch, async () => {
+    const running = downloadToFile("https://x.test/p", "", { id: "n0", directory });
+    await first.step(1);
+    await written(1024);
+    // A pause is refused (no partial bytes to keep), and the download carries on.
+    assertEquals(await pauseFileTransfer("n0"), false);
+    assertEquals((await fileTransfers())[0].state, "running");
+    assertEquals(await cancelFileTransfer("n0"), true);
+    await assertRejects(() => running, FileTransferError);
+    assertEquals(text(), "earlier");
+    assertEquals(picked.writers, 0);
+  });
+  // A failure mid-body: aborted too, the file as it was.
+  const failing = streamingFetch(3 * 1024, { failAt: 2048 });
+  await noOpfs(failing.fetch, async () => {
+    const done = downloadToFile("https://x.test/p", "", { id: "n1", directory });
+    const failed = assertRejects(() => done, FileTransferError);
+    await failing.drain();
+    const err = await failed;
+    assertEquals([err.code, err.resumable], ["NETWORK", false]);
+    assertEquals(text(), "earlier");
+    assertEquals(picked.writers, 0);
+  });
+  // Done: the stream's close swaps the whole body in.
+  const whole = streamingFetch(2048);
+  await noOpfs(whole.fetch, async () => {
+    const done = downloadToFile("https://x.test/p", "", { id: "n2", directory });
+    await whole.drain();
+    assertEquals(await done, { path: "" });
+    assertEquals(picked.bytes, pattern(2048));
+    assertEquals(picked.writers, 0);
+    // An app-folder download still needs OPFS.
+    const err = await assertRejects(() => downloadToFile("https://x.test/p", "a.bin"));
+    assertStringIncludes(String((err as Error).message), "no filesystem here");
+  });
 });
 
 Deno.test("trackedDownload: a cancel while its engine's pause is settling cancels, and drops the kept bytes", async () => {
