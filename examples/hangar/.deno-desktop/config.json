@@ -1,0 +1,44 @@
+{
+  "desktop": {
+    "installers": {
+      "macos": [],
+      "linux": [],
+      "windows": []
+    },
+    "app": {
+      "name": "Hangar",
+      "identifier": "dev.denext.hangar",
+      "origin": "hangar://app",
+      "singleInstance": true
+    },
+    "window": {
+      "width": 900,
+      "height": 640,
+      "title": "Hangar"
+    },
+    "minSize": {
+      "width": 320,
+      "height": 360
+    },
+    "capabilities": {
+      "clipboard": true,
+      "extensions": [
+        "./desktop/hangar.ts"
+      ]
+    },
+    "extraPermissions": {
+      "run": [
+        "*"
+      ],
+      "write": [
+        "~/VMs"
+      ],
+      "sys": [
+        "systemMemoryInfo"
+      ],
+      "env": [
+        "HOME"
+      ]
+    }
+  }
+}

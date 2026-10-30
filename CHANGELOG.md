@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Hangar, a tray-first desktop example** (`examples/hangar`): an app that lives in the tray /
+  menu bar and manages QEMU disk images and running VMs. It adopts existing VM folders that start
+  with a `start.sh` and creates its own from a `hangar.json`; starts VMs headless or windowed,
+  shuts them down over QMP (`system_powerdown`, then `quit` after a timeout) and force stops one by
+  its exact pid; shows QMP status, RAM and CPU per VM against a RAM budget; and lists, creates,
+  grows, converts and snapshots images with `qemu-img`. Destructive actions take a typed confirm
+  that the backend checks again, and every action stays inside a library VM's folder. The backend
+  is a `defineDesktopExtension` over a fake-able host, tested without QEMU; the README lists what
+  the example approximates today (a window hidden at launch, the page-owned tray, the main window
+  resized at the tray icon as the panel).
+
 ## [4.10.3] - 2026-10-30
 
 ### Added
