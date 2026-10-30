@@ -50,11 +50,18 @@ export interface RunDenoOptions {
  * For a child whose result is one JSON document on stdout. On Windows such a child has been seen
  * to write its complete document, then spin at 100% CPU in its teardown and never exit (the same
  * failure `boundedSpawn`'s `jsonStdout` handles for `deno info --json`). Each chunk on either pipe
- * restarts a silence window; when it runs out and the stdout so far is one complete JSON object
- * or array, the child and its descendants are killed and the run returns exit code 0 with that
+ * restarts a silence window; when it runs out and stdout ends with one complete JSON object or
+ * array, the child and its descendants are killed and the run returns exit code 0 with that
  * output, after one notice line naming the pid. A partial document never parses, so a child that
  * stopped mid-output still waits for its exit or its `signal`; a child that exits first keeps its
  * own status.
+ *
+ * Only for a verb that prints its document as its LAST act and exits, and whose silent work
+ * before it is short and read-mostly: `denext commands --json` and `denext job --list` /
+ * `--history` / `--clear-history --json` (which prints after the clear is done). Not for a child
+ * that runs project work for long silent stretches after project code may have printed a JSON
+ * value of its own (`denext db-admin`, whose statements and migrations write; `denext doctor`'s
+ * route probes): a silence there is work, so those wait for their exit or their deadline.
  */
 export interface JsonDocumentChild {
   /** The silence that settles a complete document (default `DENEXT_CHILD_EXIT_GRACE_MS`, 5 s). */
@@ -206,6 +213,9 @@ export interface ProcResult {
  * @returns The exit code and captured output.
  */
 export async function runDeno(args: string[], opts: RunDenoOptions): Promise<ProcResult> {
+  // A child whose tree may be killed leads its own process group (POSIX), so the kill reaches
+  // every descendant by the group's id, which stays reserved while any member lives.
+  const grouped = opts.jsonDocument !== undefined && Deno.build.os !== "windows";
   const child = new Deno.Command(opts.deno ?? denoExecutable(), {
     args,
     cwd: opts.cwd,
@@ -214,7 +224,20 @@ export async function runDeno(args: string[], opts: RunDenoOptions): Promise<Pro
     stdout: "piped",
     stderr: "piped",
     signal: opts.signal,
+    ...(grouped ? { detached: true } : {}),
   }).spawn();
+  // Out of the terminal's process group, the group no longer gets its Ctrl-C: an abort ends it.
+  const abortGroup = () => killGroup(child.pid);
+  if (grouped) opts.signal?.addEventListener("abort", abortGroup, { once: true });
+  try {
+    return await runChild(child, opts);
+  } finally {
+    opts.signal?.removeEventListener("abort", abortGroup);
+  }
+}
+
+/** {@linkcode runDeno} once `child` is spawned. */
+async function runChild(child: Deno.ChildProcess, opts: RunDenoOptions): Promise<ProcResult> {
   if (opts.stdin !== undefined) await writeStdin(child, opts.stdin);
   const streaming = opts.onLine !== undefined;
   const stdout = sinkOf(streaming);
@@ -286,9 +309,10 @@ class DocumentWatch {
 }
 
 /**
- * Whether `stdout` is one complete JSON object or array: the whole of it, or the bare-`{` to
- * bare-`}` span a pretty-printing verb writes ({@linkcode parseJsonDocument}). A document still
- * being written never parses.
+ * Whether `stdout` ENDS with one complete JSON object or array: the whole of it, or the bare-`{`
+ * to bare-`}` span a pretty-printing verb writes ({@linkcode parseJsonDocument}) when that span
+ * closes on stdout's last line. A document still being written never parses, and one followed by
+ * more output (a JSON value a project logged early, then a progress line) is not the answer.
  */
 function completeDocument(stdout: string): boolean {
   const text = stdout.trim();
@@ -298,24 +322,23 @@ function completeDocument(stdout: string): boolean {
       return true;
     } catch { /* not the whole of it; try the span */ }
   }
-  return parseJsonDocument(stdout) !== null;
+  return /(^|\n)\}$/.test(text.replace(/\r/g, "")) && parseJsonDocument(stdout) !== null;
 }
 
 /**
  * Kill `child` and everything it started (a CLI child re-execs itself, and the process that spins
- * may be a descendant): `taskkill /T /F` by its exact pid on Windows; elsewhere each descendant
- * `pgrep -P` finds, deepest first; then the child itself. Waits for its exit and `reads`, at most
- * 10 s.
+ * may be a descendant). Elsewhere than Windows the child leads its own process group (see
+ * {@linkcode runDeno}), so one `SIGKILL` to the group reaches every descendant still in it with no
+ * pid listing to go stale. On Windows, `taskkill /T /F` (by its absolute path, never through PATH
+ * or the working directory) by the child's pid, at once and only while its status is unsettled:
+ * Deno holds the child's process handle until then, so Windows cannot reuse that pid. Waits for
+ * its exit and `reads`, at most 10 s.
  */
 async function killTree(child: Deno.ChildProcess, reads: Promise<unknown>): Promise<void> {
   if (Deno.build.os === "windows") {
-    await quietly("taskkill", ["/PID", String(child.pid), "/T", "/F"]);
+    if (!await settledNow(child.status)) await taskkillTree(child.pid);
   } else {
-    for (const pid of (await descendants(child.pid)).reverse()) {
-      try {
-        Deno.kill(pid, "SIGKILL");
-      } catch { /* exited meanwhile */ }
-    }
+    killGroup(child.pid);
   }
   try {
     child.kill("SIGKILL");
@@ -325,34 +348,52 @@ async function killTree(child: Deno.ChildProcess, reads: Promise<unknown>): Prom
   clearTimeout(grace);
 }
 
-/** Every descendant of `pid` (`pgrep -P`, breadth first); none when `pgrep` is missing. */
-async function descendants(pid: number): Promise<number[]> {
-  const found: number[] = [];
-  for (let i = -1; i < found.length; i++) {
-    const parent = i < 0 ? pid : found[i];
-    const out = await quietly("pgrep", ["-P", String(parent)]);
-    for (const line of out.split("\n")) {
-      const n = Number(line.trim());
-      if (Number.isInteger(n) && n > 0 && !found.includes(n)) found.push(n);
-    }
-  }
-  return found;
+/** `SIGKILL` the process group `pgid` leads (best effort: it may be gone). */
+function killGroup(pgid: number): void {
+  try {
+    Deno.kill(-pgid, "SIGKILL");
+  } catch { /* the group is gone */ }
 }
 
-/** Run `cmd` with `args` and return its stdout ("" when it cannot run). */
-async function quietly(cmd: string, args: string[]): Promise<string> {
+/** Whether `promise` has already settled (checked within the current turn). */
+async function settledNow(promise: Promise<unknown>): Promise<boolean> {
+  const pending = Symbol("pending");
+  // `promise` first: when it has settled, its reaction runs before the marker's.
+  return await Promise.race([promise, Promise.resolve(pending)]).catch(() => null) !== pending;
+}
+
+/**
+ * Windows' own `taskkill.exe`: `%SystemRoot%\System32\taskkill.exe`, never a `taskkill` found
+ * through PATH or the working directory.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`).
+ * @returns The absolute path.
+ */
+export function taskkillPath(env: (name: string) => string | undefined = envOf): string {
+  const root = (env("SystemRoot") ?? "").replace(/[\\/]+$/, "");
+  // Only an absolute drive path counts; anything else falls back to the default install.
+  const base = /^[A-Za-z]:\\/.test(root) ? root : "C:\\Windows";
+  return `${base}\\System32\\taskkill.exe`;
+}
+
+function envOf(name: string): string | undefined {
   try {
-    const out = await new Deno.Command(cmd, {
-      args,
-      stdin: "null",
-      stdout: "piped",
-      stderr: "null",
-    })
-      .output();
-    return new TextDecoder().decode(out.stdout);
+    return Deno.env.get(name);
   } catch {
-    return "";
+    return undefined;
   }
+}
+
+/** `taskkill /T /F` of `pid` and its tree (best effort: it may be gone). */
+async function taskkillTree(pid: number): Promise<void> {
+  try {
+    await new Deno.Command(taskkillPath(), {
+      args: ["/PID", String(pid), "/T", "/F"],
+      stdin: "null",
+      stdout: "null",
+      stderr: "null",
+    }).output();
+  } catch { /* it cannot run */ }
 }
 
 function writeStderr(line: string): void {

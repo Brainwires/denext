@@ -3,7 +3,12 @@
 // one, without the second `Headers` and `Response` the copy cost on every page.
 
 import { assertEquals } from "@std/assert";
-import { finalize, finalizeNew, type RequestState } from "../src/server/pipeline-state.ts";
+import {
+  finalize,
+  finalizeLacking,
+  finalizeNew,
+  type RequestState,
+} from "../src/server/pipeline-state.ts";
 import { htmlResponse } from "../src/server/page-document.ts";
 
 function stateWith(injected?: Headers, outgoing = new Headers(), status?: number): RequestState {
@@ -64,4 +69,26 @@ Deno.test("an HTML page response with injected headers is constructed once", () 
   }
   assertEquals(made, 1);
   assertEquals(res.headers.get("x-rule"), "a");
+});
+
+Deno.test("finalizeLacking adds only the headers a response lacks, keeping its status", async () => {
+  const plain = new Response("x", { status: 302, headers: { location: "/a" } });
+  // Nothing to add: the response itself.
+  assertEquals(finalizeLacking(stateWith(), plain), plain);
+  const injected = new Headers({ "x-rule": "a", "x-own": "rule" });
+  injected.append("set-cookie", "rule=1");
+  const outgoing = new Headers({ "x-out": "1" });
+  outgoing.append("set-cookie", "sid=2");
+  const own = new Headers({ location: "/a", "x-own": "mine" });
+  own.append("set-cookie", "sid=2");
+  const res = finalizeLacking(
+    stateWith(injected, outgoing, 404),
+    new Response("x", { status: 302, headers: own }),
+  );
+  const got = await shape(res);
+  assertEquals(got.status, 302, "a loader's status override is the rendered response's");
+  assertEquals(res.headers.get("x-own"), "mine");
+  assertEquals(res.headers.get("x-rule"), "a");
+  assertEquals(res.headers.get("x-out"), "1");
+  assertEquals(got.cookies.sort(), ["rule=1", "sid=2"]);
 });

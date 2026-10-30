@@ -148,7 +148,11 @@ export default { plugins: [reactRouter({ getLoadContext: () => ({ db }) })] };`}
         client navigation's payload (React Router's <code>.data</code>{" "}
         request), after every loader, the render and the route's error boundaries ran, so a
         middleware can read the status, set headers on the document, time the render, or return its
-        own <code>Response</code> instead. A render error reaches <code>next()</code>{" "}
+        own <code>Response</code> instead. A response it builds after <code>next()</code>{" "}
+        (a fresh one, a copy, or a thrown{" "}
+        <code>redirect()</code>) still gets the app's configured headers and the cookies the render
+        set, where it lacks them; a header it set itself is kept. A render error reaches{" "}
+        <code>next()</code>{" "}
         as the error response (the boundary's, at its status), never as a throw. A middleware that
         returns a <code>Response</code> without calling <code>next()</code>{" "}
         answers with it and nothing renders. A thrown <code>redirect()</code> or{" "}

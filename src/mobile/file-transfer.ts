@@ -1539,6 +1539,10 @@ export async function pauseFileTransfer(id: string): Promise<boolean> {
  * else anew, and an upload from the start. On the web and in a Deno Desktop window only a paused
  * download resumes: a failed transfer resolves `false` (start it again with `downloadToFile`; on
  * Deno Desktop the same URL to the same file continues from the partial file the runtime kept).
+ * After a restart, a Deno Desktop download started with a credential header (`Authorization`,
+ * `Cookie`, an API key) is refused here, since the runtime never writes one to disk: start it again
+ * with `downloadToFile` and its headers (the same id, URL and file), which continues from its
+ * partial file.
  *
  * @param id The transfer's id.
  * @returns Whether it resumed: `false` for an id with no record, a transfer that is neither

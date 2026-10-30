@@ -130,7 +130,11 @@ mid-path (`./apps/*/web`), and a `!` entry leaves the folders it matches out
 name starts with `.` (unless the glob spells the dot), or one it reaches
 through a symlink. The same rules cover a package.json `workspaces` list and a
 `pnpm-workspace.yaml`, which also take `[abc]`, `{a,b}` and a symlinked folder
-inside the root. denext also handles an app inside a
+inside the root. An entry denext can't read stops the command with an error
+that names it and its file: a class that isn't a valid range (`[z-a]`), or
+braces that expand to more than 1024 patterns. A path entry (no glob) in a
+`deno.json` `workspace` is kept as written, as Deno keeps it, even when a
+symlink on it leads out of the root. denext also handles an app inside a
 workspace that doesn't list it: it builds on its own config, as Deno runs it,
 but it can't import its siblings by name.
 

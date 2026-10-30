@@ -40,13 +40,11 @@ and this project adheres to
   `DENEXT_REVOCATION_CHECK=0` turns the check off. Until a signing key is compiled in, the check
   reads and fetches nothing. See
   [Revoked runtimes](https://denext.dev/docs/toolchain#revoked-runtimes).
-
 - **`deno task revocations`** (maintainers): `keygen` (the private key straight into the login
   keychain), `init`, `add`, `sign`, `resign`, `verify`, `publish` and `floor` for the signed list, which
   self-verifies against the compiled-in keys before it is published to denext.dev and a mirror.
   A list expires 21 days after signing; `deno task release` re-signs it when fewer than 10 days
   remain, and compiles the published list's sequence into the release as its floor (`floor`).
-
 - **`start.tls`: HTTPS for `denext start` without a proxy, a certificate per host name.**
   `start: { tls: { certificates: [{ hostnames, certFileEnv, keyFileEnv }] } }` in
   `denext.config.ts` serves HTTPS from `denext start` and a `build --compile` server. Each
@@ -62,7 +60,6 @@ and this project adheres to
   certificates list. `denext/server` exports the `StartTls`, `StartTlsCertificate`, `ServeTls` and
   `CertifiedKeyPem` types (`serveWithPortFallback` takes a `tls` option). See
   https://denext.dev/docs/deployment-targets#https-without-a-proxy.
-
 - **`denext patch create` registers npm patches in deno.json's `patchedDependencies`.** When
   the project runs on denext's Deno from runtime 3.0.0-denext.3 (the pinned toolchain, not
   `DENEXT_DENO=stock`), an npm patch is also written as a package-relative copy under
@@ -73,7 +70,6 @@ and this project adheres to
   re-create replaces the entry, `delete` removes it, and entries written by hand are left alone.
   Nothing is registered, with a line saying why, without a `node_modules` directory or for a patch
   that adds or deletes a file, which the runtime can't apply. See https://denext.dev/docs/patches.
-
 - **The generated deploy files carry `start.tls`.** `denext generate docker` (and the `docker` /
   `fly` presets) mounts `./certs` read-only at `/certs`, keeps it out of the image
   (`.dockerignore`), requires each certificate's and key's variable in the compose file and lists
@@ -84,7 +80,6 @@ and this project adheres to
   `denoDeploy()` warns. The deploy manifest's `server.tls` lists the certificates' host names and
   variable names (`null` for plain HTTP). The generators warn about several certificates without
   `"unstable": ["net"]` in deno.json and a health probe no certificate serves.
-
 - **`denext migrate` carries pnpm and Bun patches.** `pnpm.patchedDependencies` (package.json),
   `patchedDependencies` in pnpm-workspace.yaml (the workspace root's for an app inside one) and
   Bun's `patchedDependencies` (package.json) are copied to `patches/npm/<name>+<version>.patch`
@@ -121,10 +116,28 @@ and this project adheres to
   early and broke the script; a `</head>` in a script's string drew the Partytown boot tag into it
   too. The stamp now treats the content of `script`, `style`, `textarea` and `title` elements and
   of comments as text, and an attribute value may hold `>`.
-
 - **`build --compile` with several `start.tls` certificates bakes `--unstable-net`.** The compile
   runs with a config of its own, which carries no `unstable` from the project's `deno.json`, so the
   executable refused to serve several certificates ("needs the unstable net APIs").
+- **A response a React Router middleware builds after `next()` keeps the app's headers and
+  cookies.** A fresh response, a copy of the rendered one, or a `redirect()` thrown after `next()`
+  now carries the app's `headers` rules, `middleware.ts`'s headers and the cookies
+  `cookies().set()` queued during the render, each added only where the response lacks it (a
+  Set-Cookie is never repeated); before, only a response made without calling `next()` got them,
+  so such a redirect dropped a sign-in cookie.
+- **A workspace entry that can't be read is an error naming it.** A class that isn't a valid
+  range (`[z-a]`), or braces that expand past 1024 patterns, is now an error that names the entry
+  and its file, not a raw `SyntaxError` or a pattern list of millions.
+- **`denext ui`'s listing children settle only on a document that ends their output.** `denext
+  commands --json` and `denext job --list` / `--history` / `--clear-history --json` print their
+  document as their last act; a JSON value printed earlier and followed by more output is no
+  longer taken for it. Such a child leads its own process group outside Windows, so the kill (or
+  the caller's abort) reaches every descendant by the group's id rather than by a list of pids
+  that may have been reused meanwhile; on Windows it is ended with
+  `%SystemRoot%\System32\taskkill.exe` by its own pid, never a `taskkill` found through `PATH` or
+  the working directory. The Database section's `denext db-admin` child and the Setup page's
+  `denext doctor --json` are always waited for to their exit or deadline: project code there may
+  print JSON of its own before a long silent stretch of work.
 
 ### Security
 
@@ -133,6 +146,13 @@ and this project adheres to
   pinned `3.0.0-denext.2`'s V8 15.2.124.1 lacks. A sloppy-import hint no longer reveals whether a
   file exists to a computed `import()` without read permission. Security advisory
   [GHSA-qr84-w8xw-f7r4](https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4).
+- **Deno Desktop download records never write a credential header to disk.** A credential
+  header (`Authorization`, `Proxy-Authorization`, `Cookie`, or one whose name says auth, token,
+  key, secret, session, password, credential or signature) of a download started with an `id` is
+  no longer kept in `denext-transfers/transfers.json`: it stays in memory for the launch, and after
+  a restart a resume of such a download is refused (`validation`) until the page starts it again
+  with its headers, which continues from the partial file. The file is `0600` on macOS and Linux;
+  Windows ignores the mode and it takes the user profile's ACL.
 
 ## [4.10.3] - 2026-10-30
 

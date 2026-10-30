@@ -6,8 +6,12 @@
  * One JSON file, `<data>/denext-transfers/transfers.json`, replaced atomically (a temp file renamed
  * over it) and readable by the user only. The folder is one of the runtime's reserved names under
  * the data directory (`path-scope.ts`), so the page's `fs` calls never read, list, write or delete
- * it: a live record holds the download's request headers (an `Authorization`, say), dropped once it
- * is over for good (done, cancelled, or failed with nothing to resume), as the plugin drops them.
+ * it. A live record holds the download's request headers in memory, dropped once it is over for
+ * good (done, cancelled, or failed with nothing to resume), as the plugin drops them. The file never
+ * holds a credential header ({@linkcode isCredentialHeader}: an `Authorization`, a `Cookie`, an API
+ * key): a record that had one is written without it and marked `withheld`, so a resume after a
+ * restart needs the headers again from the page. (`0600` is the file's mode on macOS and Linux; on
+ * Windows the mode is ignored and the file takes the user profile's ACL.)
  *
  * Every change is keyed by the download's attempt (a new one per `download` / `resumeDownload`
  * call), so an attempt that stopped never writes over the record of the one that replaced it.
@@ -59,6 +63,11 @@ export interface TransferRecord {
   readonly error?: string;
   /** A done download's absolute path. */
   readonly file?: string;
+  /**
+   * Credential headers were not written to disk (a record loaded after a restart): resuming it
+   * needs the headers again.
+   */
+  readonly withheld?: boolean;
   /** The attempt that last wrote it. */
   readonly attempt: string;
   /** When it last changed (ms since the epoch). */
@@ -91,6 +100,29 @@ interface TransferRecordInfo {
  */
 function settledRecord(r: Pick<TransferRecord, "state" | "resumable">): boolean {
   return r.state === "done" || (r.state === "failed" && !r.resumable);
+}
+
+/**
+ * Whether request header `name` may carry a credential, and so is never written to disk: an
+ * `Authorization`, `Proxy-Authorization` or `Cookie`, and any header whose name says auth, token,
+ * key, secret, session, cookie, password, credential or signature (`X-Api-Key`, `X-Auth-Token`).
+ *
+ * @param name The header name.
+ * @returns Whether it is kept in memory only.
+ */
+export function isCredentialHeader(name: string): boolean {
+  return /auth|token|key|secret|session|cookie|passw|credential|signature/i.test(name);
+}
+
+/** `r` as the records file holds it: no credential header, `withheld` when one was dropped. */
+function persisted(r: TransferRecord): TransferRecord {
+  const headers: Record<string, string> = {};
+  let withheld = r.withheld === true;
+  for (const [name, value] of Object.entries(r.headers)) {
+    if (isCredentialHeader(name)) withheld = true;
+    else headers[name] = value;
+  }
+  return withheld ? { ...r, headers, withheld } : r;
 }
 
 /** Whether `value` is a string. */
@@ -146,8 +178,9 @@ function parseRecord(raw: unknown): TransferRecord | undefined {
   const headers = stringRecord(r.headers);
   const ok = headers !== undefined &&
     Object.entries(REQUIRED).every(([k, check]) => check(r[k])) &&
-    Object.entries(OPTIONAL).every(([k, check]) => r[k] === undefined || check(r[k]));
-  return ok ? { ...(r as unknown as TransferRecord), headers } : undefined;
+    Object.entries(OPTIONAL).every(([k, check]) => r[k] === undefined || check(r[k])) &&
+    (r.withheld === undefined || typeof r.withheld === "boolean");
+  return ok ? persisted({ ...(r as unknown as TransferRecord), headers }) : undefined;
 }
 
 /** The page's view of a record. */
@@ -259,7 +292,7 @@ export class TransferRecords {
   }
 
   /**
-   * Start record `id` for `attempt` (replacing any record of that id).
+   * Start record `id` for `attempt` (replacing any record of that id, `withheld` included).
    *
    * @param record The record's fields.
    * @returns Once saved.
@@ -324,7 +357,8 @@ export class TransferRecords {
     await Deno.mkdir(this.#dir, { recursive: true, mode: 0o700 });
     const temp = `${this.#file}.${crypto.randomUUID()}.tmp`;
     try {
-      await Deno.writeTextFile(temp, JSON.stringify(list), { createNew: true, mode: 0o600 });
+      const text = JSON.stringify(list.map(persisted));
+      await Deno.writeTextFile(temp, text, { createNew: true, mode: 0o600 });
       await Deno.rename(temp, this.#file);
     } catch (err) {
       await Deno.remove(temp).catch(() => {});
