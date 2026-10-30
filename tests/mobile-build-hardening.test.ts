@@ -14,6 +14,7 @@ import { join } from "@std/path";
 import {
   type BuildCommand,
   buildStepEnv,
+  gradlewCommand,
   type MobileBuildDeps,
   type MobileBuildOptions,
   planMobileBuild,
@@ -318,7 +319,7 @@ Deno.test("mobile build --release: a doctor error stops the build after cap sync
       ]),
     });
     await assertRejects(() => runMobileBuild(plan, {}, passed), Error, "exited with 1");
-    assertEquals(passed.ran, ["npx", "./gradlew"]);
+    assertEquals(passed.ran, ["npx", gradlewCommand()]);
     // A doctor error outside the release-security gate is printed with its fix; the build goes on.
     const csp = {
       check: "csp",
@@ -328,7 +329,7 @@ Deno.test("mobile build --release: a doctor error stops the build after cap sync
     };
     const warned = deps({ doctor: report(dir, [csp]) });
     await assertRejects(() => runMobileBuild(plan, {}, warned), Error, "exited with 1");
-    assertEquals(warned.ran, ["npx", "./gradlew"]);
+    assertEquals(warned.ran, ["npx", gradlewCommand()]);
     assertStringIncludes(warned.logged.join("\n"), "warning: [csp] out/index.html has no");
     // A debug build is not gated.
     const debug = deps({ doctor: report(dir, [error]) });
@@ -338,7 +339,7 @@ Deno.test("mobile build --release: a doctor error stops the build after cap sync
       Error,
       "exited with 1",
     );
-    assertEquals(debug.ran, ["npx", "./gradlew"]);
+    assertEquals(debug.ran, ["npx", gradlewCommand()]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -448,7 +449,7 @@ Deno.test("mobile build --release: an iOS-only release error does not block the 
     const plan = await planMobileBuild(options(dir, { release: true, skipExport: true }));
     const d = deps();
     await assertRejects(() => runMobileBuild(plan, {}, d), Error, "exited with 1");
-    assertEquals(d.ran, ["npx", "./gradlew"]);
+    assertEquals(d.ran, ["npx", gradlewCommand()]);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -464,7 +465,7 @@ Deno.test("mobile build --release: a flavor's https serverUrl is not a server-ur
     }));
     const d = deps();
     await assertRejects(() => runMobileBuild(plan, {}, d), Error, "exited with 1");
-    assertEquals(d.ran, ["npx", "./gradlew"]);
+    assertEquals(d.ran, ["npx", gradlewCommand()]);
     // The flavor's edit is restored.
     assert(!(await Deno.readTextFile(join(dir, "capacitor.config.json"))).includes("app.example"));
   } finally {
@@ -479,7 +480,7 @@ Deno.test("mobile build --release: a missing CSP builds with a warning; a wildca
     const plan = await planMobileBuild(options(dir, { release: true, skipExport: true }));
     const d = deps();
     await assertRejects(() => runMobileBuild(plan, {}, d), Error, "exited with 1");
-    assertEquals(d.ran, ["npx", "./gradlew"], "the native build ran");
+    assertEquals(d.ran, ["npx", gradlewCommand()], "the native build ran");
     assertStringIncludes(d.logged.join("\n"), "warning: [csp]");
   } finally {
     await Deno.remove(dir, { recursive: true });
