@@ -281,6 +281,11 @@ a binary of its own, so a stolen signing key could at worst force that one step 
 (`<DENO_DIR>/denext-deno/revocations.json`) for 12 hours and re-verified on every read: its
 signature against the public keys compiled into denext, its expiry (60 days after signing; an
 expired list is ignored) and a sequence number that only grows (an older list is never taken back).
+A list dated more than a day ahead of this machine's clock is refused. The replay floor is the
+sequence of the cached list as it was signed: the bookkeeping file beside it
+(`revocations.state.json`) records the key set it was written under, is ignored under any other,
+and can lower the floor but never raise it, so nothing that writes to the cache can turn the check
+off for good.
 A stale cache is refreshed from `https://denext.dev/runtime/revocations.json`, then from a mirror on
 GitHub, within 1.5 seconds in all. **A command never fails and never waits longer because of the
 list:** offline, an HTTP error, a bad signature or an oversized answer all mean the cached list is

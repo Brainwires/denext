@@ -26,7 +26,12 @@ and this project adheres to
   `install` and `doctor` fetch it every time, within 5 seconds, and report its sequence and expiry;
   `toolchain status --json` adds `revocation`); a network, HTTP or signature problem never fails or
   delays a command beyond that, a process without network permission never fetches, and
-  `denext start` / `denext job` read the cached list only. `toolchain prune` keeps the rollback.
+  `denext start` / `denext job` read the cached list only. A list dated more than a day ahead of
+  the clock is refused, and the replay floor is the cached list's own signed sequence: the
+  bookkeeping file beside it is bound to the key set it was written under and can lower the floor
+  but never raise it, so a write to the cache cannot turn the check off for good; the tests' keys
+  file is honoured only under a switch a test turns on in its own process, and a run on it writes
+  nothing to the cache. `toolchain prune` keeps the rollback.
   `DENEXT_REVOCATION_CHECK=0` turns the check off. Until a signing key is compiled in, the check
   reads and fetches nothing. See
   [Revoked runtimes](https://denext.dev/docs/toolchain#revoked-runtimes).

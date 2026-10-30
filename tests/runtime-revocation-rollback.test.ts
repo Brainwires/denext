@@ -29,8 +29,10 @@ import { denortBinary } from "../src/build/compile-app.ts";
 import {
   assertRuntimeShippable,
   freshRevocationList,
+  honourRevocationKeysFileForTests,
   REVOCATION_KEYS_FILE_ENV,
   REVOCATION_NOTICED_ENV,
+  revocationKeySetId,
   type RuntimeRevocation,
   signRevocationList,
 } from "../src/build/runtime-revocations.ts";
@@ -50,6 +52,9 @@ import {
   toolchainRollbackOf,
 } from "../scripts/desktop-pin-runtime.ts";
 import { sha256Hex, zip } from "./_archive-fixtures.ts";
+
+// The keys file is honoured only under this test-only switch (never by the variable alone).
+honourRevocationKeysFileForTests();
 
 const TARGET = "linux-x86_64";
 const TRIPLE = "x86_64-unknown-linux-gnu";
@@ -133,7 +138,12 @@ async function world(withRollback = true): Promise<World> {
       await Deno.writeTextFile(join(cacheRoot, "revocations.json"), JSON.stringify(doc));
       await Deno.writeTextFile(
         join(cacheRoot, "revocations.state.json"),
-        JSON.stringify({ schema: 1, sequence: list.sequence, fetchedAt: Date.now() }),
+        JSON.stringify({
+          schema: 1,
+          keys: await revocationKeySetId([pub]),
+          sequence: list.sequence,
+          fetchedAt: Date.now(),
+        }),
       );
     },
     env: (vars = {}) => (k) => ({ [REVOCATION_KEYS_FILE_ENV]: keysFile, ...vars })[k],

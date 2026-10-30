@@ -18,14 +18,17 @@ import {
   decideRevocation,
   findRevocation,
   freshRevocationList,
+  honourRevocationKeysFileForTests,
   loadRuntimeRevocations,
   REVOCATION_CHECK_ENV,
   REVOCATION_FETCH_BUDGET_MS,
   REVOCATION_KEYS_FILE_ENV,
   REVOCATION_MAX_BYTES,
+  REVOCATION_MAX_FUTURE_MS,
   REVOCATION_SIGNATURE_DOMAIN,
   revocationCacheRoot,
   revocationKeys,
+  revocationKeySetId,
   RevocationListError,
   revocationNotice,
   revocationResignDue,
@@ -243,12 +246,15 @@ Deno.test("revocationResignDue: fewer than 30 days left (or an unreadable expiry
   assert(revocationResignDue(at(10), NOW, 7) === false);
 });
 
-Deno.test("revocationKeys: the test-only keys file replaces the compiled-in keys", async () => {
+Deno.test("revocationKeys: the test-only keys file replaces the compiled-in keys, under the test switch only", async () => {
   const dir = await Deno.makeTempDir();
   try {
     const file = join(dir, "keys.json");
     await Deno.writeTextFile(file, JSON.stringify(["a", "", 3, "b"]));
     const env = (k: string) => k === REVOCATION_KEYS_FILE_ENV ? file : undefined;
+    // The variable alone does nothing: production code never turns the switch on.
+    assertEquals(revocationKeys(env), revocationKeys(() => undefined));
+    honourRevocationKeysFileForTests();
     assertEquals(revocationKeys(env), ["a", "b"]);
     await Deno.writeTextFile(file, "{}");
     assertEquals(revocationKeys(env), []);
@@ -261,6 +267,7 @@ Deno.test("revocationKeys: the test-only keys file replaces the compiled-in keys
       join(dir, "denext-deno"),
     );
   } finally {
+    honourRevocationKeysFileForTests(false);
     await Deno.remove(dir, { recursive: true });
   }
 });
@@ -462,6 +469,132 @@ Deno.test("loadRuntimeRevocations: the mirror when the primary fails; replays, o
   } finally {
     await one.close();
     await two.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("verifyRevocationDocument refuses a list dated more than a day ahead of the clock", async () => {
+  const { key, pub } = await keyPair();
+  // A signer whose clock ran two days fast: its sequence (Unix seconds) and issuedAt are ahead.
+  const ahead = listAt([ENTRY], NOW + 2 * DAY);
+  const doc = await signed(ahead, key);
+  assertEquals(await refused(verifyRevocationDocument(doc, [pub], { now: NOW })), "future");
+  // A sequence forged far ahead with an honest issuedAt is refused the same way.
+  const forged = { ...listAt(), sequence: Number.MAX_SAFE_INTEGER };
+  assertEquals(
+    await refused(verifyRevocationDocument(await signed(forged, key), [pub], { now: NOW })),
+    "future",
+  );
+  // Within a day of skew: accepted.
+  const slightly = listAt([ENTRY], NOW + REVOCATION_MAX_FUTURE_MS - 1000);
+  assertEquals(
+    (await verifyRevocationDocument(await signed(slightly, key), [pub], { now: NOW }))?.sequence,
+    slightly.sequence,
+  );
+});
+
+Deno.test("loadRuntimeRevocations: a forged bookkeeping sequence can't raise the replay floor", async () => {
+  const { key, pub } = await keyPair();
+  let served = await signed(listAt([], NOW), key);
+  const srv = server(() => new Response(served));
+  const dir = await Deno.makeTempDir();
+  try {
+    let now = NOW + 1000;
+    const base = {
+      cacheRoot: dir,
+      keys: [pub],
+      urls: [srv.url],
+      netGranted: granted,
+      now: () => now,
+      env: () => undefined,
+      mode: "force" as const,
+    };
+    assertEquals((await loadRuntimeRevocations(base)).source, "network");
+    // Something with a same-user write sets the floor to the largest sequence there is, under
+    // the right key set — every genuine list would be a replay from then on.
+    const statePath = join(dir, "revocations.state.json");
+    const state = JSON.parse(await Deno.readTextFile(statePath));
+    assertEquals(state.keys, await revocationKeySetId([pub]));
+    await Deno.writeTextFile(
+      statePath,
+      JSON.stringify({ ...state, sequence: Number.MAX_SAFE_INTEGER }),
+    );
+    now += DAY;
+    const newer = listAt([ENTRY], now - 1000);
+    served = await signed(newer, key);
+    const after = await loadRuntimeRevocations(base);
+    assertEquals([after.source, after.list?.sequence], ["network", newer.sequence]);
+    // An older list is still a replay: the floor is the cached list's own (signed) sequence.
+    served = await signed(listAt([], NOW - DAY), key);
+    assertEquals((await loadRuntimeRevocations(base)).list?.sequence, newer.sequence);
+  } finally {
+    await srv.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("loadRuntimeRevocations: bookkeeping written under another key set is ignored", async () => {
+  const { key, pub } = await keyPair();
+  const doc = await signed(listAt(), key);
+  const srv = server(() => new Response(doc));
+  const dir = await Deno.makeTempDir();
+  try {
+    const now = NOW + 1000;
+    // Fresh (fetched a minute ago) and far ahead — but written under other keys (a test's).
+    await Deno.writeTextFile(
+      join(dir, "revocations.state.json"),
+      JSON.stringify({
+        schema: 1,
+        keys: await revocationKeySetId(["someone-else"]),
+        sequence: Number.MAX_SAFE_INTEGER,
+        fetchedAt: now - 60_000,
+      }),
+    );
+    const got = await loadRuntimeRevocations({
+      cacheRoot: dir,
+      keys: [pub],
+      urls: [srv.url],
+      netGranted: granted,
+      now: () => now,
+      env: () => undefined,
+    });
+    // Its fetch time didn't hold the fetch off, and its sequence didn't refuse the list.
+    assertEquals([got.source, srv.hits()], ["network", 1]);
+    assertEquals(got.list?.sequence, listAt().sequence);
+  } finally {
+    await srv.close();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("loadRuntimeRevocations: a run on the test keys file writes nothing to the cache", async () => {
+  const { key, pub } = await keyPair();
+  const doc = await signed(listAt(), key);
+  const srv = server(() => new Response(doc));
+  const dir = await Deno.makeTempDir();
+  try {
+    const got = await loadRuntimeRevocations({
+      cacheRoot: dir,
+      keys: [pub],
+      urls: [srv.url],
+      netGranted: granted,
+      now: () => NOW + 1000,
+      env: (k) => k === REVOCATION_KEYS_FILE_ENV ? "/test/keys.json" : undefined,
+    });
+    assertEquals(got.source, "network");
+    assertEquals([...Deno.readDirSync(dir)], [], "no list, no bookkeeping");
+    // A failed fetch on test keys records nothing either.
+    await loadRuntimeRevocations({
+      cacheRoot: dir,
+      keys: [pub],
+      urls: [srv.url],
+      netGranted: () => Promise.resolve(false),
+      now: () => NOW + 1000,
+      env: (k) => k === REVOCATION_KEYS_FILE_ENV ? "/test/keys.json" : undefined,
+    });
+    assertEquals([...Deno.readDirSync(dir)], []);
+  } finally {
+    await srv.close();
     await Deno.remove(dir, { recursive: true });
   }
 });

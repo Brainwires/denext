@@ -12,9 +12,12 @@
 // shape of the full-app update manifest (app-update.ts). The signature is checked over the bytes
 // before they are parsed, against the public keys compiled in (runtime-revocation-keys.ts). The
 // signed payload carries `expiresAt` (a list at or after it is ignored) and a `sequence` that only
-// grows (a list below the highest one accepted on this machine is ignored), so an old list can
-// neither be replayed nor served forever. Unknown fields are ignored; an unknown `schema` is
-// ignored as a whole.
+// grows (a list below the one this machine holds is ignored), so an old list can neither be
+// replayed nor served forever; a list dated more than a day ahead of the clock is refused. The
+// replay floor is the sequence of the cached list as SIGNED (re-verified under the keys in force):
+// the unsigned bookkeeping file beside it records the key set it was written under and can lower
+// the floor but never raise it, so no local write can turn the check off for good. Unknown fields
+// are ignored; an unknown `schema` is ignored as a whole.
 //
 // Transport is untrusted (trust comes from the signature): denext.dev first, then a mirror on
 // GitHub, within a budget (1.5 s; 5 s for `toolchain status` / `install` / `doctor`). The list is
@@ -25,6 +28,7 @@
 import { join } from "@std/path";
 import { denoCacheDir } from "./deno-cache-dir.ts";
 import { fromBase64, toBase64 } from "./ota-signing.ts";
+import { encodeHex } from "@std/encoding/hex";
 import { RUNTIME_REVOCATION_PUBLIC_KEYS } from "./runtime-revocation-keys.ts";
 
 /** What the signature covers before the signed string. */
@@ -47,9 +51,17 @@ const REVOCATION_FORCE_BUDGET_MS = 5000;
 /** How long a signed list stays valid when no expiry is given. */
 const REVOCATION_DEFAULT_EXPIRY_DAYS = 60;
 
+/** How far ahead of the clock a list's `issuedAt` / `sequence` may be (a skewed signer). */
+export const REVOCATION_MAX_FUTURE_MS = 24 * 3600_000;
+
 /** `0` turns the check off. */
 export const REVOCATION_CHECK_ENV = "DENEXT_REVOCATION_CHECK";
-/** Test-only: a JSON file holding the public keys (base64 SPKI) to verify with, instead of the compiled-in ones. */
+/**
+ * Test-only: a JSON file holding the public keys (base64 SPKI) to verify with, instead of the
+ * compiled-in ones. Honoured only after {@linkcode honourRevocationKeysFileForTests} (nothing in
+ * denext calls it, so the variable alone does nothing), and while it is set nothing is written to
+ * the cache.
+ */
 export const REVOCATION_KEYS_FILE_ENV = "DENEXT_REVOCATION_KEYS_FILE";
 /** Set on the processes a command starts once it said a revocation, so they don't repeat it. */
 export const REVOCATION_NOTICED_ENV = "DENEXT_REVOCATION_NOTICED";
@@ -107,7 +119,8 @@ export type RevocationProblem =
   | "signature"
   | "invalid"
   | "expired"
-  | "replayed";
+  | "replayed"
+  | "future";
 
 /** A refused list ({@linkcode verifyRevocationDocument}). */
 export class RevocationListError extends Error {
@@ -301,7 +314,17 @@ export async function verifyRevocationDocument(
   }
   if (payload?.schema !== 1) return null;
   const list = checkRevocationList(payload);
-  if ((options.now ?? Date.now()) >= Date.parse(list.expiresAt)) {
+  const now = options.now ?? Date.now();
+  if (
+    list.sequence * 1000 > now + REVOCATION_MAX_FUTURE_MS ||
+    Date.parse(list.issuedAt) > now + REVOCATION_MAX_FUTURE_MS
+  ) {
+    throw new RevocationListError(
+      "future",
+      `the list is dated ahead of this clock (issued ${list.issuedAt}, sequence ${list.sequence})`,
+    );
+  }
+  if (now >= Date.parse(list.expiresAt)) {
     throw new RevocationListError("expired", `the list expired at ${list.expiresAt}`, list);
   }
   if (list.sequence < (options.minSequence ?? 0)) {
@@ -374,16 +397,31 @@ export function revocationResignDue(
   return Number.isNaN(expires) || expires - now < days * DAY_MS;
 }
 
+/** Whether this process honours {@linkcode REVOCATION_KEYS_FILE_ENV} (tests only). */
+let keysFileHonoured = false;
+
 /**
- * The public keys lists are verified with: the compiled-in ones, or (tests) the JSON array of
- * base64 SPKI keys in the file {@linkcode REVOCATION_KEYS_FILE_ENV} names. Empty: no key is
- * configured, and the check does nothing.
+ * Test-only: let {@linkcode REVOCATION_KEYS_FILE_ENV} replace the compiled-in keys in this
+ * process. Nothing in denext calls it — a test module does — so the environment alone can never
+ * swap the keys a list is verified with.
+ *
+ * @param on Whether to honour it (default `true`).
+ */
+export function honourRevocationKeysFileForTests(on = true): void {
+  keysFileHonoured = on;
+}
+
+/**
+ * The public keys lists are verified with: the compiled-in ones, or (tests, after
+ * {@linkcode honourRevocationKeysFileForTests}) the JSON array of base64 SPKI keys in the file
+ * {@linkcode REVOCATION_KEYS_FILE_ENV} names. Empty: no key is configured, and the check does
+ * nothing.
  *
  * @param env Env reader.
  * @returns The keys.
  */
 export function revocationKeys(env: EnvGet = processEnv): string[] {
-  const file = env(REVOCATION_KEYS_FILE_ENV);
+  const file = keysFileHonoured ? env(REVOCATION_KEYS_FILE_ENV) : undefined;
   if (!file) return RUNTIME_REVOCATION_PUBLIC_KEYS.filter((k) => k !== "");
   try {
     const keys: unknown = JSON.parse(Deno.readTextFileSync(file));
@@ -403,10 +441,24 @@ export function revocationCacheRoot(env: EnvGet = processEnv): string {
   return join(denoCacheDir(env), "denext-deno");
 }
 
-/** The cache's bookkeeping. */
+/**
+ * The id of a key set: the SHA-256 of its keys, sorted, one per line. The bookkeeping file records
+ * it, and a file written under another key set (a test's keys, a rotated key) is ignored.
+ *
+ * @param keys The public keys.
+ * @returns The hex digest.
+ */
+export async function revocationKeySetId(keys: readonly string[]): Promise<string> {
+  const text = [...keys].sort().join("\n");
+  return encodeHex(new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(text))));
+}
+
+/** The cache's bookkeeping (unsigned: it can lower the replay floor, never raise it). */
 interface RevocationState {
   readonly schema: 1;
-  /** The highest sequence accepted on this machine. */
+  /** The key set it was written under ({@linkcode revocationKeySetId}). */
+  readonly keys: string;
+  /** The sequence of the list accepted last. */
   readonly sequence: number;
   /** When the list was last fetched (epoch ms). */
   readonly fetchedAt: number;
@@ -414,10 +466,12 @@ interface RevocationState {
   readonly failedAt?: number;
 }
 
-async function readState(root: string): Promise<RevocationState | null> {
+/** The bookkeeping, when it was written under the key set `keys` (else `null`). */
+async function readState(root: string, keys: string): Promise<RevocationState | null> {
   try {
     const s = JSON.parse(await Deno.readTextFile(join(root, STATE_FILE)));
-    return s?.schema === 1 && Number.isSafeInteger(s.sequence) && Number.isFinite(s.fetchedAt)
+    return s?.schema === 1 && s.keys === keys && Number.isSafeInteger(s.sequence) &&
+        Number.isFinite(s.fetchedAt)
       ? s
       : null;
   } catch {
@@ -610,37 +664,88 @@ export async function loadRuntimeRevocations(
   const env = options.env ?? processEnv;
   const mode = options.mode ?? "fetch";
   const keys = checkKeys(mode, env, options.keys);
-  if (keys === null) return NOT_CONFIGURED;
-  let root: string;
-  try {
-    root = options.cacheRoot ?? revocationCacheRoot(env);
-  } catch {
-    return NOT_CONFIGURED; // no cache directory: nothing to read, nowhere to remember
-  }
+  const root = keys === null ? null : cacheRootOf(options, env);
+  if (keys === null || root === null) return NOT_CONFIGURED;
   const now = (options.now ?? Date.now)();
-  const state = await readState(root);
-  const minSequence = state?.sequence ?? 0;
-  const expired = { list: null as RuntimeRevocationList | null };
-  const cached = await readCached(root, keys, { now, minSequence }, expired);
-  if (!fetchDue(mode, state, now)) return result(cached, "cache", expired.list);
+  const held = await readHeld(root, keys, now);
+  if (!fetchDue(mode, held.state, now)) return result(held.cached, "cache", held.expired.list);
   const budgetMs = options.budgetMs ??
     (mode === "force" ? REVOCATION_FORCE_BUDGET_MS : REVOCATION_FETCH_BUDGET_MS);
   const fetched = await fetchVerified(
     options.urls ?? REVOCATION_URLS,
     keys,
-    { budgetMs, now, minSequence, fetch: options.fetch ?? fetch },
+    { budgetMs, now, minSequence: held.minSequence, fetch: options.fetch ?? fetch },
     options.netGranted ?? netGrantedByQuery,
-    expired,
+    held.expired,
   );
+  // A run on test keys (DENEXT_REVOCATION_KEYS_FILE) never writes what a later run reads.
+  if (!env(REVOCATION_KEYS_FILE_ENV)) await record(root, held, now, fetched);
+  return fetched === null
+    ? result(held.cached, "cache", held.expired.list)
+    : result(fetched.list, "network", null);
+}
+
+/** The cache directory, or `null` when there is none to be had (nothing to read or remember). */
+function cacheRootOf(options: LoadRevocationsOptions, env: EnvGet): string | null {
+  try {
+    return options.cacheRoot ?? revocationCacheRoot(env);
+  } catch {
+    return null;
+  }
+}
+
+/** What this machine holds: the bookkeeping, the cached list and the replay floor they give. */
+interface HeldRevocations {
+  readonly keySet: string;
+  readonly state: RevocationState | null;
+  readonly cached: RuntimeRevocationList | null;
+  /** A verified list ignored because it expired (filled further by the fetch). */
+  readonly expired: { list: RuntimeRevocationList | null };
+  readonly minSequence: number;
+}
+
+/** The cached list (re-verified under `keys`) and the bookkeeping written under the same keys. */
+async function readHeld(root: string, keys: readonly string[], now: number) {
+  const keySet = await revocationKeySetId(keys);
+  const state = await readState(root, keySet);
+  const expired = { list: null as RuntimeRevocationList | null };
+  const cached = await readCached(root, keys, { now, minSequence: 0 }, expired);
+  const minSequence = replayFloor(cached ?? expired.list, state);
+  return { keySet, state, cached, expired, minSequence } satisfies HeldRevocations;
+}
+
+/** Remember a fetch: the list and its bookkeeping, or (`null`) when it failed. */
+async function record(
+  root: string,
+  held: HeldRevocations,
+  now: number,
+  fetched: Fetched | null,
+): Promise<void> {
+  const base = { schema: 1 as const, keys: held.keySet };
   if (fetched === null) {
-    const failed = { schema: 1, sequence: minSequence, fetchedAt: state?.fetchedAt ?? 0 };
-    await writeQuietly(root, STATE_FILE, JSON.stringify({ ...failed, failedAt: now }) + "\n");
-    return result(cached, "cache", expired.list);
+    const failed: RevocationState = {
+      ...base,
+      sequence: held.minSequence,
+      fetchedAt: held.state?.fetchedAt ?? 0,
+      failedAt: now,
+    };
+    await writeQuietly(root, STATE_FILE, JSON.stringify(failed) + "\n");
+    return;
   }
   await writeQuietly(root, CACHE_FILE, fetched.text);
-  const next: RevocationState = { schema: 1, sequence: fetched.list.sequence, fetchedAt: now };
+  const next: RevocationState = { ...base, sequence: fetched.list.sequence, fetchedAt: now };
   await writeQuietly(root, STATE_FILE, JSON.stringify(next) + "\n");
-  return result(fetched.list, "network", null);
+}
+
+/**
+ * The replay floor: the sequence of the list this machine holds (`held`, verified under the keys
+ * in force, expired or not), lowered by the bookkeeping's when that is lower — the unsigned file
+ * can never raise it, so a forged `sequence` cannot make every genuine list a replay. No list
+ * held: 0.
+ */
+function replayFloor(held: RuntimeRevocationList | null, state: RevocationState | null): number {
+  if (held === null) return 0;
+  return Math.min(held.sequence, state?.sequence ?? held.sequence);
 }
 
 /** A configured {@linkcode LoadedRevocations}. */
