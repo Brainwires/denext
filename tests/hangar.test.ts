@@ -42,13 +42,7 @@ import {
   parseMemoryMiB,
   parseStartScript,
 } from "../examples/hangar/lib/start-script.ts";
-import {
-  MENU,
-  panelBounds,
-  SHUTDOWN_PREFIX,
-  trayMenu,
-  workAreaAt,
-} from "../examples/hangar/lib/tray.ts";
+import { MENU, SHUTDOWN_PREFIX, trayMenu } from "../examples/hangar/lib/tray.ts";
 import type { Overview, VmDefinition } from "../examples/hangar/lib/types.ts";
 import {
   buildQemuCommand,
@@ -691,35 +685,6 @@ Deno.test("hangar format: sizes, budget, tooltip, quick actions", () => {
   assertEquals(sshCommand(win), "ssh -p 2227 localhost");
   assertEquals(rdpAddress(win), "localhost:3390");
   assertEquals(rdpAddress({ ...win, forwards: [] } as VmDefinition), null);
-});
-
-Deno.test("hangar tray: the panel under a top-bar icon, above a taskbar icon, or in a corner", () => {
-  const area = { x: 0, y: 25, width: 1440, height: 875 };
-  // macOS menu bar: under the icon, centred, clamped to the right edge.
-  assertEquals(panelBounds({ x: 1400, y: 0, width: 24, height: 24 }, area), {
-    x: 1080,
-    y: 30,
-    width: 360,
-    height: 480,
-  });
-  // Windows taskbar at the bottom: above the icon.
-  const bottom = { x: 0, y: 0, width: 1920, height: 1040 };
-  assertEquals(panelBounds({ x: 1700, y: 1045, width: 24, height: 30 }, bottom).y, 1045 - 480 - 6);
-  // Linux: no bounds, the top-right corner.
-  assertEquals(panelBounds(null, area), { x: 1074, y: 31, width: 360, height: 480 });
-  const screens = [
-    {
-      bounds: { x: 0, y: 0, width: 100, height: 100 },
-      workArea: { x: 0, y: 0, width: 100, height: 90 },
-    },
-    {
-      bounds: { x: 100, y: 0, width: 100, height: 100 },
-      workArea: { x: 100, y: 0, width: 100, height: 90 },
-    },
-  ];
-  assertEquals(workAreaAt(screens, { x: 150, y: 5 })?.x, 100);
-  assertEquals(workAreaAt(screens, null)?.x, 0);
-  assertEquals(workAreaAt([], null), null);
 });
 
 Deno.test("hangar tray: the menu lists running VMs, startable ones and the windows", async () => {

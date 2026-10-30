@@ -11,7 +11,7 @@ body {
 .content {
   padding: 16px 24px;
 }
-/* The panel: the window resized at the tray icon. */
+/* The panel at the tray icon (app/panel). */
 :root[data-mode="panel"] .content {
   padding: 10px 12px;
 }

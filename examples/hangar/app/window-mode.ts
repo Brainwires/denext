@@ -1,82 +1,84 @@
-// The one window as Hangar's two kinds of window: the PANEL (small, on top, at the tray icon,
-// hidden when it loses focus) and the FULL window (resizable, normal). denext has one window per
-// app today, so both are that window, resized and moved; README.md lists the gaps.
+// Hangar's windows: the PANEL at the tray icon (denext's backend tray panel, `desktop.tray.panel`:
+// frameless, never takes the focus, hides when it loses it), the MAIN window (the library; hidden
+// at launch, `desktop.window.show: false`) and one FULL window per page (`openWindow`). Hangar has
+// no Dock icon (`desktop.app.dock: false`) except while a full window shows, so that window comes
+// to the front and Cmd-Tab reaches it.
 
 import {
+  type DesktopWindowHandle,
   focusWindow,
-  getScreens,
+  getWindows,
   hideWindow,
-  setAlwaysOnTop,
-  setWindowBounds,
-  setWindowResizable,
+  openWindow,
   showWindow,
+  windowHandle,
 } from "denext/desktop/window";
-import type { AppTray } from "denext/desktop/app";
-import { FULL_SIZE, PANEL_SIZE, panelBounds, workAreaAt } from "../lib/tray.ts";
+import { hideTrayPanel, setDockVisible, showTrayPanel } from "denext/desktop/app";
+import { FULL_SIZE } from "../lib/tray.ts";
 
-/** What the window is being used as. */
-export type WindowMode = "hidden" | "panel" | "full";
+/** The full windows this page opened, by path (one per page of the app). */
+const opened = new Map<string, DesktopWindowHandle>();
 
-let mode: WindowMode = "hidden";
-/** When the panel last hid itself on blur (a click on the tray icon blurs it first). */
-let blurHiddenAt = 0;
-
-function setMode(next: WindowMode) {
-  mode = next;
-  document.documentElement.dataset.mode = next;
+/** Give the app a Dock icon while a full window shows (macOS; elsewhere nothing). */
+async function dock(visible: boolean): Promise<void> {
+  await setDockVisible(visible).catch(() => false);
 }
 
-/** Show the window as the panel at the tray icon. */
-export async function showPanel(tray: AppTray | null): Promise<void> {
-  const icon = tray ? await tray.getBounds().catch(() => null) : null;
-  const screens = await getScreens().catch(() => []);
-  const area = workAreaAt(screens, icon) ?? { x: 0, y: 0, width: 1280, height: 800 };
-  setMode("panel");
-  await setWindowResizable(false).catch(() => {});
-  await setAlwaysOnTop(true).catch(() => {});
-  await setWindowBounds(panelBounds(icon, area, PANEL_SIZE)).catch(() => {});
-  await showWindow();
-  await focusWindow().catch(() => {});
+/** Hide the Dock icon again once no full window is showing. */
+async function dockIfNoFullWindows(): Promise<void> {
+  const windows = await getWindows().catch(() => []);
+  const showing = windows.some((w) => w.kind !== "panel" && w.visible);
+  if (!showing) await dock(false);
 }
 
-/** Toggle the panel (a tray click). A click right after the panel hid on blur closes it. */
-export async function togglePanel(tray: AppTray | null): Promise<void> {
-  if (mode === "panel" || Date.now() - blurHiddenAt < 400) {
-    await hide();
-    return;
+/** Show the main window (the library). */
+export async function showMain(): Promise<void> {
+  await dock(true);
+  await hideTrayPanel().catch(() => false);
+  const main = windowHandle("main");
+  await main.show();
+  await main.focus().catch(() => {});
+}
+
+/**
+ * Open (or bring back) the full window for `path`: `"/"` is the main window, every other page its
+ * own window.
+ */
+export async function openFull(path: string): Promise<void> {
+  if (path === "/") return await showMain();
+  await dock(true);
+  await hideTrayPanel().catch(() => false);
+  const existing = opened.get(path);
+  if (existing) {
+    try {
+      await existing.show();
+      await existing.focus();
+      return;
+    } catch {
+      opened.delete(path); // closed meanwhile
+    }
   }
-  await showPanel(tray);
+  const win = await openWindow({ url: path, title: "Hangar", ...FULL_SIZE });
+  opened.set(path, win);
+  win.onClosed(() => {
+    opened.delete(path);
+    void dockIfNoFullWindows();
+  });
 }
 
-/** Show the window as a full window, centred on its display. */
-export async function showFull(): Promise<void> {
-  const screens = await getScreens().catch(() => []);
-  const area = workAreaAt(screens, null);
-  setMode("full");
-  await setAlwaysOnTop(false).catch(() => {});
-  await setWindowResizable(true).catch(() => {});
-  await setWindowBounds({
-    ...FULL_SIZE,
-    ...(area
-      ? {
-        x: Math.round(area.x + (area.width - FULL_SIZE.width) / 2),
-        y: Math.round(area.y + (area.height - FULL_SIZE.height) / 2),
-      }
-      : {}),
-  }).catch(() => {});
-  await showWindow();
-  await focusWindow().catch(() => {});
+/** Show the panel at the tray icon (the "Show panel" menu item). */
+export async function showPanel(): Promise<void> {
+  await showTrayPanel().catch(() => false);
 }
 
-/** Hide the window; the app stays in the tray. */
+/** Hide this window (the main window's close button): the app stays in the tray. */
 export async function hide(): Promise<void> {
-  setMode("hidden");
   await hideWindow().catch(() => {});
+  await dockIfNoFullWindows();
 }
 
-/** The panel lost focus: hide it (a full window stays). */
-export function onWindowBlur(): void {
-  if (mode !== "panel") return;
-  blurHiddenAt = Date.now();
-  void hide();
+/** Show this window and focus it (no tray host: the main window is the app). */
+export async function showSelf(): Promise<void> {
+  await showWindow().catch(() => {});
+  await focusWindow().catch(() => {});
 }

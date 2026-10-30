@@ -2,20 +2,19 @@
 // The panel (and the library page of the full window): every VM with its state, RAM and CPU, the
 // RAM budget, and start / shut down. Starting over the budget asks first.
 
-import { useRouter, useState } from "denext";
+import { useState } from "denext";
 import { formatBytes } from "../lib/format.ts";
 import type { VmOverview } from "../lib/types.ts";
 import { errorText, hangar } from "./hangar-client.ts";
 import { useOverview } from "./use-overview.ts";
-import { showFull } from "./window-mode.ts";
+import { openFull } from "./window-mode.ts";
 
 export function Panel() {
   const { overview, error, refresh } = useOverview();
   const [message, setMessage] = useState("");
   const [overBudget, setOverBudget] = useState<{ id: string; headless: boolean } | null>(null);
-  const router = useRouter();
-
-  const go = (path: string) => void showFull().then(() => router.push(path));
+  // A page of its own: the main window for the library, a full window for every other page.
+  const go = (path: string) => void openFull(path);
 
   const act = async (what: () => Promise<unknown>) => {
     setMessage("");

@@ -44,42 +44,43 @@ deno test -A tests/hangar.test.ts
 
 ## How it is built
 
-| File                  | What it is                                                                       |
-| --------------------- | -------------------------------------------------------------------------------- |
-| `desktop.ts`          | The Deno Desktop entry: `runDesktop`, then hides the window it adopted           |
-| `desktop/hangar.ts`   | The backend, a `defineDesktopExtension` the page calls through the bridge        |
-| `lib/hangar.ts`       | The VM logic over a `Host` (`lib/host.ts`): library, instances, images, settings |
-| `lib/deno-host.ts`    | The real host: `ps`, `lsof` / `/proc`, `qemu-img`, unix sockets, files           |
-| `lib/qmp.ts`          | A small QMP client over any byte stream                                          |
-| `lib/start-script.ts` | The static `start.sh` reader                                                     |
-| `lib/vm-config.ts`    | `hangar.json` validation and its QEMU command line                               |
-| `lib/tray.ts`         | The panel's placement at the tray icon and the tray menu                         |
-| `app/tray-shell.tsx`  | The tray icon, its clicks and menu, the tooltip, close-to-tray                   |
-| `app/window-mode.ts`  | The one window as the panel, a full window, or hidden                            |
-| `app/*/`              | The pages: the panel / library, a VM's details, images, a new VM, settings       |
+| File                  | What it is                                                                        |
+| --------------------- | --------------------------------------------------------------------------------- |
+| `desktop.ts`          | The Deno Desktop entry: `runDesktop` with the config's window, tray and Dock      |
+| `desktop/hangar.ts`   | The backend, a `defineDesktopExtension` the page calls through the bridge         |
+| `lib/hangar.ts`       | The VM logic over a `Host` (`lib/host.ts`): library, instances, images, settings  |
+| `lib/deno-host.ts`    | The real host: `ps`, `lsof` / `/proc`, `qemu-img`, unix sockets, files            |
+| `lib/qmp.ts`          | A small QMP client over any byte stream                                           |
+| `lib/start-script.ts` | The static `start.sh` reader                                                      |
+| `lib/vm-config.ts`    | `hangar.json` validation and its QEMU command line                                |
+| `lib/tray.ts`         | The window sizes and the tray menu                                                |
+| `app/tray-shell.tsx`  | The main page drives the backend tray: menu, tooltip, double click, close-to-tray |
+| `app/window-mode.ts`  | The panel, the main window (the library) and one window per other page            |
+| `app/*/`              | The pages: the library, the panel, a VM's details, images, a new VM, settings     |
 
 `tests/hangar.test.ts` drives `lib/` against an in-memory host (`tests/helpers/hangar-fake-host.ts`)
 and the QMP client against an in-memory socket: no QEMU, no `~/VMs`, no real process.
 
-## What is approximated today
+## How it is tray-first
 
-denext's desktop apps have one window and no windowless launch yet, so Hangar approximates a
-tray-first app with what exists:
+Everything below comes from denext's desktop windowing (`denext.config.ts`, `desktop.*`):
 
-- **Windowless start.** The runtime opens the window at launch; `desktop.ts` hides it as soon as
-  `runDesktop` adopted it, so it may flash briefly. The page still loads in the hidden window.
-- **The tray is the page's.** `createTray` (`denext/desktop/app`) is called from the page; a full
-  reload removes and recreates it. There is no tray before the page loads.
-- **The panel is the main window**, resized and moved under the tray icon (`tray.getBounds()`), set
-  non-resizable and always on top. It keeps its title bar (no frameless window) and hides on the
-  page's `blur` DOM event (denext forwards no window blur event).
-- **Full windows are the same window**, resized and navigated: one window at a time.
-- **Dock / taskbar icon.** The app shows one, like any other; there is no accessory mode.
-- **Clicks.** Left click and double click are told apart; right click opens the menu. No modifier
-  keys, no hover. On Linux there are no tray bounds (the panel goes to the top-right corner) and
-  most hosts open the menu on any click; stock GNOME needs the AppIndicator extension, and without a
-  tray host the runtime shows the window, which Hangar then uses as the full window.
-- **Quit.** "Quit" in the tray menu quits; closing the window only hides it (`onCloseRequested`).
+- **Windowless start.** `desktop.window.show: false`: the main window (the library) starts hidden,
+  with no flash; its page still loads and drives the tray's menu and tooltip.
+- **No Dock icon.** `desktop.app.dock: false` (macOS); `app/window-mode.ts` turns the icon on while
+  a full window is open, so it comes to the front and Cmd-Tab reaches it, and off again after.
+- **A backend tray.** `desktop.tray` is created by `runDesktop` before any page loads and survives
+  reloads; pages reach it with `getTray()` (`denext/desktop/app`).
+- **A real panel.** `desktop.tray.panel` is the runtime's `Tray.attachPanel`: a frameless window
+  that never takes the focus, toggled by a left click, hidden when it loses the focus, and placed by
+  denext under a menu-bar icon or above a bottom taskbar, inside the display's work area.
+- **Several windows.** "Images", "New VM", "Settings" and a VM's details each open in a window of
+  their own (`openWindow` in `denext/desktop/window`); "Open Hangar" shows the main window.
+- **Keep alive.** `desktop.app.keepAlive`: closing every window leaves Hangar in the tray; closing
+  the main window hides it (`onCloseRequested`), so its page keeps the tray current. "Quit" quits.
 
-Native support for each of these (a windowless launch, no Dock icon, several windows, a backend
-tray, richer tray events) is planned in the desktop runtime.
+What still depends on the desktop runtime: on macOS the Dock icon shows for a moment at launch until
+the runtime reads the setting before its first frame; the tray's clicks carry no button, modifier or
+position; on Linux the AppIndicator tray has no left click and no position (the panel opens where it
+last was; the menu has "Show panel"), and stock GNOME needs the AppIndicator extension (without a
+tray host the main window is shown instead).
