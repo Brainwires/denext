@@ -38,6 +38,9 @@
 //      while any workspace member denext imports at run time (scripts/lib/jsr-pins.ts) pins a
 //      version JSR does not have (4.1.0 shipped pinning an unpublished @denext/og); then tag
 //      v<version> and push branch + tag
+//   7. re-sign the signed revoked-runtimes list when fewer than 30 days remain before it expires
+//      (`deno task revocations resign --if-due`, the keychain key; a warning on failure, never an
+//      abort: the list is advisory)
 //
 // A release that stopped in step 6 (JSR slow to list the corpus — the wait polls for the exact
 // version with backoff for up to 3 hours —, a failed push, a closed terminal) resumes where it
@@ -475,6 +478,7 @@ async function dryRun(version: string, tag: string, branch: string): Promise<voi
       }`,
     );
   }
+  console.log("7. revocations      (skipped — dry run; a real run re-signs the list when due)");
   console.log(`\nDry run complete — nothing written, nothing committed. Would tag ${tag}.`);
 }
 
@@ -640,6 +644,35 @@ async function publishSteps(
   } catch (err) {
     if (err instanceof ReleaseAbort) die(err.message);
     throw err;
+  }
+  await resignRevocations();
+}
+
+/** Step 7's command: re-sign the revoked-runtimes list when fewer than 30 days remain. */
+const RESIGN_REVOCATIONS = [
+  "deno",
+  "run",
+  "-A",
+  "scripts/runtime-revocations.ts",
+  "resign",
+  "--if-due",
+];
+
+/**
+ * Step 7: keep the signed revoked-runtimes list (src/build/runtime-revocations.ts) fresh — it
+ * expires 60 days after signing, and releases are what re-sign it (there is no scheduled job): a
+ * list with fewer than 30 days left is re-signed with the keychain key and published again. It is
+ * advisory, so a failure (no key on this machine, offline) is a warning, never a failed release.
+ */
+async function resignRevocations(): Promise<void> {
+  console.log("\n7. Revoked-runtimes list: re-sign when fewer than 30 days remain…");
+  const [cmd, ...args] = RESIGN_REVOCATIONS;
+  if (await run(cmd, ...args) !== 0) {
+    console.warn(
+      "release: warning — the revoked-runtimes list was not re-signed. It is advisory and " +
+        "lapses only at its expiry; run `deno task revocations resign` on the machine that " +
+        "holds the key (CONTRIBUTING.md → A bad runtime release).",
+    );
   }
 }
 

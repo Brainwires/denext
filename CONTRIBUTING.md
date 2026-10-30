@@ -527,6 +527,61 @@ only that package, on its own tag:
    `git tag -a <pkg>-vX.Y.Z -m "@denext/<pkg> X.Y.Z" <commit>` (e.g.
    `photon-v1.1.0`) and `git push origin <pkg>-vX.Y.Z`.
 
+### A bad runtime release
+
+A released Deno toolchain or Deno Desktop runtime (`denext-runtime-v<version>` on
+`Brainwires/deno`) that turns out to be broken is revoked through the signed revoked-runtimes list
+(`src/build/runtime-revocations.ts`; users' side: [the toolchain docs](https://denext.dev/docs/toolchain#revoked-runtimes)).
+The list is ECDSA P-256 signed with a maintainer key; denext verifies it with the two public keys
+compiled into `src/build/runtime-revocation-keys.ts` (the active one and an offline backup). With
+both slots empty the check is a no-op: no list is read, nothing is fetched. Signing is a manual
+step on the maintainer's Mac, never a CI secret: `deno task revocations` (`scripts/runtime-revocations.ts`)
+reads the private key from the login keychain with `security find-generic-password -w`, never
+prints it and never writes it to disk.
+
+**One-time setup** (a maintainer, by hand; an agent never creates or handles the key):
+
+1. `deno task revocations keygen` stores a new private key in the login keychain (service
+   `denext-runtime-revocations`, account `active`) and prints its public key. Paste it into the
+   first (active) slot of `src/build/runtime-revocation-keys.ts`.
+2. `deno task revocations keygen --slot backup` makes the backup pair. Paste its public key into
+   the second slot, export the item (Keychain Access) into the password manager, then delete it
+   from the keychain: the backup key lives offline and is used only to rotate. Also keep a copy of
+   the active key in the password manager.
+3. Commit the keys module and release it.
+4. Set `DENEXT_REVOCATIONS_RSYNC_ROOT=<host>:<denext.dev web root>` in the shell that signs, then
+   publish the first list (nothing revoked): `deno task revocations init`. It rsyncs
+   `runtime/revocations.json` into the web root and commits `runtime-revocations.json` to the
+   orphan branch `denext-revocations` of `Brainwires/deno` (`gh`, logged in with push access).
+   The docs-site deploy (`rsync --delete site/out/ …`) must leave the file alone: add
+   `--exclude /runtime/` to that rsync.
+
+**Runbook (bad runtime release N):**
+
+1. Confirm the break (a crash report, an issue) and work out which targets it hits.
+2. Revoke it: `deno task revocations add --component cli --version N [--targets <triple,…>]
+   --reason "<one line>" [--advisory <https url>] [--fixed-in "denext X.Y.Z"]` (`--component
+   desktop` for the Deno Desktop runtime). It signs with the keychain key, verifies the result
+   against the compiled-in public keys, writes `.denext/runtime-revocations.json` and publishes it
+   to denext.dev and the mirror (`--no-publish` stops before that; `deno task revocations publish
+   <file>` publishes later).
+3. Check from a clean `DENO_DIR`: `denext toolchain status` shows the revocation and the rollback.
+   Users pick it up within 12 hours, or at once on `toolchain status` / `doctor`.
+4. Re-pin. When a fixed runtime N+1 exists, `deno task desktop:pin-runtime denext-runtime-vN+1`:
+   the new pins keep N-1 as their `rollback`, because N is revoked. Otherwise restore the previous
+   pins (`git show <last good>:src/build/deno-toolchain-pin.json`, the same for
+   `desktop-runtime-pin.json`). `--rollback <tag>` names the fallback release explicitly.
+5. Cut a denext patch release through the normal gates (`deno task release`, then merge
+   `development → main`). Publish a GitHub advisory if security is involved.
+6. Optionally point the fork release's notes at the revocation (its assets stay immutable).
+
+**Freshness.** A list expires 60 days after signing and denext then ignores it (`doctor` warns).
+There is no scheduled job: `deno task release` re-signs it (step 7, `deno task revocations resign
+--if-due`) when fewer than 30 days remain, on the machine that holds the key. A failure there is a
+warning, never a failed release; run `deno task revocations resign` by hand. `deno task
+revocations verify` checks the published copy against the compiled-in keys. To rotate, sign with
+the backup key (store it in the keychain as the `active` item), compile a new backup into the next release, and retire the old active key.
+
 ### Gotchas
 
 - **Clean tree required.** `deno publish` (and the workflow) refuse a dirty
