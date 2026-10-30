@@ -231,12 +231,32 @@ export function mapProfile(
   return user;
 }
 
-/** The raw profile `profile()` receives: the id_token claims (OIDC), else the userinfo. */
+/**
+ * The raw profile `profile()` receives: the id_token claims (OIDC), else the userinfo. A
+ * `profileFromUserinfo` provider reads userinfo over the claims (Auth.js's mapping reads its
+ * fields), but the verified id_token keeps `sub` (the flow already refused a userinfo about
+ * another subject) and, for the same address, `email_verified`.
+ */
 function rawProfile(spec: GeneratedSpec, input: ProfileInput): Record<string, unknown> {
+  const claims = input.claims ?? {};
   if (spec.type === "oidc" && !spec.profileFromUserinfo) {
-    return { ...(input.userinfo ?? {}), ...(input.claims ?? {}) };
+    return { ...(input.userinfo ?? {}), ...claims };
   }
-  return { ...(input.claims ?? {}), ...(input.userinfo ?? {}) };
+  const raw: Record<string, unknown> = { ...claims, ...(input.userinfo ?? {}) };
+  return input.claims === undefined ? raw : pinVerifiedClaims(raw, claims);
+}
+
+/** `raw` with the verified id_token's `sub`, and its `email_verified` for the same address. */
+function pinVerifiedClaims(
+  raw: Record<string, unknown>,
+  claims: Record<string, unknown>,
+): Record<string, unknown> {
+  if (claims.sub !== undefined) raw.sub = claims.sub;
+  const sameAddress = claims.email === raw.email;
+  if (sameAddress && claims.email_verified !== undefined) {
+    raw.email_verified = claims.email_verified;
+  }
+  return raw;
 }
 
 /** Whether the id alternative that applies reads only values that are there. */

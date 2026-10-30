@@ -68,6 +68,7 @@ function fakeHub(limits: Partial<ViewLimits> = {}) {
       maxParkedViews: 10,
       maxSubscriptionInputBytes: 1024,
       channelAuthTtlSeconds: 300,
+      viewTokenMaxAgeSeconds: 86_400,
       ...limits,
     }),
     sendFrame: (conn, text) => push(conn, JSON.parse(text)),

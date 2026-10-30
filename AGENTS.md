@@ -290,9 +290,9 @@ export const Counter = defineLiveView({
 ```
 
 `send(msg)` sends only a handler index (the message stays on the server); a reconnect within
-`live.limits.viewResumeSeconds` resumes the model, else `init` re-runs. Set
-`DENEXT_LIVE_VIEW_SECRET` on every instance. Docs: https://denext.dev/docs/live-views,
-https://denext.dev/docs/mvu
+`live.limits.viewResumeSeconds` resumes the model for the same viewer, else `init` re-runs. Set
+`DENEXT_LIVE_VIEW_SECRET` (16+ characters) on every instance. Docs:
+https://denext.dev/docs/live-views, https://denext.dev/docs/mvu
 
 **A typed Server Action (the mutation side, also type-checked):** `defineAction` validates
 `FormData` into a typed input (a parser, or a Zod/Valibot/any Standard Schema) and its `Out`

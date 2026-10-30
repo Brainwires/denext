@@ -42,6 +42,7 @@ import {
   type ViewSummary,
 } from "./live-views.ts";
 import { getLiveViewStore } from "./live-view-store.ts";
+import { DEFAULT_VIEW_TOKEN_MAX_AGE_SECONDS } from "../runtime/live-view.ts";
 import { createLustreViewHub, type LustreHub, type LustreViewInstance } from "./lustre-views.ts";
 import {
   broadcastInvalidation,
@@ -213,6 +214,7 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxViewBytesPerConnection: 1024 * 1024,
   viewResumeSeconds: 30,
   maxParkedViews: 1000,
+  viewTokenMaxAgeSeconds: DEFAULT_VIEW_TOKEN_MAX_AGE_SECONDS,
 };
 let limits: Required<LiveLimits> = DEFAULT_LIMITS;
 

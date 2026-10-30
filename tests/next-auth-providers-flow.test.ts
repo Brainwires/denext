@@ -28,6 +28,7 @@ import LinkedIn from "../src/compat/next-auth/providers/linkedin.ts";
 import MicrosoftEntraID from "../src/compat/next-auth/providers/microsoft-entra-id.ts";
 import Okta from "../src/compat/next-auth/providers/okta.ts";
 import Reddit from "../src/compat/next-auth/providers/reddit.ts";
+import Salesforce from "../src/compat/next-auth/providers/salesforce.ts";
 import Slack from "../src/compat/next-auth/providers/slack.ts";
 import Spotify from "../src/compat/next-auth/providers/spotify.ts";
 import Twitch from "../src/compat/next-auth/providers/twitch.ts";
@@ -56,6 +57,8 @@ interface Row {
   formPost?: boolean;
   /** The userinfo body (OAuth providers), or extra id_token claims (OIDC). */
   userinfo?: Record<string, unknown>;
+  /** The endpoints discovery names, for a provider configured with its issuer alone. */
+  discovered?: { authorize: string; token: string; jwks: string; userinfo: string };
   claims?: Record<string, unknown>;
   /** GitHub's email list. */
   emails?: unknown[];
@@ -287,6 +290,13 @@ function stubIdp(p: OAuthProvider, row: Row, nonce: () => string | undefined, ta
   const seen: Seen = { token: [] };
   const issuer = p.discovery?.issuer ?? p.issuer;
   const noQuery = (u: string) => u.split("?")[0];
+  const ep = row.discovered ??
+    {
+      authorize: p.authorizationUrl,
+      token: p.tokenUrl,
+      jwks: p.jwksUrl,
+      userinfo: p.userinfoUrl,
+    };
   /** The id_token the token endpoint returns (OIDC only), tampered as asked. */
   const idToken = () => {
     const now = Math.floor(Date.now() / 1000);
@@ -310,10 +320,10 @@ function stubIdp(p: OAuthProvider, row: Row, nonce: () => string | undefined, ta
     return Response.json({ access_token: "at", token_type: "bearer", ...extra });
   };
   const routes = new Map<string, (init?: RequestInit) => Response | Promise<Response>>([
-    [noQuery(p.tokenUrl), token],
-    [noQuery(p.jwksUrl ?? "-"), () => Response.json(IDP.jwks)],
+    [noQuery(ep.token), token],
+    [noQuery(ep.jwks ?? "-"), () => Response.json(IDP.jwks)],
     [noQuery(p.userEmailsUrl ?? "-"), () => Response.json(row.emails)],
-    [noQuery(p.userinfoUrl ?? "-"), () => Response.json(row.userinfo ?? {})],
+    [noQuery(ep.userinfo ?? "-"), () => Response.json(row.userinfo ?? {})],
   ]);
   if (issuer) {
     routes.set(
@@ -321,10 +331,10 @@ function stubIdp(p: OAuthProvider, row: Row, nonce: () => string | undefined, ta
       () =>
         Response.json({
           issuer,
-          authorization_endpoint: p.authorizationUrl,
-          token_endpoint: p.tokenUrl,
-          jwks_uri: p.jwksUrl,
-          ...(p.userinfoUrl ? { userinfo_endpoint: p.userinfoUrl } : {}),
+          authorization_endpoint: ep.authorize,
+          token_endpoint: ep.token,
+          jwks_uri: ep.jwks,
+          ...(ep.userinfo ? { userinfo_endpoint: ep.userinfo } : {}),
           ...(tamper.issAdvertised ? { authorization_response_iss_parameter_supported: true } : {}),
         }),
     );
@@ -529,4 +539,56 @@ Deno.test("next-auth provider flow: a correct `iss` is accepted when discovery a
   });
   assertEquals(failures, []);
   assert(signedIn(res));
+});
+
+/** Salesforce reads its profile from userinfo (`profileFromUserinfo`) after the id_token. */
+function salesforceRow(
+  userinfo: Record<string, unknown>,
+  claims: Record<string, unknown> = {},
+): Row {
+  return {
+    provider: Salesforce,
+    authorize: "",
+    scope: "",
+    pkce: true,
+    basic: true,
+    discovered: {
+      authorize: "https://login.salesforce.com/services/oauth2/authorize",
+      token: "https://login.salesforce.com/services/oauth2/token",
+      jwks: "https://login.salesforce.com/id/keys",
+      userinfo: "https://login.salesforce.com/services/oauth2/userinfo",
+    },
+    claims,
+    userinfo,
+    user: { id: "sub-1" },
+  };
+}
+
+Deno.test("next-auth provider flow: salesforce — a userinfo `sub` matching the id_token's signs in", async () => {
+  const row = salesforceRow({ sub: "sub-1", name: "Ada", email: "ada@example.com" });
+  const { res, users, failures } = await signIn("salesforce", row);
+  assertEquals(failures, []);
+  assert(signedIn(res));
+  assertEquals(users[0].id, "sub-1");
+});
+
+Deno.test("next-auth provider flow: salesforce — a userinfo `sub` other than the id_token's is refused (OIDC Core §5.3.2)", async () => {
+  for (const sub of ["sub-evil", undefined]) {
+    const row = salesforceRow({ ...(sub ? { sub } : {}), email: "victim@example.com" });
+    const { res, users, failures } = await signIn("salesforce", row);
+    assert(!signedIn(res), `userinfo sub ${sub} accepted`);
+    assertEquals(users, []);
+    assertEquals(failures.length, 1);
+  }
+});
+
+Deno.test("next-auth provider flow: salesforce — the id_token's `email_verified` wins over userinfo's", async () => {
+  const row = salesforceRow(
+    { sub: "sub-1", email: "ada@example.com", email_verified: true },
+    { email: "ada@example.com", email_verified: false },
+  );
+  const { res, users } = await signIn("salesforce", row);
+  assert(signedIn(res));
+  assertEquals(users[0].email, undefined, "the id_token marks the address unverified");
+  assertEquals(users[0].emailVerified, undefined);
 });

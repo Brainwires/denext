@@ -120,7 +120,14 @@ fire only handlers the server rendered for it, in a render it still holds.
 browser mounts or resumes the view, and again before an event once
 `live.limits.channelAuthTtlSeconds` (300) has passed — `false` ends the view with `denied`.
 Without `authorize`, anyone holding the page's signed props can mount the view, the same as
-loading the page that rendered it.
+loading the page that rendered it, until those props expire (`viewTokenMaxAgeSeconds`); under
+`denext dev` a view with no `authorize` logs a one-time warning. `authorize` stays optional, for
+views that are public.
+
+The signed props carry the time the page rendered them. A mount or a resume with props older than
+`viewTokenMaxAgeSeconds` (a day by default) is answered `gone`, and the browser re-renders the
+route once for fresh ones. A page cached longer than that (`dynamic = "force-static"`, or ISR
+with a longer `revalidate`) needs a larger value.
 
 Live views ride the Live hub, so its gates apply first: the same-origin handshake,
 `live.authorize`, `maxConnections` / `maxConnectionsPerIp`, the 100-frames-a-second rate and
@@ -133,6 +140,7 @@ Live views ride the Live hub, so its gates apply first: the same-origin handshak
 | `viewResumeSeconds`         | 30      | How long a dropped connection's views wait to be resumed.                                             |
 | `maxParkedViews`            | 1000    | Views waiting to be resumed across the server; the oldest go first.                                   |
 | `maxSubscriptionInputBytes` | 16 KiB  | A view's props.                                                                                       |
+| `viewTokenMaxAgeSeconds`    | 86400   | How long after the page rendered them a view's signed props mount or resume it (`gone` past it).      |
 
 Per view, at most 32 events wait to be processed (more are refused with `limit`), at most 32
 effects are pending and 32 subscriptions open, and an interval fires at most every 100 ms.
@@ -164,11 +172,15 @@ list without keys is patched by position.
 
 When the socket drops, the server parks the connection's views for `viewResumeSeconds`. The
 browser reconnects with backoff and re-mounts each view with the instance id it was given; if
-the server still holds it, for the same view and the same signed props, the model carries on
+the server still holds it, for the same view, the same signed props and the same viewer, the model
+carries on
 (effects and subscriptions kept running meanwhile) and the browser gets its whole tree. A parked
 view's model is also written to the view store (below), so a reconnect that reaches another
 instance resumes it there, from the model as it last stood. Past the window, or when no store
-holds it, the mount runs `init` again from the props — the documented re-init. Events fired
+holds it, the mount runs `init` again from the props — the documented re-init. A parked view
+resumes only for the viewer it was mounted for: with `denextAuth`, the same signed-in user (or
+signed out both times); without it, the same `Cookie` header. A viewer who signed out or switched
+account on the page without reloading gets `init`, never the previous viewer's model. Events fired
 while the socket was down wait (up to 16) and are sent once the view is mounted again.
 
 If the server cannot mount the view at all — its module is not loaded in this process yet, or
@@ -180,7 +192,8 @@ the HMAC does not verify (another instance's key, a restart with a per-process k
 A live view's state lives in the process that holds the viewer's socket, so:
 
 - **Mounting works anywhere** when every instance signs with the same key: set
-  `DENEXT_LIVE_VIEW_SECRET` (any long random string) on all of them. Without it each process
+  `DENEXT_LIVE_VIEW_SECRET` (a random string of at least 16 characters: `openssl rand -base64
+  32`; a shorter one is an error) on all of them. Without it each process
   uses a random key, and a page rendered by one instance and mounted on another costs one
   route re-render (`gone`) before it works.
 - **Resuming anywhere needs a shared view store.** Install one at startup —

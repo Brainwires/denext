@@ -316,7 +316,7 @@
     "example:tailwind": "cd examples/tailwind && deno task dev",
     "e2e:desktop-kitchen-sink": "cd examples/desktop-kitchen-sink && deno task test:window",
     "example:game": "deno run -A --config deno.json examples/game/serve.ts",
-    "gen:auth-providers": "deno run -A scripts/gen-auth-providers.ts",
+    "gen:auth-providers": "deno run --allow-read --allow-write=. --allow-run=deno scripts/gen-auth-providers.ts",
     "gen:config-schema": "deno run -A scripts/gen-config-schema.ts",
     "gen:command-table": "deno run -A scripts/gen-command-table.ts",
     "gen:native-templates": "deno run -A scripts/gen-native-templates.ts",

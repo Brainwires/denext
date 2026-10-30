@@ -22,6 +22,7 @@ import {
   UNSUPPORTED,
 } from "./auth-providers/classify.ts";
 import {
+  assertModuleName,
   type ProviderManifest,
   providerModules,
   PROVIDERS_DIR,
@@ -773,6 +774,7 @@ async function listProviders(): Promise<string[]> {
  * @returns The new text.
  */
 export function patchDenoJson(text: string, modules: readonly string[]): string {
+  modules.forEach(assertModuleName);
   const lines = text.split("\n");
   const isProvider = (line: string) => /^\s*"\.\/next-auth\/providers\/[^"]+":/.test(line);
   const first = lines.findIndex(isProvider);
