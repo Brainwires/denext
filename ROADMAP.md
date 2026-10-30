@@ -37,40 +37,15 @@
   `DENO_LEGACY_ABORT` / `DENO_UNSTABLE_IDLE_TRIM`.
 - **A one-commit re-pin runbook** (the pin, the symbols, the revert) before 5.0.
 
-## 4.10-c train (open branches; each line is deleted when its branch lands)
+## Capacitor
 
-- `fix/migrate-sandbox-4.10c`: the next.config evaluator's symlink escape, `migrate
-  --enable-capacitor` running project code, and the evaluator spawning without `--no-config`.
-- `feat/ota-serve-hardening-4.10c`: the OTA serve check's rest (platform stamp, fail-closed admit,
-  `/_capacitor_file_`) and `secureStore`'s `accessibility` option; with `fix/shim-accessibility-4.10c`.
-- `fix/action-signals-4.10c`: an action's `notFound` / `forbidden` / `unauthorized` reaching the
-  client as a plain `Error`, and the Fragment-ref chunk failure that leaves a no-op for the page's
-  life.
-- `feat/fastlane-arm64-4.10c`: managed fastlane run on macOS arm64.
-- `feat/compile-limits-4.10c`: `compile.limits`.
-- `feat/reconciler-context-4.10b`: context and classes in `react-reconciler` renderers.
-- `fix/realtime-reread-4.10c`: **Realtime: the combined re-read's select list** is spliced into the
-  single-filter query by a string replace of `as r from`; build it structurally (only a configured
-  key column name could break it).
-- `fix/review-c-4.10c` (not pushed yet), `fix/ota-app-binding-4.10c` (the `resumeFileTransfer`
-  JSDoc), and `fix/desktop-overlay-verify-4.10c`: `desktop.update.hosts` validated like the other
-  permission lists.
-- `fix/loader-info-bounded-4.10c`, `fix/deno-doc-hang-4.10b`, `fix/deno-doc-batch-4.10c`: the
-  mitigation for the Windows CI Deno children that hang (the runtime's root cause is a 5.x item).
-- Windows checks of the lock branches, `resolveDesktopUiDir` for hand-built servers, and the rest of
-  the train through the Windows CI.
-- **Advisories** drafted for this train (lockfile, desktop overlay, next-config evaluator, CORS on
-  actions, Live view resume, OIDC `userinfo` `sub`): publish them with 4.10.2, and decide the
-  signed-mode unstamped manifest.
 - **Capacitor 8.6.0** (the pin and the examples; it clears the package-age hold on 10-30).
 
 ## Breaking changes for 5.0
 
-- `5.0/require-runtime`: denext's runtime is required; the `DENEXT_DENO=stock` text in
-  KNOWN-LIMITATIONS goes with it (`feat/stock-deprecation-4.10c` and
-  `fix/stock-deprecation-gaps-4.10c` carry the 4.12 warning).
-- `5.0/auth-package`: `@denext/auth` and its follow-ups (its CHANGELOG conflicts with
-  `5.0/require-runtime`).
+- denext's runtime is required; the `DENEXT_DENO=stock` text in
+  KNOWN-LIMITATIONS goes with it.
+- The `@denext/auth` package and its follow-ups.
 
 ## Needs a device, hardware or credentials (the 5.0 gate lets each become a dated
 
@@ -148,8 +123,6 @@ Not blocking 5.0; each item says why.
   `SecAccessControl`, Windows Hello) in the Brainwires/deno fork. _Why 5.x: a runtime capability
   plus a person at Touch ID / Hello; the gap is in KNOWN-LIMITATIONS._
 - **Native bindings** (`denext desktop add native`). _Why 5.x: a new feature, no code yet._
-- **`fileTransfers()` after a restart** lists only the page's own transfers. _Why 5.x: a fixable
-  gap, not a security one._
 - **Native passkey rows:** a step-up of a pending native sign-in, and list / delete. _Why 5.x: a
   fixable gap on a new surface._
 - **Distro coverage** of the packaged runtime (a Wayland headless leg, a Fedora rpm smoke test, a
@@ -186,15 +159,12 @@ Low findings of the 4.8 backend audit (realtime and storage):
 
 ## Framework compatibility surfaces
 
-- **A workspace glob member expands one level** (`"./apps/*"`). _Why 5.x: a fixable gap._
 - **`@denext/graphql` reloads only a schema it can trace.** _Why 5.x: dev-server restart works._
 - **Fresh partial navigation:** `f-view-transition`, region history replay and the rest listed in
   KNOWN-LIMITATIONS. _Why 5.x: fixable gaps, none blocking._
 - **Preact compat:** `createFactory`, `findDOMNode`, `isFragment`, `isMemo`,
   `unmountComponentAtNode`, callbacks, the precompile JSX helpers and render-to-string streaming
   (the parity gate lists them). _Why 5.x: small, independent gaps._
-- **React Router middleware around the render,** not only ahead of the loaders (a branch,
-  `feat/rr-middleware-render-4.10c`, exists). _Why 5.x: a design gap, large._
 - **One-bundle (iso) routes keep the page on an action signal.** _Why 5.x: documented in
   KNOWN-LIMITATIONS._
 

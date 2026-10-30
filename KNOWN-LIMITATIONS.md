@@ -336,7 +336,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `apps/`; a deeper or mid-path glob (`packages/**`, `apps/*/web`) names nothing to denext, so an
   app it covers builds on its own config and its siblings' names don't resolve. List such members
   one by one. A package's own import map applies to its files as a scope, except in a server copy
-  `denext dev` writes after an edit there, which resolves through the app's map. Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
+  `denext dev` writes after an edit there, which resolves through the app's map.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
@@ -387,7 +387,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   response (headers set on it reach the page; another `Response` answers like a thrown one), code
   after `next()` runs before the loaders, and a parent route's loader may run before a child
   route's middleware. On a resource route and a plain POST to a page's action `next()` runs the
-  real handler. `clientMiddleware` does not run. Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
+  real handler. `clientMiddleware` does not run.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
 - **Prisma auto-migration wires SQLite, Postgres (CockroachDB too), MySQL and SQL Server only:**
   a `mongodb` datasource keeps its `new PrismaClient()` unwired (Prisma 6 has no MongoDB driver
@@ -494,7 +494,7 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   the background. On the web a transfer lasts as long as the page. A Deno Desktop download
   pauses and resumes, but `fileTransfers()` lists only the ones this page started: after a
   restart, download the same URL to the same file again to continue its kept partial file. Background
-  device run: target unscheduled (needs an iPhone and an Android phone). The Deno Desktop `fileTransfers()` restart gap is planned for 5.x (ROADMAP, "5.x / Deno Desktop").
+  device run: target unscheduled (needs an iPhone and an Android phone).
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame
