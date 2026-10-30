@@ -5,6 +5,7 @@
 import { assert, assertEquals } from "@std/assert";
 import { join } from "@std/path";
 import {
+  isCredentialHeader,
   SETTLED_RETENTION_MS,
   TRANSFER_RECORDS_DIR,
   type TransferRecord,
@@ -84,7 +85,13 @@ Deno.test({
   name: "transfer records: each malformed entry is dropped; the well-formed ones load",
 }, async () => {
   await withDataDir(async (dataDir) => {
-    const good = record({ id: "good", status: 503, code: "HTTP", error: "busy" });
+    const good = record({
+      id: "good",
+      headers: { accept: "*/*" },
+      status: 503,
+      code: "HTTP",
+      error: "busy",
+    });
     const bad: unknown[] = [
       null,
       "t1",
@@ -104,6 +111,7 @@ Deno.test({
       { ...record({ id: "bad-status" }), status: "503" },
       { ...record({ id: "bad-code" }), code: 1 },
       { ...record({ id: "bad-file" }), file: false },
+      { ...record({ id: "bad-withheld" }), withheld: "yes" },
     ];
     await writeRecordsFile(dataDir, JSON.stringify([...bad, good]));
     const { records } = await load(dataDir);
@@ -272,3 +280,54 @@ async function exists(path: string): Promise<boolean> {
     throw err;
   }
 }
+
+Deno.test("transfer records: which request headers count as credentials", () => {
+  for (
+    const name of [
+      "Authorization",
+      "proxy-authorization",
+      "Cookie",
+      "X-Api-Key",
+      "x-auth-token",
+      "X-Amz-Security-Token",
+      "x-session-id",
+      "x-client-secret",
+      "x-password",
+      "x-signature",
+      "x-credential",
+    ]
+  ) assert(isCredentialHeader(name), name);
+  for (const name of ["accept", "accept-language", "x-tenant", "user-agent", "x-request-id"]) {
+    assert(!isCredentialHeader(name), name);
+  }
+});
+
+Deno.test({
+  name:
+    "transfer records SECURITY: the file never holds a credential header; a loaded one is withheld",
+}, async () => {
+  await withDataDir(async (dataDir) => {
+    const records = new TransferRecords(dataDir, () => NOW);
+    const headers = { authorization: "Bearer x", "x-api-key": "k", accept: "*/*" };
+    await records.start({ ...record({ headers }) });
+    // In memory, for this launch's resume: every header.
+    assertEquals(records.get("t1")?.headers, headers);
+    assertEquals(records.get("t1")?.withheld, undefined);
+    const file = await Deno.readTextFile(recordsFile(dataDir));
+    assert(!file.includes("Bearer x") && !file.includes('"k"'), file);
+    // A restart loads what the file holds, marked so a resume asks for the headers again.
+    const { records: after } = await load(dataDir);
+    assertEquals(after.get("t1")?.headers, { accept: "*/*" });
+    assertEquals(after.get("t1")?.withheld, true);
+    // A record with no credential header is written as it is.
+    await after.start(record({ id: "t2", headers: { accept: "*/*" } }));
+    const t2 = (JSON.parse(await Deno.readTextFile(recordsFile(dataDir))) as TransferRecord[])
+      .find((r) => r.id === "t2");
+    assertEquals(t2?.withheld, undefined);
+    // A file an older build wrote with a credential in it loads without it.
+    await writeRecordsFile(dataDir, JSON.stringify([record({ id: "old" })]));
+    const { records: old } = await load(dataDir);
+    assertEquals(old.get("old")?.headers, {});
+    assertEquals(old.get("old")?.withheld, true);
+  });
+});

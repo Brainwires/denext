@@ -496,8 +496,13 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   does not run on while the app is closed: one running at quit is listed as `failed` (resumable
   from its partial file) after the restart. Done desktop records are listed for 7 days unless
   forgotten first, where the plugin keeps them until `forgetFileTransfer()`, and a download into a
-  picked file (its handle lasts one launch) is not recorded. Background device run: target
-  unscheduled (needs an iPhone and an Android phone).
+  picked file (its handle lasts one launch) is not recorded. A desktop record never writes a
+  credential header (`Authorization`, `Cookie`, an API key) to disk, so after a restart a download
+  started with one does not resume through `resumeFileTransfer()`: start it again with
+  `downloadToFile()` and its headers (same id, URL and file) and it continues from its partial
+  file. The records file is `0600` on macOS and Linux; Windows ignores the mode, so there it takes
+  the user profile's ACL (the user and administrators). Background device run: target unscheduled
+  (needs an iPhone and an Android phone).
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame

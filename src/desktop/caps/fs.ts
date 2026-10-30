@@ -1086,6 +1086,8 @@ function downloadMethods(cfg: FsCapabilityConfig): DownloadMethods {
   /**
    * A resume that sends no headers of its own continues with the ones its record kept (the page
    * that started it may be gone, after a restart), when the record names the same URL and file.
+   * Credential headers are never written to disk, so a record loaded after a restart that had one
+   * (`withheld`) is refused: the page starts it again with its headers, from the partial file.
    */
   const resumeHeaders = (
     a: Record<string, unknown>,
@@ -1095,7 +1097,14 @@ function downloadMethods(cfg: FsCapabilityConfig): DownloadMethods {
     const r = records.get(req.id);
     const same = r !== undefined && r.url === req.url && r.directory === a.directory &&
       r.path === a.path;
-    return same ? new Headers(r.headers) : req.headers;
+    if (!same) return req.headers;
+    if (r.withheld) {
+      throw badInput(
+        `download ${req.id}'s credential headers are not kept across a restart: ` +
+          "start it again with its headers (it continues from its partial file)",
+      );
+    }
+    return new Headers(r.headers);
   };
 
   /** The `download` (or, with `resume`, `resumeDownload`) method. */

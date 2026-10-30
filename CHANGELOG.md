@@ -12,17 +12,22 @@ and this project adheres to
 
 - **Deno Desktop downloads are recorded across restarts**, as the mobile `DenextTransfer` plugin
   records its transfers. The `fs` capability keeps each download started with an `id` into an app
-  folder in `denext-transfers/transfers.json` under the app's data directory, written atomically
-  and readable by the user only; the folder joins the runtime's reserved names, so the page's
-  `fs`, `shell` and drag-out never reach it. After a restart `fileTransfers()` lists the paused,
-  failed and recently done downloads, `resumeFileTransfer(id)` continues a paused or failed one
-  from its partial file with the request headers it was started with, `cancelFileTransfer(id)`
-  drops its partial file and record, and `forgetFileTransfer(id)` drops a settled one. A download
-  that was running when the app quit (or whose page went away) comes back `failed`, code
-  `NETWORK`, `resumable` when its partial file can continue, as iOS reports one a force-quit
-  stopped. A record drops its request headers once it is over for good, and a done record is
-  listed for 7 days. The runtime answers two new `fs` methods, `listDownloads` and
-  `forgetDownload`; `cancelDownload` answers `cancelled: false` for a download that finished first.
+  folder in `denext-transfers/transfers.json` under the app's data directory, written atomically and
+  readable by the user only; the folder joins the runtime's reserved names, so the page's `fs`,
+  `shell` and drag-out never reach it. After a restart `fileTransfers()` lists the paused, failed
+  and recently done downloads, `resumeFileTransfer(id)` continues a paused or failed one from its
+  partial file with the request headers it was started with, `cancelFileTransfer(id)` drops its
+  partial file and record, and `forgetFileTransfer(id)` drops a settled one. A download that was
+  running when the app quit (or whose page went away) comes back `failed`, code `NETWORK`,
+  `resumable` when its partial file can continue, as iOS reports one a force-quit stopped. A record
+  drops its request headers once it is over for good, and a done record is listed for 7 days. A
+  credential header (`Authorization`, `Proxy-Authorization`, `Cookie`, or one whose name says auth,
+  token, key, secret, session, password, credential or signature) is never written to the file: it
+  stays in memory for the launch, and after a restart a resume of such a download is refused
+  (`validation`) until the page starts it again with its headers, which continues from the partial
+  file. The file is `0600` on macOS and Linux; Windows ignores the mode and it takes the user
+  profile's ACL. The runtime answers two new `fs` methods, `listDownloads` and `forgetDownload`;
+  `cancelDownload` answers `cancelled: false` for a download that finished first.
 
 ### Fixed
 

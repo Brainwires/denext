@@ -658,8 +658,9 @@ Deno.test({
   const mode: ServerMode = { body: BODY, etag: '"v1"', honorRange: true };
   await withServer(mode, async (t) => {
     await pausedAt300(t.cap(), mode, t.root, "r1", "r.bin", {
-      headers: { authorization: "Bearer t" },
+      headers: { "x-tenant": "acme" },
     });
+    assert((await Deno.readTextFile(recordsFile(t.root))).includes('"x-tenant":"acme"'));
     // A restart: a new capability instance over the same data dir.
     const after = t.cap();
     assertEquals(await listed(after), [{
@@ -678,11 +679,10 @@ Deno.test({
     assertEquals(out.bytes, 1000);
     assertEquals(await Deno.readFile(join(t.root, "data", "r.bin")), BODY);
     assertEquals(t.seen.at(-1), ["bytes=300-", '"v1"']);
-    assertEquals(t.auths, ["Bearer t", "Bearer t"]);
     const [done] = await listed(after);
     assertEquals([done.state, done.bytes, done.total, done.file], ["done", 1000, 1000, out.path]);
     // Over for good: the record no longer keeps the request headers.
-    assert(!(await Deno.readTextFile(recordsFile(t.root))).includes("Bearer"));
+    assert(!(await Deno.readTextFile(recordsFile(t.root))).includes("acme"));
     assertEquals(await listed(t.cap()), [done], "done is listed after another restart");
   });
 });
@@ -714,7 +714,13 @@ Deno.test({
       true,
     ]);
     assertEquals(r.error, "the download stopped when the app quit");
-    assertEquals((await dl(after, URL_A, "q.bin", { id: "q1" }, "resumeDownload")).bytes, 1000);
+    // Its credential header never reached the disk: the page passes its headers again.
+    assert(!atQuit.includes("Bearer"), atQuit);
+    const headers = { authorization: "Bearer q" };
+    assertEquals(
+      (await dl(after, URL_A, "q.bin", { id: "q1", headers }, "resumeDownload")).bytes,
+      1000,
+    );
     assertEquals(t.seen.at(-1), ["bytes=300-", '"v1"']);
     assertEquals(t.auths.at(-1), "Bearer q");
     assertEquals(await Deno.readFile(join(t.root, "data", "q.bin")), BODY);
@@ -885,5 +891,40 @@ Deno.test({
       restore();
       resetFileTransfersForTesting();
     }
+  });
+});
+
+Deno.test({
+  name:
+    "records SECURITY: credential headers are kept in memory only; after a restart the page passes them again",
+}, async () => {
+  const mode: ServerMode = { body: BODY, etag: '"v1"', honorRange: true };
+  await withServer(mode, async (t) => {
+    const headers = { authorization: "Bearer t", cookie: "sid=s", "x-api-key": "k", accept: "*/*" };
+    const first = t.cap();
+    await pausedAt300(first, mode, t.root, "s1", "s.bin", { headers });
+    const file = await Deno.readTextFile(recordsFile(t.root));
+    for (const secret of ["Bearer t", "sid=s", '"k"']) assert(!file.includes(secret), file);
+    assert(file.includes('"accept":"*/*"'), "a header that carries no credential is kept");
+    assert(file.includes('"withheld":true'), file);
+    // The same launch still has them: a header-less resume sends them.
+    await pausedAt300(first, mode, t.root, "s2", "s2.bin", { headers });
+    assertEquals((await dl(first, URL_A, "s2.bin", { id: "s2" }, "resumeDownload")).bytes, 1000);
+    assertEquals(t.auths.at(-1), "Bearer t");
+    // After a restart a header-less resume is refused, naming the fix; nothing is requested.
+    const after = t.cap();
+    const asked = t.seen.length;
+    const refused = await assertRejects(
+      () => dl(after, URL_A, "s.bin", { id: "s1" }, "resumeDownload"),
+      DesktopCapError,
+      "credential headers are not kept across a restart",
+    );
+    assertEquals(refused.code, "validation");
+    assertEquals(t.seen.length, asked);
+    // Passed again, it continues from the partial file.
+    const out = await dl(after, URL_A, "s.bin", { id: "s1", headers }, "resumeDownload");
+    assertEquals(out.bytes, 1000);
+    assertEquals(t.seen.at(-1), ["bytes=300-", '"v1"']);
+    assertEquals(t.auths.at(-1), "Bearer t");
   });
 });
