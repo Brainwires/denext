@@ -413,6 +413,16 @@ Deno.test("shippingToolchainPin: a marker naming the rollback ships it only whil
     await w.list([revoke()]);
     const rb = await shipping({ DENEXT_TOOLCHAIN_ACTIVE: ROLLBACK });
     assertEquals([rb.version, rb.rollback], [ROLLBACK, undefined]);
+    // The defaults: the pin in force (a pin file here, which the list never applies to, so a
+    // marker naming its rollback is refused), this host, the toolchain cache.
+    const file = join(w.cacheRoot, "pin.json");
+    await Deno.writeTextFile(file, JSON.stringify(w.pin));
+    const pinned = (vars: Record<string, string>) =>
+      shippingToolchainPin(
+        w.env({ DENEXT_TOOLCHAIN_PIN_FILE: file, DENO_DIR: w.cacheRoot, ...vars }),
+      );
+    assertEquals((await pinned({})).version, PINNED);
+    await assertRejects(() => pinned({ DENEXT_TOOLCHAIN_ACTIVE: ROLLBACK }), Error, "refusing");
   } finally {
     await w.close();
   }
@@ -771,7 +781,9 @@ Deno.test("desktop:pin-runtime writes the replaced pins as the new pins' rollbac
 Deno.test("the checked-in pins name one earlier release as their rollback, unnested", async () => {
   const { DENO_TOOLCHAIN: tc } = await import("../src/build/deno-toolchain.ts");
   const { DESKTOP_RUNTIME_PIN: rt } = await import("../src/build/desktop-runtime.ts");
-  if (!tc.rollback && !rt.rollback) return; // a release with no fallback pinned
+  // Every pin from the first revocation-aware release (3.0.0-denext.3) on names a fallback: a pin
+  // without one could only warn and keep running a revoked runtime.
+  assert(tc.rollback && rt.rollback, "the pins name no rollback");
   // Both from the same release (libdenort must match the `deno desktop` CLI).
   assertEquals(tc.rollback?.version, rt.rollback?.version);
   assert(tc.rollback!.version !== tc.version);
