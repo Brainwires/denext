@@ -6,10 +6,12 @@
 // carry: the root's imports, each member's `exports` under its `name`, and each member's own
 // imports scoped to its directory.
 
-import { dirname, isAbsolute, join, relative, resolve, toFileUrl } from "@std/path";
+import { dirname, isAbsolute, join, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
+import { parse as parseYaml } from "@std/yaml";
 import { CONFIG_FILES } from "./config-files.ts";
 import { withNpmrcSupplyChain } from "./npmrc-supply-chain.ts";
+import { expandWorkspaceMembers } from "./workspace-globs.ts";
 
 /** What {@linkcode workspaceImports} adds to a merged config. */
 export interface WorkspaceImports {
@@ -50,27 +52,24 @@ export function workspaceMembers(config: Record<string, unknown> | null): string
 }
 
 /**
- * The directories one `workspace` entry names: a path, or a `dir/*` glob over its
- * subdirectories (sorted). A glob anywhere else names nothing.
+ * The directories one `workspace` entry names, as Deno expands it (see workspace-globs.ts): a
+ * path (as written, outside the root too), or a glob (`apps/*`, `packages/**`, one mid-path) over the directories that hold a
+ * config, minus any the list's `!` entries exclude.
  *
  * @param root The workspace root directory.
  * @param entry One `workspace` entry.
+ * @param members The whole list, whose `!` entries apply (default: the entry alone).
  */
-export function memberDirs(root: string, entry: string): Promise<string[]> {
-  return Promise.resolve(memberDirsSync(root, entry));
-}
-
-/** {@linkcode memberDirs}, synchronously (the client bundler's loader setup is synchronous). */
-function memberDirsSync(root: string, entry: string): string[] {
-  if (!entry.includes("*")) return [join(root, entry)];
-  const m = /^(.*?)\/?\*\/?$/.exec(entry);
-  if (!m || m[1].includes("*")) return [];
-  const parent = join(root, m[1]);
-  const out: string[] = [];
-  try {
-    for (const e of Deno.readDirSync(parent)) if (e.isDirectory) out.push(join(parent, e.name));
-  } catch { /* no such directory: names nothing */ }
-  return out.sort();
+export function memberDirs(
+  root: string,
+  entry: string,
+  members: readonly string[] = [entry],
+): Promise<string[]> {
+  if (entry.startsWith("!")) return Promise.resolve([]);
+  // A path as written, even one outside the root: `denext upgrade` reports that one.
+  if (!/[*?]/.test(entry)) return Promise.resolve([join(root, entry)]);
+  const negations = members.filter((m) => m.startsWith("!"));
+  return Promise.resolve(expandWorkspaceMembers(root, [entry, ...negations], "deno"));
 }
 
 /**
@@ -78,16 +77,7 @@ function memberDirsSync(root: string, entry: string): string[] {
  * root (`../x`): Deno refuses such a member, so its imports are never read and no hint names it.
  */
 function allMemberDirs(root: string, members: readonly string[]): string[] {
-  const dirs = new Set<string>();
-  const base = resolve(root);
-  for (const entry of members) {
-    for (const d of memberDirsSync(root, entry)) {
-      const dir = resolve(d);
-      const rel = relative(base, dir);
-      if (!/^\.\.(?:[\\/]|$)/.test(rel) && !isAbsolute(rel)) dirs.add(dir);
-    }
-  }
-  return [...dirs];
+  return expandWorkspaceMembers(resolve(root), members, "deno");
 }
 
 /** A config's `imports` with `./` / `../` values made absolute `file:` URLs (prefixes keep `/`). */
@@ -185,16 +175,34 @@ function npmWorkspaceEntries(pkg: Record<string, unknown> | null): string[] | nu
   return Array.isArray(list) ? list.filter((m): m is string => typeof m === "string") : null;
 }
 
-/** The npm workspace `dir`'s own package.json declares, or null. */
-function npmWorkspaceAt(dir: string): WorkspaceDirs | null {
-  const members = npmWorkspaceEntries(readObject(join(dir, "package.json")));
-  return members ? { root: dir, members: allMemberDirs(dir, members) } : null;
+/** A `pnpm-workspace.yaml`'s `packages` entries, or null when it lists none. */
+function pnpmWorkspaceEntries(dir: string): string[] | null {
+  let doc: unknown;
+  try {
+    doc = parseYaml(Deno.readTextFileSync(join(dir, "pnpm-workspace.yaml")));
+  } catch {
+    return null;
+  }
+  const list = (doc as { packages?: unknown } | null)?.packages;
+  return Array.isArray(list) ? list.filter((m): m is string => typeof m === "string") : null;
 }
 
 /**
- * The npm workspace (package.json `workspaces`, which Deno installs for as it does a deno.json
- * `workspace`) `dir` belongs to, as its root or a listed member; null otherwise. Members are
- * expanded as {@linkcode memberDirs} does (a path, or a `dir/*` glob) and none outside the root.
+ * The npm-family workspace `dir` declares, or null: a `pnpm-workspace.yaml`'s `packages` (pnpm
+ * reads that file, never package.json `workspaces`), else the package.json `workspaces`.
+ */
+function npmWorkspaceAt(dir: string): WorkspaceDirs | null {
+  const pnpm = pnpmWorkspaceEntries(dir);
+  if (pnpm) return { root: dir, members: expandWorkspaceMembers(dir, pnpm, "pnpm") };
+  const members = npmWorkspaceEntries(readObject(join(dir, "package.json")));
+  return members ? { root: dir, members: expandWorkspaceMembers(dir, members, "npm") } : null;
+}
+
+/**
+ * The npm workspace (package.json `workspaces`, or pnpm's `pnpm-workspace.yaml`, which Deno
+ * installs for as it does a deno.json `workspace`) `dir` belongs to, as its root or a listed
+ * member; null otherwise. Members are expanded as that manager does (workspace-globs.ts: `*`,
+ * `**`, `!` exclusions, `node_modules` skipped) and none outside the root.
  *
  * @param dir A project directory.
  * @returns The root and member directories.
@@ -260,7 +268,8 @@ export function workspaceImports(appConfigPath: string): Promise<WorkspaceImport
 
 /**
  * {@linkcode workspaceImports}, synchronously: what the client bundler's loader is handed for an
- * app a workspace names through a glob member (`apps/*`), which its own discovery can't expand.
+ * app a workspace names through a glob member (`apps/*`, `packages/**`), which its own discovery
+ * can't expand.
  *
  * @param appConfigPath The app's `deno.json` / `deno.jsonc`.
  * @returns The entries.

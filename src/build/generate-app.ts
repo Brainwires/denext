@@ -7,6 +7,7 @@ import { parse as parseJsonc } from "@std/jsonc";
 import { scaffoldFiles } from "./scaffold.ts";
 import { setJsonValue } from "./json-edit.ts";
 import { memberDirs, workspaceMembers } from "./workspace-imports.ts";
+import { workspaceSelects } from "./workspace-globs.ts";
 import { VERSION } from "../../mod.ts";
 
 /** One file the plan writes (the shape of `generate.ts`'s preview file). */
@@ -34,7 +35,7 @@ async function readRootConfig(rootDir: string): Promise<{ path: string; text: st
 async function memberNames(rootDir: string, members: readonly string[]): Promise<string[]> {
   const names: string[] = [];
   for (const entry of members) {
-    for (const dir of await memberDirs(rootDir, entry)) {
+    for (const dir of await memberDirs(rootDir, entry, members)) {
       for (const file of ["deno.json", "deno.jsonc"]) {
         try {
           const name = (parseJsonc(await Deno.readTextFile(join(dir, file))) as { name?: unknown })
@@ -46,22 +47,6 @@ async function memberNames(rootDir: string, members: readonly string[]): Promise
     }
   }
   return names;
-}
-
-/** A member entry without its leading `./` and trailing `/`. */
-const bareEntry = (entry: string) => entry.replace(/^\.\//, "").replace(/\/$/, "");
-
-/**
- * Whether the workspace entry `entry` names the member at `dir` (root-relative, `/`-separated):
- * the same path, or a `<parent>/*` glob over `dir`'s parent — Deno refuses a member named twice,
- * so a glob that covers the new app means it is listed already.
- */
-function namesMember(entry: string, dir: string): boolean {
-  const bare = bareEntry(entry);
-  if (!bare.includes("*")) return bare === dir;
-  const glob = /^(.*?)\/?\*$/.exec(bare);
-  return glob !== null && !glob[1].includes("*") &&
-    bareEntry(glob[1]) === dir.slice(0, dir.lastIndexOf("/"));
 }
 
 /** The scope whose `ui` and `shared` packages are both members (`@acme`), or null. */
@@ -115,7 +100,8 @@ export async function appPlan(rootDir: string, name: string): Promise<AppPlanFil
         `jsr:@denext/denext@${pinned}`,
       ),
     }));
-  const listed = members.some((m) => namesMember(m, dir));
+  // Deno refuses a member named twice, so a glob that covers the new app means it is listed.
+  const listed = workspaceSelects(members, dir, "deno");
   const workspace = listed ? members : [...members, `./${dir}`];
   const text = await withMember(root.text, config!, workspace, name, dir);
   return [...files, { path: root.path, contents: text, overwrite: true }];
