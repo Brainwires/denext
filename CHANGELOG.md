@@ -45,6 +45,17 @@ and this project adheres to
   re-create replaces the entry, `delete` removes it, and entries written by hand are left alone.
   Nothing is registered, with a line saying why, without a `node_modules` directory or for a patch
   that adds or deletes a file, which the runtime can't apply. See https://denext.dev/docs/patches.
+- **`denext migrate` carries pnpm and Bun patches.** `pnpm.patchedDependencies` (package.json),
+  `patchedDependencies` in pnpm-workspace.yaml (the workspace root's for an app inside one) and
+  Bun's `patchedDependencies` (package.json) are copied to `patches/npm/<name>+<version>.patch`
+  and registered in deno.json's `patchedDependencies` under the same key, so denext's Deno from
+  runtime 3.0.0-denext.3 applies them on install. A patch under `node_modules/<pkg>/` paths is made
+  package-relative and a plain unified diff gets its `diff --git` lines. A patch that adds, deletes,
+  renames or copies a file or changes a binary one is a review item (the runtime changes existing
+  text files only), as is every patch on a runtime that doesn't apply them, a key deno.json maps
+  already and an unreadable file; a hand-authored deno.json gets the entries to add by hand.
+  `migrate --check` lists each patch it would carry and each it would not. See
+  https://denext.dev/docs/migrating#npm-patches-from-pnpm-and-bun.
 
 ### Changed
 

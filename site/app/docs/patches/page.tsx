@@ -67,6 +67,12 @@ denext patch apply                      # what dev/build/start do at boot`}
         directory (the runtime refuses to resolve one) or the patch adds or deletes a file (the
         runtime changes existing files only); <code>apply</code> at boot covers those.
       </p>
+      <p>
+        Coming from pnpm or Bun? <code>denext migrate</code> carries their{" "}
+        <code>patchedDependencies</code> into the same place: each patch copied to{" "}
+        <code>patches/npm/</code> and registered under its key (see{" "}
+        <a href="/docs/migrating#npm-patches-from-pnpm-and-bun">Migrating</a>).
+      </p>
 
       <h2>Patching denext</h2>
       <p>
