@@ -4301,7 +4301,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.10.1",
+          "signature": "VERSION: 4.10.2",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -15184,6 +15184,18 @@
           "denextOnly": true
         },
         {
+          "name": "StartLimits",
+          "slug": "StartLimits",
+          "kind": "interface",
+          "signature": "interface StartLimits",
+          "doc": "The production server's resource limits (see StartConfig.limits).",
+          "docFull": "The production server's resource limits (see {@link StartConfig.limits}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "StaticParamsGenerator",
           "slug": "StaticParamsGenerator",
           "kind": "typeAlias",
@@ -20806,7 +20818,7 @@
           "name": "createDesktopHandler",
           "slug": "createDesktopHandler",
           "kind": "function",
-          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>",
+          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string | DesktopUiFiles, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>",
           "doc": "The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.",
           "docFull": "The desktop request handler: the `onRequest` escape hatch, the token-gated local endpoints,\nthen — when `devProxy` is set (`denext desktop dev` only) — the reverse proxy to `denext dev`\nfor EVERYTHING else; otherwise the backend proxy, the export's static assets (`no-store`), the\n`index.html` shell for navigations, else 404. Exported for tests; {@linkcode runDesktop} wires\nit to `Deno.serve`.\n\nRequest order is load-bearing: the token-gated `/_denext/desktop/*` endpoints ({@link\nhandleLocalEndpoint}) run BEFORE the dev proxy, so they are always served LOCALLY and never\nforwarded to the dev server, even in live-reload mode.",
           "params": [],
@@ -21875,6 +21887,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopUiFiles",
+          "slug": "DesktopUiFiles",
+          "kind": "interface",
+          "signature": "interface DesktopUiFiles",
+          "doc": "The UI files a desktop window is served from.",
+          "docFull": "The UI files a desktop window is served from.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopVcRedistUrl",
           "slug": "desktopVcRedistUrl",
           "kind": "function",
@@ -22665,8 +22689,8 @@
           "slug": "syncDesktopAppConfig",
           "kind": "function",
           "signature": "syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport>",
-          "doc": "syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop.",
-          "docFull": "{@linkcode syncDesktopAppConfigAt} for the project that owns `entryUrl` (a script in its\n`scripts/` folder): what the scaffolded `scripts/package-*.ts` call before `deno desktop`.",
+          "doc": "syncDesktopAppConfigAt for the project that owns entryUrl (a script in its scripts/ folder): what the scaffolded scripts/package-*.ts call before deno desktop. With desktop.update.ui set it first requires the export to carry a sequenced OTA manifest (desktopUiUpdateFloorProblem), so no app ships its UI updater without a downgrade floor.",
+          "docFull": "{@linkcode syncDesktopAppConfigAt} for the project that owns `entryUrl` (a script in its\n`scripts/` folder): what the scaffolded `scripts/package-*.ts` call before `deno desktop`. With\n`desktop.update.ui` set it first requires the export to carry a sequenced OTA manifest\n({@linkcode desktopUiUpdateFloorProblem}), so no app ships its UI updater without a downgrade\nfloor.",
           "params": [
             {
               "name": "entryUrl",
@@ -22740,8 +22764,8 @@
           "slug": "applyDesktopUpdate",
           "kind": "function",
           "signature": "applyDesktopUpdate(version: string, config: DesktopUpdaterConfig): Promise<void>",
-          "doc": "Promote the staged version to the active overlay and flip the \"current\" pointer atomically. Re-verifies the staged manifest (version + signature) and re-hashes every staged file BEFORE the swap. The previous version dir is kept for rollback, the accepted sequence is recorded, and the new version starts PENDING — desktopBooted must confirm it or the next resolveDesktopUiDir rolls it back.",
-          "docFull": "Promote the staged `version` to the active overlay and flip the \"current\" pointer atomically.\nRe-verifies the staged manifest (version + signature) and re-hashes every staged file BEFORE\nthe swap. The previous version dir is kept for rollback, the accepted `sequence` is recorded,\nand the new version starts PENDING — {@linkcode desktopBooted} must confirm it or the next\n{@linkcode resolveDesktopUiDir} rolls it back.",
+          "doc": "Promote the staged version to the active overlay and flip the \"current\" pointer atomically. Re-verifies the staged manifest (version + signature, the downgrade floor and the expiry) and re-hashes every staged file BEFORE the swap. The previous version dir is kept for rollback, the accepted sequence is recorded, every other staging folder is deleted, and the new version starts PENDING — desktopBooted must confirm it or the next resolveDesktopUiDir rolls it back.",
+          "docFull": "Promote the staged `version` to the active overlay and flip the \"current\" pointer atomically.\nRe-verifies the staged manifest (version + signature, the downgrade floor and the expiry) and\nre-hashes every staged file BEFORE the swap. The previous version dir is kept for rollback, the\naccepted `sequence` is recorded, every other staging folder is deleted, and the new version\nstarts PENDING — {@linkcode desktopBooted} must confirm it or the next\n{@linkcode resolveDesktopUiDir} rolls it back.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -22897,6 +22921,42 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopUi",
+          "slug": "DesktopUi",
+          "kind": "interface",
+          "signature": "interface DesktopUi",
+          "doc": "The UI a launch serves: the verified overlay, or the bundled export alone.",
+          "docFull": "The UI a launch serves: the verified overlay, or the bundled export alone.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopUiOverlay",
+          "slug": "DesktopUiOverlay",
+          "kind": "interface",
+          "signature": "interface DesktopUiOverlay",
+          "doc": "The verified UI overlay a launch serves (see openDesktopUi).",
+          "docFull": "The verified UI overlay a launch serves (see {@linkcode openDesktopUi}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopUiRead",
+          "slug": "DesktopUiRead",
+          "kind": "typeAlias",
+          "signature": "type DesktopUiRead = object | object | object",
+          "doc": "What reading one file of the served overlay gives (DesktopUiOverlay.read).",
+          "docFull": "What reading one file of the served overlay gives ({@linkcode DesktopUiOverlay.read}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopUpdateCheck",
           "slug": "DesktopUpdateCheck",
           "kind": "interface",
@@ -23031,6 +23091,27 @@
           "denextOnly": true
         },
         {
+          "name": "openDesktopUi",
+          "slug": "openDesktopUi",
+          "kind": "function",
+          "signature": "openDesktopUi(bundledOut: string, config: DesktopUpdaterConfig): Promise<DesktopUi>",
+          "doc": "The UI the desktop runtime should serve this launch: the active overlay, re-verified, or only the bundled export (overlay: null). Serve the overlay's files through DesktopUiOverlay.read, which checks each one against the signed manifest when it is served, never straight from its folder; runDesktop({ updater }) does.",
+          "docFull": "The UI the desktop runtime should serve this launch: the active overlay, re-verified, or only\nthe bundled export (`overlay: null`). Serve the overlay's files through\n{@linkcode DesktopUiOverlay.read}, which checks each one against the signed manifest when it is\nserved, never straight from its folder; `runDesktop({ updater })` does.\n\nThis is also the BOOT WATCHDOG. If the pointer is PENDING and a boot marker for the same\nversion already exists, the previous launch applied that version and never confirmed it (it\nfailed to boot), so it is ROLLED BACK — its sequence refused so it is not retried in a loop —\nand the previous good version (or the bundle) is served. A pending version on its FIRST launch\nis served with a fresh marker armed; {@linkcode desktopBooted} clears it. An overlay that fails\nre-verification (a file changed, missing or added, a symbolic link, a manifest that no longer\nverifies) is rolled back the same way and reported as `rejected`; one that cannot be read right\nnow (a permission or I/O error) is skipped for this launch only.\n\nAn overlay is tied to the bundled export it was installed over (`bundle.json`: the export's\nstamped version, else its `index.html` hash). When the app itself was replaced — a full-app\nupdate or a reinstall brings a different bundle — every overlay is dropped and the new bundle is\nserved, so a UI built for the old app never runs on the new one.",
+          "params": [
+            {
+              "name": "bundledOut",
+              "doc": "The bundled export (the app's own UI)."
+            },
+            {
+              "name": "config",
+              "doc": "The updater config."
+            }
+          ],
+          "returns": "The verified overlay, or the bundled export alone.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "OtaManifest",
           "slug": "OtaManifest",
           "kind": "interface",
@@ -23071,10 +23152,19 @@
           "slug": "resolveDesktopUiDir",
           "kind": "function",
           "signature": "resolveDesktopUiDir(bundledOut: string, config: DesktopUpdaterConfig): Promise<string>",
-          "doc": "The directory the desktop runtime should serve: the active verified overlay, or bundledOut.",
-          "docFull": "The directory the desktop runtime should serve: the active verified overlay, or `bundledOut`.\n\nThis is also the BOOT WATCHDOG. If the pointer is PENDING and a boot marker for the same\nversion already exists, the previous launch applied that version and never confirmed it (it\nfailed to boot), so it is ROLLED BACK — its sequence refused so it is not retried in a loop —\nand the previous good version (or the bundle) is served. A pending version on its FIRST launch\nis served with a fresh marker armed; {@linkcode desktopBooted} clears it. A confirmed pointer\nwhose files exist is served directly; anything missing falls back to `bundledOut`.\n\nAn overlay is tied to the bundled export it was installed over (`bundle.json`: the export's\nstamped version, else its `index.html` hash). When the app itself was replaced — a full-app\nupdate or a reinstall brings a different bundle — every overlay is dropped and the new bundle is\nserved, so a UI built for the old app never runs on the new one.",
-          "params": [],
-          "returns": "",
+          "doc": "The directory of the UI openDesktopUi resolves: the active overlay's, re-verified at launch, or bundledOut. A server that serves it must check each file as it serves it (an overlay file can change after launch): prefer openDesktopUi and DesktopUiOverlay.read.",
+          "docFull": "The directory of the UI {@linkcode openDesktopUi} resolves: the active overlay's, re-verified at\nlaunch, or `bundledOut`. A server that serves it must check each file as it serves it (an\noverlay file can change after launch): prefer {@linkcode openDesktopUi} and\n{@linkcode DesktopUiOverlay.read}.",
+          "params": [
+            {
+              "name": "bundledOut",
+              "doc": "The bundled export (the app's own UI)."
+            },
+            {
+              "name": "config",
+              "doc": "The updater config."
+            }
+          ],
+          "returns": "The directory to serve.",
           "examples": [],
           "denextOnly": true
         }
@@ -25190,7 +25280,7 @@
           "kind": "typeAlias",
           "signature": "type AuthSessionErrorCode = cancelled | busy | invalid | unsupported | timeout | scheme_not_declared | pkce_required | scheme_owned_by_other_app | scheme_not_registered | session_in_progress | port_in_use",
           "doc": "The code on an openAuthSession rejection:",
-          "docFull": "The `code` on an {@linkcode openAuthSession} rejection:\n\n- `cancelled`: the user closed the sheet (or the popup) without finishing, or (Deno Desktop)\n  the `signal` aborted;\n- `busy`: another auth session is still open (one at a time);\n- `invalid`: `url` is not an absolute `https:` URL, `callbackScheme` is not a custom scheme,\n  or `timeoutMs` is not a positive number;\n- `unsupported`: the shell has no `DenextAuthSession` plugin, the sheet could not be\n  presented, the web popup was blocked, or there is no window (SSR);\n- `timeout`: `timeoutMs` passed first (the sheet or popup is closed where the platform\n  allows it).\n\nDeno Desktop's custom-scheme callbacks add:\n\n- `scheme_not_declared`: `callbackScheme` is not in `desktop.app.deepLinks`;\n- `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256` (every\n  platform: the iOS / Android shell and the web popup too), and `pkce: \"not-applicable\"` was not\n  given;\n- `scheme_owned_by_other_app`: another app handles the scheme (its identity in\n  {@linkcode AuthSessionError.handler}): use the loopback flow, or ask the user and call\n  `claimDeepLinkScheme` (`denext/desktop/client`);\n- `scheme_not_registered`: the app could not register itself for the scheme (an unpackaged dev\n  run);\n- `session_in_progress`: another custom-scheme session is still open.\n\nIts loopback flow adds `port_in_use`: another program holds the fixed\n{@linkcode AuthSessionOptions.loopbackPort}.",
+          "docFull": "The `code` on an {@linkcode openAuthSession} rejection:\n\n- `cancelled`: the user closed the sheet (or the popup) without finishing, or (Deno Desktop)\n  the `signal` aborted;\n- `busy`: another auth session is still open (one at a time);\n- `invalid`: `url` is not an absolute `https:` URL, `callbackScheme` is not a custom scheme,\n  or `timeoutMs` is not a positive number;\n- `unsupported`: the shell has no `DenextAuthSession` plugin, the sheet could not be\n  presented, the web popup was blocked, or there is no window (SSR);\n- `timeout`: `timeoutMs` passed first (the sheet or popup is closed where the platform\n  allows it).\n\nDeno Desktop's custom-scheme callbacks add:\n\n- `scheme_not_declared`: `callbackScheme` is not in `desktop.app.deepLinks`;\n- `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256` (every\n  platform: the iOS / Android shell, the web popup and Deno Desktop's loopback flow too), and\n  `pkce: \"not-applicable\"` was not given;\n- `scheme_owned_by_other_app`: another app handles the scheme (its identity in\n  {@linkcode AuthSessionError.handler}): use the loopback flow, or ask the user and call\n  `claimDeepLinkScheme` (`denext/desktop/client`);\n- `scheme_not_registered`: the app could not register itself for the scheme (an unpackaged dev\n  run);\n- `session_in_progress`: another custom-scheme session is still open.\n\nIts loopback flow adds `port_in_use`: another program holds the fixed\n{@linkcode AuthSessionOptions.loopbackPort}.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -25465,8 +25555,8 @@
           "slug": "cancelFileTransfer",
           "kind": "function",
           "signature": "cancelFileTransfer(id: string): Promise<boolean>",
-          "doc": "Cancel a running or paused transfer; a download's partial file is dropped. Its promise rejects with a FileTransferError of code \"CANCELLED\".",
-          "docFull": "Cancel a running or paused transfer; a download's partial file is dropped. Its promise\nrejects with a {@linkcode FileTransferError} of code `\"CANCELLED\"`.",
+          "doc": "Cancel a running or paused transfer; a download's partial file is dropped (on the web, the OPFS part file it was writing, what a pause kept included; a file it was to replace keeps its contents). Its promise rejects with a FileTransferError of code \"CANCELLED\".",
+          "docFull": "Cancel a running or paused transfer; a download's partial file is dropped (on the web, the\nOPFS part file it was writing, what a pause kept included; a file it was to replace keeps its\ncontents). Its promise rejects with a {@linkcode FileTransferError} of code `\"CANCELLED\"`.",
           "params": [
             {
               "name": "id",
@@ -25971,7 +26061,7 @@
           "kind": "function",
           "signature": "downloadToFile(url: string, path: string, options?: DownloadToFileOptions): Promise<object>",
           "doc": "Download a URL straight into a file (missing parent folders are created), with progress.",
-          "docFull": "Download a URL straight into a file (missing parent folders are created), with progress.\n\n- Inside the native shell with denext's `DenextTransfer` plugin (`denext mobile add\n  file-transfer`), the OS's background transfer service downloads it (a `URLSession`\n  background session on iOS, WorkManager on Android): it carries on while the app is in the\n  background, and {@linkcode pauseFileTransfer} / {@linkcode resumeFileTransfer} continue it\n  where it stopped when the server allows a range. The body never passes through the WebView,\n  and CORS does not apply.\n- Inside the shell with only `@capacitor/filesystem` (`denext mobile add filesystem`), the\n  plugin's native download (`downloadFile`), without progress. (A plugin without\n  `downloadFile`, which it deprecates, gets `fetch(url)` and the plugin's `writeFile`.)\n- In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime\n  fetches in the Deno process (with the request `headers`; CORS does not apply) and writes\n  under the app's folder, with progress. {@linkcode fileTransfers} lists it and\n  {@linkcode onFileTransfer} reports it; {@linkcode pauseFileTransfer} keeps the bytes so far\n  and {@linkcode resumeFileTransfer} asks for the rest with a range request (a server that\n  answers 200 starts it over); {@linkcode cancelFileTransfer} or aborting `signal` cancels it\n  and drops the partial file. A download a restart interrupted continues when the same URL is\n  downloaded to the same file again.\n- Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System\n  with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range\n  request (a server that answers 200 starts it over).",
+          "docFull": "Download a URL straight into a file (missing parent folders are created), with progress.\n\n- Inside the native shell with denext's `DenextTransfer` plugin (`denext mobile add\n  file-transfer`), the OS's background transfer service downloads it (a `URLSession`\n  background session on iOS, WorkManager on Android): it carries on while the app is in the\n  background, and {@linkcode pauseFileTransfer} / {@linkcode resumeFileTransfer} continue it\n  where it stopped when the server allows a range. The body never passes through the WebView,\n  and CORS does not apply.\n- Inside the shell with only `@capacitor/filesystem` (`denext mobile add filesystem`), the\n  plugin's native download (`downloadFile`), without progress. (A plugin without\n  `downloadFile`, which it deprecates, gets `fetch(url)` and the plugin's `writeFile`.)\n- In a Deno Desktop window with the `fs` capability (`denext desktop add fs`), the runtime\n  fetches in the Deno process (with the request `headers`; CORS does not apply) and writes\n  under the app's folder, with progress. {@linkcode fileTransfers} lists it and\n  {@linkcode onFileTransfer} reports it; {@linkcode pauseFileTransfer} keeps the bytes so far\n  and {@linkcode resumeFileTransfer} asks for the rest with a range request (a server that\n  answers 200 starts it over); {@linkcode cancelFileTransfer} or aborting `signal` cancels it\n  and drops the partial file. A download a restart interrupted continues when the same URL is\n  downloaded to the same file again.\n- Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System\n  with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range\n  request (a server that answers 200 starts it over). The bytes go to a part file in OPFS's\n  `cache/.denext-part/` folder (hidden from `listDir`) that replaces the file only once the\n  download is done, so a file already at `path` keeps its contents until then.\n  {@linkcode cancelFileTransfer}, aborting `signal` or a failure ends it and deletes the part\n  file, never the file it would have replaced. A reload forgets the transfer: downloading to\n  the same file again starts over in the same part file. Without OPFS (no secure context), a\n  download into a picked file or folder writes through the picked file's own writable stream,\n  which swaps the bytes in only when the download is done (a cancel or a failure leaves the\n  file as it was); such a download cannot pause ({@linkcode pauseFileTransfer} resolves\n  `false`). An app-folder download needs OPFS.",
           "params": [
             {
               "name": "url",
@@ -28112,7 +28202,7 @@
           "kind": "function",
           "signature": "openAuthSession(url: string, options: AuthSessionOptions): Promise<AuthSessionResult>",
           "doc": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the callback URL the provider redirected to.",
-          "docFull": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the\ncallback URL the provider redirected to.\n\n- **iOS** (inside the Capacitor shell): an `ASWebAuthenticationSession` sheet. It shares\n  Safari's cookies unless `preferEphemeral`, and catches the redirect to\n  `<callbackScheme>:` itself.\n- **Android** (inside the shell): a Custom Tab. The redirect reaches the app through its\n  intent filter for `callbackScheme` (`denext mobile add auth-session --scheme <scheme>`)\n  and resolves the call. Coming back without a callback (back button, closing the tab)\n  rejects `cancelled`. While a session is open, a link with that scheme is not routed by\n  {@linkcode onDeepLink}.\n- **Web**: a popup window. Register an https page of this origin as the redirect URI and\n  call {@linkcode completeAuthSession} there; the popup posts its URL back and closes. A\n  blocked popup rejects `unsupported` (call this from a click handler), and a popup closed\n  without a callback rejects `cancelled`. A provider page served with\n  `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then\n  reads as `cancelled`: use a full-page redirect for such providers.\n\n- **Deno Desktop**: with a loopback `redirect_uri` (`http://127.0.0.1/cb`) the system browser,\n  and the runtime catches the redirect on an ephemeral loopback port (RFC 8252), or on\n  `loopbackPort` for a provider with a fixed registered redirect. Otherwise a\n  custom-scheme callback: on macOS it runs in the OS's auth session (`ASWebAuthenticationSession`,\n  a sheet on the app's window with a real `cancelled`, private with `preferEphemeral`); on Windows\n  and Linux the system browser, and the callback comes back as a deep link. While the system\n  browser has the sign-in, a Cancel overlay covers the app (`cancelOverlay`), since the browser\n  reports no cancellation. Either way `callbackScheme` must be declared in\n  `desktop.app.deepLinks`, the URL must carry PKCE S256 (unless `pkce: \"not-applicable\"` with a\n  `reason`), the callback must match the `redirect_uri` (or `callbackPrefix`) exactly and carry\n  the same `state`, and another app handling the scheme is refused\n  (`scheme_owned_by_other_app`) rather than handed the callback. The callback never reaches\n  {@linkcode onDeepLink}. Needs `denext desktop add auth-session` (and, for a custom scheme,\n  denext's pinned runtime).\n\nOnly one session is open at a time (`busy` otherwise). The URL must carry PKCE S256 (a\n`code_challenge` and `code_challenge_method=S256`; `pkce_required` otherwise) unless\n`pkce: \"not-applicable\"` with a `reason`. Generate `state` and the PKCE verifier before the\ncall, compare `state` after it, and exchange the `code` (with the verifier) on your server.",
+          "docFull": "Sign in with an OAuth 2 / OpenID Connect provider in a system browser sheet, and get the\ncallback URL the provider redirected to.\n\n- **iOS** (inside the Capacitor shell): an `ASWebAuthenticationSession` sheet. It shares\n  Safari's cookies unless `preferEphemeral`, and catches the redirect to\n  `<callbackScheme>:` itself.\n- **Android** (inside the shell): a Custom Tab. The redirect reaches the app through its\n  intent filter for `callbackScheme` (`denext mobile add auth-session --scheme <scheme>`)\n  and resolves the call. Coming back without a callback (back button, closing the tab)\n  rejects `cancelled`. While a session is open, a link with that scheme is not routed by\n  {@linkcode onDeepLink}.\n- **Web**: a popup window. Register an https page of this origin as the redirect URI and\n  call {@linkcode completeAuthSession} there; the popup posts its URL back and closes. A\n  blocked popup rejects `unsupported` (call this from a click handler), and a popup closed\n  without a callback rejects `cancelled`. A provider page served with\n  `Cross-Origin-Opener-Policy: same-origin` cuts the popup off from this page, which then\n  reads as `cancelled`: use a full-page redirect for such providers.\n\n- **Deno Desktop**: with a loopback `redirect_uri` (`http://127.0.0.1/cb`) the system browser,\n  and the runtime catches the redirect on an ephemeral loopback port (RFC 8252), or on\n  `loopbackPort` for a provider with a fixed registered redirect. Otherwise a\n  custom-scheme callback: on macOS it runs in the OS's auth session (`ASWebAuthenticationSession`,\n  a sheet on the app's window with a real `cancelled`, private with `preferEphemeral`); on Windows\n  and Linux the system browser, and the callback comes back as a deep link. While the system\n  browser has the sign-in, a Cancel overlay covers the app (`cancelOverlay`), since the browser\n  reports no cancellation. Both flows require PKCE S256 in the URL (unless\n  `pkce: \"not-applicable\"` with a `reason`; `pkce_required` otherwise). With a custom scheme,\n  `callbackScheme` must be declared in `desktop.app.deepLinks`, the callback must match the\n  `redirect_uri` (or `callbackPrefix`) exactly and carry the same `state`, and another app\n  handling the scheme is refused (`scheme_owned_by_other_app`) rather than handed the callback.\n  The callback never reaches {@linkcode onDeepLink}. Needs `denext desktop add auth-session`\n  (and, for a custom scheme, denext's pinned runtime).\n\nOnly one session is open at a time (`busy` otherwise). The URL must carry PKCE S256 (a\n`code_challenge` and `code_challenge_method=S256`; `pkce_required` otherwise) unless\n`pkce: \"not-applicable\"` with a `reason`. Generate `state` and the PKCE verifier before the\ncall, compare `state` after it, and exchange the `code` (with the verifier) on your server.",
           "params": [
             {
               "name": "url",
@@ -28483,7 +28573,7 @@
               "doc": "The transfer's id."
             }
           ],
-          "returns": "Whether it paused.",
+          "returns": "Whether it paused: false too for a download that finished, failed or was cancelled before the pause landed, and for a page download into a picked file without OPFS (it writes straight through the picked file's stream, which keeps no partial bytes to resume from).",
           "examples": [],
           "denextOnly": true
         },
@@ -53253,8 +53343,8 @@
           "slug": "KeychainAccessibilityConstant",
           "kind": "typeAlias",
           "signature": "type KeychainAccessibilityConstant = number",
-          "doc": "A Keychain accessibility class (accepted and ignored here).",
-          "docFull": "A Keychain accessibility class (accepted and ignored here).",
+          "doc": "A Keychain accessibility class (keychainAccessible).",
+          "docFull": "A Keychain accessibility class (`keychainAccessible`).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -53290,7 +53380,7 @@
             },
             {
               "name": "options",
-              "doc": "keychainService namespaces it; requireAuthentication gates it behind biometrics."
+              "doc": "keychainService namespaces it; requireAuthentication gates it behind biometrics; keychainAccessible picks the Keychain class."
             }
           ],
           "returns": "A promise that settles once stored.",

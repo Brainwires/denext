@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.10.2] - 2026-10-30
+
 ### Added
 
 - **`denext fastlane ios build unsigned:true`.** The Fastfile `denext mobile add fastlane` writes
@@ -19810,7 +19812,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.2...development
+[4.10.2]: https://jsr.io/@denext/denext@4.10.2
 [4.10.1]: https://jsr.io/@denext/denext@4.10.1
 [4.10.0]: https://jsr.io/@denext/denext@4.10.0
 [4.9.0]: https://jsr.io/@denext/denext@4.9.0
