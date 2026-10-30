@@ -2091,7 +2091,9 @@ Deno.test("the checked-in pin passes pinFromRelease's own checks, for every targ
   const sums = Object.values(pinned).flatMap((t) =>
     (["webview", "cef"] as const).flatMap((b) => t[b] ? [`${t[b]!.sha256}  ${t[b]!.file}`] : [])
   ).join("\n");
-  assertEquals(pinFromRelease(pin.tag, manifest, sums), pin as unknown as PinFile);
+  // The `rollback` is the previous pin, which the release itself does not name.
+  const { rollback: _rollback, ...released } = pin;
+  assertEquals(pinFromRelease(pin.tag, manifest, sums), released as unknown as PinFile);
 });
 
 Deno.test("toolchainPinFromRelease pins each CLI zip's esbuild (denext.17 on), and only denext's version", () => {

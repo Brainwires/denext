@@ -8,6 +8,68 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Revoked runtimes roll back.** A released Deno toolchain or Deno Desktop runtime that turns out
+  to be broken can now be revoked after release, for every target or only some, through a list the
+  maintainers sign (ECDSA P-256, verified against public keys compiled into denext). Before it runs
+  its pinned toolchain, denext reads the list and, when the pin is revoked for the host, runs the
+  previous release the pin now names as its `rollback` (the `deno-toolchain-pin.json` and
+  `desktop-runtime-pin.json` pins gain the field; `deno task desktop:pin-runtime` fills it from the
+  pin it replaces, keeps the older fallback when that pin is revoked itself, and takes
+  `--rollback <tag>`). The rollback is verified against the SHA-256 the pin shipped with: the list
+  can only disable a pin, never name a binary. With no safe fallback the revoked release still
+  runs, with one warning per process tree. `build --compile`, `desktop build` and
+  `desktop package` refuse to ship a revoked runtime unless `DENEXT_ALLOW_REVOKED_RUNTIME=<version>`
+  names it; the desktop verbs move the toolchain and the Deno Desktop runtime back together. The
+  list is cached for 12 hours and refreshed within 1.5 seconds at most, from denext.dev and a
+  GitHub mirror at once (the newest valid list wins), and a list older than the one published
+  when this denext was released is never taken (`toolchain status`,
+  `install` and `doctor` fetch it every time, within 5 seconds, and report its sequence and expiry;
+  `toolchain status --json` adds `revocation`); a network, HTTP or signature problem never fails or
+  delays a command beyond that, a process without network permission never fetches, and
+  `denext start` / `denext job` read the cached list only. A list dated more than a day ahead of
+  the clock is refused, and the replay floor is the cached list's own signed sequence: the
+  bookkeeping file beside it is bound to the key set it was written under and can lower the floor
+  but never raise it, so a write to the cache cannot turn the check off for good; the tests' keys
+  file is honoured only under a switch a test turns on in its own process, and a run on it writes
+  nothing to the cache. The toolchain marker handed to child processes (`DENEXT_TOOLCHAIN_ACTIVE`)
+  never skips the check or forces the rollback on its own: a process on the rollback re-checks the
+  list, and `build --compile`, `desktop build` and `desktop package` ship the rollback only while
+  the list picks it. `toolchain prune` keeps the rollback.
+  `DENEXT_REVOCATION_CHECK=0` turns the check off. Until a signing key is compiled in, the check
+  reads and fetches nothing. See
+  [Revoked runtimes](https://denext.dev/docs/toolchain#revoked-runtimes).
+
+- **`deno task revocations`** (maintainers): `keygen` (the private key straight into the login
+  keychain), `init`, `add`, `sign`, `resign`, `verify`, `publish` and `floor` for the signed list, which
+  self-verifies against the compiled-in keys before it is published to denext.dev and a mirror.
+  A list expires 21 days after signing; `deno task release` re-signs it when fewer than 10 days
+  remain, and compiles the published list's sequence into the release as its floor (`floor`).
+
+### Changed
+
+- **Runtime 3.0.0-denext.3: denext pins it** (was `3.0.0-denext.2`; the toolchain, the Deno
+  Desktop runtime and CI's Linux toolchain zip move together; both pins name `3.0.0-denext.2` as
+  their `rollback`). It moves to V8 15.2.124.45 and adds
+  runtime APIs denext doesn't use yet: the `HTMLRewriter` global (`--unstable-html-rewriter`),
+  `resolveCertificate` (a certificate per server name for `Deno.listenTls` / `Deno.serve`), a cookie
+  jar for `fetch` (`Deno.CookieJar`, `Deno.Cookie`, `Deno.CookieMap`; `--unstable-cookies`) and npm
+  `patchedDependencies`. Also: better-sqlite3 under Jest's module registry, a shell-spawned `node`
+  shim keeps the npm resolution, a package.json script's arguments lose npm's leading `--`,
+  `node:test` parents wait for unawaited subtests, a desktop bind call from a page that is gone is
+  rejected and dropped, and the idle trim keeps a wake-up during a trim and skips the GC on a large
+  live heap (`DENO_IDLE_TRIM_MAX_GC_HEAP_MB`). The glibc floor stays 2.27. The
+  [runtime reference](https://denext.dev/docs/runtime-reference) lists the new APIs.
+
+### Security
+
+- **Runtime 3.0.0-denext.3 carries V8 15.2.124.45**, with the fixes for two V8 bugs exploited in
+  the wild (CVE-2026-85046, a type confusion, and CVE-2026-87491, an out-of-bounds write) that the
+  pinned `3.0.0-denext.2`'s V8 15.2.124.1 lacks. A sloppy-import hint no longer reveals whether a
+  file exists to a computed `import()` without read permission. Security advisory
+  [GHSA-qr84-w8xw-f7r4](https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4).
+
 ## [4.10.3] - 2026-10-30
 
 ### Added

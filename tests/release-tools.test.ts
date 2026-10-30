@@ -100,6 +100,7 @@ Deno.test("prepareRelease (dry) reports the bump, the golden refresh and the cha
   const out = await captured(() => prepareRelease("99.0.0-test.1", true));
   assertStringIncludes(out, "1. Bump");
   assertStringIncludes(out, "1b. ");
+  assertStringIncludes(out, "1c. revocation floor (skipped — dry run)");
   assertStringIncludes(out, "2. CHANGELOG: rolled [Unreleased] → [99.0.0-test.1]");
 });
 
@@ -304,7 +305,8 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   // resolveAlias reaches by path, so there was nothing to drop; 0.15 MiB of headroom to 20 MiB is
   // left. Splitting the package (the auth package first) is 5.0 work. Raised to 19.9 MiB on
   // 2026-10-30 for the 4.10-d train (19.79 → 19.85 MiB: workspace globs, desktop transfer
-  // records, the child-exit grace, React Router render middleware); a size reduction is queued.
+  // records, the child-exit grace, React Router render middleware, then the revoked-runtimes
+  // list: the verifier and the two pins' `rollback`); a size reduction is queued.
   const files = await publishedFiles();
   if (!files) return; // not a git checkout: nothing to measure
   const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;

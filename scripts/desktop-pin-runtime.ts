@@ -12,6 +12,14 @@
 // `deno.version` is then the stock Deno it is built from), `<deno>-denext.N` up to 2.9.7-denext.22.
 //   deno task desktop:pin-runtime <tag> --manifest <manifest.json> --sums <SHA256SUMS> \
 //     [--archives <dir>]                         # local files (the archives too, by file name)
+//   deno task desktop:pin-runtime <tag> --rollback <earlier tag>   # name the fallback release
+//
+// Each new pin keeps the pin it replaces as its `rollback`: the release denext runs instead when
+// the signed revoked-runtimes list revokes the pinned one (src/build/runtime-revocations.ts). When
+// the replaced pin is itself revoked (or is the same release), its own `rollback` is kept instead,
+// so a revoked release never becomes the fallback. `--rollback <tag>` names the fallback release
+// explicitly; its archives get the same checks and attestation as the pinned ones
+// (`--rollback-manifest` / `--rollback-sums` / `--rollback-archives` read it locally).
 //
 // Reads the release's `manifest.json` and `SHA256SUMS` and checks EVERY archive against both: the
 // manifest's sha256 must equal the SHA256SUMS line for the same file, every SHA256SUMS archive must
@@ -57,6 +65,7 @@ import { runtimeAttestationArgs } from "../src/build/desktop-runtime.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
 import { extractArchive } from "../src/build/safe-extract.ts";
 import { tsgoTreeSha256 } from "../src/build/deno-toolchain.ts";
+import { loadRuntimeRevocations } from "../src/build/runtime-revocations.ts";
 import {
   compareDenoVersions,
   denextVersionLine,
@@ -108,6 +117,8 @@ export interface PinFile {
   laufeySha: string;
   laufeyApiVersion: number | null;
   targets: Record<string, { runtimeLib: string } & Partial<Record<"webview" | "cef", PinArtifact>>>;
+  /** The pin this one replaced (see {@linkcode rollbackFor}). */
+  rollback?: Omit<PinFile, "schema" | "rollback">;
 }
 
 /** The esbuild a CLI zip carries (mirrors `DenoToolchainEsbuild`). */
@@ -149,6 +160,8 @@ export interface ToolchainPinFile {
    * host check reads it through `minGlibcFor` (src/build/linux-libc.ts).
    */
   minGlibc?: string;
+  /** The pin this one replaced (see {@linkcode rollbackFor}). */
+  rollback?: Omit<ToolchainPinFile, "schema" | "repository" | "rollback">;
 }
 
 /** Parse GNU `sha256sum` output into file → digest. */
@@ -656,60 +669,177 @@ async function fetchText(url: string): Promise<string> {
   return await res.text();
 }
 
+/** A toolchain pin's `rollback` (mirrors `DenoToolchainRollback`): the pin, minus what never nests. */
+export type ToolchainRollback = Omit<ToolchainPinFile, "schema" | "repository" | "rollback">;
+/** A runtime pin's `rollback` (mirrors `DesktopRuntimeRollback`). */
+export type RuntimeRollback = Omit<PinFile, "schema" | "rollback">;
+
+/** `pin` as the `rollback` of the pin that replaces it. */
+export function toolchainRollbackOf(pin: ToolchainPinFile): ToolchainRollback {
+  const { schema: _s, repository: _r, rollback: _b, ...rest } = pin;
+  return rest;
+}
+
+/** `pin` as the `rollback` of the pin that replaces it. */
+export function runtimeRollbackOf(pin: PinFile): RuntimeRollback {
+  const { schema: _s, rollback: _b, ...rest } = pin;
+  return rest;
+}
+
+/**
+ * The `rollback` a new pin of `version` carries, from the pin it replaces (`previous`, `null`
+ * when there is none): that pin — unless it is the same release (re-pinned: its own rollback
+ * stays) or it is revoked itself, when ITS rollback is kept: a revoked release is never a fallback.
+ *
+ * @param previous The pin being replaced.
+ * @param version The new pin's version.
+ * @param revoked Whether a version is on the revoked-runtimes list.
+ * @param of The pin → rollback mapping.
+ * @returns The rollback, or `undefined` for none.
+ */
+export async function rollbackFor<P extends { version: string; rollback?: R }, R>(
+  previous: P | null,
+  version: string,
+  revoked: (version: string) => Promise<boolean>,
+  of: (pin: P) => R,
+): Promise<R | undefined> {
+  if (previous === null) return undefined;
+  if (previous.version === version || await revoked(previous.version)) return previous.rollback;
+  return of(previous);
+}
+
+/** The versions the published revoked-runtimes list names (any component, any target). */
+async function revokedVersions(): Promise<(version: string) => Promise<boolean>> {
+  const loaded = await loadRuntimeRevocations({ mode: "force" });
+  const names = new Set((loaded.list?.revoked ?? []).map((e) => e.version));
+  return (version) => Promise.resolve(names.has(version));
+}
+
+/** A pin file's JSON, or `null` when there is none. */
+async function readPin<T>(path: string): Promise<T | null> {
+  try {
+    return JSON.parse(await Deno.readTextFile(path)) as T;
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return null;
+    throw err;
+  }
+}
+
+/** A release's runtime and toolchain pins, from its `manifest.json` + `SHA256SUMS`. */
+async function releasePins(
+  tag: string,
+  flag: (name: string) => string | undefined,
+  prefix = "",
+): Promise<{ pin: PinFile; cli: ToolchainPinFile | null }> {
+  const base = `https://github.com/${REPO}/releases/download/${tag}`;
+  const manifestText = flag(`--${prefix}manifest`)
+    ? await Deno.readTextFile(flag(`--${prefix}manifest`)!)
+    : await fetchText(`${base}/manifest.json`);
+  const sumsText = flag(`--${prefix}sums`)
+    ? await Deno.readTextFile(flag(`--${prefix}sums`)!)
+    : await fetchText(`${base}/SHA256SUMS`);
+  const manifest = JSON.parse(manifestText);
+  return {
+    pin: pinFromRelease(tag, manifest, sumsText),
+    cli: toolchainPinFromRelease(tag, manifest, sumsText),
+  };
+}
+
+/** Seams for {@linkcode main}. */
+export interface PinMainOptions {
+  /** Whether a version is revoked (default: the published revoked-runtimes list, fetched). */
+  readonly revoked?: (version: string) => Promise<boolean>;
+}
+
+/** The rollbacks the new pins carry: `--rollback <tag>`'s release (attested), else the old pins'. */
+async function rollbacks(
+  args: { tag: string; flag: (name: string) => string | undefined; version: string },
+  paths: { out: string; toolchainOut: string },
+  attest: (pin: PinFile, options: AttestPinOptions) => Promise<void>,
+  options: PinMainOptions,
+): Promise<{ runtime?: RuntimeRollback; toolchain?: ToolchainRollback }> {
+  const forced = args.flag("--rollback");
+  if (forced) {
+    if (forced === args.tag) fail("--rollback must name an earlier release than the one pinned");
+    const r = await releasePins(forced, args.flag, "rollback-");
+    await attest(r.pin, { archives: args.flag("--rollback-archives"), cli: r.cli });
+    return {
+      runtime: runtimeRollbackOf(r.pin),
+      ...(r.cli ? { toolchain: toolchainRollbackOf(r.cli) } : {}),
+    };
+  }
+  const runtime = await readPin<PinFile>(paths.out);
+  const toolchain = await readPin<ToolchainPinFile>(paths.toolchainOut);
+  if (runtime === null && toolchain === null) return {};
+  const revoked = options.revoked ?? await revokedVersions();
+  return {
+    runtime: await rollbackFor(runtime, args.version, revoked, runtimeRollbackOf),
+    toolchain: await rollbackFor(toolchain, args.version, revoked, toolchainRollbackOf),
+  };
+}
+
 /**
  * The CLI: fetch (or read, with `--manifest` / `--sums`) the release's files, build the pins and
  * write them to `out` (the runtime) and `toolchainOut` (the Deno toolchain, when the release ships
- * CLI archives).
+ * CLI archives). Each pin keeps the one it replaces as its `rollback` ({@linkcode rollbackFor});
+ * `--rollback <tag>` names that release instead (its archives attested like the pinned ones;
+ * `--rollback-manifest` / `--rollback-sums` / `--rollback-archives` read it locally).
  *
- * @param args The command line (`<tag> [--manifest <file> --sums <file>] [--archives <dir>]`).
+ * @param args The command line (`<tag> [--manifest <file> --sums <file>] [--archives <dir>]
+ *   [--rollback <tag>]`).
  * @param out Where the runtime pin is written (default: `src/build/desktop-runtime-pin.json`).
  * @param attest The archive cross-check run before writing (default {@linkcode attestPin}).
  * @param toolchainOut Where the toolchain pin is written (default:
  *   `src/build/deno-toolchain-pin.json`).
+ * @param options Seams.
  */
 export async function main(
   args: string[],
   out: string = OUT,
   attest: (pin: PinFile, options: AttestPinOptions) => Promise<void> = attestPin,
   toolchainOut: string = TOOLCHAIN_OUT,
+  options: PinMainOptions = {},
 ): Promise<void> {
   const tag = args[0];
   if (!tag || tag.startsWith("-")) {
     fail(
       "usage: deno task desktop:pin-runtime <tag> [--manifest <file> --sums <file>] " +
-        "[--archives <dir>]",
+        "[--archives <dir>] [--rollback <tag>]",
     );
   }
   const flag = (name: string) => {
     const i = args.indexOf(name);
     return i === -1 ? undefined : args[i + 1];
   };
-  const base = `https://github.com/${REPO}/releases/download/${tag}`;
-  const manifestText = flag("--manifest")
-    ? await Deno.readTextFile(flag("--manifest")!)
-    : await fetchText(`${base}/manifest.json`);
-  const sumsText = flag("--sums")
-    ? await Deno.readTextFile(flag("--sums")!)
-    : await fetchText(`${base}/SHA256SUMS`);
-  const manifest = JSON.parse(manifestText);
-  const pin = pinFromRelease(tag, manifest, sumsText);
-  const cli = toolchainPinFromRelease(tag, manifest, sumsText);
+  const { pin, cli } = await releasePins(tag, flag);
   await attest(pin, { archives: flag("--archives"), cli });
-  await Deno.writeTextFile(out, JSON.stringify(pin, null, 2) + "\n");
+  const rb = await rollbacks(
+    { tag, flag, version: pin.version },
+    { out, toolchainOut },
+    attest,
+    options,
+  );
+  const runtime: PinFile = { ...pin, ...(rb.runtime ? { rollback: rb.runtime } : {}) };
+  await Deno.writeTextFile(out, JSON.stringify(runtime, null, 2) + "\n");
   if (cli) {
-    await Deno.writeTextFile(toolchainOut, JSON.stringify(cli, null, 2) + "\n");
+    const toolchain = { ...cli, ...(rb.toolchain ? { rollback: rb.toolchain } : {}) };
+    await Deno.writeTextFile(toolchainOut, JSON.stringify(toolchain, null, 2) + "\n");
     const denort = Object.keys(cli.denort ?? {}).length;
     console.log(
       `wrote ${toolchainOut}: deno toolchain ${cli.version}, ` +
         `${Object.keys(cli.targets).length} CLI archives` +
-        (denort > 0 ? `, ${denort} denort archives` : ""),
+        (denort > 0 ? `, ${denort} denort archives` : "") +
+        (rb.toolchain ? `, rollback ${rb.toolchain.version}` : ""),
     );
   }
   const count = Object.values(pin.targets).reduce(
     (n, t) => n + BACKENDS.filter((b) => t[b]).length,
     0,
   );
-  console.log(`wrote ${out}: runtime ${pin.version} (deno ${pin.deno}), ${count} archives`);
+  console.log(
+    `wrote ${out}: runtime ${pin.version} (deno ${pin.deno}), ${count} archives` +
+      (rb.runtime ? `, rollback ${rb.runtime.version}` : ""),
+  );
 }
 
 if (import.meta.main) await main(Deno.args);

@@ -65,6 +65,7 @@ on:
       - "src/build/deno-cache-dir.ts"
       - "src/build/deno-toolchain.ts"
       - "src/build/deno-toolchain-pin.json"
+      - "src/build/runtime-revocation*.ts" # the revoked-runtimes list the runtime pins are checked against
       - "src/build/linux-libc.ts"
       - "src/build/deno-version.ts"
       - "src/build/stock-deprecation.ts"

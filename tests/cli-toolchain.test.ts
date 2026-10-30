@@ -136,6 +136,31 @@ Deno.test("maybeReexecToolchain never loops: the marker on its own version, or t
   assertEquals(seen.resolved, 0);
 });
 
+Deno.test("maybeReexecToolchain on the pin's rollback: stays only while the resolver still picks it", async () => {
+  // A process on 2.9.7-denext.14 whose marker names it (the command that started it ran the pin's
+  // rollback because the pinned release is revoked): the resolver is asked again.
+  const rolled = {
+    vars: { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.14" },
+    denoVersion: "2.9.7-denext.14",
+    denext: "2.9.7-denext.14",
+  };
+  const back: DenoToolchainChoice = {
+    kind: "toolchain",
+    deno: "/cache/rb",
+    version: "2.9.7-denext.14",
+  };
+  const still = deps(back, rolled);
+  assertEquals(await maybeReexecToolchain(true, still.d), false, "still the rollback: stays");
+  assertEquals([still.seen.resolved, still.seen.spawned.length], [1, 0]);
+  // The list no longer revokes the pin (or the marker leaked): onto the pinned toolchain.
+  const leaked = deps(TOOLCHAIN, rolled);
+  assert(await maybeReexecToolchain(true, leaked.d));
+  assertEquals(leaked.seen.spawned, [["/cache/deno", "2.9.7-denext.15"]]);
+  // A stock answer (DENEXT_DENO=stock appeared) leaves it where it is.
+  const stock = deps({ kind: "stock", reason: "x" }, rolled);
+  assertEquals(await maybeReexecToolchain(true, stock.d), false);
+});
+
 Deno.test("maybeReexecToolchain: a leaked marker or a stale -denext.N build re-execs onto the pin", async () => {
   for (
     const over of [
@@ -404,6 +429,7 @@ Deno.test("maybeReexecToolchain on a 3.0.0-rc.5+ toolchain: no probe, no re-run 
     const { d, seen, probes } = onToolchain(true, {
       denoVersion: version,
       denext: version,
+      pinnedVersion: version,
       vars: { DENEXT_TOOLCHAIN_ACTIVE: version },
     });
     assertEquals(await maybeReexecToolchain(true, d), false);
