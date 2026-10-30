@@ -2,7 +2,8 @@
 // Do not edit: run `deno task gen:command-table`. Each row is a verb's description and the
 // import of the module that implements it (src/cli/lazy-command.ts).
 
-import { CLI_COMMANDS_JSON } from "@denext/docs-corpus/cli-commands";
+import { unpackText } from "../build/packed-text.ts";
+import { CLI_COMMANDS_BROTLI_BASE64 } from "./command-meta.packed.ts";
 import type { CommandRegistry, CommandSpec } from "./command.ts";
 import { type CommandLoader, type CommandMeta, importCliModule } from "./lazy-command.ts";
 
@@ -16,8 +17,8 @@ const factory = (module: string, name: string): CommandLoader => (registry) =>
     (m[name] as (registry: CommandRegistry) => CommandSpec)(registry)
   );
 
-/** Every first-party verb's description, in registry order (JSON: see the generator). */
-const META: readonly CommandMeta[] = JSON.parse(CLI_COMMANDS_JSON);
+/** Every first-party verb's description, in registry order (packed JSON: see the generator). */
+const META: readonly CommandMeta[] = JSON.parse(unpackText(CLI_COMMANDS_BROTLI_BASE64));
 
 /** How to load each verb in {@linkcode META}, in the same order. */
 const LOADERS: readonly CommandLoader[] = [

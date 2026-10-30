@@ -938,9 +938,9 @@ class TrackedDownload extends SettlingDownload<{ path: string }> {
     }
   }
 
-  override cancelPaused(why: "cancel" | "caller"): void {
-    super.cancelPaused(why);
-    void this.engine.discard(this.info.id).catch(() => {});
+  /** A cancel while paused: the engine drops the partial file it kept, then the promise rejects. */
+  protected override discard(): Promise<void> {
+    return this.engine.discard(this.info.id).catch(() => {});
   }
 
   protected async attempt(resume: boolean): Promise<void> {
@@ -965,21 +965,22 @@ class TrackedDownload extends SettlingDownload<{ path: string }> {
       });
       this.succeed(done);
     } catch (err) {
-      this.#stopped(err);
+      await this.#stopped(err);
     } finally {
       this.#pausing = false;
     }
   }
 
   /** The run stopped: a pause (the promise stays pending), a cancel, or a failure. */
-  #stopped(err: unknown): void {
+  async #stopped(err: unknown): Promise<void> {
     const pause = this.#pausing ? this.engine.paused(err) : undefined;
     if (pause && !this.cancelled) {
       pageEvent(this, "paused", { state: "paused", ...pause });
       return;
     }
-    // A cancel that landed while the pause was settling: the engine kept the partial file.
-    if (pause) void this.engine.discard(this.info.id).catch(() => {});
+    // A cancel that landed while the pause was settling: the engine kept the partial file, which
+    // goes before the promise rejects.
+    if (pause) await this.discard();
     this.fail(this.#failure(err));
   }
 

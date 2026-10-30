@@ -688,10 +688,8 @@ Deno.test({
     assert(await cancelFileTransfer("wire-pause-2"));
     const err = await assertRejects(() => again, FileTransferError);
     assertEquals(err.code, "CANCELLED");
-    const end = Date.now() + 3_000;
-    while ((await filesUnder(root)).length > 1 && Date.now() < end) {
-      await new Promise((r) => setTimeout(r, 10));
-    }
+    // It rejects once the runtime has dropped the partial and its record: nothing is left in
+    // flight (before, the rejection came first and the drop finished after the test).
     assertEquals(await filesUnder(root), ["dl/r.bin"]);
     stop();
   });
