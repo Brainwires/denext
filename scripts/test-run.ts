@@ -202,7 +202,11 @@ export function testPasses(
   const vitestFiles = inScope(vitest, paths, ignores);
   // A `.vitest.ts` path named on its own is the Vitest pass's alone: stock Deno runs an explicitly
   // named file whatever its name, and cannot resolve `vitest`.
-  const stockPaths = paths.filter((p) => !p.endsWith(VITEST_SUFFIX));
+  // Likewise a serial file named on its own: `--ignore` only prunes discovery, so an explicit
+  // path would also run in the parallel pass, its env changes leaking into the other files.
+  const stockPaths = paths.filter((p) =>
+    !p.endsWith(VITEST_SUFFIX) && !serialFiles.some((f) => f === p.replace(/^\.\//, ""))
+  );
   const base = ["test", "-A", "--unstable-kv", ...flags];
   const own = [...ignores, ...serialFiles];
   const listed = [...configExcludes.filter((e) => !own.includes(e)), ...own];
