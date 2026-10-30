@@ -4,12 +4,12 @@
 // deno.json `links` substitutes it for the adapter's `better-sqlite3` dependency.
 // No native addon, no Rust query engine.
 
-import { PrismaBetterSQLite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "../generated/client/client.ts";
 
 const url = `file:${Deno.env.get("DB_PATH") ?? "./prisma/dev.db"}`;
 const prisma = new PrismaClient({
-  adapter: new PrismaBetterSQLite3({ url }),
+  adapter: new PrismaBetterSqlite3({ url }),
 });
 
 // Seed a couple of rows on first boot so a fresh database isn't empty (idempotent).
