@@ -22,6 +22,15 @@ and this project adheres to
   live heap (`DENO_IDLE_TRIM_MAX_GC_HEAP_MB`). The glibc floor stays 2.27. The
   [runtime reference](https://denext.dev/docs/runtime-reference) lists the new APIs.
 
+### Fixed
+
+- **A SPA shell's inline script that writes a `<script>` tag keeps working under
+  `nextScriptWorkers`.** The per-response nonce stamp put `nonce="…"` into every `<script` it
+  found, a script's string literal included (`"<script src=…><\/script>"`), which ended the string
+  early and broke the script; a `</head>` in a script's string drew the Partytown boot tag into it
+  too. The stamp now treats the content of `script`, `style`, `textarea` and `title` elements and
+  of comments as text, and an attribute value may hold `>`.
+
 ### Security
 
 - **Runtime 3.0.0-denext.3 carries V8 15.2.124.45**, with the fixes for two V8 bugs exploited in

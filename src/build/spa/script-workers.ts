@@ -72,8 +72,21 @@ export function newScriptNonce(): string {
 /** The shell's `spa.csp` meta tag: its policy is the second group. */
 const CSP_META = /(<meta http-equiv="Content-Security-Policy" content=")([^"]*)(")/;
 
-/** A `<script` open tag without a `nonce` attribute of its own. */
-const SCRIPT_TAG = /<script(?=[\s>])(?![^>]*\snonce=)/g;
+/**
+ * The shell's tokens the stamp acts on, in document order: a comment (group 1 unset, left as it
+ * is), an element whose content is text to the HTML parser (`script`, `style`, `textarea`,
+ * `title`: group 1 its name, group 2 its attributes, group 3 the rest of the element), and
+ * `</head>`. Matching the raw-text elements whole keeps a `<script` or `</head>` inside a
+ * script's string literal, a style or a comment from being taken for a tag; an attribute value
+ * may hold `>`.
+ */
+const SHELL_TOKEN =
+  /<!--[\s\S]*?(?:-->|$)|<(script|style|textarea|title)(?=[\s>\/])((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?(?:<\/\1\s*>|$))|<\/head\s*>/gi;
+
+/** Whether a start tag's attributes name a `nonce` (quoted values blanked first). */
+function hasNonce(attributes: string): boolean {
+  return /(?:^|\s)nonce\s*=/i.test(attributes.replace(/"[^"]*"|'[^']*'/g, '""'));
+}
 
 /**
  * The shell as one response serves it: the Partytown boot tag at the end of `<head>`, `nonce` on
@@ -94,8 +107,19 @@ export function stampWorkerNonce(shell: string, lib: string, nonce: string): str
     (_all, open: string, policy: string, close: string) =>
       open + policy.replace(/(^|;\s*)script-src\b/, `$1script-src ${source}`) + close,
   );
-  const stamped = withPolicy.replace(SCRIPT_TAG, `<script nonce="${nonce}"`);
   const boot = `<script src="${escapeHtml(lib)}boot.js" nonce="${nonce}"></script>`;
-  const at = stamped.indexOf("</head>");
-  return at < 0 ? boot + stamped : `${stamped.slice(0, at)}${boot}\n  ${stamped.slice(at)}`;
+  let booted = false;
+  const stamped = withPolicy.replace(
+    SHELL_TOKEN,
+    (token: string, name: string | undefined, attributes: string, rest: string) => {
+      if (name === undefined) {
+        if (booted || !/^<\/head/i.test(token)) return token; // a comment, or a later `</head>`
+        booted = true;
+        return `${boot}\n  ${token}`;
+      }
+      if (name.toLowerCase() !== "script" || hasNonce(attributes)) return token;
+      return `${token.slice(0, 7)} nonce="${nonce}"${attributes}>${rest}`;
+    },
+  );
+  return booted ? stamped : boot + stamped;
 }
