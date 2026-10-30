@@ -185,7 +185,8 @@ Deno.test("a member listed outside the root (../x) is skipped: Deno refuses it",
 Deno.test("workspaceVerbTarget: a monorepo root stands for its one app; several are named", async () => {
   const dir = await tree({
     "deno.json": { workspace: ["./apps/*", "./packages/ui"] },
-    // An SPA member: no app/ folder, a denext.config.ts.
+    // An SPA member: no app/ folder, a denext.config.ts (and the deno.json a glob member needs).
+    "apps/web/deno.json": {},
     "apps/web/denext.config.ts": "export default { mode: 'spa' };\n",
     "apps/web/capacitor.config.ts": "export default {};\n",
     "packages/ui/deno.json": { name: "@x/ui", exports: "./mod.ts" },

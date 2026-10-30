@@ -122,8 +122,15 @@ workspace holds. A glob works too: with `"workspace": ["./apps/*",
 "./packages/*"]` every app and package under those folders is a member, imports
 its siblings by name in the server and the client bundle alike, and
 `denext generate app` adds no second entry for an app the glob already covers
-(Deno refuses a member listed twice). A glob matches the folders directly under
-its parent (`apps/*`), not deeper ones. denext also handles an app inside a
+(Deno refuses a member listed twice). A glob follows Deno's rules: `*` and `?`
+match within one folder name, `**` any depth (`./packages/**`), a glob may sit
+mid-path (`./apps/*/web`), and a `!` entry leaves the folders it matches out
+(`"!./packages/legacy/**"`). A glob names only folders that hold a `deno.json`,
+`deno.jsonc` or `package.json`, and never one under `node_modules`, one whose
+name starts with `.` (unless the glob spells the dot), or one it reaches
+through a symlink. The same rules cover a package.json `workspaces` list and a
+`pnpm-workspace.yaml`, which also take `[abc]`, `{a,b}` and a symlinked folder
+inside the root. denext also handles an app inside a
 workspace that doesn't list it: it builds on its own config, as Deno runs it,
 but it can't import its siblings by name.
 

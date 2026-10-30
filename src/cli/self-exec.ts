@@ -1,7 +1,8 @@
 // How the CLI re-runs ITSELF in a child `deno run` (the CSS import-map re-exec and the
 // server-side-npm re-exec), for a local checkout, a JSR / https install, or a compiled binary.
 
-import { dirname, fromFileUrl, join, resolve } from "@std/path";
+import { dirname, fromFileUrl, join, relative, resolve } from "@std/path";
+import { workspaceSelects } from "../build/workspace-globs.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { type DenoToolchainChoice, TOOLCHAIN_ACTIVE_ENV } from "../build/deno-toolchain.ts";
 import {
@@ -122,27 +123,16 @@ function pinOfConfig(config: DenoConfig, configPath: string): string | null {
 }
 
 /**
- * Whether a workspace member entry (`./apps/web`, `packages/*`) names `member`, both resolved
- * against the root's directory. Only `*` is understood, as one path segment.
+ * Whether a workspace member entry (`./apps/web`, `packages/*`, `packages/**`) names `member`,
+ * both resolved against the root's directory, as Deno expands the list (workspace-globs.ts).
  */
 function workspaceLists(config: DenoConfig, rootDir: string, member: string): boolean {
   const entries = Array.isArray(config.workspace)
     ? config.workspace
     : (config.workspace as { members?: unknown } | null)?.members;
   if (!Array.isArray(entries)) return false;
-  for (const entry of entries) {
-    if (typeof entry !== "string") continue;
-    const full = resolve(rootDir, entry);
-    if (!full.includes("*")) {
-      if (full === member) return true;
-      continue;
-    }
-    const pattern = full.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(
-      "[^/\\\\]*",
-    );
-    if (new RegExp(`^${pattern}$`).test(member)) return true;
-  }
-  return false;
+  const list = entries.filter((e): e is string => typeof e === "string");
+  return workspaceSelects(list, relative(rootDir, member), "deno");
 }
 
 /**

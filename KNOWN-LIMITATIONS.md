@@ -320,11 +320,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   instead. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
   `build` and `export` stay on the CLI.
-- **A workspace glob member expands one level.** `"./apps/*"` names the folders directly under
-  `apps/`; a deeper or mid-path glob (`packages/**`, `apps/*/web`) names nothing to denext, so an
-  app it covers builds on its own config and its siblings' names don't resolve. List such members
-  one by one. A package's own import map applies to its files as a scope, except in a server copy
-  `denext dev` writes after an edit there, which resolves through the app's map.
+- **A workspace glob never follows a symlink out of the root.** denext expands `"workspace"`,
+  `"workspaces"` and `pnpm-workspace.yaml` globs as Deno, npm, Yarn and pnpm do (`packages/**`,
+  `apps/*/web`, `!` exclusions), but a folder a glob reaches through a symlink whose target lies
+  outside the root is no member to denext, though Deno and npm take it: an app it names builds on
+  its own config and its siblings' names don't resolve. List such a member by its path. A
+  package's own import map applies to its files as a scope, except in a server copy `denext dev`
+  writes after an edit there, which resolves through the app's map.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
