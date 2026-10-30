@@ -2,7 +2,7 @@
 // a deno.json `workspace`, a package.json `workspaces` and a `pnpm-workspace.yaml`. Every case
 // was checked against the tool itself (Deno 2.9.8 / denext's toolchain, npm 11, pnpm 11).
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertThrows } from "@std/assert";
 import { join } from "@std/path";
 import {
   npmWorkspaceOf,
@@ -10,7 +10,12 @@ import {
   workspaceImports,
   workspaceOf,
 } from "../src/build/workspace-imports.ts";
-import { expandWorkspaceMembers, workspaceSelects } from "../src/build/workspace-globs.ts";
+import {
+  expandWorkspaceMembers,
+  MAX_BRACE_EXPANSIONS,
+  WorkspaceEntryError,
+  workspaceSelects,
+} from "../src/build/workspace-globs.ts";
 import { appPlan } from "../src/build/generate-app.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 
@@ -244,4 +249,38 @@ Deno.test("generate app: a `**` member already covers the new app", async () => 
   } finally {
     await removeTempDir(dir);
   }
+});
+
+Deno.test("a bad character class is a config error naming the entry, not a SyntaxError", () => {
+  for (const [kind, list] of [["npm", "package.json"], ["pnpm", "pnpm-workspace.yaml"]] as const) {
+    const error = assertThrows(
+      () => expandWorkspaceMembers("/nonexistent-root", ["packages/*", "packages/[z-a]"], kind),
+      WorkspaceEntryError,
+      list,
+    );
+    assertEquals(error.entry, "packages/[z-a]");
+    assert(error.message.includes('"packages/[z-a]"'), error.message);
+    assertThrows(() => workspaceSelects(["apps/[z-a]*"], "apps/x", kind), WorkspaceEntryError);
+  }
+  // Deno has no classes: the same entry is a literal path there.
+  assertEquals(
+    expandWorkspaceMembers("/r", ["packages/[z-a]"], "deno"),
+    [join("/r", "packages/[z-a]")],
+  );
+});
+
+Deno.test("brace expansion is bounded: past the cap the entry is refused before it blows up", () => {
+  // 2^10 = 1024 patterns: at the cap, still expanded.
+  assert(workspaceSelects(["p/" + "{a,b}".repeat(10)], "p/" + "a".repeat(10), "npm"));
+  assertEquals(MAX_BRACE_EXPANSIONS, 1024);
+  // 2^25 patterns would take gigabytes: refused at once, naming the entry.
+  const entry = "packages/" + "{a,b}".repeat(25);
+  const started = performance.now();
+  const error = assertThrows(
+    () => expandWorkspaceMembers("/nonexistent-root", [entry], "pnpm"),
+    WorkspaceEntryError,
+    `more than ${MAX_BRACE_EXPANSIONS} patterns`,
+  );
+  assertEquals(error.entry, entry);
+  assert(performance.now() - started < 2_000, "refused before expanding");
 });

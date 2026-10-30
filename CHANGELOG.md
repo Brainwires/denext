@@ -48,13 +48,15 @@ and this project adheres to
   already bound parameters and stay so; identifiers go through the REST layer's quoting helper.
 - **Workspace globs expand as Deno, npm, Yarn and pnpm expand them.** A `workspace` glob used to
   name only the folders directly under its parent, so a member that `packages/**` or `apps/*/web`
-  names built on its own config and couldn't import its siblings by name. One expansion now
-  serves every caller (the build's import maps, `denext ui` / `desktop` / `mobile` at the root,
-  `generate app`, `upgrade`, the pinned-CLI lookup and the jail settings): `*` and `?` within a
-  folder name, `**` at any depth, mid-path globs, `!` exclusions, and for the npm family `[abc]`
-  and `{a,b}`. A glob names only folders that hold the tool's manifest and skips `node_modules`,
-  dot folders and symlinks out of the root. A `pnpm-workspace.yaml`'s `packages` now count for the
-  jail settings as well.
+  names built on its own config and couldn't import its siblings by name. One expansion now serves
+  every caller (the build's import maps, `denext ui` / `desktop` / `mobile` at the root, `generate
+  app`, `upgrade`, the pinned-CLI lookup and the jail settings): `*` and `?` within a folder name,
+  `**` at any depth, mid-path globs, `!` exclusions, and for the npm family `[abc]` and `{a,b}`. A
+  glob names only folders that hold the tool's manifest and skips `node_modules`, dot folders and
+  symlinks out of the root. An entry it can't read is an error that names it and its file (a class
+  that isn't a valid range, `[z-a]`, or braces that expand past 1024 patterns), not a raw
+  `SyntaxError` or a pattern list of millions. A `pnpm-workspace.yaml`'s `packages` now count for
+  the jail settings as well.
 - **A `deno info --json` child that finished but never exits no longer holds the build until its
   deadline.** On a loaded Windows machine such a child has been seen to write its complete JSON
   output and then spin at full CPU without exiting, until the build killed it at its 120 s deadline
