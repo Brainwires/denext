@@ -110,10 +110,16 @@ function serve(): { base: string; ranges: () => number; close: () => Promise<voi
         headers: { etag: '"v1"', "content-length": "65536" },
       });
     }
-    if (path === "/upload") return await upload(req);
-    if (path === "/raw") {
-      const bytes = (await req.arrayBuffer()).byteLength;
-      return new Response(`${req.method} ${req.headers.get("content-type")} ${bytes}`);
+    // A cancelled upload (harness step 10) drops its body mid-way: answer it here rather than let
+    // Deno.serve's default onError print the read error into the middle of the test's report line.
+    try {
+      if (path === "/upload") return await upload(req);
+      if (path === "/raw") {
+        const bytes = (await req.arrayBuffer()).byteLength;
+        return new Response(`${req.method} ${req.headers.get("content-type")} ${bytes}`);
+      }
+    } catch {
+      return new Response("body dropped", { status: 400 });
     }
     return new Response("not here", { status: 404 });
   });
