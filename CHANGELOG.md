@@ -40,10 +40,12 @@ and this project adheres to
 - **`denext mobile build --release` runs the release checks.** After `cap sync` and before Xcode
   or Gradle, it runs `denext mobile doctor --release` and stops on its release-security
   findings: a LAN / loopback / `http` `server.url`, a wildcard or `http:` `allowNavigation`,
-  `frameGuard: false` over a foreign origin, cleartext in the Capacitor config or a network
-  security config, a debuggable WebView, the legacy bridge and a leftover
-  `NSAllowsLocalNetworking`. Every other doctor error (a missing CSP, a secret-shaped string in
-  the export, …) is printed as a warning with its fix, and the build goes on. A flavor's
+  `frameGuard: false` over a foreign origin, cleartext (`server.cleartext`, the manifest's
+  `usesCleartextTraffic`, a network security config, a leftover `NSAllowsLocalNetworking`), a
+  debuggable WebView, `android:debuggable="true"` and the legacy bridge. Every other doctor error
+  (a missing CSP, a secret-shaped string in the export, `NSAllowsArbitraryLoads`, an insecure
+  ATS exception domain, mixed content, …) is printed as a warning with its fix, and the build
+  goes on. A flavor's
   `serverUrl` that is not `https` is refused.
 - **The fastlane CI workflow pins its actions.** `denext mobile add fastlane --ci` writes every
   action as a commit SHA with its tag in a comment, decodes the upload keystore with a private

@@ -161,13 +161,15 @@ findings, each with its fix:
 - a `server.url` on a LAN / loopback address or plain `http`;
 - `server.allowNavigation` with `*`, a wildcard over hosts you do not own, or an `http:` entry;
 - `plugins.DenextBridge.frameGuard: false` over an `allowNavigation` origin;
-- cleartext in the Capacitor config (`server.cleartext`) or in a network security config
-  (`cleartextTrafficPermitted="true"`), and a leftover `NSAllowsLocalNetworking`;
-- a debuggable WebView (`webContentsDebuggingEnabled`);
+- cleartext from any source: `server.cleartext`, the manifest's
+  `android:usesCleartextTraffic="true"`, a network security config with
+  `cleartextTrafficPermitted="true"`, and a leftover `NSAllowsLocalNetworking`;
+- a debuggable WebView (`webContentsDebuggingEnabled`) or APK (`android:debuggable="true"`);
 - `android.useLegacyBridge`.
 
 Every other error of the [release profile](/docs/mobile#app-store-review) (a missing CSP, a
-secret-shaped string in the export, another App Transport Security exception, …) is printed as
+secret-shaped string in the export, `NSAllowsArbitraryLoads` or an insecure exception domain,
+`android.allowMixedContent`, …) is printed as
 a warning with its fix, and the build goes on: run `denext mobile doctor --release` to see them
 all. A finding about the other platform's native project does not stop this one. Before anything
 runs, the build also refuses a `denext mobile dev` session's leftover config, a `server.url`

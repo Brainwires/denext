@@ -56,9 +56,11 @@ export interface MobileDoctorFinding {
   /**
    * A release-security hole `denext mobile build --release` refuses to ship (see
    * {@linkcode releaseGateFindings}): a dev / http `server.url`, a wildcard or http
-   * `allowNavigation`, `frameGuard: false` over a foreign origin, cleartext in the Capacitor
-   * config or a network security config, a debuggable WebView, the legacy bridge, a leftover
-   * `NSAllowsLocalNetworking`. Every other finding only warns there.
+   * `allowNavigation`, `frameGuard: false` over a foreign origin, cleartext (the Capacitor
+   * config, the manifest's `usesCleartextTraffic`, a network security config, a leftover
+   * `NSAllowsLocalNetworking`), a debuggable WebView or APK (`android:debuggable`), the legacy
+   * bridge. Every other finding (`NSAllowsArbitraryLoads`, insecure ATS exception domains,
+   * mixed content, a missing CSP, …) only warns there.
    */
   readonly releaseGate?: boolean;
 }
@@ -615,6 +617,7 @@ const cleartext: Check = {
       out.push({
         check: "cleartext",
         level,
+        releaseGate: true,
         message: `${nativeRel(p.root, ANDROID_MANIFEST)}: android:usesCleartextTraffic="true"`,
         fix: "remove it, or scope plain http to named hosts with a network security config",
       });
@@ -674,6 +677,7 @@ const androidDebuggable: Check = {
       ? [{
         check: "android-debuggable",
         level: "error",
+        releaseGate: true,
         message: `${
           nativeRel(p.root, ANDROID_MANIFEST)
         }: android:debuggable="true" (Play refuses debuggable uploads)`,

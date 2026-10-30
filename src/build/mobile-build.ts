@@ -826,8 +826,9 @@ function otherPlatformPrefix(plan: MobileBuildPlan): string {
  * The release gate: `denext mobile doctor --release` over the synced project. It refuses the
  * build on the release-security findings ({@linkcode releaseGateFindings}: a dev / http
  * `server.url`, a wildcard or http `allowNavigation`, `frameGuard: false` over a foreign origin,
- * cleartext in the Capacitor config or a network security config, a debuggable WebView, the
- * legacy bridge, a leftover `NSAllowsLocalNetworking`); every other doctor error is printed as a
+ * cleartext (Capacitor config, `usesCleartextTraffic`, a network security config, a leftover
+ * `NSAllowsLocalNetworking`), a debuggable WebView or APK, the legacy bridge); every other
+ * doctor error is printed as a
  * warning with its fix and the build goes on. Findings about the other platform's native project
  * do not block this one, and with a flavor's (https) `serverUrl` its `server-url` finding is the
  * flavor's deliberate setting.

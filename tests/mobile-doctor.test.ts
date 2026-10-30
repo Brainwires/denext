@@ -456,8 +456,15 @@ Deno.test("mobile doctor: the release gate is the release-security findings only
       appId: "dev.example",
       webDir: "out",
       server: { url: "https://app.example", allowNavigation: ["*.example.com", "*"] },
-      android: { webContentsDebuggingEnabled: true, useLegacyBridge: true },
+      android: {
+        webContentsDebuggingEnabled: true,
+        useLegacyBridge: true,
+        allowMixedContent: true,
+      },
     }),
+    "android/app/src/main/AndroidManifest.xml":
+      '<manifest><application android:debuggable="true" ' +
+      'android:usesCleartextTraffic="true"></application></manifest>',
     "ios/App/App/Info.plist": plist(
       "\t<key>NSAppTransportSecurity</key>\n\t<dict>\n\t\t<key>NSAllowsLocalNetworking</key>\n" +
         "\t\t<true/>\n\t\t<key>NSAllowsArbitraryLoads</key>\n\t\t<true/>\n\t</dict>",
@@ -469,18 +476,20 @@ Deno.test("mobile doctor: the release gate is the release-security findings only
     const gate = releaseGateFindings(report);
     assertEquals([...new Set(gate.map((f) => f.check))].sort(), [
       "allow-navigation",
+      "android-debuggable",
       "cleartext",
       "legacy-bridge",
       "webview-debugging",
     ]);
     const cleartext = gate.filter((f) => f.check === "cleartext").map((f) => f.message);
-    assertEquals(cleartext.length, 1, cleartext.join("\n"));
-    assertStringIncludes(cleartext[0], "NSAllowsLocalNetworking");
+    assertEquals(cleartext.length, 2, cleartext.join("\n"));
+    assertStringIncludes(cleartext.join("\n"), "NSAllowsLocalNetworking");
+    assertStringIncludes(cleartext.join("\n"), 'android:usesCleartextTraffic="true"');
     // The wildcard subdomain is a warning, never a gate.
     assertEquals(gate.filter((f) => f.check === "allow-navigation").length, 1);
     // Errors outside the gate: a hosted https server.url, NSAllowsArbitraryLoads, the CSP.
     const rest = report.findings.filter((f) => f.level === "error" && !f.releaseGate);
-    for (const id of ["server-url", "cleartext", "csp"]) {
+    for (const id of ["server-url", "cleartext", "csp", "mixed-content"]) {
       assert(rest.some((f) => f.check === id), id);
     }
   } finally {

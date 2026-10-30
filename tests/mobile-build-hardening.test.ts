@@ -364,6 +364,24 @@ Deno.test("mobile build --release: the real doctor refuses each release error", 
       "ios",
     ],
     [
+      "cleartext",
+      {
+        "android/app/src/main/AndroidManifest.xml":
+          '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application ' +
+          'android:usesCleartextTraffic="true"></application></manifest>',
+      },
+      "android",
+    ],
+    [
+      "android-debuggable",
+      {
+        "android/app/src/main/AndroidManifest.xml":
+          '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application ' +
+          'android:debuggable="true"></application></manifest>',
+      },
+      "android",
+    ],
+    [
       "legacy-bridge",
       { "capacitor.config.json": config({ android: { useLegacyBridge: true } }) },
       "android",
@@ -482,5 +500,50 @@ Deno.test("mobile build --release: a missing CSP builds with a warning; a wildca
     assertEquals(d.ran, ["npx"]);
   } finally {
     await Deno.remove(wild, { recursive: true });
+  }
+});
+
+Deno.test("mobile build --release: NSAllowsArbitraryLoads, an insecure ATS domain and mixed content only warn", async () => {
+  const cases: Array<[string, Record<string, string>, "ios" | "android"]> = [
+    [
+      "cleartext",
+      {
+        "ios/App/App/Info.plist": plist(
+          "\t<key>NSAppTransportSecurity</key>\n\t<dict>\n\t\t<key>NSAllowsArbitraryLoads</key>" +
+            "\n\t\t<true/>\n\t\t<key>NSExceptionDomains</key>\n\t\t<dict>\n\t\t\t<key>legacy.example</key>" +
+            "\n\t\t\t<dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>\n\t\t</dict>" +
+            "\n\t</dict>",
+        ),
+      },
+      "ios",
+    ],
+    [
+      "mixed-content",
+      {
+        "capacitor.config.json": JSON.stringify({
+          appId: "dev.example",
+          webDir: "out",
+          android: { allowMixedContent: true },
+        }),
+      },
+      "android",
+    ],
+  ];
+  for (const [check, files, platform] of cases) {
+    const dir = await project(files);
+    try {
+      const plan = await planMobileBuild(options(dir, {
+        platform,
+        release: true,
+        skipExport: true,
+        ...(platform === "ios" ? { unsigned: true } : {}),
+      }));
+      const d = deps();
+      await assertRejects(() => runMobileBuild(plan, {}, d), Error, "exited with 1", check);
+      assertEquals(d.ran.length, 2, `${check}: the native build ran`);
+      assertStringIncludes(d.logged.join("\n"), `warning: [${check}]`);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
   }
 });
