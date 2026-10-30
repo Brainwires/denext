@@ -25,7 +25,10 @@ import {
   renderEnvExample,
   renderStackCompose,
   type StackOptions,
+  tlsEnvLines,
+  tlsVolume,
 } from "./docker-stack.ts";
+import { TLS_CERT_DIR, tlsProbeArgs, withCertificateReads } from "./start-tls-deploy.ts";
 
 export { DOCKER_SENTINEL };
 
@@ -151,7 +154,9 @@ function execForm(words: readonly string[]): string {
  * becomes `--allow-net-connect --allow-net-listen=:<port>,[::]:<port>`.
  */
 function imageStartCommand(port: number, options: DockerOptions): readonly string[] | undefined {
-  const task = options.startCommand;
+  const task = options.startCommand && serverTls(options)
+    ? withCertificateReads(options.startCommand, TLS_CERT_DIR)
+    : options.startCommand;
   if (!task || !(options.netSplit ?? toolchainNetSplit())) return task;
   // `:<port>` is 0.0.0.0, 127.0.0.1 and localhost; `[::]` is the server bound to IPv6's any.
   return splitNetFlag(task, [`:${port}`, `[::]:${port}`]);
@@ -219,11 +224,28 @@ function limitedStartCommand(
 /**
  * The image's `HEALTHCHECK`, against the built-in probe. `deno eval` runs with every
  * permission, so no flags; the probe is GET-only and always 200 while the server is up
- * (its body — not the status — says whether the cache store is durable).
+ * (its body — not the status — says whether the cache store is durable). With `start.tls` it
+ * probes `https://localhost` without checking the certificate (exec form: the probe asks whether
+ * the server answers, not who it is).
  */
-function healthcheck(port: number): string {
-  return `HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \\
-  CMD deno eval "fetch('http://127.0.0.1:${port}/_denext/health').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))"`;
+function healthcheck(port: number, tls: boolean): string {
+  const timing = "HEALTHCHECK --interval=30s --timeout=3s --start-period=15s --retries=3 \\\n";
+  if (tls) return `${timing}  CMD ${execForm(["deno", ...tlsProbeArgs(port, "/_denext/health")])}`;
+  return `${timing}  CMD deno eval "fetch('http://127.0.0.1:${port}/_denext/health').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))"`;
+}
+
+/** Whether the server image serves HTTPS itself (`start.tls`; never the static image). */
+function serverTls(options: DockerOptions): boolean {
+  return options.mode === "server" && !!options.tls;
+}
+
+/** The server image's lines about `start.tls`: where the certificate files come from. */
+function tlsLines(options: DockerOptions): string {
+  if (!serverTls(options)) return "";
+  return `# start.tls: the server serves HTTPS itself. The certificate and key files are never part of
+# the image (.dockerignore keeps certs/ out): mount them read-only at ${TLS_CERT_DIR} and set the
+# variables start.tls names to their paths (docker-compose.yml and .env.example do both).
+`;
 }
 
 /**
@@ -306,11 +328,11 @@ ENV DENEXT_LOG=json
 # The production server listens on ${port} and binds 0.0.0.0 by default (see
 # \`deno task start\`). Change the port with \`ENV PORT=<n>\`
 # (and EXPOSE) — \`start\` reads $PORT.
-EXPOSE ${port}
+${tlsLines(options)}EXPOSE ${port}
 
 # The built-in liveness probe. Its JSON body also reports the cache store
 # ({"cache":"ok","cacheStore":"sqlite"}); "memory" there means the write grant is missing.
-${healthcheck(port)}
+${healthcheck(port, serverTls(options))}
 
 # \`deno task start\` is the least-privilege task \`denext create\` writes:
 #   --allow-net --allow-read --allow-env --allow-write=.denext
@@ -428,20 +450,28 @@ function commentOut(text: string, indent: number): string {
 export function renderCompose(options: DockerOptions): string {
   const port = portOf(options);
   if (isStack(options)) return renderStackCompose(options, port, options.mode === "static");
+  const tls = serverTls(options) ? options.tls : null;
+  const envFile = tls
+    ? `    # start.tls's variables (and anything else the app reads) come from .env (see .env.example).
+    env_file:
+      - path: .env
+        required: false
+`
+    : `    # Load secrets / runtime env from a file (uncomment and create .env):
+    # env_file: .env
+`;
   return `${DOCKER_SENTINEL}.
 services:
   web:
     build: .
     ports:
       - "${port}:${port}"
-    environment:
-      - NODE_ENV=production
+${tls ? tlsVolume() : ""}    environment:
+${["NODE_ENV=production", ...tlsEnvLines(tls, "list")].map((l) => `      - ${l}`).join("\n")}
     restart: unless-stopped
     # SIGTERM drains in-flight requests (DENEXT_SHUTDOWN_DRAIN_MS, 10 s by default) first.
     stop_grace_period: 30s
-    # Load secrets / runtime env from a file (uncomment and create .env):
-    # env_file: .env
-
+${envFile}
   # Example Postgres service — uncomment, then wire DATABASE_URL into \`web\`
   # (or regenerate with \`denext generate docker --postgres\` for the full wiring).
 ${commentOut(DB_SERVICE, 2)}
@@ -451,11 +481,15 @@ ${commentOut(DB_VOLUMES, 0)}
 }
 
 /**
- * `.dockerignore` — keep build cache, VCS, local env, and the image files out.
+ * `.dockerignore` — keep build cache, VCS, local env, and the image files out (and, with
+ * `start.tls`, the `certs/` directory the compose file mounts: a private key never goes into a
+ * layer).
  *
+ * @param options The options (only `start.tls` matters).
  * @returns The file's contents.
  */
-export function renderDockerignore(): string {
+export function renderDockerignore(options?: Pick<DockerOptions, "mode" | "tls">): string {
+  const certs = options && serverTls(options as DockerOptions) ? "certs\n" : "";
   return `${DOCKER_SENTINEL}.
 .git
 .gitignore
@@ -474,7 +508,7 @@ compose.*.yml
 docker-compose.*.yml
 .dockerignore
 desktop-icon.png
-`;
+${certs}`;
 }
 
 // ---- the plan --------------------------------------------------------------
@@ -539,8 +573,10 @@ export async function dockerPlan(
     ["Dockerfile", renderDockerfile(options)],
     // An existing compose file under any of Docker Compose's names is the one regenerated.
     [(await findComposeFile(projectDir)) ?? DEFAULT_COMPOSE_FILE, renderCompose(options)],
-    [".dockerignore", renderDockerignore()],
-    ...(isStack(options) ? [[".env.example", renderEnvExample(options)] as const] : []),
+    [".dockerignore", renderDockerignore(options)],
+    ...(isStack(options) || serverTls(options)
+      ? [[".env.example", renderEnvExample(options)] as const]
+      : []),
     ...(options.dev
       ? [[DEV_COMPOSE_FILE, renderComposeDev(options, portOf(options))] as const]
       : []),

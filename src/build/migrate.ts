@@ -13,6 +13,7 @@
 // derived from the Vite config/usage, and — with `--desktop` — a `desktop.ts` entry
 // and `spa.proxy` for a `deno desktop` build.
 
+import { carryPackageManagerPatches, type MigratePatchesReport } from "./migrate-patches.ts";
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
 import { resolveTsPaths, tsPathAliases } from "./tsconfig-paths.ts";
@@ -553,6 +554,12 @@ export interface MigrateResult {
    * `supplyChain.jailScripts.packages` entries written into deno.json (or left to the user).
    */
   jailScripts?: JailReport;
+  /**
+   * Present when package.json / pnpm-workspace.yaml declares pnpm or Bun npm patches
+   * (`patchedDependencies`): the ones carried into deno.json's `patchedDependencies` (copied to
+   * `patches/npm/`) and the ones left for review (src/build/migrate-patches.ts).
+   */
+  patches?: MigratePatchesReport;
 }
 
 /** How the app's `next.config.*` translated into `denext.config.ts`. */
@@ -1562,7 +1569,9 @@ async function migrateConfined(dir: string, options: MigrateOptions): Promise<Mi
     edit: !migrated.denoJsonExists,
     confine: dir,
   });
-  const r = jail.action === "none" ? migrated : { ...migrated, jailScripts: jail };
+  const withJail = jail.action === "none" ? migrated : { ...migrated, jailScripts: jail };
+  const patches = await carryPackageManagerPatches(dir, { edit: !migrated.denoJsonExists });
+  const r = patches ? { ...withJail, patches } : withJail;
   if (!options.capacitor || r.capacitor) return r;
   return { ...r, capacitorSkipped: capacitorSkipReason(r) };
 }

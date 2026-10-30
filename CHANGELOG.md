@@ -74,6 +74,29 @@ and this project adheres to
   Nothing is registered, with a line saying why, without a `node_modules` directory or for a patch
   that adds or deletes a file, which the runtime can't apply. See https://denext.dev/docs/patches.
 
+- **The generated deploy files carry `start.tls`.** `denext generate docker` (and the `docker` /
+  `fly` presets) mounts `./certs` read-only at `/certs`, keeps it out of the image
+  (`.dockerignore`), requires each certificate's and key's variable in the compose file and lists
+  them empty in `.env.example`, adds `/certs` to a start task's scoped `--allow-read`, and probes
+  health over `https://localhost`. `genericHost()` writes a unit whose server faces clients itself
+  (every interface, port 443 by default with `CAP_NET_BIND_SERVICE`, no `DENEXT_TRUST_PROXY`), no
+  nginx or Caddy snippet, and the variables in `env.example`; `fly()` passes TLS through as raw TCP;
+  `denoDeploy()` warns. The deploy manifest's `server.tls` lists the certificates' host names and
+  variable names (`null` for plain HTTP). The generators warn about several certificates without
+  `"unstable": ["net"]` in deno.json and a health probe no certificate serves.
+
+- **`denext migrate` carries pnpm and Bun patches.** `pnpm.patchedDependencies` (package.json),
+  `patchedDependencies` in pnpm-workspace.yaml (the workspace root's for an app inside one) and
+  Bun's `patchedDependencies` (package.json) are copied to `patches/npm/<name>+<version>.patch`
+  and registered in deno.json's `patchedDependencies` under the same key, so denext's Deno from
+  runtime 3.0.0-denext.3 applies them on install. A patch under `node_modules/<pkg>/` paths is made
+  package-relative and a plain unified diff gets its `diff --git` lines. A patch that adds, deletes,
+  renames or copies a file or changes a binary one is a review item (the runtime changes existing
+  text files only), as is every patch on a runtime that doesn't apply them, a key deno.json maps
+  already and an unreadable file; a hand-authored deno.json gets the entries to add by hand.
+  `migrate --check` lists each patch it would carry and each it would not. See
+  https://denext.dev/docs/migrating#npm-patches-from-pnpm-and-bun.
+
 ### Changed
 
 - **Runtime 3.0.0-denext.3: denext pins it** (was `3.0.0-denext.2`; the toolchain, the Deno
@@ -98,6 +121,10 @@ and this project adheres to
   early and broke the script; a `</head>` in a script's string drew the Partytown boot tag into it
   too. The stamp now treats the content of `script`, `style`, `textarea` and `title` elements and
   of comments as text, and an attribute value may hold `>`.
+
+- **`build --compile` with several `start.tls` certificates bakes `--unstable-net`.** The compile
+  runs with a config of its own, which carries no `unstable` from the project's `deno.json`, so the
+  executable refused to serve several certificates ("needs the unstable net APIs").
 
 ### Security
 

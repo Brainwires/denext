@@ -151,6 +151,13 @@ function denoDeployWarnings(ctx: DeployContext): void {
     );
   }
   if (manifest.compile) ctx.warn("deno-deploy: the build --compile executable is not used here");
+  if (manifest.server.tls) {
+    ctx.warn(
+      "deno-deploy: the platform terminates TLS for the app's domains, and the server it starts " +
+        "can't read start.tls's certificate files there, so it would refuse to start: leave " +
+        "start.tls out of the config on Deno Deploy (it sets DENO_DEPLOYMENT_ID)",
+    );
+  }
   const secrets = requiredSecrets(manifest);
   if (secrets.length) {
     ctx.log(`set these in the app's environment (deno deploy env add): ${secrets.join(", ")}`);

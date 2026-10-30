@@ -4513,7 +4513,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `addContactsChangeListener(listener: () => void): EventSubscription` — Call listener when the address book changes (a contact added, changed or removed, by this app or another): CNContactStoreDidChange on iOS, a ContentObserver on Android (which may batch changes by a few seconds, and report one change twice). Needs DenextContacts; on the web, or without it, the listener never fires (as in Expo's web build).
 - `type Address = object` — A legacy postal address.
 - `enum CalendarFormats` — Calendar formats of a legacy Date.
-- `type CalendarFormatType = CalendarFormats | ${CalendarFormats}` — A CalendarFormats member or its string.
+- `type CalendarFormatType = CalendarFormats | ${[0m[38;5;12mCalendarFormats[0m}` — A CalendarFormats member or its string.
 - `class Contact` — A contact of the address book, by id. Reads go through the plugin on each call; writes read the stored record, change it and write it back.
 - `ContactAccessButton: ContactAccessButtonComponent` — iOS 18's ContactAccessButton. The plugin does not provide it, so it renders nothing and isAvailable() is false, as on Android and the web in Expo.
 - `interface ContactAccessButtonComponent` — The ContactAccessButton component with its static check.
@@ -4526,15 +4526,15 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ContactQuery = object` — A legacy contact query.
 - `type ContactQueryOptions = object` — Options of Contact.getAll.
 - `type ContactResponse = object` — A page of legacy contacts.
-- `type ContactSort = ${SortTypes}` — A legacy sort order.
+- `type ContactSort = ${[0m[38;5;12mSortTypes[0m}` — A legacy sort order.
 - `type ContactsPermissionResponse = PermissionResponse & object` — A contacts permission answer, with how much of the address book is shared.
 - `enum ContactsSortOrder` — The class API's sort orders (ContactQueryOptions.sortOrder).
-- `type ContactType = ContactTypes | ${ContactTypes}` — A ContactTypes member or its string.
+- `type ContactType = ContactTypes | ${[0m[38;5;12mContactTypes[0m}` — A ContactTypes member or its string.
 - `enum ContactTypes` — Person or company.
 - `class Container` — A container of contacts (an account: on the device, iCloud, Exchange, …), by id. iOS only, as in Expo, through DenextContacts; elsewhere every call rejects with ERR_UNAVAILABLE.
 - `type ContainerClassType = local | exchange | cardDAV | unassigned | unknown` — A container's kind as the class API reports it.
 - `type ContainerQuery = object` — A legacy container query.
-- `type ContainerType = ContainerTypes | ${ContainerTypes}` — A ContainerTypes member or its string.
+- `type ContainerType = ContainerTypes | ${[0m[38;5;12mContainerTypes[0m}` — A ContainerTypes member or its string.
 - `enum ContainerTypes` — Kinds of contact container.
 - `type CreateContactRecord = object` — A new contact (Contact.create).
 - `type CreateFormOptions = object` — Options of Contact.presentCreateForm (ignored here).
@@ -4553,7 +4553,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ExistingSocialProfile = NewSocialProfile & object` — A social profile of a contact.
 - `type ExistingUrlAddress = NewUrlAddress & object` — A URL of a contact.
 - `enum Fields` — The legacy API's contact fields (ContactQuery.fields).
-- `type FieldType = Fields | ${Fields}` — A Fields member or its string.
+- `type FieldType = Fields | ${[0m[38;5;12mFields[0m}` — A Fields member or its string.
 - `type FormOptions = object` — Options of a contact form. Only allowsEditing is honoured here.
 - `getContactByIdAsync(id: string, fields?: FieldType[]): Promise<ExistingContact | undefined>` — One contact.
 - `getContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — A page of contacts. pageSize / pageOffset page it, name keeps names containing the text, id keeps those ids, groupId keeps the group's members, sort orders by given or family name, and fields limits what is read.
@@ -4606,26 +4606,26 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `addContactsChangeListener(listener: () => void): EventSubscription` — Call listener when the address book changes (a contact added, changed or removed, by this app or another): CNContactStoreDidChange on iOS, a ContentObserver on Android (which may batch changes by a few seconds, and report one change twice). Needs DenextContacts; on the web, or without it, the listener never fires (as in Expo's web build).
 - `type Address = object` — A legacy postal address.
 - `enum CalendarFormats` — Calendar formats of a legacy Date.
-- `type CalendarFormatType = CalendarFormats | ${CalendarFormats}` — A CalendarFormats member or its string.
+- `type CalendarFormatType = CalendarFormats | ${[0m[38;5;12mCalendarFormats[0m}` — A CalendarFormats member or its string.
 - `type Contact = object` — A legacy contact (Expo's Contact type of the legacy API).
 - `ContactAccessButton: ContactAccessButtonComponent` — iOS 18's ContactAccessButton. The plugin does not provide it, so it renders nothing and isAvailable() is false, as on Android and the web in Expo.
 - `type ContactAccessButtonProps = object` — Props of ContactAccessButton (iOS 18's limited-access button).
 - `type ContactQuery = object` — A legacy contact query.
 - `type ContactResponse = object` — A page of legacy contacts.
-- `type ContactSort = ${SortTypes}` — A legacy sort order.
+- `type ContactSort = ${[0m[38;5;12mSortTypes[0m}` — A legacy sort order.
 - `type ContactsPermissionResponse = PermissionResponse & object` — A contacts permission answer, with how much of the address book is shared.
-- `type ContactType = ContactTypes | ${ContactTypes}` — A ContactTypes member or its string.
+- `type ContactType = ContactTypes | ${[0m[38;5;12mContactTypes[0m}` — A ContactTypes member or its string.
 - `enum ContactTypes` — Person or company.
 - `type Container = object` — A legacy container.
 - `type ContainerQuery = object` — A legacy container query.
-- `type ContainerType = ContainerTypes | ${ContainerTypes}` — A ContainerTypes member or its string.
+- `type ContainerType = ContainerTypes | ${[0m[38;5;12mContainerTypes[0m}` — A ContainerTypes member or its string.
 - `enum ContainerTypes` — Kinds of contact container.
 - `createGroupAsync(name?: string, _containerId?: string): Promise<string>` — Create a contact group.
 - `type Date = object` — A legacy date: month is 0-based, as JavaScript's Date.
 - `type Email = object` — A legacy email address.
 - `type ExistingContact = LegacyContact & object` — A legacy contact with its id.
 - `enum Fields` — The legacy API's contact fields (ContactQuery.fields).
-- `type FieldType = Fields | ${Fields}` — A Fields member or its string.
+- `type FieldType = Fields | ${[0m[38;5;12mFields[0m}` — A Fields member or its string.
 - `type FormOptions = object` — Options of a contact form. Only allowsEditing is honoured here.
 - `getContactByIdAsync(id: string, fields?: FieldType[]): Promise<ExistingContact | undefined>` — One contact.
 - `getContactsAsync(contactQuery?: ContactQuery): Promise<ContactResponse>` — A page of contacts. pageSize / pageOffset page it, name keeps names containing the text, id keeps those ids, groupId keeps the group's members, sort orders by given or family name, and fields limits what is read.

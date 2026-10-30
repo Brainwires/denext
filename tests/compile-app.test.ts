@@ -400,3 +400,47 @@ Deno.test({
     }
   },
 });
+
+Deno.test({
+  name: "compileApp: start.tls with several certificates bakes --unstable-net; one does not",
+  ignore: Deno.build.os === "windows", // the recording `deno` is a shell script
+  async fn() {
+    // The compile runs with a config of its own (.denext/compile/deno.json), which carries no
+    // `unstable` from the project's deno.json: without the flag the binary refused to serve
+    // several certificates ("needs the unstable net APIs").
+    const argvFor = async (certificates: number): Promise<string[]> => {
+      const dir = await builtProjectWithState();
+      try {
+        const certs = Array.from(
+          { length: certificates },
+          (_, i) =>
+            `{ hostnames: [${
+              i === 0 ? '"*"' : `"h${i}.test"`
+            }], certFileEnv: "C${i}", keyFileEnv: "K${i}" }`,
+        );
+        await Deno.writeTextFile(
+          join(dir, "denext.config.ts"),
+          `export default { start: { tls: { certificates: [${certs.join(", ")}] } } };\n`,
+        );
+        await Deno.writeTextFile(
+          join(dir, "deno.json"),
+          JSON.stringify({ name: "@acme/embed", unstable: ["net"] }),
+        );
+        const record = join(dir, "argv.json");
+        const fake = join(dir, "fake-deno.sh");
+        await Deno.writeTextFile(fake, `#!/bin/sh\nprintf '%s\\n' "$@" > '${record}'\n`);
+        await Deno.chmod(fake, 0o755);
+        await compileApp(dir, { deno: fake, output: join(dir, "dist", "app") });
+        const config = JSON.parse(
+          await Deno.readTextFile(join(dir, ".denext", "compile", "deno.json")),
+        );
+        assertEquals(config.unstable, undefined, "the compile config carries no unstable");
+        return (await Deno.readTextFile(record)).trim().split("\n");
+      } finally {
+        await removeTempDir(dir);
+      }
+    };
+    assert((await argvFor(2)).includes("--unstable-net"));
+    assertEquals((await argvFor(1)).includes("--unstable-net"), false);
+  },
+});

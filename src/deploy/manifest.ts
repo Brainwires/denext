@@ -90,6 +90,30 @@ export interface DeployServer {
    * 4.10.
    */
   limits?: string[];
+  /**
+   * `start.tls` — the server serves HTTPS itself — with each certificate's host names and the
+   * environment variables naming its PEM files (never the paths or the files), for a generator to
+   * pass those variables through, make the files readable and probe health over `https:`; `null`
+   * when the server serves plain HTTP. Several certificates need denext's Deno from runtime
+   * 3.0.0-denext.3 with the unstable net APIs on. Absent in a manifest from before denext 4.10.3.
+   */
+  tls?: DeployServerTls | null;
+}
+
+/** {@linkcode DeployServer.tls}: the certificates the server serves HTTPS with. */
+export interface DeployServerTls {
+  /** One entry per certificate, in config order. */
+  certificates: DeployTlsCertificate[];
+}
+
+/** One certificate of {@linkcode DeployServerTls}. */
+export interface DeployTlsCertificate {
+  /** The host names it serves (exact, a one-label `*.` wildcard, or `"*"`). */
+  hostnames: string[];
+  /** The environment variable holding the certificate (chain) file's path. */
+  certFileEnv: string;
+  /** The environment variable holding the private key file's path. */
+  keyFileEnv: string;
 }
 
 /** A job under `jobs/`. */

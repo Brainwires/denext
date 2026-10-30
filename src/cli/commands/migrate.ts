@@ -199,6 +199,14 @@ function reportJailScripts(j: NonNullable<MigrateResult["jailScripts"]>): void {
   for (const line of rest) console.log(`      ${line}`);
 }
 
+/** The pnpm / Bun patches migrate carried into deno.json (or left for review). */
+function reportPatches(p: NonNullable<MigrateResult["patches"]>): void {
+  const [first, ...rest] = p.lines;
+  const mark = p.action === "written" && p.review.length === 0 ? "▸" : "⚠️ ";
+  console.log(`  ${mark} ${first}`);
+  for (const line of rest) console.log(`      ${line}`);
+}
+
 /** Up to `max` review notes (and a count of the rest); nothing when there are none. */
 function printReviewNotes(warnings: string[], max: number): void {
   if (warnings.length === 0) return;
@@ -936,6 +944,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       if (r.prisma) reportPrisma(r.prisma);
       if (r.nextAuth) reportNextAuth(r.nextAuth);
       if (r.jailScripts) reportJailScripts(r.jailScripts);
+      if (r.patches) reportPatches(r.patches);
       await capacitorSteps(r, run ?? terminalRunner(false), false, ctx.flags.yes === true);
 
       if (r.denoJsonExists) {

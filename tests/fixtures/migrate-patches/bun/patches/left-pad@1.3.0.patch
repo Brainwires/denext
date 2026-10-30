@@ -1,0 +1,12 @@
+diff --git a/index.js b/index.js
+index e90aec3..f98bbb1 100644
+--- a/index.js
++++ b/index.js
+@@ -4,6 +4,7 @@
+      * To Public License, Version 2, as published by Sam Hocevar. See
+      * http://www.wtfpl.net/ for more details. */
+ 'use strict';
++/* patched */
+ module.exports = leftPad;
+ 
+ var cache = [
