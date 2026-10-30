@@ -168,3 +168,80 @@ Deno.test("startDesktopAuthSession: sends loopbackPort; port_in_use comes back t
     g.__denext = origDenext;
   }
 });
+
+/** Whether this host has an IPv6 loopback (the `::1` tests need one). */
+function hasIpv6Loopback(): boolean {
+  try {
+    Deno.listen({ hostname: "::1", port: 0 }).close();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+Deno.test({
+  name:
+    "loopbackPort: another listener on [::1]:<port> is port_in_use (it could take the redirect)",
+  ignore: !hasIpv6Loopback(),
+  fn: async () => {
+    resetDesktopAuthSessionForTesting();
+    // Another local process holds the IPv6 loopback on the port a `localhost` redirect names: a
+    // browser that tries `::1` first would hand it the code.
+    const taken = Deno.listen({ hostname: "::1", port: 0 });
+    const port = (taken.addr as Deno.NetAddr).port;
+    let opened = false;
+    try {
+      const res = await handleDesktopAuthSession(
+        req({ authUrl: authUrl("http://localhost/cb"), loopbackPort: port, timeoutMs: 200 }),
+        TOKEN,
+        () => void (opened = true),
+      );
+      assertEquals(res.status, 409);
+      assertEquals((await res.json()).code, "port_in_use");
+      assertEquals(opened, false, "the browser must not open while ::1 is someone else's");
+    } finally {
+      taken.close();
+    }
+  },
+});
+
+Deno.test({
+  name: "loopback listener: binds ::1 too, on the same port (fixed and ephemeral)",
+  ignore: !hasIpv6Loopback(),
+  fn: async () => {
+    // Ephemeral: the redirect is rewritten to 127.0.0.1, and [::1] on that port is ours as well.
+    resetDesktopAuthSessionForTesting();
+    let viaV6: Promise<number> | undefined;
+    const res = await handleDesktopAuthSession(
+      req({ authUrl: authUrl("http://127.0.0.1/cb"), timeoutMs: 5_000 }),
+      TOKEN,
+      (url) => {
+        const port = new URL(new URL(url).searchParams.get("redirect_uri")!).port;
+        viaV6 = fetch(`http://[::1]:${port}/cb?code=v6&state=s1`).then(async (r) => {
+          await r.body?.cancel();
+          return r.status;
+        });
+      },
+    );
+    assertEquals(res.status, 200);
+    assertStringIncludes((await res.json()).url, "code=v6");
+    assertEquals(await viaV6!, 200);
+    // Fixed: a `localhost` registration keeps its host, and both addresses answer.
+    let fixed: Promise<number> | undefined;
+    const { res: fixedRes } = await onFreeLoopback((port) =>
+      handleDesktopAuthSession(
+        req({ authUrl: authUrl("http://localhost/cb"), loopbackPort: port, timeoutMs: 5_000 }),
+        TOKEN,
+        () => {
+          fixed = fetch(`http://[::1]:${port}/cb?code=v6f&state=s1`).then(async (r) => {
+            await r.body?.cancel();
+            return r.status;
+          });
+        },
+      )
+    );
+    assertEquals(fixedRes.status, 200);
+    assertStringIncludes((await fixedRes.json()).url, "code=v6f");
+    assertEquals(await fixed!, 200);
+  },
+});

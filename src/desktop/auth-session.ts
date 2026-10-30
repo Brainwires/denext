@@ -80,9 +80,11 @@ function authSessionError(
  * `reason`) and a `redirect_uri` whose host the runtime rewrites to its ephemeral loopback port, or
  * that keeps its host and gets the fixed `loopbackPort`; pass it here, then verify `state` and
  * exchange the `code` (with the verifier) from the returned URL. They are what defeats a
- * local-process race (RFC 8252 §8.1): another process that discovered or holds the callback port
- * could take the redirect, or forge one before the real browser does, so a `code` it intercepts
- * is useless without the verifier, and a `state` you generated and re-check refuses a forgery.
+ * local-process race (RFC 8252 §8.1): another process that discovered the callback port could
+ * forge a redirect before the real browser does, so a `code` it intercepts is useless without the
+ * verifier, and a callback without the URL's `state` is refused by the runtime (the session keeps
+ * waiting). The runtime listens on `127.0.0.1` and `::1` on one port, so no other process can hold
+ * the address a `localhost` redirect resolves to; a waived PKCE needs a `state` in the URL.
  *
  * The system browser reports no cancellation, so while the session waits a cancel overlay (see
  * {@linkcode showAuthCancelOverlay}) offers the user a Cancel button, unless `cancelOverlay` is

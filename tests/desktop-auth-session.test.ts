@@ -420,3 +420,57 @@ Deno.test("desktop auth-session: a PKCE waiver without a reason, or another pkce
     assertEquals((await res.json()).code, "invalid");
   }
 });
+
+Deno.test("desktop auth-session: a callback without the authUrl's state does not settle the session", async () => {
+  resetDesktopAuthSessionForTesting();
+  const forged: Promise<[number, string]>[] = [];
+  let real: Promise<string> | undefined;
+  const hit = (href: string) =>
+    fetch(href).then(async (r) => [r.status, await r.text()] as [number, string]);
+  const openBrowser = (authUrl: string) => {
+    const redirect = new URL(new URL(authUrl).searchParams.get("redirect_uri")!);
+    const at = (query: string) => `${redirect.origin}${redirect.pathname}?${query}`;
+    // Another local process races forged redirects in first: another state, none, two.
+    forged.push(hit(at("code=evil&state=other")));
+    forged.push(hit(at("code=evil")));
+    forged.push(hit(at("code=evil&state=s1&state=s1")));
+    real = Promise.all(forged).then(() => hit(at("code=real&state=s1")).then(([, t]) => t));
+  };
+  const res = await handleDesktopAuthSession(
+    req({ authUrl: VALID_AUTH_URL, timeoutMs: 5_000 }),
+    TOKEN,
+    openBrowser,
+  );
+  assertEquals(res.status, 200);
+  const { url } = await res.json();
+  assertStringIncludes(url, "code=real");
+  for (const [status] of await Promise.all(forged)) assertEquals(status, 400);
+  assertStringIncludes(await real!, "You can close this tab.");
+});
+
+Deno.test("desktop auth-session: a PKCE waiver needs a state in the authUrl → 400 invalid", async () => {
+  resetDesktopAuthSessionForTesting();
+  let opened = false;
+  const res = await handleDesktopAuthSession(
+    req({
+      authUrl: "https://auth.example.com/authorize?client_id=x&redirect_uri=" +
+        encodeURIComponent("http://127.0.0.1/callback"),
+      pkce: "not-applicable",
+      reason: "the provider binds the code to a client secret",
+      timeoutMs: 200,
+    }),
+    TOKEN,
+    () => void (opened = true),
+  );
+  assertEquals(res.status, 400);
+  assertEquals((await res.json()).code, "invalid");
+  // A URL with two states has no one state the callback could be held to.
+  const twice = await handleDesktopAuthSession(
+    req({ authUrl: VALID_AUTH_URL + "&state=s2" }),
+    TOKEN,
+    () => void (opened = true),
+  );
+  assertEquals(twice.status, 400);
+  assertEquals((await twice.json()).code, "invalid");
+  assertEquals(opened, false);
+});

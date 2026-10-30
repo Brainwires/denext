@@ -19,6 +19,16 @@ and this project adheres to
   `code` unredeemable (RFC 8252 §8.1, RFC 7636). The custom-scheme flow already required it; the
   page now checks it there too, before the runtime does. An app whose loopback sign-in builds its
   URL without PKCE must add it (or the documented waiver). Affected: the loopback flow since 2.10.0.
+- **Deno Desktop's loopback redirect listener binds `::1` as well as `127.0.0.1`**, on one port
+  (RFC 8252 §7.3; IPv4 alone where the host has no IPv6). Before, it bound IPv4 only, so with a
+  fixed `loopbackPort` and a `localhost` redirect another local program could listen on
+  `[::1]:<port>` and receive the redirect from a browser that tries IPv6 first. A fixed port held on
+  either address now rejects `port_in_use` before the browser opens. Affected: `loopbackPort` since
+  3.1.0.
+- **The loopback listener checks `state`.** When the authorization URL carries a `state`, only a
+  callback with exactly that `state` completes the session; a forged redirect gets an error page
+  and the session keeps waiting until its timeout. A PKCE waiver (`pkce: "not-applicable"`) now
+  needs a `state` in the URL, as the custom-scheme flow does.
 
 ## [4.10.1] - 2026-10-29
 
