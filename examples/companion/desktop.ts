@@ -4,9 +4,10 @@
 // desktop event stream (`onDesktopEvent("loopy", "say", …)` in app/companion.tsx); a button press
 // comes back on the window's own origin (`POST /_loopy/reply`).
 //
-// The window settings (size, hidden title bar, no backdrop) come from `desktop.*` in
-// denext.config.ts through `.deno-desktop/config.json`, the runtime part of the config every export
-// and `denext desktop` command rewrites, so the config module is never compiled into the app.
+// The window settings (a transparent, frameless, non-activating overlay on every Space, no Dock
+// icon) and the tray come from `desktop.*` in denext.config.ts through `.deno-desktop/config.json`,
+// the runtime part of the config every export and `denext desktop` command rewrites, so the config
+// module is never compiled into the app.
 import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 import { inboxFilePath } from "./inbox/paths.ts";
@@ -20,6 +21,13 @@ const app = await runDesktop({
   ...resolved,
   onRequest: (request, url) =>
     url.pathname === REPLY_PATH ? replyResponse(request, inbox?.replies) : null,
+});
+
+// The tray (`desktop.tray`) is the way back with no Dock icon: show or hide Loopy's window.
+app.tray?.onMenuItem((id) => {
+  const loopy = app.windows.get("main");
+  if (id === "show") loopy?.show();
+  else if (id === "hide") loopy?.hide();
 });
 
 if (!app.sidecarChild) {

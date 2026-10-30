@@ -45,5 +45,6 @@
       "name": "Loopy",
       "identifier": "dev.denext.loopy"
     }
-  }
+  },
+  "compile": { "include": [".deno-desktop/app.json"] }
 }

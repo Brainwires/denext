@@ -28,6 +28,7 @@ import {
   SayError,
 } from "../examples/companion/lib/messages.ts";
 import { cornerPosition, primaryScreen } from "../examples/companion/lib/placement.ts";
+import { clickThroughPlan, hitRects, insideAny } from "../examples/companion/lib/click-through.ts";
 import {
   type CompanionModel,
   companionReducer,
@@ -259,6 +260,29 @@ Deno.test("loopy placement: the bottom-right corner of the primary display's wor
   assertEquals(primaryScreen([a, b]), b);
   assertEquals(primaryScreen([a]), a);
   assertEquals(primaryScreen([]), undefined);
+});
+
+// ---------------------------------------------------------------- the overlay's click-through
+
+Deno.test("loopy overlay: a hit region first, else forwarded click-through, else none", () => {
+  assertEquals(clickThroughPlan({ hitRegion: true, clickThrough: true }), "region");
+  assertEquals(
+    clickThroughPlan({ hitRegion: false, clickThrough: true, clickThroughForward: true }),
+    "forward",
+  );
+  assertEquals(clickThroughPlan({ clickThrough: true, clickThroughForward: false }), "none");
+  assertEquals(clickThroughPlan({}), "none");
+});
+
+Deno.test("loopy overlay: the click-catching rectangles, rounded outwards; empty boxes dropped", () => {
+  const rects = hitRects([
+    { left: 10.4, top: 20.6, right: 50.2, bottom: 80.1 },
+    { left: 5, top: 5, right: 5, bottom: 30 }, // a closed bubble: no width
+  ]);
+  assertEquals(rects, [{ x: 10, y: 20, width: 41, height: 61 }]);
+  assertEquals(insideAny(rects, 10, 20), true);
+  assertEquals(insideAny(rects, 51, 20), false, "the right edge is outside");
+  assertEquals(insideAny([], 0, 0), false);
 });
 
 // ---------------------------------------------------------------- components

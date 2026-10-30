@@ -22,13 +22,19 @@ html,
 body {
   margin: 0;
   height: 100%;
-  /* Phase A windows are opaque; once denext has transparent windows (plans: loopy-native) this
-     goes transparent and Loopy floats on the desktop itself. */
+  /* Opaque in a browser and where the window cannot be transparent (Windows, CEF); see below. */
   background: var(--paper);
   color: var(--ink);
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
+}
+
+/* A transparent overlay window (lib/window-setup.ts sets data-overlay): Loopy stands on the
+   desktop itself. */
+html[data-overlay="transparent"],
+html[data-overlay="transparent"] body {
+  background: transparent;
 }
 
 .companion {

@@ -92,7 +92,9 @@ async function boundedText(request: Request): Promise<string | null> {
   }
   const reader = request.body?.getReader();
   if (!reader) return "";
-  const chunks: Uint8Array[] = [];
+  // Decoded as it arrives (stream mode keeps a character split across chunks whole).
+  const decoder = new TextDecoder();
+  let text = "";
   let size = 0;
   for (;;) {
     const { done, value } = await reader.read();
@@ -102,15 +104,9 @@ async function boundedText(request: Request): Promise<string | null> {
       await reader.cancel();
       return null;
     }
-    chunks.push(value);
+    text += decoder.decode(value, { stream: true });
   }
-  const all = new Uint8Array(size);
-  let at = 0;
-  for (const c of chunks) {
-    all.set(c, at);
-    at += c.byteLength;
-  }
-  return new TextDecoder().decode(all);
+  return text + decoder.decode();
 }
 
 /** The refusal for a request that fails the transport checks, or `null` when it passes them. */

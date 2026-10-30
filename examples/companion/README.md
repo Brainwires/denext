@@ -37,10 +37,12 @@ inside its top loop. Its moves (`data-state` on the SVG, drawn by `public/styles
 | `dismiss`   | **Fold up**                            | folds flat into the desk                                  |
 | (squash)    | clicking its face                      | squash-and-stretch (Web Animations) and a line of its own |
 
-The window is 260 × 300 with the title bar hidden and no backdrop: the speech bubble on top, Loopy
-below it on the left, and **Fold up** / **Quit** in the bottom-right corner (faint until the pointer
-is over the window). Drag Loopy to move the window. In a browser the same page shows five demo
-buttons under Loopy instead.
+The window is a 260 × 300 transparent, frameless overlay in the bottom-right corner: the speech
+bubble on top, Loopy below it on the left, and **Fold up** / **Quit** in the bottom-right corner
+(faint until the pointer is over them). It never takes the focus from the app you are typing in,
+floats above other windows on every Space, and has no Dock or taskbar entry: the tray icon shows and
+hides Loopy and quits. Drag Loopy to move it. In a browser the same page shows five demo buttons
+under Loopy instead.
 
 ## How it works
 
@@ -52,10 +54,16 @@ buttons under Loopy instead.
   mood, the next one takes over when a bubble closes, and folding up drops them all.
 - `app/companion.tsx` — the client component: runs the reducer and the timers, listens for the
   inbox's messages (`onDesktopEvent("loopy", "say", …)`) and sets up the window.
-- `lib/window-setup.ts` — `denext/desktop/window`: `windowCapabilities()` first, then
-  `setAlwaysOnTop(true)` and, where windows can be placed (not Wayland), the bottom-right corner of
-  the primary display's work area (`getScreens()`); `makeWindowDraggable` on Loopy. Each step is
-  skipped where it's unsupported, and off desktop all of them are.
+- `denext.config.ts` — the overlay window (`desktop.window`: `frameless`, `transparent`,
+  `focusable: false`, `alwaysOnTop`, `visibleOnAllWorkspaces`, `skipTaskbar`), no Dock icon
+  (`desktop.app.dock: false`) and the tray (`desktop.tray`, handled in `desktop.ts`).
+- `lib/window-setup.ts` + `lib/click-through.ts` — `denext/desktop/window`: `windowCapabilities()`
+  first; a transparent background where the window is transparent; clicks through everywhere but
+  Loopy, its bubble and its buttons (`setHitRegion` over their rectangles, else
+  `setIgnoreMouseEvents(true, { forward: true })` toggled over them, else nothing); where windows
+  can be placed (not Wayland), the bottom-right corner of the primary display's work area
+  (`getScreens()`); `makeWindowDraggable` on Loopy. Each step is skipped where it's unsupported, and
+  off desktop all of them are.
 - `desktop.ts` + `inbox/` — after `runDesktop`, a second `Deno.serve` on `127.0.0.1` (port 47833,
   `LOOPY_PORT`, or a free one when it's taken) serves `POST /api/loopy/say` and pushes each message
   to the page with the runtime's `emit`. A button press comes back on the window's own origin
@@ -89,14 +97,17 @@ the token (401); a body over 16 KiB is a 413.
 
 ## Today vs. later
 
-Works today, on denext's pinned Deno Desktop runtime: the small hidden-title-bar window, always on
-top, placed bottom-right, dragged by Loopy; every animation; the inbox and `--wait` replies; the
-Claude Code hooks. On the stock runtime the window works without the corner placement.
+Works today, on denext's pinned Deno Desktop runtime: the transparent, frameless overlay on macOS
+and Linux (Windows and the CEF backend paint it opaque); never taking the focus; always on top and
+on every Space (macOS joins every Space through the non-activating panel); no taskbar entry on
+Windows and Linux; no Dock icon on macOS (it shows for a moment at launch); the tray; placement;
+every animation; the inbox and `--wait` replies; the Claude Code hooks.
 
-Needs window support denext doesn't have yet, so Loopy is an opaque card rather than a character
-standing on the desktop: a transparent, frameless window; clicks passing through everywhere but
-Loopy and its bubble; a window that never takes focus from the app you're typing in; no Dock or
-taskbar entry; staying visible on every Space and over full-screen apps; and reading text aloud.
+Waits on the runtime (`windowCapabilities()` turns each on when it lands, with no change here):
+clicks passing through everywhere but Loopy (`hitRegion`, or `clickThrough` +
+`clickThroughForward`); over full-screen apps; and WKWebView's animation frames in a panel that has
+never been focused (a WebKit / laufey issue: Loopy's CSS animations may pause until it is clicked
+once).
 
 ## Tests
 

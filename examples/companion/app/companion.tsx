@@ -81,13 +81,18 @@ function dragRegion(el: HTMLElement | null): () => void {
 function useDesktop(
   dispatch: Dispatch<CompanionEvent>,
   stageRef: RefObject<HTMLDivElement | null>,
+  catcherRefs: readonly RefObject<HTMLElement | null>[],
 ): boolean {
   const [desktop, setDesktop] = useState(false);
   useEffect(() => {
     let alive = true;
+    let unfollow = () => {};
     const enqueue = (message: LoopyMessage) => dispatch({ type: "enqueue", message });
-    setupWindow().then((setup) => {
-      if (!alive) return;
+    // Clicks go through the transparent window everywhere but Loopy, its bubble and its buttons.
+    const catchers = catcherRefs.flatMap((r) => (r.current ? [r.current] : []));
+    setupWindow(catchers).then((setup) => {
+      if (!alive) return setup.stop();
+      unfollow = setup.stop;
       setDesktop(setup.desktop);
       enqueue(hello(setup.desktop));
     });
@@ -96,6 +101,7 @@ function useDesktop(
     dispatch({ type: "show" });
     return () => {
       alive = false;
+      unfollow();
       undrag();
       stop();
     };
@@ -115,13 +121,14 @@ function useTimedMoves(loopy: LoopyModel, dispatch: Dispatch<CompanionEvent>): v
 
 /** The speech bubble for the message on screen, if any. */
 function BubbleSlot(
-  { message, onFinish }: {
+  { message, onFinish, slotRef }: {
     message: LoopyMessage | undefined;
     onFinish: (message: LoopyMessage, actionId: string | null) => void;
+    slotRef: RefObject<HTMLDivElement>;
   },
 ) {
   return (
-    <div class="bubble-slot">
+    <div class="bubble-slot" ref={slotRef}>
       {message && (
         <SpeechBubble
           key={message.id}
@@ -136,15 +143,16 @@ function BubbleSlot(
 
 /** Fold up / Call Loopy, and Quit on desktop. */
 function Controls(
-  { shown, desktop, onFold, onCall }: {
+  { shown, desktop, onFold, onCall, navRef }: {
     shown: boolean;
     desktop: boolean;
     onFold: () => void;
     onCall: () => void;
+    navRef: RefObject<HTMLElement>;
   },
 ) {
   return (
-    <nav class="controls">
+    <nav class="controls" ref={navRef}>
       <button type="button" onClick={shown ? onFold : onCall}>
         {shown ? "Fold up" : "Call Loopy"}
       </button>
@@ -171,7 +179,9 @@ export function Companion() {
   const [model, dispatch] = useReducer(companionReducer, INITIAL_COMPANION);
   const stageRef = useRef<HTMLDivElement>(null);
   const squashRef = useRef<HTMLDivElement>(null);
-  const desktop = useDesktop(dispatch, stageRef);
+  const slotRef = useRef<HTMLDivElement>(null);
+  const navRef = useRef<HTMLElement>(null);
+  const desktop = useDesktop(dispatch, stageRef, [stageRef, slotRef, navRef]);
   useTimedMoves(model.loopy, dispatch);
   const current = model.queue[0];
   const shown = model.loopy.state !== "hidden";
@@ -192,7 +202,7 @@ export function Companion() {
 
   return (
     <main class={`companion${desktop ? " is-desktop" : ""}`}>
-      <BubbleSlot message={current} onFinish={finish} />
+      <BubbleSlot message={current} onFinish={finish} slotRef={slotRef} />
       <div class="stage" ref={stageRef}>
         <div class="squash" ref={squashRef}>
           <Loopy state={model.loopy.state} />
@@ -204,6 +214,7 @@ export function Companion() {
         desktop={desktop}
         onFold={foldUp}
         onCall={() => dispatch({ type: "show" })}
+        navRef={navRef}
       />
       {!desktop && <Demo onSay={enqueue} />}
     </main>
