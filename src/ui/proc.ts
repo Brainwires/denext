@@ -10,6 +10,8 @@ import { denoExecutable, frameworkFileUrl } from "../build/bundle.ts";
 import { isStandaloneBinary, nearestConfig, pinnedDenextCli } from "../cli/self-exec.ts";
 import { cliNpmModeArgs } from "../build/pnpm-workspace.ts";
 import { drainUntilExit } from "../build/exited-output.ts";
+import { childExitGraceMs } from "../build/serial-child.ts";
+import { parseJsonDocument } from "./child-json.ts";
 import { VERSION } from "../../mod.ts";
 
 /**
@@ -37,6 +39,28 @@ export interface RunDenoOptions {
   readonly stdin?: string;
   /** The `deno` binary to run (default {@linkcode denoExecutable}). */
   readonly deno?: string;
+  /**
+   * The child's whole result is one JSON document on stdout (a `--json` verb): don't wait on its
+   * exit once that document is complete. See {@linkcode JsonDocumentChild}.
+   */
+  readonly jsonDocument?: JsonDocumentChild;
+}
+
+/**
+ * For a child whose result is one JSON document on stdout. On Windows such a child has been seen
+ * to write its complete document, then spin at 100% CPU in its teardown and never exit (the same
+ * failure `boundedSpawn`'s `jsonStdout` handles for `deno info --json`). Each chunk on either pipe
+ * restarts a silence window; when it runs out and the stdout so far is one complete JSON object
+ * or array, the child and its descendants are killed and the run returns exit code 0 with that
+ * output, after one notice line naming the pid. A partial document never parses, so a child that
+ * stopped mid-output still waits for its exit or its `signal`; a child that exits first keeps its
+ * own status.
+ */
+export interface JsonDocumentChild {
+  /** The silence that settles a complete document (default `DENEXT_CHILD_EXIT_GRACE_MS`, 5 s). */
+  readonly graceMs?: number;
+  /** Where the notice goes (default: this process's stderr). */
+  readonly onSettled?: (line: string) => void;
 }
 
 /**
@@ -195,12 +219,146 @@ export async function runDeno(args: string[], opts: RunDenoOptions): Promise<Pro
   const streaming = opts.onLine !== undefined;
   const stdout = sinkOf(streaming);
   const stderr = sinkOf(streaming);
-  const [{ code }] = await Promise.all([
+  const watch = opts.jsonDocument === undefined ? undefined : new DocumentWatch(opts.jsonDocument);
+  const reads = Promise.all([
     child.status,
-    pump(child.stdout, child.status, stdout, opts.onLine),
-    pump(child.stderr, child.status, stderr, opts.onLine),
+    pump(child.stdout, child.status, stdout, opts.onLine, watch),
+    pump(child.stderr, child.status, stderr, opts.onLine, watch, false),
   ]);
-  return result(code, stdout.text(), stderr.text());
+  const ended = await Promise.race([reads, watch?.settled ?? new Promise<never>(() => {})]);
+  watch?.stop();
+  if (ended !== "settled") return result(ended[0].code, stdout.text(), stderr.text());
+  // Exited in the same turn: its own status stands.
+  const exited = await Promise.race([child.status, Promise.resolve(null)]);
+  if (exited !== null) {
+    const [{ code }] = await reads;
+    return result(code, stdout.text(), stderr.text());
+  }
+  await killTree(child, reads);
+  watch!.notify(child.pid);
+  return result(0, stdout.text(), stderr.text());
+}
+
+/**
+ * The silence watch of a {@linkcode JsonDocumentChild}: each chunk restarts it, and when it runs
+ * out with a complete document on stdout, {@linkcode settled} resolves.
+ */
+class DocumentWatch {
+  readonly #graceMs: number;
+  readonly #onSettled: (line: string) => void;
+  readonly #stdout: string[] = [];
+  #quiet: ReturnType<typeof setTimeout> | undefined;
+  #watching: boolean;
+  #settle: (v: "settled") => void = () => {};
+  /** Resolves once a complete document has been followed by the grace's silence. */
+  readonly settled = new Promise<"settled">((r) => this.#settle = r);
+
+  constructor(options: JsonDocumentChild) {
+    this.#graceMs = options.graceMs ?? childExitGraceMs();
+    this.#onSettled = options.onSettled ?? writeStderr;
+    this.#watching = Number.isFinite(this.#graceMs);
+  }
+
+  /** A chunk arrived (`text` is stdout's, `undefined` stderr's). */
+  chunk(text: string | undefined): void {
+    if (text !== undefined) this.#stdout.push(text);
+    if (!this.#watching) return;
+    clearTimeout(this.#quiet);
+    this.#quiet = setTimeout(() => {
+      if (completeDocument(this.#stdout.join(""))) this.#settle("settled");
+    }, this.#graceMs);
+  }
+
+  /** The outcome is decided: no more timers. */
+  stop(): void {
+    this.#watching = false;
+    clearTimeout(this.#quiet);
+  }
+
+  /** Report the killed child. */
+  notify(pid: number): void {
+    this.#onSettled(
+      `warning: deno child (pid ${pid}): output complete; the process did not exit ` +
+        `${this.#graceMs / 1000} s after its last output and was killed; its output is used ` +
+        "(DENEXT_CHILD_EXIT_GRACE_MS sets the grace)",
+    );
+  }
+}
+
+/**
+ * Whether `stdout` is one complete JSON object or array: the whole of it, or the bare-`{` to
+ * bare-`}` span a pretty-printing verb writes ({@linkcode parseJsonDocument}). A document still
+ * being written never parses.
+ */
+function completeDocument(stdout: string): boolean {
+  const text = stdout.trim();
+  if (text.startsWith("{") || text.startsWith("[")) {
+    try {
+      JSON.parse(text);
+      return true;
+    } catch { /* not the whole of it; try the span */ }
+  }
+  return parseJsonDocument(stdout) !== null;
+}
+
+/**
+ * Kill `child` and everything it started (a CLI child re-execs itself, and the process that spins
+ * may be a descendant): `taskkill /T /F` by its exact pid on Windows; elsewhere each descendant
+ * `pgrep -P` finds, deepest first; then the child itself. Waits for its exit and `reads`, at most
+ * 10 s.
+ */
+async function killTree(child: Deno.ChildProcess, reads: Promise<unknown>): Promise<void> {
+  if (Deno.build.os === "windows") {
+    await quietly("taskkill", ["/PID", String(child.pid), "/T", "/F"]);
+  } else {
+    for (const pid of (await descendants(child.pid)).reverse()) {
+      try {
+        Deno.kill(pid, "SIGKILL");
+      } catch { /* exited meanwhile */ }
+    }
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch { /* exited meanwhile */ }
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([reads, new Promise((r) => grace = setTimeout(r, 10_000))]);
+  clearTimeout(grace);
+}
+
+/** Every descendant of `pid` (`pgrep -P`, breadth first); none when `pgrep` is missing. */
+async function descendants(pid: number): Promise<number[]> {
+  const found: number[] = [];
+  for (let i = -1; i < found.length; i++) {
+    const parent = i < 0 ? pid : found[i];
+    const out = await quietly("pgrep", ["-P", String(parent)]);
+    for (const line of out.split("\n")) {
+      const n = Number(line.trim());
+      if (Number.isInteger(n) && n > 0 && !found.includes(n)) found.push(n);
+    }
+  }
+  return found;
+}
+
+/** Run `cmd` with `args` and return its stdout ("" when it cannot run). */
+async function quietly(cmd: string, args: string[]): Promise<string> {
+  try {
+    const out = await new Deno.Command(cmd, {
+      args,
+      stdin: "null",
+      stdout: "piped",
+      stderr: "null",
+    })
+      .output();
+    return new TextDecoder().decode(out.stdout);
+  } catch {
+    return "";
+  }
+}
+
+function writeStderr(line: string): void {
+  try {
+    Deno.stderr.writeSync(new TextEncoder().encode(`${line}\n`));
+  } catch { /* stderr closed */ }
 }
 
 /** Where one child stream's decoded text is collected. */
@@ -269,12 +427,15 @@ async function pump(
   exited: Promise<unknown>,
   sink: Sink,
   onLine?: (line: string) => void,
+  watch?: DocumentWatch,
+  isStdout = true,
 ): Promise<void> {
   const decoder = new TextDecoder();
   let pending = "";
   await drainUntilExit(stream, exited, (chunk) => {
     const text = decoder.decode(chunk, { stream: true });
     sink.push(text);
+    watch?.chunk(isStdout ? text : undefined);
     if (!onLine) return;
     pending += text;
     const lines = pending.split("\n");

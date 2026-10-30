@@ -50,6 +50,7 @@ async function defaultRunner(
       cwd: dir,
       stdin: JSON.stringify(envelope),
       signal,
+      jsonDocument: {},
     });
     const reply = parseJsonDocument<DbReply>(result.stdout);
     if (reply && typeof reply.ok === "boolean") return reply;

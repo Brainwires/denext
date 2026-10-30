@@ -1,19 +1,16 @@
-// The `prisma-client` generator emits an ESM, Deno-runtime client. The `queryCompiler` +
-// `driverAdapters` preview features select the Rust-free query compiler — no native query
-// engine binary — driven through the better-sqlite3 driver adapter, which (via deno.json
-// `links`) talks to denext's node:sqlite compat. Without them the generator emits the
-// library engine (a native `.node` binary that also rejects `{ adapter }` under Deno).
+// The `prisma-client` generator emits an ESM, Deno-runtime client. Prisma 7 runs the
+// Rust-free query compiler through a driver adapter by default (no native query engine, no
+// preview features): here the better-sqlite3 adapter, which (via deno.json `links`) talks to
+// denext's node:sqlite compat. The datasource URL the CLI uses lives in `prisma.config.ts`.
 generator client {
-  provider        = "prisma-client"
-  output          = "../generated/client"
-  runtime         = "deno"
-  moduleFormat    = "esm"
-  previewFeatures = ["queryCompiler", "driverAdapters"]
+  provider     = "prisma-client"
+  output       = "../generated/client"
+  runtime      = "deno"
+  moduleFormat = "esm"
 }
 
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
 }
 
 model Note {

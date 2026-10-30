@@ -203,7 +203,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     trust: "full",
     notes: "system browser, open with the default app, reveal, trash",
     manual: [
-      "shell: --allow-run of the OS opener (open / explorer / xdg-open) can start any app the user can; the runtime only passes URLs of the listed schemes and paths inside the fs scope or picked this session.",
+      "shell: --allow-run of the OS launchers (open and osascript / explorer.exe, rundll32.exe and powershell.exe / xdg-open, gio and dbus-send) can start any app the user can; the runtime only passes URLs of the listed schemes and paths inside the fs scope or picked this session.",
     ],
   },
   "auth-session": {

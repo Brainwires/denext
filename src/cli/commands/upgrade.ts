@@ -51,8 +51,10 @@ async function memberConfigs(
   const paths: string[] = [];
   const unresolved: string[] = [];
   const outside: string[] = [];
-  for (const entry of workspaceEntries(text)) {
-    const dirs = await memberDirs(dir, entry);
+  const entries = workspaceEntries(text);
+  for (const entry of entries) {
+    if (entry.startsWith("!")) continue; // an exclusion names no member of its own
+    const dirs = await memberDirs(dir, entry, entries);
     const found = (await Promise.all(dirs.map(configPath))).filter((p): p is string => !!p);
     // A member entry (`"../other"`) or a member linked out of the project is never rewritten.
     const inside = (await Promise.all(found.map((p) => insideProject(dir, p))))

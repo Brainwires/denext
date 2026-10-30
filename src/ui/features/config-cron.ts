@@ -361,6 +361,7 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
       cwd: dir,
       onLine: (line) => lines.push(line),
       signal: AbortSignal.timeout(discoveryBudgetMs),
+      jsonDocument: {},
     });
   } catch {
     return empty("the job listing did not finish — jobs and schedules are not shown");
@@ -558,7 +559,8 @@ async function historyChild(
   const signal = AbortSignal.timeout(budget);
   const late = () => historyDeadlineReason(flag, budget, lines);
   try {
-    await runDeno(argv, { cwd: dir, onLine: (line) => lines.push(line), signal });
+    // One JSON document: a child that printed it whole and then never exits is not waited on.
+    await runDeno(argv, { cwd: dir, onLine: (line) => lines.push(line), signal, jsonDocument: {} });
   } catch {
     return signal.aborted ? late() : `denext job ${flag} did not finish`;
   }

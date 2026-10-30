@@ -65,6 +65,7 @@ ignoreDependencies = [
   "react-native-web", # scroll-bench's rnw-flatlist-rnw imports react-native-web's vendored FlatList
   "drizzle-orm", # examples/drizzle/deno.json: npm:drizzle-orm@^0.44.7
   "@prisma/adapter-better-sqlite3", # examples/prisma/deno.json: npm:@prisma/adapter-better-sqlite3
+  "prisma", # examples/prisma/package.json devDependency: prisma.config.ts imports `prisma/config`
   "@capacitor/cli", # examples/native/deno.json: npm:@capacitor/cli@^7
   "tailwindcss", # examples/tailwind/styles/tailwind.css `@import "tailwindcss"` (Tailwind CLI)
   # examples/lustre/deno.json: "@gleam/" maps the example's Gleam build (gleam/build/dev/javascript),
@@ -242,6 +243,8 @@ entry = [
   "examples/native/capacitor.config.ts",
   "examples/native/scripts/*.ts",
   "examples/prisma/scripts/*.ts",
+  # Prisma 7's CLI config, which the `prisma` CLI loads by path (`prisma generate` / `db push`).
+  "examples/prisma/prisma.config.ts",
   "examples/spa/bench.ts",
   # The scroll bench's image generator (`deno task images` in examples/scroll-bench).
   "examples/scroll-bench/shared/gen-images.ts",

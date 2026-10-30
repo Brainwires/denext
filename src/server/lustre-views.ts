@@ -7,8 +7,8 @@
 // registered view and a token the server signed over exactly these props (under the Lustre
 // namespace, so a live-view token never mounts one; either failing is `gone`); the props decode;
 // the view's `authorize` in the viewer's session (a throw is a deny); a post-await connected + cap
-// re-check. Then a runtime parked here under the `resume` id (same view, same signed props, same
-// viewer — `viewerIdentity`) is
+// re-check. Then a runtime parked here under the `resume` id (same view, same signed props
+// whatever token now carries them — `resumeKey`, same viewer — `viewerIdentity`) is
 // reattached, or a new one starts (`init` runs). Lustre's model is not serialisable, so nothing is
 // written to the shared view store: another instance runs `init` again.
 //
@@ -48,6 +48,7 @@ import {
   enqueueEvent,
   type MountShape,
   mountView,
+  resumeKey,
   str,
   takeParked,
   viewerIdentity,
@@ -79,7 +80,7 @@ export interface LustreViewInstance {
 interface Instance<C> extends LustreViewInstance {
   vid: string;
   props: unknown;
-  /** `view + "\0" + token`: a resume must present the same signed props. */
+  /** `resumeKey` (view-hub-common.ts): a resume must present the same signed props. */
   signed: string;
   /** The viewer it was mounted for (`viewerIdentity`): only the same viewer resumes it. */
   identity: string;
@@ -379,7 +380,7 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
     shape: MountShape,
     admitted: { def: LustreViewDef; props: unknown },
   ): Promise<void> => {
-    const signed = `${shape.view}\0${shape.token}`;
+    const signed = await resumeKey(shape.view, shape.props);
     const identity = await viewerIdentity(deps, conn);
     if (!deps.isConnected(conn)) return;
     if (atCap(conn, shape.vid)) {

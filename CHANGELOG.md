@@ -8,6 +8,93 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.10.3] - 2026-10-30
+
+### Added
+
+- **Deno Desktop downloads are recorded across restarts**, as the mobile `DenextTransfer` plugin
+  records its transfers. The `fs` capability keeps each download started with an `id` into an app
+  folder in `denext-transfers/transfers.json` under the app's data directory, written atomically
+  and readable by the user only; the folder joins the runtime's reserved names, so the page's
+  `fs`, `shell` and drag-out never reach it. After a restart `fileTransfers()` lists the paused,
+  failed and recently done downloads, `resumeFileTransfer(id)` continues a paused or failed one
+  from its partial file with the request headers it was started with, `cancelFileTransfer(id)`
+  drops its partial file and record, and `forgetFileTransfer(id)` drops a settled one. A download
+  that was running when the app quit (or whose page went away) comes back `failed`, code
+  `NETWORK`, `resumable` when its partial file can continue, as iOS reports one a force-quit
+  stopped. A record drops its request headers once it is over for good, and a done record is
+  listed for 7 days. The runtime answers two new `fs` methods, `listDownloads` and
+  `forgetDownload`; `cancelDownload` answers `cancelled: false` for a download that finished first.
+
+### Fixed
+
+- **React Router route `middleware` now wraps the render.** Its `next()` resolved at once to a
+  stand-in response on a page, ahead of the loaders; it now resolves to the response the browser
+  gets, as React Router's server middleware does for a document or `.data` request: the rendered
+  document, or a client navigation's payload, after every loader and the render ran. A
+  middleware can read the status, set headers on the document, time the render or return its own
+  `Response`; one returning a `Response` without calling `next()` short-circuits the render, and
+  a render error reaches `next()` as the error response at its status. The chain runs outermost
+  route first with one shared `context`, and a throw before `next()` answers as that route's
+  loader throwing it would. Around an action submitted from the page, `next()` now runs the
+  action and resolves to its response; on a resource route a thrown `Response` reaches `next()`, and a thrown error does as React
+  Router's 500 response (`Unexpected Server Error`), which a middleware can replace.
+- **`@denext/backend`: a realtime re-read's statement is assembled from its parts.** The filters of
+  a shared re-read were spliced into the finished statement with a text replacement, which
+  rewrote a filter column whose catalog type is spelled with `$'`, `$&` or `$$`. Values were
+  already bound parameters and stay so; identifiers go through the REST layer's quoting helper.
+- **Workspace globs expand as Deno, npm, Yarn and pnpm expand them.** A `workspace` glob used to
+  name only the folders directly under its parent, so a member that `packages/**` or `apps/*/web`
+  names built on its own config and couldn't import its siblings by name. One expansion now
+  serves every caller (the build's import maps, `denext ui` / `desktop` / `mobile` at the root,
+  `generate app`, `upgrade`, the pinned-CLI lookup and the jail settings): `*` and `?` within a
+  folder name, `**` at any depth, mid-path globs, `!` exclusions, and for the npm family `[abc]`
+  and `{a,b}`. A glob names only folders that hold the tool's manifest and skips `node_modules`,
+  dot folders and symlinks out of the root. A `pnpm-workspace.yaml`'s `packages` now count for the
+  jail settings as well.
+- **A `deno info --json` child that finished but never exits no longer holds the build until its
+  deadline.** On a loaded Windows machine such a child has been seen to write its complete JSON
+  output and then spin at full CPU without exiting, until the build killed it at its 120 s deadline
+  and ran it again. A `deno info --json` child of the build (its module-graph crawl and the esbuild
+  loader's) whose output parses as one complete JSON document, and which has then written nothing
+  on either pipe for a grace, is now killed and its output used, with one stderr line naming its pid
+  (and, under `DENEXT_CHILD_PROBE=1`, its CPU samples and debug log's tail). Output that stopped
+  mid-document is never used: that child still ends at its deadline. `DENEXT_CHILD_EXIT_GRACE_MS`
+  sets the grace (default 5000; `0` waits for the exit). The repository's `deno doc --json` /
+  `deno info --json` children get the same treatment.
+- **A Live View resume matches the view, the props and the viewer, not the token.** A resume
+  compared the signed-props token itself, so a page that re-rendered with a freshly issued token
+  (after a `gone` token, a soft navigation back, an ISR re-render) ran `init` again. It now matches
+  the view, the props the verified token signs and the viewer, and resumes the model.
+- **The npm audit gate audits only git-tracked lockfiles, and all of them.** `deno task audit:npm`
+  picked lockfiles from the filesystem, so a gitignored `examples/<name>/deno.lock` left by a local
+  run (never shipped) could fail a release push, while tracked locks one level deeper
+  (`examples/<name>/<sub>/deno.lock`) were never audited. It now takes the root lock plus every
+  tracked `deno.lock` under `examples/`, at any depth. Outside a git checkout it falls back to
+  walking the filesystem and says so.
+
+### Security
+
+- **The prisma example moves to Prisma 7, so a fresh install has no high advisory.** Every
+  Prisma 6 release's `@prisma/config` pins `deepmerge-ts` 7.1.5
+  ([GHSA-ggr8-5vv4-36mx](https://github.com/advisories/GHSA-ggr8-5vv4-36mx), fixed in 8), so the
+  example's `^6.7.0` ranges could not reach the fix. `prisma`, `@prisma/client` and
+  `@prisma/adapter-better-sqlite3` are now pinned at 7.10.1 (`deepmerge-ts` 8.0.2), the
+  datasource URL moved to `prisma.config.ts`, the adapter class is `PrismaBetterSqlite3`, the
+  `links` package advertises `better-sqlite3` 12.6.2, and setup runs `prisma generate` and a plain
+  `prisma db push`.
+- **The drizzle example's `drizzle-orm` range reaches the fix for GHSA-gpj5-g38j-94v9.** A 0.x
+  caret pins the minor version, so `^0.44.7` could not resolve to 0.45.2, the release that fixes
+  SQL injection through improperly escaped identifiers. `package.json` and `deno.json` now ask for
+  `^0.45.2`.
+
+### Documentation
+
+- **The `shell` capability's printed note names every launcher it bakes** (`osascript`, `rundll32.exe`,
+  `powershell.exe`, `gio`, `dbus-send` as well as `open` / `explorer.exe` / `xdg-open`), and the
+  native-menu limitation says what the Deno Desktop menu really draws (red destructive items and
+  icons; Windows draws a destructive item as a normal one).
+
 ## [4.10.2] - 2026-10-30
 
 ### Added
@@ -19812,7 +19899,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.2...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.3...development
+[4.10.3]: https://jsr.io/@denext/denext@4.10.3
 [4.10.2]: https://jsr.io/@denext/denext@4.10.2
 [4.10.1]: https://jsr.io/@denext/denext@4.10.1
 [4.10.0]: https://jsr.io/@denext/denext@4.10.0

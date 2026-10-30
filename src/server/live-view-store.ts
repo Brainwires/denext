@@ -122,7 +122,10 @@ export function getLiveViewStore(): LiveViewStore {
 export interface ViewSnapshot {
   /** The view id. */
   view: string;
-  /** `view + "\0" + token`: a resume must present the same signed props. */
+  /**
+   * `resumeKey`: the view and a digest of its signed props; a resume presents the same props
+   * under a token that verifies now (not necessarily the same token).
+   */
   signed: string;
   /** The viewer that parked it (`viewerIdentity`): a resume must come from the same viewer. */
   identity: string;

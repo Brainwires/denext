@@ -21,7 +21,7 @@ emit correct denext instead of Next.js.
    on denext's toolchain — `denext task start`, or the image / unit `denext deploy prepare` writes —
    and stops with the fix on stock Deno). `denext create <dir>` scaffolds one (`--monorepo`: a Deno
    workspace, the app in `apps/web` importing shared `packages/ui` / `packages/shared` by name;
-   `denext generate app <name>` adds another app; glob members such as `apps/*` work, and `denext ui`
+   `denext generate app <name>` adds another app; glob members such as `apps/*`, `packages/**` and `!` exclusions work, and `denext ui`
    / `desktop` / `mobile` at the root run on its app). Migrating a Next app? `denext migrate` does it in one pass
    — writes the `deno.json` alias map so `next/*`+`react` resolve to denext with
    your source unchanged (add `--codemod` to rewrite imports to native `denext`). A **`pages/` (Pages
@@ -49,8 +49,9 @@ emit correct denext instead of Next.js.
    A **React Router** app (`@denext/react-router`) keeps its route modules: `createContext` /
    `RouterContextProvider` / `MiddlewareFunction` come from `denext/remix` (what `react-router`
    maps to), every loader's and action's `context` is a `RouterContextProvider` (`context.get(key)`
-   / `context.set(key, value)`), a route's `middleware` export runs outermost first before its
-   loader or action, and migrate carries a custom server's `getLoadContext` into
+   / `context.set(key, value)`), a route's `middleware` export runs outermost first around
+   the request (`next()` resolves to the rendered document, a navigation's payload or the action's
+   response), and migrate carries a custom server's `getLoadContext` into
    `load-context.ts` (`defineLoadContext` from `denext/remix/server`):
    https://denext.dev/docs/react-router#load-context-and-middleware.
    Guides: https://denext.dev/docs/migrating-fresh,

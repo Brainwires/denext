@@ -160,6 +160,19 @@ Deno.test("withoutSigningEnv: drops every signing and store credential, keeps th
   assertEquals(buildStepEnv({}, () => env), { clearEnv: false });
 });
 
+/** An environment variable by name, case-insensitively as Windows spells them (`Path`, not `PATH`). */
+function envValue(env: Record<string, string>, name: string): string | undefined {
+  const key = Object.keys(env).find((k) => k.toUpperCase() === name.toUpperCase());
+  return key === undefined ? undefined : env[key];
+}
+
+Deno.test("withoutSigningEnv: a Windows-spelled `Path` is inherited under its own spelling", () => {
+  const scrubbed = withoutSigningEnv({ Path: "C:\\bin", denext_android_keystore_password: "x" });
+  assertEquals(scrubbed, { Path: "C:\\bin" });
+  assertEquals(scrubbed.PATH, undefined, "a literal `PATH` lookup misses on Windows");
+  assertEquals(envValue(scrubbed, "PATH"), "C:\\bin");
+});
+
 Deno.test("runInheritedCommand: a scrubbed step's child process never sees the keystore password", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_build_env_" });
   const name = "DENEXT_ANDROID_KEYSTORE_PASSWORD";
@@ -184,7 +197,7 @@ Deno.test("runInheritedCommand: a scrubbed step's child process never sees the k
     const scrubbed = await seen(true);
     assertEquals(scrubbed[name], undefined);
     assertEquals(scrubbed.DENEXT_STEP, "export");
-    assert(scrubbed.PATH !== undefined, "the rest of the environment is inherited");
+    assert(envValue(scrubbed, "PATH") !== undefined, "the rest of the environment is inherited");
     assertEquals((await seen(false))[name], "not-for-build-plugins");
   } finally {
     if (before === undefined) Deno.env.delete(name);

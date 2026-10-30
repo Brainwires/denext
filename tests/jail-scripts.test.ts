@@ -917,6 +917,31 @@ Deno.test("add: a failed add takes its jail exceptions out; a good one keeps the
   }
 });
 
+Deno.test("add: inside an npm workspace member the exceptions go to the workspace root's package.json", async () => {
+  const { addWithJail } = await import("../src/cli/commands/deps.ts");
+  const memberPackage = JSON.stringify({ name: "jail-member", dependencies: {} });
+  const root = await project({
+    "package.json": { private: true, workspaces: ["apps/*"] },
+    ".npmrc": "jail-scripts=true\n",
+    "apps/web/package.json": memberPackage,
+  });
+  const member = join(root, "apps/web");
+  const out = capture();
+  try {
+    const ctx = makeCtx({ rest: ["npm:sharp@^0.34"], global: { cwd: member } });
+    assertEquals(await addWithJail(ctx, () => Promise.resolve(0)), 0);
+    const rootDoc = JSON.parse(await Deno.readTextFile(join(root, "package.json")));
+    assertEquals(rootDoc.deno?.supplyChain?.jailScripts, {
+      packages: { sharp: plain(pinned("sharp")) },
+    });
+    // The runtime reads the root's settings only: the member's package.json stays as it was.
+    assertEquals(await Deno.readTextFile(join(member, "package.json")), memberPackage);
+  } finally {
+    out.restore();
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("create/init: an existing package.json's dependencies get their exceptions", async () => {
   const { initCommand } = await import("../src/cli/commands/create.ts");
   const dir = await project({
