@@ -2236,7 +2236,11 @@ audio.addEventListener("ended", () => clearNowPlaying());`}
         <li>
           otherwise (the browser) the page: <code>fetch</code>{" "}
           with the body streamed into the Origin Private File System, with progress, pause and
-          resume, for as long as the page lasts.
+          resume, for as long as the page lasts. The bytes go to a part file in OPFS&apos;s{" "}
+          <code>cache/.denext-part/</code> folder (never beside the file, and hidden from{" "}
+          <code>listDir</code>), which takes the file&apos;s place only once the download is done: a
+          file already at the path keeps its contents through a pause, a cancel or a failure. A
+          download a reload interrupted starts over, reusing that part file.
         </li>
       </ol>
       <p>
@@ -2329,20 +2333,24 @@ onFileTransfer((e) => e.type === "progress" && setProgress(e.id, e.bytes, e.tota
         {" "}
         <code>resumeFileTransfer(id)</code> resolve a <code>boolean</code>: <code>false</code>{" "}
         for an upload (uploads cannot pause), a download that is not running (or, to resume, not
-        paused), or an id with no record. With the plugin, <code>resumeFileTransfer</code>{" "}
-        also retries a failed transfer.
+        paused), or an id with no record. A pause answers once the request has stopped, so it is
+        also <code>false</code>{" "}
+        for a download that finished, failed or was cancelled first. With the plugin,{" "}
+        <code>resumeFileTransfer</code> also retries a failed transfer.
       </p>
       <p>
         A download pauses with its bytes kept (resume data on iOS, a <code>.part</code>{" "}
-        file on Android and on Deno Desktop, the OPFS file on the web) and resumes with a range
+        file on Android and on Deno Desktop, the OPFS part file on the web) and resumes with a range
         request guarded by the response&apos;s <code>ETag</code> (or{" "}
         <code>Last-Modified</code>); a server that answers <code>200</code>{" "}
         to it starts the download over. Uploads cannot pause. <code>cancelFileTransfer(id)</code>
         {" "}
-        drops a download&apos;s partial file and rejects its promise with a{" "}
-        <code>FileTransferError</code> of code <code>"CANCELLED"</code> (an aborted{" "}
+        drops a download&apos;s partial file (on the web, the OPFS part file, even one a pause kept;
+        the file it was to replace is left as it was) and rejects its promise with a{" "}
+        <code>FileTransferError</code> of code <code>"CANCELLED"</code>; an aborted{" "}
         <code>signal</code>{" "}
-        rejects with the signal&apos;s reason). A non-2xx answer rejects with code{" "}
+        does the same, rejecting with the signal&apos;s reason. A non-2xx answer rejects with code
+        {" "}
         <code>"HTTP"</code>, its <code>status</code> and <code>body</code>; a network failure with
         {" "}
         <code>"NETWORK"</code>, <code>resumable</code>{" "}

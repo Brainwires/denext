@@ -482,6 +482,9 @@ function fromNativeEntry(
   return typeof info.mtime === "number" ? { ...entry, mtime: info.mtime } : entry;
 }
 
+/** The OPFS `cache` folder where page downloads keep their bytes until they are done. */
+const PART_DIR = ".denext-part";
+
 /** An OPFS directory's entries as {@linkcode FileEntry} values. */
 async function opfsEntries(dir: FileSystemDirectoryHandle): Promise<FileEntry[]> {
   const out: FileEntry[] = [];
@@ -527,17 +530,63 @@ export async function listDir(
     : native
     ? ((await native.plugin.readdir({ path: rel, directory: native.directory })).files ?? [])
       .map(fromNativeEntry)
-    : await opfsEntries(
+    : (await opfsEntries(
       await resolveDir(await webDirectory("listDir", directory, false, false), rel, false),
-    );
+    )).filter((e) => directory !== "cache" || rel !== "" || e.name !== PART_DIR);
   return entries.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** The OPFS (or picked) file a page download writes, opened anew or to append. */
+/**
+ * Where a page download to `rel` keeps its bytes until it is done, so the file already there keeps
+ * its contents through a pause, a cancel or a failure: a file in OPFS's `cache/.denext-part/`,
+ * named for the target (its directory, or the picked handle's id, and path). Never beside the
+ * target, where it could take the name of a file of the user's or show in a listing (and a picked
+ * file may have no reachable parent). The next download to the same file starts that entry over,
+ * so one a reload left behind is reused.
+ */
+function webPart(directory: FileDirectory, rel: string): [FileDirectory, string] {
+  const target = isPicked(directory) ? directory.picked : directory;
+  return ["cache", `${PART_DIR}/${encodeURIComponent(`${target}/${rel}`)}`];
+}
+
+/**
+ * Move an OPFS part file to `rel` under `directory`, replacing the file there
+ * (`FileSystemHandle.move(directory, name)`); `false` when the browser has no `move` or refuses
+ * it.
+ */
+async function movePart(
+  handle: FileSystemFileHandle,
+  directory: AppFileDirectory,
+  rel: string,
+): Promise<boolean> {
+  type Move = (to: FileSystemDirectoryHandle, name: string) => Promise<void>;
+  const move = (handle as { move?: Move }).move;
+  if (typeof move !== "function") return false;
+  try {
+    const parts = splitPath(rel);
+    const root = await webDirectory("downloadToFile", directory, true, true);
+    const into = await resolveDir(root, parts.slice(0, -1).join("/"), true);
+    await move.call(handle, into, parts.at(-1)!);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The file a page download writes: its part file ({@linkcode webPart}), opened anew or to append,
+ * then moved into place. Writes land in the stream's own copy until `close()` commits them; a
+ * cancel `abort()`s that copy and removes the part file, which a browser refuses while a writable
+ * on it is still open. Done, the part file is moved over an OPFS file ({@linkcode movePart}); a
+ * picked file, or a browser without `move` or that refuses it, gets the bytes copied in through a
+ * writable whose `close()` swaps them in, and the part file is removed.
+ */
 function webSink(directory: FileDirectory, rel: string): DownloadSink {
+  let part: WebFile | undefined;
   return {
     async open(at) {
-      const { handle } = await webFile("downloadToFile", directory, rel, true, true, true);
+      part = await webFile("downloadToFile", ...webPart(directory, rel), true, true, true);
+      const { handle } = part;
       const writable = at > 0
         ? await handle.createWritable({ keepExistingData: true })
         : await handle.createWritable();
@@ -545,8 +594,24 @@ function webSink(directory: FileDirectory, rel: string): DownloadSink {
       return {
         write: (chunk) => writable.write(chunk),
         close: () => writable.close(),
+        abort: () => writable.abort(),
       };
     },
+    async commit() {
+      const from = part!;
+      if (!isPicked(directory) && await movePart(from.handle, directory, rel)) return;
+      const to = await webFile("downloadToFile", directory, rel, true, true, true);
+      const writable = await to.handle.createWritable();
+      try {
+        await writable.write(await from.handle.getFile());
+        await writable.close();
+      } catch (err) {
+        await writable.abort().catch(() => {});
+        throw err;
+      }
+      await from.remove().catch(() => {});
+    },
+    remove: () => part?.remove() ?? Promise.resolve(),
   };
 }
 
@@ -610,7 +675,11 @@ function urlOf(fn: string, url: string): string {
  *   downloaded to the same file again.
  * - Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System
  *   with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range
- *   request (a server that answers 200 starts it over).
+ *   request (a server that answers 200 starts it over). The bytes go to a part file in OPFS's
+ *   `cache/.denext-part/` folder (hidden from `listDir`) that replaces the file only once the
+ *   download is done, so a file already at `path` keeps its contents until then. {@linkcode cancelFileTransfer}, aborting `signal` or a failure ends it
+ *   and deletes the part file, never the file it would have replaced. A reload forgets the
+ *   transfer: downloading to the same file again starts over in the same part file.
  *
  * @param url The `http(s)` URL to fetch.
  * @param path The file's path inside `directory`; no `..` segments.

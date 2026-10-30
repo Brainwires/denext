@@ -434,6 +434,31 @@ and this project adheres to
   output pipe open for a moment; a caller that removed the project directory next could race it
   (Windows refuses to remove a directory a process still holds). Stopping it now resolves once
   the child has exited and its pipe is closed.
+- **A page download's pause and cancel hold while a write is in flight.** On the web, where
+  `downloadToFile` streams into the origin private file system, a `cancelFileTransfer` (or the
+  caller's `signal`) that arrived during the last write (or while it was being committed) let the download finish: its promise
+  resolved and the file was kept, instead of rejecting with `CANCELLED`. A cancel that followed a
+  pause whose write was still landing ended paused instead of cancelled. Both now cancel, and `pauseFileTransfer` answers once the
+  request has stopped: `true` when it paused, `false` when the download finished, failed or was
+  cancelled first.
+- **A cancelled page download deletes its file.** On the web, `cancelFileTransfer` (or the
+  caller's `signal`) left the file the download was writing in the origin private file system,
+  though a cancel is documented to drop a download's partial file. The writes in flight are now
+  aborted rather than committed and the file is removed, including one a pause kept; a pause still
+  keeps it for the resume, and a cancel before the download opened its file leaves the file
+  already at that path alone.
+- **A page download replaces a file only once it is done.** On the web, `downloadToFile` wrote
+  straight into the file at its path, so a pause overwrote a file already there with the bytes so
+  far, and a cancel or a failure left it partial or removed it. The bytes now go to a part file
+  in OPFS's `cache/.denext-part/` folder, never beside the file, where it could take the name of
+  a file of the user's or show in `listDir` (which hides the folder), that is moved over the file
+  when the download is done (copied in where the browser has no `move` or refuses it, and always
+  for a picked item), as the iOS background download does. A pause keeps the part file for the resume; a cancel or a failure (a network error, an
+  HTTP error answering a resume) deletes only it, and its `failed` event is no longer `resumable`.
+- **A tracked download cancelled while its pause settled stays cancelled.** A download another
+  engine runs (a Deno Desktop window's) that was cancelled after its engine accepted a pause but
+  before the run stopped ended paused, its promise pending. It now cancels and the engine drops
+  the bytes it kept.
 
 ### Security
 
