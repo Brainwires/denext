@@ -1042,14 +1042,21 @@ above every `3.0.0-rc.N`), which carries everything in rc.6 and adds the hardene
 with no deno.json. `3.0.0-denext.2` gives the CLI's downloads
 deadlines and retries on a fresh connection (`DENO_DOWNLOAD_*`), encrypts the Secret Service
 sessions of the Deploy token and the secure-store migration, fixes Windows pipes and spawns, moves
-to V8 15.2, and builds the Linux binaries for glibc 2.27 and later. `3.0.0-denext.3` (the build
-denext pins today) moves to V8 15.2.124.45, which fixes two V8 bugs exploited in the wild
+to V8 15.2, and builds the Linux binaries for glibc 2.27 and later. `3.0.0-denext.3` moves to V8 15.2.124.45, which fixes two V8 bugs exploited in the wild
 ([GHSA-qr84-w8xw-f7r4](https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4)),
 and adds the `HTMLRewriter` global (`--unstable-html-rewriter`), `resolveCertificate` for a
 certificate per server name on `Deno.listenTls` / `Deno.serve`, a cookie jar for `fetch`
 (`Deno.CookieJar`, `Deno.Cookie`, `Deno.CookieMap`; `--unstable-cookies`) and npm
 `patchedDependencies`; better-sqlite3 under Jest's module registry, a shell-spawned `node` shim
-keeping the npm resolution, and a package.json script's arguments without npm's `--` come with it. The
+keeping the npm resolution, and a package.json script's arguments without npm's `--` come with it.
+`3.0.0-denext.5` (the build denext pins today; there is no `3.0.0-denext.4` release) fixes two
+security bugs: in a package.json-only project, `require()` no longer reads files a `node_modules`
+link leads to outside `node_modules` without read permission ([GHSA-xhq4-83x4-g734](https://github.com/Brainwires/deno/security/advisories/GHSA-xhq4-83x4-g734)), and
+the memory behind three arrays the runtime shares with JavaScript is no longer used after it is
+freed ([GHSA-mvh6-5whv-26gw](https://github.com/Brainwires/deno/security/advisories/GHSA-mvh6-5whv-26gw)). On Windows a finished process ends
+with `TerminateProcess`, so it can no longer spin in its teardown instead of exiting; the panic
+banner names the subcommand and the argument count instead of printing the command line; and
+`DENEXT_CRASH_REPORT_URL` turns on opt-in crash reports from the CLI and compiled programs. The
 [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases

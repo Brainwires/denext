@@ -54,7 +54,8 @@ export interface RunDenoOptions {
  * array, the child and its descendants are killed and the run returns exit code 0 with that
  * output, after one notice line naming the pid. A partial document never parses, so a child that
  * stopped mid-output still waits for its exit or its `signal`; a child that exits first keeps its
- * own status.
+ * own status. Runtime 3.0.0-denext.5 fixes the cause on Windows (a finished process ends with
+ * `TerminateProcess`, not `ExitProcess`); the grace stays for older runtimes.
  *
  * Only for a verb that prints its document as its LAST act and exits, and whose silent work
  * before it is short and read-mostly: `denext commands --json` and `denext job --list` /

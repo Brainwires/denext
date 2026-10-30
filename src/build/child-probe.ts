@@ -15,7 +15,9 @@
 // stdout parses as a complete JSON object or array and it has been silent on both pipes for a grace
 // (`DENEXT_CHILD_EXIT_GRACE_MS`, 5 s), it is killed and its output used as a success, after one
 // line naming its pid (with the probe's report when probed). A partial document never parses, so a
-// child that stopped mid-output still ends at its deadline.
+// child that stopped mid-output still ends at its deadline. Runtime 3.0.0-denext.5 fixes the cause
+// on Windows (a finished process ends with `TerminateProcess`, not `ExitProcess`, whose teardown
+// could spin on a lock a killed thread held); the grace stays for older runtimes.
 //
 // The build's own children are probed only under `DENEXT_CHILD_PROBE=1` (a diagnostic: off by
 // default); the repository's scripts and tests (scripts/deno-doc.ts) always probe theirs.

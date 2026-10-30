@@ -219,7 +219,7 @@ A project that patches npm packages with pnpm (`pnpm.patchedDependencies` in `pa
 Bun (`patchedDependencies` in `package.json`) keeps its patches. `denext migrate` copies each one
 to `patches/npm/<name>+<version>.patch` and registers it in `deno.json`'s `patchedDependencies`
 under the same key (`left-pad@1.3.0`, a range, or a bare name), which denext's Deno from runtime
-`3.0.0-denext.3` (the pinned toolchain) applies whenever it installs the package:
+`3.0.0-denext.3` (the pinned toolchain has it) applies whenever it installs the package:
 
 ```json
 {
