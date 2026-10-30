@@ -392,8 +392,11 @@ and this project adheres to
   `denextAuth` user, or a digest of the `Cookie` header without `denextAuth` — and a different
   viewer's resume runs `init`. The signed props a page carries now expire:
   `live.limits.viewTokenMaxAgeSeconds` (default a day; an older token is `gone` and the browser
-  re-renders the route once). `DENEXT_LIVE_VIEW_SECRET` must be at least 16 characters, as
-  `DENEXT_ACTION_ID_SECRET` is, and `denext dev` warns once for a view with no `authorize`.
+  re-renders the route once). A resume matches the view, the props the verified token signs and
+  the viewer, not the token itself, so a page that re-rendered with a freshly issued token (after
+  that `gone`, a soft navigation back, an ISR re-render) still resumes its model.
+  `DENEXT_LIVE_VIEW_SECRET` must be at least 16 characters, as `DENEXT_ACTION_ID_SECRET` is, and
+  `denext dev` warns once for a view with no `authorize`.
 - **Userinfo must name the id_token's subject.** An OIDC provider that also reads userinfo (the
   Salesforce and Vipps `next-auth/providers/*` modules, or any `oidc()` provider with
   `userinfoUrl`) signed in with the userinfo's `sub` and `email_verified` over the verified

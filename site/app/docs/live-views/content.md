@@ -180,7 +180,11 @@ instance resumes it there, from the model as it last stood. Past the window, or 
 holds it, the mount runs `init` again from the props — the documented re-init. A parked view
 resumes only for the viewer it was mounted for: with `denextAuth`, the same signed-in user (or
 signed out both times); without it, the same `Cookie` header. A viewer who signed out or switched
-account on the page without reloading gets `init`, never the previous viewer's model. Events fired
+account on the page without reloading gets `init`, never the previous viewer's model. The match
+is on the props the token signs, not on the token: the token must still verify (signature and
+`viewTokenMaxAgeSeconds`), but a page re-rendered since (a soft navigation back, an ISR
+re-render, the re-render after a `gone`) carries a newly issued token over the same props and
+resumes the same model. Events fired
 while the socket was down wait (up to 16) and are sent once the view is mounted again.
 
 If the server cannot mount the view at all — its module is not loaded in this process yet, or
