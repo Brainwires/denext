@@ -433,7 +433,7 @@
     "@std/assert": "jsr:@std/assert@^1.0.0",
     "@b-fuze/deno-dom": "jsr:@b-fuze/deno-dom@0.1.56",
     "effect": "npm:effect@^3.22.0",
-    "@prisma/driver-adapter-utils": "npm:@prisma/driver-adapter-utils@6.19.3",
+    "@prisma/driver-adapter-utils": "npm:@prisma/driver-adapter-utils@7.10.1",
     "@denext/lightningcss": "jsr:@denext/lightningcss@^1.0.0-rc.72",
     "@denext/docs-corpus": "jsr:@denext/docs-corpus@4.10.1",
     "sass": "npm:sass@^1.80.0",

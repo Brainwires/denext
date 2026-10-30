@@ -180,6 +180,7 @@ const columnConstraint = (e: ServerFields) => {
 const SERVER_ERRORS: Record<string, (e: ServerFields, message: string) => MappedError> = {
   "22001": (e) => ({ kind: "LengthMismatch", column: str(e.column) }),
   "22003": (_e, message) => ({ kind: "ValueOutOfRange", cause: message }),
+  "22P02": (_e, message) => ({ kind: "InvalidInputValue", message }),
   "23505": (e) => ({ kind: "UniqueConstraintViolation", constraint: keyFields(e.detail) }),
   "23502": (e) => ({
     kind: "NullConstraintViolation",
@@ -192,6 +193,13 @@ const SERVER_ERRORS: Record<string, (e: ServerFields, message: string) => Mapped
       constraint: columnConstraint(e) ?? (index ? { index } : undefined),
     };
   },
+  "23001": (e) => {
+    const index = str(e.constraint);
+    return {
+      kind: "RestrictViolation",
+      constraint: columnConstraint(e) ?? (index ? { index } : undefined),
+    };
+  },
   "3D000": (_e, message) => ({ kind: "DatabaseDoesNotExist", db: quoted(message) }),
   "28000": (_e, message) => ({
     kind: "DatabaseAccessDenied",
@@ -199,6 +207,7 @@ const SERVER_ERRORS: Record<string, (e: ServerFields, message: string) => Mapped
   }),
   "28P01": (_e, message) => ({ kind: "AuthenticationFailed", user: quoted(message) }),
   "40001": () => ({ kind: "TransactionWriteConflict" }),
+  "40P01": () => ({ kind: "TransactionWriteConflict" }),
   "42P01": (_e, message) => ({ kind: "TableDoesNotExist", table: quoted(message) }),
   "42703": (_e, message) => ({ kind: "ColumnNotFound", column: quoted(message) }),
   "42P04": (_e, message) => ({ kind: "DatabaseAlreadyExists", db: quoted(message) }),

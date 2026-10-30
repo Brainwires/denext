@@ -287,6 +287,12 @@ Deno.test("postgres: errors as Prisma's kinds", () => {
   assertEquals(conv({ code: "23503", column: "pid" }).constraint, { fields: ["pid"] });
   assertEquals(conv({ code: "23503", constraint: "c_fk" }).constraint, { index: "c_fk" });
   assertEquals(conv({ code: "23503" }).constraint, undefined);
+  assertEquals(conv({ code: "23001", column: "pid" }).kind, "RestrictViolation");
+  assertEquals(conv({ code: "23001", column: "pid" }).constraint, { fields: ["pid"] });
+  assertEquals(conv({ code: "23001", constraint: "c_fk" }).constraint, { index: "c_fk" });
+  assertEquals(conv({ code: "23001" }).constraint, undefined);
+  assertEquals(conv({ code: "22P02" }).kind, "InvalidInputValue");
+  assertEquals(conv({ code: "22P02" }).message, "m");
   const db = (code: string, message: string) => fields(pg.convertPostgresError({ code, message }));
   assertEquals(db("3D000", 'database "nodb" does not exist').db, "nodb");
   assertEquals(
@@ -295,6 +301,7 @@ Deno.test("postgres: errors as Prisma's kinds", () => {
   );
   assertEquals(db("28P01", 'password authentication failed for user "postgres"').user, "postgres");
   assertEquals(db("40001", "x").kind, "TransactionWriteConflict");
+  assertEquals(db("40P01", "x").kind, "TransactionWriteConflict");
   assertEquals(db("42P01", 'relation "nope" does not exist').table, "nope");
   assertEquals(db("42703", 'column "nope" does not exist').column, "nope");
   assertEquals(db("42P04", 'database "app" already exists').db, "app");

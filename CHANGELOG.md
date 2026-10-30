@@ -97,6 +97,12 @@ and this project adheres to
 
 ### Fixed
 
+- **`PrismaDenoSql` on Postgres reports Prisma 7's `RestrictViolation` and `InvalidInputValue`.**
+  A foreign-key `RESTRICT` failure (SQLSTATE 23001) and an invalid input value (22P02) are mapped
+  to those kinds, as `@prisma/adapter-pg` 7 does, instead of the generic `postgres` error, and a
+  deadlock (40P01) is a `TransactionWriteConflict`. The restated contract in
+  `denext/prisma-adapter` follows `@prisma/driver-adapter-utils` 7.10.1 (the new kinds, `table` on
+  a unique violation, optional savepoint methods on `Transaction`).
 - **The npm audit gate audits only git-tracked lockfiles, and all of them.** `deno task audit:npm`
   picked lockfiles from the filesystem, so a gitignored `examples/<name>/deno.lock` left by a local
   run (never shipped) could fail a release push, while tracked locks one level deeper
