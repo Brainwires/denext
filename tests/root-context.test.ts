@@ -182,6 +182,9 @@ Deno.test("root context: a server's next request never sees the request that loa
   try {
     assertEquals(await (await fetch(`http://127.0.0.1:${port}/load`)).text(), "loaded");
     assertEquals(await (await fetch(`http://127.0.0.1:${port}/probe`)).text(), "none");
+    // The module's top-level timer (freshModule) must fire before the test ends, or the timer
+    // sanitizer sees it pending (about one run in five).
+    await (await import(toFileUrl(path).href) as { seen: Promise<unknown> }).seen;
   } finally {
     controller.abort();
     await server.finished;
