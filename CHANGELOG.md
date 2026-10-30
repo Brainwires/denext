@@ -10,11 +10,46 @@ and this project adheres to
 
 ### Added
 
+- **`denext fastlane ios build unsigned:true`.** The Fastfile `denext mobile add fastlane` writes
+  takes `unsigned:true` on the iOS `build` lane: it builds with `denext mobile build ios --release
+  --unsigned` and skips match and `setup_ci`, so the lane runs with no certificate, profile or
+  Apple account (a CI check, or a build re-signed elsewhere). `beta` and `release` refuse it. An
+  unedited Fastfile picks it up on the next `denext mobile add fastlane`.
+- **The managed fastlane is checked on Apple silicon.** The native-plugins workflow's `ios` job,
+  which a release is gated on, now runs `denext toolchain install --with fastlane` on its macOS 15
+  arm64 runner (the pinned portable Ruby, its gems' C extensions built with the runner's Xcode)
+  and then `denext fastlane ios build unsigned:true` on the example app, failing on any step.
+- **`start.limits`: resource limits for the production server.**
+  `start: { limits: { memory, cpuSeconds, deadlineSeconds } }` in `denext.config.ts` caps the
+  server's JavaScript heap (`memory`: megabytes or `"512m"` / `"2g"`, at least 32 MB), its CPU time
+  and its wall-clock lifetime (whole seconds), through the `--max-memory` / `--max-cpu-time` /
+  `--max-time` flags of denext's Deno from runtime 3.0.0-rc.2; each ends the process with its own
+  exit code (137, 152, 124) for a supervisor to restart it. `denext start` puts them on the process
+  that serves and on no CLI re-run before it (the toolchain re-exec, a compiled `denext`'s pinned
+  child): those hand them down as data (`DENEXT_START_LIMITS`), so no hop's deadline ends before the
+  server's and no hop's own CPU or heap counts. The serving process re-runs itself once with them
+  when it was not started with them — `DENEXT_LIMITS_APPLIED` is compared with the flags its
+  runtime takes, so a stale value never counts — or warns when it may not re-run. `build --compile`
+  bakes them into the binary; the runtime reads them only from there and can't lift them, so the
+  binary's `job` and `db` run under them too and say so. `generate docker`, the `docker` / `fly`
+  presets and the `genericHost()` systemd unit write them onto the server's `deno run`; the fly
+  preset warns when the heap limit is not below the machine's memory. Never for `dev`, tests or
+  `denext job`; on stock Deno or an older toolchain they are not passed, and a warning says so. The config validator checks the values the runtime accepts, and the deploy
+  manifest records them as `server.limits`. See
+  [Deployment targets › Resource limits](https://denext.dev/docs/deployment-targets#resource-limits).
 - **`DENEXT_CHILD_PROBE=1`, a diagnostic for a build child that hangs.** The build's `deno info`
   and `deno bundle` children then run with Deno's debug log on, and one still running at its
   deadline is reported, in the retry warning and the final error, with the log's last 80 lines and
   two CPU samples taken before the kill (`Get-Process` with the threads' wait reasons on Windows,
   `ps` elsewhere). Off by default: without it the children run as before.
+- **`secureStore.set(key, value, { accessibility })`** picks the iOS Keychain class:
+  `"whenUnlocked"` (the default, unchanged), `"whenUnlockedThisDeviceOnly"`, `"afterFirstUnlock"`,
+  `"afterFirstUnlockThisDeviceOnly"` or `"whenPasscodeSetThisDeviceOnly"`, so a refresh token can
+  stay out of backups and off other devices. On Android the secure-storage plugin's Keystore key
+  is already device-bound and readable after the first unlock; on the web and in a Deno Desktop
+  window the option is accepted and has no effect. An unknown class, or one other than
+  `"whenPasscodeSetThisDeviceOnly"` beside `requireBiometric`, is a `TypeError`. The type is
+  exported as `SecureStoreAccessibility`.
 - **`expo-secure-store`'s `keychainAccessible` and `react-native-keychain`'s `accessible` choose
   the iOS Keychain class.** They reach `secureStore.set`'s `accessibility` instead of being
   ignored: `WHEN_UNLOCKED`, `WHEN_UNLOCKED_THIS_DEVICE_ONLY`, `AFTER_FIRST_UNLOCK`,
@@ -120,14 +155,67 @@ and this project adheres to
   exits, and is killed and started once more past the same 120 s deadline
   (`DENEXT_CHILD_DEADLINE_MS` replaces it); a second overrun fails the build with a
   `ChildStallError` naming both pids.
+- **A page download's pause and cancel hold while a write is in flight.** On the web, where
+  `downloadToFile` streams into the origin private file system, a `cancelFileTransfer` (or the
+  caller's `signal`) that arrived during the last write (or while it was being committed) let the download finish: its promise
+  resolved and the file was kept, instead of rejecting with `CANCELLED`. A cancel that followed a
+  pause whose write was still landing ended paused instead of cancelled. Both now cancel, and `pauseFileTransfer` answers once the
+  request has stopped: `true` when it paused, `false` when the download finished, failed or was
+  cancelled first.
+- **A cancelled page download deletes its file.** On the web, `cancelFileTransfer` (or the
+  caller's `signal`) left the file the download was writing in the origin private file system,
+  though a cancel is documented to drop a download's partial file. The writes in flight are now
+  aborted rather than committed and the file is removed, including one a pause kept; a pause still
+  keeps it for the resume, and a cancel before the download opened its file leaves the file
+  already at that path alone.
+- **A page download replaces a file only once it is done.** On the web, `downloadToFile` wrote
+  straight into the file at its path, so a pause overwrote a file already there with the bytes so
+  far, and a cancel or a failure left it partial or removed it. The bytes now go to a part file
+  in OPFS's `cache/.denext-part/` folder, never beside the file, where it could take the name of
+  a file of the user's or show in `listDir` (which hides the folder), that is moved over the file
+  when the download is done (copied in where the browser has no `move` or refuses it, and always
+  for a picked item), as the iOS background download does. A pause keeps the part file for the resume; a cancel or a failure (a network error, an
+  HTTP error answering a resume) deletes only it, and its `failed` event is no longer `resumable`.
+- **A tracked download cancelled while its pause settled stays cancelled.** A download another
+  engine runs (a Deno Desktop window's) that was cancelled after its engine accepted a pause but
+  before the run stopped ended paused, its promise pending. It now cancels and the engine drops
+  the bytes it kept.
+- **An Android download cancelled as it finished ends done.** A `cancelFileTransfer` that landed
+  after the transfer worker moved the downloaded file into place, but before it recorded the
+  transfer as done, answered `true` and left the transfer cancelled with the complete file still
+  at its path. The download is complete there and the file it replaced already gone (deleting it
+  would lose both), so that cancel now answers `false` and the transfer ends done with the new
+  file, as a pause then does. A cancel before the move still cancels and deletes only the partial
+  file, and an upload's file is never touched. File-transfer template generation 5: run
+  `denext mobile add file-transfer` again to upgrade an unedited copy, then ship a new binary.
+- **An Android download paused as it finished ends done, and a reused transfer id is left alone
+  by the old worker.** A `pauseFileTransfer` that landed after the worker moved the download into
+  place answered `true` and left the transfer paused with the complete file at its path (a later
+  cancel then left that file under a cancelled transfer). The download is complete there, so the
+  pause now answers `false` and the transfer ends done, as the web fallback's pause during the
+  last write does; a pause before that point still pauses. Each start and resume now gives the
+  transfer a new attempt token, kept in its saved record and in the worker's input, and a worker
+  whose token no longer matches changes nothing: an id cancelled, forgotten and started again
+  while its old worker was finishing could otherwise be marked done (or failed) by that worker.
+  An Android download's partial file is now named for its attempt (a resume renames it to the
+  new one, so a pause still resumes after the process is gone): an old worker that had not opened
+  its partial file yet writes into its own, never into the bytes of the transfer started again
+  under its id, and drops it once it stops. A cancel deletes the partial file under the same lock
+  as its state change, and a worker never deletes the downloaded file itself, so one stopped long
+  ago no longer removes a later transfer's file at the same path. A start deletes the partial
+  files that no live transfer to that path owns, matching only the `<name>.<8 hex>.denext-part`
+  form an attempt is named with, so a file of the user's that merely looks like one (in the
+  shared Documents folder, say) is kept.
+  Records and work from before attempts keep the old name and still finish. On iOS, a cancelled
+  upload's late response bytes no longer reach the body of a new transfer started under the same
+  id, and a cancelled pause's late resume data no longer lands in a new transfer's pause (or
+  ends its wait for its own). Both ship in file-transfer template generation 5.
 
 ### Security
 
-- **`deno task audit:npm`** runs `deno audit` over the root `deno.lock` and every example's own
-  `deno.lock`, and fails on a high or critical advisory in any of them. A fix still under Deno's
-  minimum dependency age is held in `security/npm-audit-allow.json` with the date it clears. CI's
-  `cargo-audit` job and `deno task precheck` (when a `deno.lock`, a `deno.json`, an example's
-  `package.json` or the allowlist changes) run it.
+- **`deno task audit:npm` audits the examples too.** It runs `deno audit` over every example's own
+  `deno.lock` as well as the root one, and fails on a high or critical advisory in any of them;
+  `deno task precheck` also runs it when an example's `package.json` changes.
 - **The examples' lockfiles hold fixed releases.** `examples/clerk` resolves `electron` 45.0.0
   ([GHSA-jr5w-w6x2-84p9](https://github.com/advisories/GHSA-jr5w-w6x2-84p9)) and `undici` 7.30.1
   ([GHSA-4w7w-5xrc-9h26](https://github.com/advisories/GHSA-4w7w-5xrc-9h26),
@@ -157,6 +245,44 @@ and this project adheres to
   this user owns is narrowed to `0600`, and on macOS and Linux a lock path that is a symbolic link
   or another user's file is refused with an error naming the path and the fix. On Windows the
   directory's ACLs decide who can open it, unchanged.
+- **The OTA plugin's serve check, hardened** (`denext mobile add-ota` template generation 12; re-run
+  it and ship a new binary). The iOS and Android plugins check a manifest's platform stamp
+  themselves and refuse another target's signed export with `platform_mismatch`, as
+  `checkForUiUpdate` already did in the page. The check on served files fails closed: a base
+  other than the bundled UI or a downloaded version's directory is refused, where it used to
+  pass. A `/_capacitor_file_` request (`Capacitor.convertFileSrc`) for a file inside the
+  downloaded versions, however the path is spelled (`..`, a symbolic link, another case), now
+  gets the same manifest check as the router's requests, and a changed file quarantines the
+  version; files elsewhere are served as before. On iOS the bridge turns Capacitor's asset
+  handler into `DenextOtaFileGuard` for this, since Capacitor answers those requests without
+  the router. Valid updates are served exactly as before.
+  - A `/_capacitor_file_` path with a NUL or another control character is refused wherever it
+    points: on iOS a NUL turned the path Capacitor's handler reads into an empty URL, and the read
+    raised an exception that crashed the app (during a trial launch, a crash loop rolled the
+    update back). A path to a file that is not there is refused too, and the iOS check resolves
+    paths as the OS opens them (`/private/var` and `/var` alike), so a `..` spelling of a missing
+    file inside the versions root no longer passes as outside it.
+  - When the iOS bridge cannot install `DenextOtaFileGuard` (no asset handler, or one of the app's
+    own class), it serves no downloaded UI: the launch falls back to the bundled UI, `onOtaRejected`
+    fires with `code: "guard_unavailable"` (nothing is quarantined), and `download` / `activate` /
+    `apply` are refused with that code. An app with its own asset handler that accepts unchecked
+    `/_capacitor_file_` reads opts out with `plugins.DenextBridge.otaFileGuard: false`, which
+    `denext mobile doctor` now warns about (`ota-file-guard`), as it does for `frameGuard: false`.
+  - A request for a downloaded UI's file in another letter case (`APP.JS` for `app.js`), which a
+    case-insensitive volume opens as that same file, is refused (the request fails) on both
+    platforms, through the router and `/_capacitor_file_` alike. It used to count as a file
+    outside the signed manifest and quarantine the version, so any script in the page, a
+    third-party one included, could take the app's current UI out of service. A file the manifest
+    does not list under any spelling still quarantines it.
+  - **Breaking for signed deploys of a web export:** an app that embeds a public key now takes only
+    its own platform's stamped export, so a web export signed with the same key cannot install
+    itself on a phone (`platform_mismatch`). `denext mobile build` and `denext export --platform
+    ios|android` already stamp the export; for an unstamped one, `denext ota manifest <dir>
+    --platform ios|android --sign` stamps it before signing. Unsigned, pinned-origin apps still
+    take an unstamped export.
+  - A file verified once in a process is hashed again when its size, modification time, change
+    time or inode changes, so a file rewritten while the app runs is refused (and quarantines the
+    version) instead of being served from the first verdict.
 - **A Deno Desktop UI overlay serves only the files its signed manifest lists, each verified when
   it is served** (`denext/desktop/updater`, `runDesktop({ updater })`, `desktop.update.ui`).
   Re-verification at launch hashed the manifest's files but never looked for others, and the
@@ -205,53 +331,6 @@ and this project adheres to
   instead of only being left out of the grant. The evaluator's `--allow-sys` is narrowed to `cpus`, `osRelease` and
   `systemMemoryInfo` (what `os.cpus()`, `os.totalmem()` and `os.release()` read); the hostname,
   user and home directory are no longer readable. Affects 2.0.0 through 4.10.1.
-
-### Documentation
-
-- **The Deno Desktop runtime guide's releases table gains its `3.0.0-rc.6` row**, the runtime
-  reference no longer says upstream Deno releases a `3.0.0`, and the `.deno/npm-compat`
-  limitation names the runtimes that still leave it (through the pinned `3.0.0-denext.2`).
-
-## [4.10.1] - 2026-10-29
-
-- **The OTA plugin's serve check, hardened** (`denext mobile add-ota` template generation 12; re-run
-  it and ship a new binary). The iOS and Android plugins check a manifest's platform stamp
-  themselves and refuse another target's signed export with `platform_mismatch`, as
-  `checkForUiUpdate` already did in the page. The check on served files fails closed: a base
-  other than the bundled UI or a downloaded version's directory is refused, where it used to
-  pass. A `/_capacitor_file_` request (`Capacitor.convertFileSrc`) for a file inside the
-  downloaded versions, however the path is spelled (`..`, a symbolic link, another case), now
-  gets the same manifest check as the router's requests, and a changed file quarantines the
-  version; files elsewhere are served as before. On iOS the bridge turns Capacitor's asset
-  handler into `DenextOtaFileGuard` for this, since Capacitor answers those requests without
-  the router. Valid updates are served exactly as before.
-  - A `/_capacitor_file_` path with a NUL or another control character is refused wherever it
-    points: on iOS a NUL turned the path Capacitor's handler reads into an empty URL, and the read
-    raised an exception that crashed the app (during a trial launch, a crash loop rolled the
-    update back). A path to a file that is not there is refused too, and the iOS check resolves
-    paths as the OS opens them (`/private/var` and `/var` alike), so a `..` spelling of a missing
-    file inside the versions root no longer passes as outside it.
-  - When the iOS bridge cannot install `DenextOtaFileGuard` (no asset handler, or one of the app's
-    own class), it serves no downloaded UI: the launch falls back to the bundled UI, `onOtaRejected`
-    fires with `code: "guard_unavailable"` (nothing is quarantined), and `download` / `activate` /
-    `apply` are refused with that code. An app with its own asset handler that accepts unchecked
-    `/_capacitor_file_` reads opts out with `plugins.DenextBridge.otaFileGuard: false`, which
-    `denext mobile doctor` now warns about (`ota-file-guard`), as it does for `frameGuard: false`.
-  - A request for a downloaded UI's file in another letter case (`APP.JS` for `app.js`), which a
-    case-insensitive volume opens as that same file, is refused (the request fails) on both
-    platforms, through the router and `/_capacitor_file_` alike. It used to count as a file
-    outside the signed manifest and quarantine the version, so any script in the page, a
-    third-party one included, could take the app's current UI out of service. A file the manifest
-    does not list under any spelling still quarantines it.
-  - **Breaking for signed deploys of a web export:** an app that embeds a public key now takes only
-    its own platform's stamped export, so a web export signed with the same key cannot install
-    itself on a phone (`platform_mismatch`). `denext mobile build` and `denext export --platform
-    ios|android` already stamp the export; for an unstamped one, `denext ota manifest <dir>
-    --platform ios|android --sign` stamps it before signing. Unsigned, pinned-origin apps still
-    take an unstamped export.
-  - A file verified once in a process is hashed again when its size, modification time, change
-    time or inode changes, so a file rewritten while the app runs is refused (and quarantines the
-    version) instead of being served from the first verdict.
 - **A signed OTA release names the app it is for.** The manifest `signature` never covered the app,
   so with one signing key shared by several apps (as one key per publisher invites), a feed for one
   app that was compromised or misrouted could serve another app a validly signed UI. A manifest now
@@ -278,26 +357,16 @@ and this project adheres to
     --sign <key>`, or export again with `DENEXT_OTA_SIGNING_KEY` set); the re-signed manifest still
     installs on the binaries already in the field.
 
+### Documentation
+
+- **The Deno Desktop runtime guide's releases table gains its `3.0.0-rc.6` row**, the runtime
+  reference no longer says upstream Deno releases a `3.0.0`, and the `.deno/npm-compat`
+  limitation names the runtimes that still leave it (through the pinned `3.0.0-denext.2`).
+
+## [4.10.1] - 2026-10-29
+
 ### Added
 
-- **`start.limits`: resource limits for the production server.**
-  `start: { limits: { memory, cpuSeconds, deadlineSeconds } }` in `denext.config.ts` caps the
-  server's JavaScript heap (`memory`: megabytes or `"512m"` / `"2g"`, at least 32 MB), its CPU time
-  and its wall-clock lifetime (whole seconds), through the `--max-memory` / `--max-cpu-time` /
-  `--max-time` flags of denext's Deno from runtime 3.0.0-rc.2; each ends the process with its own
-  exit code (137, 152, 124) for a supervisor to restart it. `denext start` puts them on the process
-  that serves and on no CLI re-run before it (the toolchain re-exec, a compiled `denext`'s pinned
-  child): those hand them down as data (`DENEXT_START_LIMITS`), so no hop's deadline ends before the
-  server's and no hop's own CPU or heap counts. The serving process re-runs itself once with them
-  when it was not started with them — `DENEXT_LIMITS_APPLIED` is compared with the flags its
-  runtime takes, so a stale value never counts — or warns when it may not re-run. `build --compile`
-  bakes them into the binary; the runtime reads them only from there and can't lift them, so the
-  binary's `job` and `db` run under them too and say so. `generate docker`, the `docker` / `fly`
-  presets and the `genericHost()` systemd unit write them onto the server's `deno run`; the fly
-  preset warns when the heap limit is not below the machine's memory. Never for `dev`, tests or
-  `denext job`; on stock Deno or an older toolchain they are not passed, and a warning says so. The config validator checks the values the runtime accepts, and the deploy
-  manifest records them as `server.limits`. See
-  [Deployment targets › Resource limits](https://denext.dev/docs/deployment-targets#resource-limits).
 - **The lifecycle-script jail of runtime `3.0.0-denext.1`.** Everything below is gated on the
   runtime version, so stock Deno and older runtimes behave as before; the `3.0.0-denext.2` pin
   turns it on. `jailRuntime(version)` (from `src/build/jail-scripts.ts`) says what a runtime takes.
@@ -347,24 +416,6 @@ and this project adheres to
   The next Gleam build rewrites `.denext/lustre-view.ts` to pass Lustre's `insertMetadataChild`.
 - **`broadcastChannelTransport()` returns a `close()`** that closes its `BroadcastChannel`
   (an open one keeps the process's event loop alive).
-- **`denext fastlane ios build unsigned:true`.** The Fastfile `denext mobile add fastlane` writes
-  takes `unsigned:true` on the iOS `build` lane: it builds with `denext mobile build ios --release
-  --unsigned` and skips match and `setup_ci`, so the lane runs with no certificate, profile or
-  Apple account (a CI check, or a build re-signed elsewhere). `beta` and `release` refuse it. An
-  unedited Fastfile picks it up on the next `denext mobile add fastlane`.
-- **The managed fastlane is checked on Apple silicon.** The native-plugins workflow's `ios` job,
-  which a release is gated on, now runs `denext toolchain install --with fastlane` on its macOS 15
-  arm64 runner (the pinned portable Ruby, its gems' C extensions built with the runner's Xcode)
-  and then `denext fastlane ios build unsigned:true` on the example app, failing on any step.
-
-- **`secureStore.set(key, value, { accessibility })`** picks the iOS Keychain class:
-  `"whenUnlocked"` (the default, unchanged), `"whenUnlockedThisDeviceOnly"`, `"afterFirstUnlock"`,
-  `"afterFirstUnlockThisDeviceOnly"` or `"whenPasscodeSetThisDeviceOnly"`, so a refresh token can
-  stay out of backups and off other devices. On Android the secure-storage plugin's Keystore key
-  is already device-bound and readable after the first unlock; on the web and in a Deno Desktop
-  window the option is accepted and has no effect. An unknown class, or one other than
-  `"whenPasscodeSetThisDeviceOnly"` beside `requireBiometric`, is a `TypeError`. The type is
-  exported as `SecureStoreAccessibility`.
 
 ### Changed
 
@@ -520,61 +571,6 @@ and this project adheres to
   output pipe open for a moment; a caller that removed the project directory next could race it
   (Windows refuses to remove a directory a process still holds). Stopping it now resolves once
   the child has exited and its pipe is closed.
-- **A page download's pause and cancel hold while a write is in flight.** On the web, where
-  `downloadToFile` streams into the origin private file system, a `cancelFileTransfer` (or the
-  caller's `signal`) that arrived during the last write (or while it was being committed) let the download finish: its promise
-  resolved and the file was kept, instead of rejecting with `CANCELLED`. A cancel that followed a
-  pause whose write was still landing ended paused instead of cancelled. Both now cancel, and `pauseFileTransfer` answers once the
-  request has stopped: `true` when it paused, `false` when the download finished, failed or was
-  cancelled first.
-- **A cancelled page download deletes its file.** On the web, `cancelFileTransfer` (or the
-  caller's `signal`) left the file the download was writing in the origin private file system,
-  though a cancel is documented to drop a download's partial file. The writes in flight are now
-  aborted rather than committed and the file is removed, including one a pause kept; a pause still
-  keeps it for the resume, and a cancel before the download opened its file leaves the file
-  already at that path alone.
-- **A page download replaces a file only once it is done.** On the web, `downloadToFile` wrote
-  straight into the file at its path, so a pause overwrote a file already there with the bytes so
-  far, and a cancel or a failure left it partial or removed it. The bytes now go to a part file
-  in OPFS's `cache/.denext-part/` folder, never beside the file, where it could take the name of
-  a file of the user's or show in `listDir` (which hides the folder), that is moved over the file
-  when the download is done (copied in where the browser has no `move` or refuses it, and always
-  for a picked item), as the iOS background download does. A pause keeps the part file for the resume; a cancel or a failure (a network error, an
-  HTTP error answering a resume) deletes only it, and its `failed` event is no longer `resumable`.
-- **A tracked download cancelled while its pause settled stays cancelled.** A download another
-  engine runs (a Deno Desktop window's) that was cancelled after its engine accepted a pause but
-  before the run stopped ended paused, its promise pending. It now cancels and the engine drops
-  the bytes it kept.
-- **An Android download cancelled as it finished ends done.** A `cancelFileTransfer` that landed
-  after the transfer worker moved the downloaded file into place, but before it recorded the
-  transfer as done, answered `true` and left the transfer cancelled with the complete file still
-  at its path. The download is complete there and the file it replaced already gone (deleting it
-  would lose both), so that cancel now answers `false` and the transfer ends done with the new
-  file, as a pause then does. A cancel before the move still cancels and deletes only the partial
-  file, and an upload's file is never touched. File-transfer template generation 5: run
-  `denext mobile add file-transfer` again to upgrade an unedited copy, then ship a new binary.
-- **An Android download paused as it finished ends done, and a reused transfer id is left alone
-  by the old worker.** A `pauseFileTransfer` that landed after the worker moved the download into
-  place answered `true` and left the transfer paused with the complete file at its path (a later
-  cancel then left that file under a cancelled transfer). The download is complete there, so the
-  pause now answers `false` and the transfer ends done, as the web fallback's pause during the
-  last write does; a pause before that point still pauses. Each start and resume now gives the
-  transfer a new attempt token, kept in its saved record and in the worker's input, and a worker
-  whose token no longer matches changes nothing: an id cancelled, forgotten and started again
-  while its old worker was finishing could otherwise be marked done (or failed) by that worker.
-  An Android download's partial file is now named for its attempt (a resume renames it to the
-  new one, so a pause still resumes after the process is gone): an old worker that had not opened
-  its partial file yet writes into its own, never into the bytes of the transfer started again
-  under its id, and drops it once it stops. A cancel deletes the partial file under the same lock
-  as its state change, and a worker never deletes the downloaded file itself, so one stopped long
-  ago no longer removes a later transfer's file at the same path. A start deletes the partial
-  files that no live transfer to that path owns, matching only the `<name>.<8 hex>.denext-part`
-  form an attempt is named with, so a file of the user's that merely looks like one (in the
-  shared Documents folder, say) is kept.
-  Records and work from before attempts keep the old name and still finish. On iOS, a cancelled
-  upload's late response bytes no longer reach the body of a new transfer started under the same
-  id, and a cancelled pause's late resume data no longer lands in a new transfer's pause (or
-  ends its wait for its own). Both ship in file-transfer template generation 5.
 
 ### Security
 
