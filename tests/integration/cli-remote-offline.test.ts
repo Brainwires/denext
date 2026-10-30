@@ -32,7 +32,12 @@ function serveCheckout(): { server: Deno.HttpServer; origin: string } {
   return { server, origin: `http://127.0.0.1:${server.addr.port}` };
 }
 
-/** The checkout's import map with its local targets served from `origin` (as JSR would). */
+/**
+ * The checkout's import map with its local targets served from `origin` (as JSR would), and
+ * `@denext/docs-corpus` too: denext pins it at exactly its own version, which JSR always has when
+ * it has that denext (every release publishes the corpus first), so the stand-in serves the
+ * checkout's copy rather than a JSR release of another commit.
+ */
 async function remoteConfig(origin: string, dir: string): Promise<string> {
   const { imports } = JSON.parse(await Deno.readTextFile(join(ROOT, "deno.json"))) as {
     imports: Record<string, string>;
@@ -42,6 +47,12 @@ async function remoteConfig(origin: string, dir: string): Promise<string> {
       [k, v],
     ) => [k, v.startsWith("./") ? `${origin}/${v.slice(2)}` : v]),
   );
+  const corpus = JSON.parse(
+    await Deno.readTextFile(join(ROOT, "packages", "docs-corpus", "deno.json")),
+  ) as { name: string; exports: Record<string, string> };
+  for (const [sub, file] of Object.entries(corpus.exports)) {
+    remote[corpus.name + sub.slice(1)] = `${origin}/packages/docs-corpus/${file.slice(2)}`;
+  }
   const path = join(dir, "deno.json");
   await Deno.writeTextFile(path, JSON.stringify({ imports: remote, lock: false }));
   return path;

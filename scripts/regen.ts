@@ -60,7 +60,7 @@ export const STEPS: readonly RegenStep[] = [
     script: ["scripts/gen-command-table.ts"],
     outputs: [
       "src/cli/command-table.generated.ts",
-      "packages/docs-corpus/cli-commands.ts",
+      "src/cli/command-meta.packed.ts",
       "src/cli/lazy-modules.generated.ts",
       "src/cli/offline-modules.generated.ts",
     ],
@@ -78,7 +78,7 @@ export const STEPS: readonly RegenStep[] = [
     outputs: [
       "src/server/config-keys.generated.ts",
       "denext.config.schema.json",
-      "packages/docs-corpus/config-schema.ts",
+      "src/ui/form/config-schema.packed.ts",
     ],
     phase: 1,
   },

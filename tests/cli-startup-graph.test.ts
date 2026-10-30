@@ -119,7 +119,7 @@ Deno.test("the committed verb table matches buildRegistry() (drift check)", asyn
   const { table, meta, modules, offline } = await generate();
   const stale = "is stale: run `deno task gen:command-table` and commit";
   assertEquals(await Deno.readTextFile(TABLE_OUT), table, `command-table.generated.ts ${stale}`);
-  assertEquals(await Deno.readTextFile(META_OUT), meta, `docs-corpus/cli-commands.ts ${stale}`);
+  assertEquals(await Deno.readTextFile(META_OUT), meta, `command-meta.packed.ts ${stale}`);
   assertEquals(await Deno.readTextFile(MODULES_OUT), modules, `lazy-modules.generated.ts ${stale}`);
   assertEquals(
     await Deno.readTextFile(OFFLINE_OUT),

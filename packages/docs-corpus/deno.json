@@ -3,10 +3,7 @@
   "version": "4.10.3",
   "exports": {
     ".": "./mod.ts",
-    "./native-templates": "./native-templates.ts",
-    "./config-schema": "./config-schema.ts",
-    "./cli-commands": "./cli-commands.ts",
-    "./google-font-families": "./google-font-families.ts"
+    "./native-templates": "./native-templates.ts"
   },
   "denext": {
     "catalog": {
@@ -17,9 +14,6 @@
     "include": [
       "mod.ts",
       "native-templates.ts",
-      "config-schema.ts",
-      "cli-commands.ts",
-      "google-font-families.ts",
       "README.md",
       "CHANGELOG.md",
       "LICENSE",

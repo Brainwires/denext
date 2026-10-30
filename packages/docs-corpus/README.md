@@ -13,15 +13,13 @@ JSR caps a package at 20 MiB.
 import { CORPUS_BROTLI_BASE64, CORPUS_SOURCE_HASH } from "@denext/docs-corpus";
 ```
 
-It also carries generated data `@denext/denext` reads, for the same reason: the native templates
-`denext mobile add` writes (`./native-templates`), the `denext.config.ts` JSON Schema the project
-UI renders its forms from (`./config-schema`), the CLI's verb descriptions (`./cli-commands`) and
-the Google Fonts family list behind `next/font/google` (`./google-font-families`).
+It also carries, for the same reason, the native templates `denext mobile add` writes
+(`./native-templates`, Brotli-compressed). A published `@denext/denext` loads them from here; denext
+run from a checkout of its repository reads the checkout's own copy instead.
 
 ## Versioning
 
 The version is denext's: `@denext/denext` X.Y.Z imports exactly `jsr:@denext/docs-corpus@X.Y.Z`
 (no caret), the corpus generated from the denext X.Y.Z tree, and every denext release, rc versions
 included, publishes the matching corpus version before its own tag. The modules are generated in
-the denext repository (`deno task docs:corpus`, `gen:native-templates`, `gen:config-schema`,
-`gen:command-table`, `gen:google-fonts`); do not edit them.
+the denext repository (`deno task docs:corpus`, `gen:native-templates`); do not edit them.

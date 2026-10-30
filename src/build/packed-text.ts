@@ -5,7 +5,9 @@
 // so importing a packed module costs nothing until a text is used.
 //
 // The native templates are packed this way (scripts/gen-native-templates.ts →
-// src/build/native-templates.packed.ts, which imports the pack from @denext/docs-corpus).
+// src/build/native-templates.packed.ts, which loads the pack from @denext/docs-corpus). A single
+// generated text (the CLI's verb table, the config schema, the Google Fonts families) is packed
+// whole and read back with `unpackText`.
 
 import { decodeBase64 } from "@std/encoding/base64";
 import { brotliDecompressSync } from "node:zlib";
@@ -18,11 +20,22 @@ export type PackedRecords<L extends PackLayout> = {
   readonly [G in keyof L]: { readonly [R in keyof L[G]]: Readonly<Record<string, string>> };
 };
 
+/**
+ * Decode one packed text (written by scripts/lib/pack-texts.ts `brotliBase64`): base64, then
+ * Brotli, then UTF-8.
+ *
+ * @param brotliBase64 The packed text.
+ * @returns The text.
+ */
+export function unpackText(brotliBase64: string): string {
+  return new TextDecoder().decode(brotliDecompressSync(decodeBase64(brotliBase64)));
+}
+
 /** Decode a pack (written by scripts/lib/pack-texts.ts): Brotli, then base64, then JSON. */
 function unpackTexts(
   brotliBase64: string,
 ): Record<string, Record<string, Record<string, string>>> {
-  return JSON.parse(new TextDecoder().decode(brotliDecompressSync(decodeBase64(brotliBase64))));
+  return JSON.parse(unpackText(brotliBase64));
 }
 
 /**

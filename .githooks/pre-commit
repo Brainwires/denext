@@ -44,7 +44,7 @@ fi
 # entrypoint parses from it, so a flag added to a verb — or pulled in by a rebase — that the
 # committed table lacks is an "unknown flag" on development. Stage it when it moved (the drift
 # test in tests/cli-startup-graph.test.ts stays the backstop).
-for generated in src/cli/command-table.generated.ts packages/docs-corpus/cli-commands.ts \
+for generated in src/cli/command-table.generated.ts src/cli/command-meta.packed.ts \
   src/cli/lazy-modules.generated.ts; do
   if ! git diff --quiet -- "$generated"; then
     git add -- "$generated"

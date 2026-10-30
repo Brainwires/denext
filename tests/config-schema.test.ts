@@ -32,7 +32,7 @@ Deno.test("generated config keys + JSON Schema match the DenextConfig type (drif
   assertEquals(
     await Deno.readTextFile(SCHEMA_MODULE_OUT),
     schemaModule,
-    `packages/docs-corpus/config-schema.ts ${STALE}`,
+    `config-schema.packed.ts ${STALE}`,
   );
 });
 

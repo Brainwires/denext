@@ -3,10 +3,11 @@
 // schema, pick a union branch for a value, and walk every node the schema contains.
 //
 // The schema ships with the framework, so it is imported rather than fetched — the UI works
-// offline, from a JSR install, and inside `deno compile`. It ships in `@denext/docs-corpus`
-// (which denext pins at its own version), out of the 20 MiB @denext/denext package.
+// offline, from a JSR install, from a checkout, and inside `deno compile`. It ships packed
+// (config-schema.packed.ts, a third of its size against JSR's 20 MiB package cap).
 
-import { CONFIG_SCHEMA_JSON } from "@denext/docs-corpus/config-schema";
+import { unpackText } from "../../build/packed-text.ts";
+import { CONFIG_SCHEMA_BROTLI_BASE64 } from "./config-schema.packed.ts";
 import { OVERRIDES } from "./schema-overrides.ts";
 
 /** The subset of JSON Schema the config schema actually uses, plus denext's `x-denext` hints. */
@@ -66,7 +67,7 @@ let configSchema: SchemaNode | undefined;
  * @returns The root schema node of `denext.config.schema.json`.
  */
 export function loadConfigSchema(): SchemaNode {
-  return configSchema ??= JSON.parse(CONFIG_SCHEMA_JSON) as SchemaNode;
+  return configSchema ??= JSON.parse(unpackText(CONFIG_SCHEMA_BROTLI_BASE64)) as SchemaNode;
 }
 
 /**
