@@ -22,7 +22,9 @@ and this project adheres to
   runtime 3.0.0-denext.3 behind the unstable net APIs (`"unstable": ["net"]` in `deno.json`); on
   stock Deno, an older toolchain or without the flag the server refuses to start and says which is
   missing. The config validator checks the host names and variable names and refuses a name two
-  certificates list. See https://denext.dev/docs/deployment-targets#https-without-a-proxy.
+  certificates list. `denext/server` exports the `StartTls`, `StartTlsCertificate`, `ServeTls` and
+  `CertifiedKeyPem` types (`serveWithPortFallback` takes a `tls` option). See
+  https://denext.dev/docs/deployment-targets#https-without-a-proxy.
 - **`denext patch create` registers npm patches in deno.json's `patchedDependencies`.** When
   the project runs on denext's Deno from runtime 3.0.0-denext.3 (the pinned toolchain, not
   `DENEXT_DENO=stock`), an npm patch is also written as a package-relative copy under

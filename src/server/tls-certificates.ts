@@ -13,7 +13,9 @@ import type { StartTls } from "./config.ts";
 
 /** A certificate and its key, PEM. */
 export interface CertifiedKeyPem {
+  /** The certificate chain, PEM. */
   cert: string;
+  /** The private key, PEM. */
   key: string;
 }
 
