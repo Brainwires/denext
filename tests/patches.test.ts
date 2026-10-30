@@ -133,7 +133,12 @@ Deno.test("npm: a deleted and an added file are recorded (/dev/null), applied (r
 Deno.test("npm: a file too large to diff is skipped with a note, the rest of the patch is recorded", async () => {
   const { dir, installed, pristine } = await npmProject();
   const notes: string[] = [];
-  const opts = { npmPristine: () => Promise.resolve(pristine), log: (m: string) => notes.push(m) };
+  // `runtime: null`: no patchedDependencies registration (and its notes) on any pinned toolchain.
+  const opts = {
+    npmPristine: () => Promise.resolve(pristine),
+    log: (m: string) => notes.push(m),
+    runtime: null,
+  };
   try {
     const huge = Array.from({ length: 60_000 }, (_, i) => `l${i}`).join("\n") + "\n";
     await Deno.writeTextFile(join(pristine, "bundle.js"), huge);

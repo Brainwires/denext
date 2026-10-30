@@ -40,10 +40,10 @@ and this project adheres to
 
 - **Runtime 3.0.0-denext.3: denext pins it** (was `3.0.0-denext.2`; the toolchain, the Deno
   Desktop runtime and CI's Linux toolchain zip move together). It moves to V8 15.2.124.45 and adds
-  runtime APIs denext doesn't use yet: the `HTMLRewriter` global (`--unstable-html-rewriter`),
-  `resolveCertificate` (a certificate per server name for `Deno.listenTls` / `Deno.serve`), a cookie
+  runtime APIs: the `HTMLRewriter` global (`--unstable-html-rewriter`), `resolveCertificate` (a
+  certificate per server name for `Deno.listenTls` / `Deno.serve`, which `start.tls` uses), a cookie
   jar for `fetch` (`Deno.CookieJar`, `Deno.Cookie`, `Deno.CookieMap`; `--unstable-cookies`) and npm
-  `patchedDependencies`. Also: better-sqlite3 under Jest's module registry, a shell-spawned `node`
+  `patchedDependencies` (which `denext patch` registers in). Also: better-sqlite3 under Jest's module registry, a shell-spawned `node`
   shim keeps the npm resolution, a package.json script's arguments lose npm's leading `--`,
   `node:test` parents wait for unawaited subtests, a desktop bind call from a page that is gone is
   rejected and dropped, and the idle trim keeps a wake-up during a trim and skips the GC on a large
