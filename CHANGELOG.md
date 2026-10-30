@@ -33,7 +33,10 @@ and this project adheres to
   bookkeeping file beside it is bound to the key set it was written under and can lower the floor
   but never raise it, so a write to the cache cannot turn the check off for good; the tests' keys
   file is honoured only under a switch a test turns on in its own process, and a run on it writes
-  nothing to the cache. `toolchain prune` keeps the rollback.
+  nothing to the cache. The toolchain marker handed to child processes (`DENEXT_TOOLCHAIN_ACTIVE`)
+  never skips the check or forces the rollback on its own: a process on the rollback re-checks the
+  list, and `build --compile`, `desktop build` and `desktop package` ship the rollback only while
+  the list picks it. `toolchain prune` keeps the rollback.
   `DENEXT_REVOCATION_CHECK=0` turns the check off. Until a signing key is compiled in, the check
   reads and fetches nothing. See
   [Revoked runtimes](https://denext.dev/docs/toolchain#revoked-runtimes).
@@ -46,7 +49,8 @@ and this project adheres to
 ### Changed
 
 - **Runtime 3.0.0-denext.3: denext pins it** (was `3.0.0-denext.2`; the toolchain, the Deno
-  Desktop runtime and CI's Linux toolchain zip move together). It moves to V8 15.2.124.45 and adds
+  Desktop runtime and CI's Linux toolchain zip move together; both pins name `3.0.0-denext.2` as
+  their `rollback`). It moves to V8 15.2.124.45 and adds
   runtime APIs denext doesn't use yet: the `HTMLRewriter` global (`--unstable-html-rewriter`),
   `resolveCertificate` (a certificate per server name for `Deno.listenTls` / `Deno.serve`), a cookie
   jar for `fetch` (`Deno.CookieJar`, `Deno.Cookie`, `Deno.CookieMap`; `--unstable-cookies`) and npm

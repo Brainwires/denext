@@ -318,6 +318,53 @@ export function activeToolchainPin(env: EnvGet = processEnv): DenoToolchainPin {
   return rollback && marker === rollback.version ? rollback : pin;
 }
 
+/** What {@linkcode shippingToolchainPin} reads (tests pass a fixture pin and its list). */
+export interface ShippingToolchainOptions {
+  /** The pin in force (default {@linkcode loadDenoToolchainPin}). */
+  readonly pin?: DenoToolchainPin;
+  /** The host's pin key (default {@linkcode denoToolchainTarget}). */
+  readonly target?: string;
+  /** The toolchain cache, where the list is cached (default {@linkcode denoToolchainCacheRoot}). */
+  readonly cacheRoot?: string;
+  /** How the list is read (default: `fetch`). */
+  readonly revocations?: ToolchainRevocationOptions;
+}
+
+/**
+ * The pin of the toolchain a command that SHIPS a runtime runs on (`build --compile` builds onto
+ * its `denort`): {@linkcode activeToolchainPin}, but a toolchain marker naming the pin's rollback
+ * is believed only when the revoked-runtimes list, read now, still picks the rollback here — a
+ * marker leaked from a parent shell or a copied CI env never makes a release ship the older
+ * runtime.
+ *
+ * @param env Env reader.
+ * @param options The pin, target, cache and list seams.
+ * @returns The pin.
+ * @throws {Error} When the marker names the rollback but the list does not pick it.
+ */
+export async function shippingToolchainPin(
+  env: EnvGet = processEnv,
+  options: ShippingToolchainOptions = {},
+): Promise<DenoToolchainPin> {
+  const pin = options.pin ?? loadDenoToolchainPin(env);
+  const rollback = rollbackToolchainPin(pin);
+  if (!rollback || env(TOOLCHAIN_ACTIVE_ENV) !== rollback.version) return pin;
+  const unmarked: EnvGet = (name) => name === TOOLCHAIN_ACTIVE_ENV ? undefined : env(name);
+  const selected = await selectToolchainPin(
+    pin,
+    unmarked,
+    { ...(options.pin ? { pin } : {}), revocations: options.revocations ?? {} },
+    options.target ?? denoToolchainTarget(),
+    options.cacheRoot ?? denoToolchainCacheRoot(env),
+  );
+  if (selected.pin.version === rollback.version) return rollback;
+  throw new Error(
+    `denext: ${TOOLCHAIN_ACTIVE_ENV}=${rollback.version} names the toolchain pin's rollback, but ` +
+      `the revoked-runtimes list does not revoke ${pin.version} here: refusing to ship ` +
+      `${rollback.version}. Unset ${TOOLCHAIN_ACTIVE_ENV} and run the command again.`,
+  );
+}
+
 /**
  * `<deno cache>/denext-deno`.
  *
@@ -1505,8 +1552,9 @@ function toolchainSubjects(
 /**
  * The toolchain to run for `pin` (see src/build/runtime-revocations.ts): the pin in force, or its
  * `rollback` when the revoked-runtimes list revokes it for this host and the rollback is not
- * revoked too. A process started by a command that already chose (the toolchain marker is set)
- * takes that choice and consults nothing. Never throws.
+ * revoked too. The toolchain marker (`DENEXT_TOOLCHAIN_ACTIVE`) decides nothing: it can leak from
+ * a parent shell or a copied CI env, so the list is consulted whatever it says (the processes a
+ * command starts stay quiet through `DENEXT_REVOCATION_NOTICED`). Never throws.
  *
  * @param pin The pin in force.
  * @param env Env reader.
@@ -1523,8 +1571,6 @@ export async function selectToolchainPin(
   cacheRoot: string,
 ): Promise<ToolchainSelection> {
   const rollback = rollbackToolchainPin(pin);
-  const marker = env(TOOLCHAIN_ACTIVE_ENV);
-  if (marker) return { pin: rollback && marker === rollback.version ? rollback : pin };
   if (pin.version === null || !revocationsApply(env, options)) return { pin };
   const r = options.revocations ?? {};
   const loaded = await loadRuntimeRevocations({ ...r, env, cacheRoot });

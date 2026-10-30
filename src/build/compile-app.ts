@@ -60,10 +60,10 @@ import {
   settleCompileLock,
 } from "./compile-lock.ts";
 import {
-  activeToolchainPin,
   denortTargetKey,
   type DenoToolchainPin,
   ensureDenort,
+  shippingToolchainPin,
 } from "./deno-toolchain.ts";
 import { assertRuntimeShippable } from "./runtime-revocations.ts";
 
@@ -379,10 +379,11 @@ export interface DenortBinaryDeps {
   /** The toolchain version this process runs on, or `undefined` off the toolchain. */
   readonly toolchain?: () => string | undefined;
   /**
-   * The pin of the toolchain this process runs (default {@linkcode activeToolchainPin}: the pin
-   * in force, or its rollback when the command that started this one ran that).
+   * The pin of the toolchain this process runs (default {@linkcode shippingToolchainPin}: the pin
+   * in force, or its rollback when the command that started this one ran that and the
+   * revoked-runtimes list still picks it).
    */
-  readonly pin?: () => DenoToolchainPin;
+  readonly pin?: () => DenoToolchainPin | Promise<DenoToolchainPin>;
   /**
    * Refuse a revoked denort (default: the revoked-runtimes list, `DENEXT_ALLOW_REVOKED_RUNTIME`
    * to override; src/build/runtime-revocations.ts).
@@ -414,7 +415,7 @@ export async function denortBinary(
 ): Promise<string | undefined> {
   const version = (deps.toolchain ?? toolchainVersion)();
   if (version === undefined) return undefined;
-  const pin = (deps.pin ?? (() => activeToolchainPin()))();
+  const pin = await (deps.pin ?? (() => shippingToolchainPin()))();
   if (pin.version !== version) return undefined;
   const triple = target ?? Deno.build.target;
   const key = denortTargetKey(triple);

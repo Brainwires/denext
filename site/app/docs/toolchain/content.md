@@ -305,6 +305,11 @@ at all.
   `fixedIn`, `runningRollback`, `running`, `listSequence`, `listExpiresAt` (and `expiredAt` for a
   list that was ignored because it expired). `doctor` warns about a revoked pin and an expired list.
 - `toolchain prune` keeps the rollback release's cache, so the fallback works offline.
+- The toolchain marker denext hands the processes it starts (`DENEXT_TOOLCHAIN_ACTIVE`) never
+  skips the check or picks the fallback on its own, so a value leaked from a parent shell or a
+  copied CI environment changes nothing: a process running the fallback asks again and moves to the
+  pinned toolchain once the list no longer calls for the fallback, and `build --compile`,
+  `desktop build` and `desktop package` ship the fallback only while the list picks it.
 - `DENEXT_REVOCATION_CHECK=0` turns the check off. A pin file override
   (`DENEXT_TOOLCHAIN_PIN_FILE`) and `DENEXT_DENO=stock | <path>` are never checked.
 

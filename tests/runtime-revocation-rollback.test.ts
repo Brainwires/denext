@@ -18,6 +18,7 @@ import {
   resolveDenoToolchain,
   rollbackToolchainPin,
   selectToolchainPin,
+  shippingToolchainPin,
   toolchainTargetTriple,
 } from "../src/build/deno-toolchain.ts";
 import {
@@ -234,25 +235,36 @@ Deno.test("no safe fallback: the revoked pin still runs, with a warning", async 
   }
 });
 
-Deno.test("the list is not consulted for a pin override, a given pin, or a child that was told", async () => {
+Deno.test("the list is not consulted for a pin override or a given pin; the toolchain marker decides nothing", async () => {
   const w = await world();
   try {
     await w.list([revoke()]);
     // A pin passed without asking for the check (tests) is never checked.
     const given = await resolve(w, {}, { revocations: undefined });
     assertEquals(await ran(given), PINNED);
-    // A command started by one that chose the rollback runs it, reading nothing.
-    const env = (k: string) => k === "DENEXT_TOOLCHAIN_ACTIVE" ? ROLLBACK : undefined;
-    const told = await selectToolchainPin(w.pin, env, {}, TARGET, "/nonexistent");
-    assertEquals(told.pin.version, ROLLBACK);
+    // A marker leaked from a parent shell (or a copied CI env) naming the rollback no longer
+    // forces it: with nothing revoking the pin (no key configured here), the pin runs.
+    const leaked = (k: string) => k === "DENEXT_TOOLCHAIN_ACTIVE" ? ROLLBACK : undefined;
+    const forced = await selectToolchainPin(w.pin, leaked, {}, TARGET, "/nonexistent");
+    assertEquals(forced.pin.version, PINNED);
+    // Nor does a marker naming the pin skip the check: the list still moves it to the rollback.
     const pinnedChild = await selectToolchainPin(
       w.pin,
-      (k) => k === "DENEXT_TOOLCHAIN_ACTIVE" ? PINNED : undefined,
-      {},
+      w.env({ DENEXT_TOOLCHAIN_ACTIVE: PINNED }),
+      { revocations: { mode: "cache-only" } },
       TARGET,
-      "/nonexistent",
+      w.cacheRoot,
     );
-    assertEquals([pinnedChild.pin.version, pinnedChild.revocation], [PINNED, undefined]);
+    assertEquals([pinnedChild.pin.version, pinnedChild.revocation?.revoked], [ROLLBACK, true]);
+    // A child of the command that chose the rollback agrees with it (and stays quiet).
+    const child = await selectToolchainPin(
+      w.pin,
+      w.env({ DENEXT_TOOLCHAIN_ACTIVE: ROLLBACK, [REVOCATION_NOTICED_ENV]: "1" }),
+      { revocations: { mode: "cache-only" } },
+      TARGET,
+      w.cacheRoot,
+    );
+    assertEquals([child.pin.version, child.warning], [ROLLBACK, undefined]);
     // DENEXT_TOOLCHAIN_PIN_FILE (fork development) turns the check off.
     const file = await selectToolchainPin(
       w.pin,
@@ -379,6 +391,33 @@ Deno.test("activeToolchainPin / rollbackToolchainPin: a child of a rollback run 
   }
 });
 
+Deno.test("shippingToolchainPin: a marker naming the rollback ships it only while the list still picks it", async () => {
+  const w = await world();
+  try {
+    const shipping = (vars: Record<string, string>) =>
+      shippingToolchainPin(w.env(vars), {
+        pin: w.pin,
+        target: TARGET,
+        cacheRoot: w.cacheRoot,
+        revocations: { mode: "cache-only" },
+      });
+    // No marker, or the pin's own version: the pin.
+    assertEquals((await shipping({})).version, PINNED);
+    assertEquals((await shipping({ DENEXT_TOOLCHAIN_ACTIVE: PINNED })).version, PINNED);
+    // The marker names the rollback but nothing revokes the pin: refused, not shipped.
+    await w.list([]);
+    const err = await assertRejects(() => shipping({ DENEXT_TOOLCHAIN_ACTIVE: ROLLBACK }));
+    assertStringIncludes((err as Error).message, `refusing to ship ${ROLLBACK}`);
+    assertStringIncludes((err as Error).message, "Unset DENEXT_TOOLCHAIN_ACTIVE");
+    // The list revokes the pin: the rollback the parent chose is the one shipped.
+    await w.list([revoke()]);
+    const rb = await shipping({ DENEXT_TOOLCHAIN_ACTIVE: ROLLBACK });
+    assertEquals([rb.version, rb.rollback], [ROLLBACK, undefined]);
+  } finally {
+    await w.close();
+  }
+});
+
 Deno.test("build --compile refuses a revoked denort unless DENEXT_ALLOW_REVOKED_RUNTIME names it", async () => {
   const w = await world();
   try {
@@ -445,6 +484,7 @@ Deno.test("desktop packaging refuses a revoked runtime; run / dev warn; a rolled
       pin: desktopPin(),
       env: w.env(vars),
       revocations: { mode: "cache-only" as const, cacheRoot: w.cacheRoot },
+      toolchainPin: { version: PINNED, rollback: { version: ROLLBACK } },
       // Every path ends at the version gate: what it names is the runtime that was chosen.
       denoVersion: () => Promise.resolve("7.7.7"),
       log: (l: string) => void lines.push(l),
@@ -474,6 +514,23 @@ Deno.test("desktop packaging refuses a revoked runtime; run / dev warn; a rolled
       resolveDesktopRuntimeEnv(opts({ DENEXT_TOOLCHAIN_ACTIVE: ROLLBACK }))
     );
     assertStringIncludes((rolled as Error).message, `runtime ${ROLLBACK} is built for Deno 8.8.8`);
+    // Only the toolchain revoked: both still move back together.
+    await w.list([revoke()]);
+    const cliOnly = await assertRejects(() =>
+      resolveDesktopRuntimeEnv(opts({ DENEXT_TOOLCHAIN_ACTIVE: ROLLBACK }))
+    );
+    assertStringIncludes((cliOnly as Error).message, `runtime ${ROLLBACK} is built for Deno 8.8.8`);
+    // A marker the list doesn't back (nothing revoked; or a toolchain pin of another rollback):
+    // packaging is not moved to the older runtime — on to the PINNED one's gate.
+    await w.list([]);
+    for (
+      const over of [{}, { toolchainPin: { version: PINNED, rollback: { version: "0.0.1" } } }]
+    ) {
+      const leaked = await assertRejects(() =>
+        resolveDesktopRuntimeEnv(opts({ DENEXT_TOOLCHAIN_ACTIVE: ROLLBACK }, over))
+      );
+      assertStringIncludes((leaked as Error).message, `runtime ${PINNED} is built for Deno 9.9.9`);
+    }
     assertEquals(rollbackDesktopPin({ ...desktopPin(), rollback: undefined }), null);
   } finally {
     await w.close();

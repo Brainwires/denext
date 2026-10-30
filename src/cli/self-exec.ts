@@ -944,6 +944,20 @@ function onToolchainNow(deps: ReexecToolchainDeps): boolean {
 }
 
 /**
+ * For a process already on the toolchain: `null` when it stays on it — always on the pinned
+ * version; on another version its marker names (the pin's rollback, which the command that
+ * started it chose because the pinned release is revoked) only while the resolver, reading the
+ * revoked-runtimes list now, still picks that version. Otherwise the resolver's choice, to re-exec
+ * onto: a marker leaked from a parent shell or a copied CI env never keeps a process on an older
+ * runtime the list no longer calls for.
+ */
+async function recheckedChoice(deps: ReexecToolchainDeps): Promise<DenoToolchainChoice | null> {
+  if (deps.pinnedVersion === null || deps.denoVersion === deps.pinnedVersion) return null;
+  const choice = await deps.resolve();
+  return choice.kind !== "toolchain" || choice.version === deps.denoVersion ? null : choice;
+}
+
+/**
  * Run a project-code verb on denext's Deno toolchain: under stock Deno, re-exec the same
  * invocation (argv, cwd, stdio, exit code, shutdown signals) under the pinned toolchain binary.
  * A compiled binary cannot swap its own runtime, so it hands the toolchain to its children
@@ -979,8 +993,8 @@ export async function maybeReexecToolchain(
     }
     return false;
   }
-  if (onToolchainNow(deps)) return await reexecForRuntimeFlags(deps);
-  const choice = await deps.resolve();
+  const choice = onToolchainNow(deps) ? await recheckedChoice(deps) : await deps.resolve();
+  if (choice === null) return await reexecForRuntimeFlags(deps);
   announceChoice(choice, deps);
   if (choice.kind === "stock" && choice.refusal) throw new Error(choice.refusal);
   if (choice.kind === "stock") return false;
