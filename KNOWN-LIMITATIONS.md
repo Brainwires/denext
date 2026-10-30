@@ -115,7 +115,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
 - **The runtime's type-check leaves `.deno/npm-compat` in the project root** (3.0.0-rc.5 through
-  the pinned 3.0.0-denext.3). It holds
+  the pinned 3.0.0-denext.5). It holds
   an npm-shaped copy of the `@jsr/*` packages, their `_test.ts` files included, and a later
   `deno test` with default discovery would run those. A `denext create` project's `deno.json`
   excludes `.deno/` (top-level `exclude`), as denext's own does; an older project adds

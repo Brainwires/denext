@@ -94,6 +94,19 @@ and this project adheres to
 
 ### Changed
 
+- **Runtime 3.0.0-denext.5: denext pins it** (was `3.0.0-denext.3`; the toolchain, the Deno
+  Desktop runtime and CI's Linux toolchain zip move together; both pins name `3.0.0-denext.3` as
+  their `rollback`; there is no `3.0.0-denext.4` release). On Windows a finished process now ends
+  with `TerminateProcess` after flushing its output, so a `deno` child can no longer write its
+  whole output and then spin at 100% CPU in its teardown instead of exiting (denext's
+  `DENEXT_CHILD_EXIT_GRACE_MS` workaround stays for older runtimes). The panic banner prints the
+  subcommand and the argument count instead of the command line, which can carry tokens. Crash
+  reports are opt-in: `DENEXT_CRASH_REPORT_URL` (an `https:` endpoint or a `file:` path, from the
+  environment only) makes the CLI and a compiled program send one scrubbed JSON report when they
+  panic (`DENEXT_CRASH_REPORT_APP` names the app, `DENEXT_CRASH_REPORT_SELFTEST=1` checks the
+  pipeline); a packaged desktop app's panic report uses the same schema. The
+  [runtime reference](https://denext.dev/docs/runtime-reference) lists them.
+
 - **Runtime 3.0.0-denext.3: denext pins it** (was `3.0.0-denext.2`; the toolchain, the Deno
   Desktop runtime and CI's Linux toolchain zip move together; both pins name `3.0.0-denext.2` as
   their `rollback`). It moves to V8 15.2.124.45 and adds runtime APIs: the `HTMLRewriter` global
@@ -173,6 +186,17 @@ and this project adheres to
   `@prisma/adapter-pg` does, and by its `Key (…)` fields only when it does not.
 
 ### Security
+
+- **Runtime 3.0.0-denext.5 fixes two security bugs in the pinned `3.0.0-denext.3`.** In a
+  package.json-only project (`nodeModulesDir: "manual"`), a link in `node_modules` that leads out
+  of it (`node_modules/pkg -> ../../outside`) made the files it reaches readable to `require()`,
+  `createRequire` and `require.resolve` without `--allow-read` and past `--deny-read` (since
+  runtime `2.9.7-denext.22`); such a read now needs read access, as `import()` does, so a workspace
+  member linked from `node_modules` needs read access to it when read is not fully granted
+  ([GHSA-xhq4-83x4-g734](https://github.com/Brainwires/deno/security/advisories/GHSA-xhq4-83x4-g734)). And the memory behind the
+  runtime's `tickInfo`, `immediateInfo` and `timerInfo` arrays was freed while V8 still referenced
+  it (read when a snapshot was made, and reachable until the isolate was disposed); it now belongs
+  to its V8 backing store ([GHSA-mvh6-5whv-26gw](https://github.com/Brainwires/deno/security/advisories/GHSA-mvh6-5whv-26gw)).
 
 - **Runtime 3.0.0-denext.3 carries V8 15.2.124.45**, with the fixes for two V8 bugs exploited in
   the wild (CVE-2026-85046, a type confusion, and CVE-2026-87491, an out-of-bounds write) that the
