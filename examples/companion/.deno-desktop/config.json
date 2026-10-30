@@ -1,0 +1,26 @@
+{
+  "desktop": {
+    "app": {
+      "identifier": "dev.denext.loopy",
+      "name": "Loopy"
+    },
+    "window": {
+      "width": 260,
+      "height": 300,
+      "title": "Loopy",
+      "resizable": false
+    },
+    "titleBar": "hidden",
+    "backdrop": "none",
+    "extraPermissions": {
+      "write": [
+        "$APPDATA"
+      ]
+    },
+    "installers": {
+      "macos": [],
+      "linux": [],
+      "windows": []
+    }
+  }
+}

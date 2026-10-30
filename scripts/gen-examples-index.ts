@@ -103,6 +103,7 @@ export const EXAMPLE_CATEGORY: Readonly<Record<string, string>> = {
   "native-views": "native",
   "capacitor-ci": "native",
   "desktop-kitchen-sink": "native",
+  companion: "native",
   "rn-desktop": "native",
   "expo-app": "native",
   "offline-sync": "native",

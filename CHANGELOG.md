@@ -10,6 +10,16 @@ and this project adheres to
 
 ### Added
 
+- **examples/companion: Loopy, a desktop companion** — an original paper-clip character (a teal
+  Gem-style double-oval clip, drawn in hand-written SVG and animated with CSS and Web Animations)
+  that sits in a small always-on-top Deno Desktop window in the bottom-right corner of the primary
+  display, talks in speech bubbles with optional buttons, and reacts to other programs: a
+  token-protected loopback inbox (`POST /api/loopy/say`, token generated on the first run and kept
+  owner-only in the app's data folder) takes messages from scripts, and `scripts/loopy-say.ts` posts
+  them (`--wait` returns the pressed button). A sample `Notification` / `Stop` hook pair makes Loopy
+  pop up when a Claude Code session needs approval or finishes. The window chrome is
+  feature-detected through `windowCapabilities()`, and in a browser (`denext dev`) Loopy renders in
+  the page with demo buttons for every move.
 - **Revoked runtimes roll back.** A released Deno toolchain or Deno Desktop runtime that turns out
   to be broken can now be revoked after release, for every target or only some, through a list the
   maintainers sign (ECDSA P-256, verified against public keys compiled into denext). Before it runs

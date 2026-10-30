@@ -139,6 +139,20 @@
       "runFrom": "root"
     },
     {
+      "name": "companion",
+      "title": "Loopy (a desktop companion)",
+      "blurb": "Loopy is a small animated paper clip that sits on top of your desktop, talks in speech bubbles and reacts to what other programs tell it.",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/companion",
+      "tags": [
+        "desktop",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "denext task desktop    # export + open Loopy's window (denext's pinned Deno Desktop runtime)\ndenext task dev        # the same page in a browser, with demo buttons for every move",
+      "runFrom": "example"
+    },
+    {
       "name": "concurrency",
       "title": "denext × concurrent rendering",
       "blurb": "A runnable demo of denext's fiber concurrency — the things the earlier cooperative scheduler could not do: time-slicing and mid-flight interruption.",
