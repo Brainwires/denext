@@ -154,6 +154,27 @@ Deno.test("test-run: the serial files leave the parallel pass and run on their o
   assertEquals(testPasses(["tests/other/"], serial).serial, null);
 });
 
+Deno.test("test-run: a serial file named on its own runs in the serial pass alone", () => {
+  const serial = ["tests/s.test.ts", "tests/live-views.test.ts"];
+  const named = testPasses(
+    ["tests/a.test.ts", "./tests/s.test.ts", "tests/live-views.test.ts"],
+    serial,
+  );
+  assertEquals(named.serial?.slice(-2), ["tests/s.test.ts", "tests/live-views.test.ts"]);
+  const parallel = named.parallel!;
+  assert(parallel.includes("tests/a.test.ts"));
+  assert(!parallel.includes("tests/s.test.ts") && !parallel.includes("./tests/s.test.ts"));
+  assert(!parallel.includes("tests/live-views.test.ts"));
+  // Only serial files named: no parallel pass at all.
+  const only = testPasses(["tests/s.test.ts"], serial);
+  assertEquals(only.parallel, null);
+  assertEquals(only.serial?.at(-1), "tests/s.test.ts");
+  // With coverage the stock files share one pass, the serial ones included.
+  const cov = testPasses(["--coverage=cov", "tests/s.test.ts"], serial);
+  assertEquals(cov.serial, null);
+  assert(cov.parallel?.includes("tests/s.test.ts"));
+});
+
 Deno.test("test-run: the stock passes preload the per-test stall watchdog", async () => {
   assertEquals(withWatchdog(["test", "-A", "tests/a.test.ts", "--", "x"], "w.ts"), [
     "test",
