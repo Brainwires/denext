@@ -323,6 +323,7 @@
     "gen:google-fonts": "deno run -A scripts/gen-google-fonts.ts",
     "gen:font-metrics": "deno run -A scripts/gen-font-metrics.ts",
     "desktop:pin-runtime": "deno run -A scripts/desktop-pin-runtime.ts",
+    "revocations": "deno run -A scripts/runtime-revocations.ts",
     "gleam:pin": "deno run -A scripts/gleam-pin.ts",
     "fastlane:pin": "deno run -A scripts/fastlane-pin.ts",
     "docs:wasm": "deno run -A scripts/wasm-doc-patch.ts",
