@@ -45,6 +45,7 @@ import {
 } from "../packages/backend/src/realtime-sql.ts";
 import {
   grantOf,
+  groupRereadQuery,
   identityOf,
   installRealtime,
   journaled,
@@ -1291,6 +1292,66 @@ Deno.test("realtime: a timestamptz key is spelled in UTC by the re-read and the 
     seedQuery(table, undefined, 10, plain).text,
     `select to_jsonb(t."at") #>> '{}' as k from "stamps" t limit $1`,
   );
+});
+
+Deno.test("realtime: the re-read binds every filter value; the statement text never carries one", () => {
+  const { tables } = resolveRealtime({ tables: { notes: {} } });
+  const table = tables.get("notes")!;
+  const types = new Map([["id", "bigint"], ["owner", "text"]]);
+  const hostile = [
+    "x' or true; --",
+    "'); select pg_sleep(10); --",
+    " as r from ",
+    "$1",
+    "$' $& $` $$",
+    '") or true --',
+  ];
+  const benign = rereadQuery(table, { column: "owner", value: "alice" }, ["1"], types);
+  const benignGroup = groupRereadQuery(table, [{ column: "owner", value: "alice" }], ["1"], types);
+  const alice = { column: "owner", value: "alice" };
+  const benignTriple = groupRereadQuery(table, [undefined, alice, alice], ["1"], types);
+  const benignIn = groupRereadQuery(
+    table,
+    [parseFilter({ owner: { in: ["a", "b"] } })],
+    ["1"],
+    types,
+  );
+  for (const value of hostile) {
+    const filter = { column: "owner", value };
+    const one = rereadQuery(table, filter, ["1", value], types);
+    assertEquals(one.text, benign.text);
+    assertEquals(one.params, [JSON.stringify(["1", value]), value]);
+    const group = groupRereadQuery(table, [undefined, filter, filter], ["1"], types);
+    assertEquals(group.text, benignTriple.text);
+    assertEquals(group.params, [JSON.stringify(["1"]), value, value]);
+    const inList = parseFilter({ owner: { in: [value, "b"] } })!;
+    const grouped = groupRereadQuery(table, [inList], [value], types);
+    assertEquals(grouped.text, benignIn.text);
+    assertEquals(grouped.params, [JSON.stringify([value]), JSON.stringify([value, "b"])]);
+  }
+  assertEquals(
+    benignGroup.text,
+    `select to_jsonb(t."id") #>> '{}' as k, to_jsonb(t)::text as r, ` +
+      `coalesce(t."owner" = $2::text::text, false) as m0 from "notes" t ` +
+      `where t."id" = any(array(select jsonb_array_elements_text($1::jsonb)::bigint))`,
+  );
+});
+
+Deno.test("realtime: a grouped re-read keeps a catalog type spelled with $ as the catalog spells it", () => {
+  // `$'`, `$&` and `$$` are replacement patterns to String#replace: a column type whose quoted
+  // name holds one must reach the statement unchanged, not spliced with the statement's own text.
+  const { tables } = resolveRealtime({ tables: { notes: {} } });
+  const table = tables.get("notes")!;
+  for (const type of [`"price$'"`, `"tag$&"`, `"cents$$"`, `"x$\`"`]) {
+    const types = new Map([["id", "bigint"], ["amount", type]]);
+    const { text } = groupRereadQuery(table, [{ column: "amount", value: "1" }], ["1"], types);
+    assertEquals(
+      text,
+      `select to_jsonb(t."id") #>> '{}' as k, to_jsonb(t)::text as r, ` +
+        `coalesce(t."amount" = $2::text::${type}, false) as m0 from "notes" t ` +
+        `where t."id" = any(array(select jsonb_array_elements_text($1::jsonb)::bigint))`,
+    );
+  }
 });
 
 // ── Raw mode (Supabase postgres_changes), truncate, old rows, operators ─────

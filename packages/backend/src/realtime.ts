@@ -61,6 +61,7 @@ import {
   withMigrationLock,
 } from "@denext/denext/server";
 import { type DbIdentity, ensureRlsMigrated, type RlsScope } from "./rls.ts";
+import { quoteIdent } from "./rest-query.ts";
 import { resolveScope, rlsReady, scopedFor } from "./postgres.ts";
 import {
   decodeSubscriptionKey,
@@ -1831,13 +1832,15 @@ function filterSql(filter: ParsedFilter, param: string, types: Map<string, strin
   const type = types.get(column);
   if (filter.op === "in") {
     return type
-      ? `t."${column}" = any(array(select jsonb_array_elements_text(${param}::jsonb)::${type}))`
-      : `t."${column}"::text in (select jsonb_array_elements_text(${param}::jsonb))`;
+      ? `t.${
+        quoteIdent(column)
+      } = any(array(select jsonb_array_elements_text(${param}::jsonb)::${type}))`
+      : `t.${quoteIdent(column)}::text in (select jsonb_array_elements_text(${param}::jsonb))`;
   }
   const op = OPERATORS[filter.op ?? "eq"];
   return type
-    ? `t."${column}" ${op} ${param}::text::${type}`
-    : `t."${column}"::text ${op} ${param}`;
+    ? `t.${quoteIdent(column)} ${op} ${param}::text::${type}`
+    : `t.${quoteIdent(column)}::text ${op} ${param}`;
 }
 
 /**
@@ -1851,8 +1854,8 @@ function filterSql(filter: ParsedFilter, param: string, types: Map<string, strin
  */
 function keyText(column: string, type: string | undefined): string {
   const value = type === "timestamp with time zone"
-    ? `t."${column}" AT TIME ZONE 'UTC'`
-    : `t."${column}"`;
+    ? `t.${quoteIdent(column)} AT TIME ZONE 'UTC'`
+    : `t.${quoteIdent(column)}`;
   return `to_jsonb(${value}) #>> '{}'`;
 }
 
@@ -1868,17 +1871,41 @@ export function rereadQuery(
   types: Map<string, string>,
 ): { text: string; params: unknown[] } {
   const params: unknown[] = [JSON.stringify(keys)];
-  const type = types.get(table.key);
-  const match = type
-    ? `t."${table.key}" = any(array(select jsonb_array_elements_text($1::jsonb)::${type}))`
-    : `t."${table.key}"::text in (select jsonb_array_elements_text($1::jsonb))`;
-  let text = `select ${keyText(table.key, type)} as k, to_jsonb(t)::text as r ` +
-    `from ${table.qualified} t where ${match}`;
+  const where = [keyMatch(table.key, "$1", types)];
   if (filter) {
     params.push(filter.value);
-    text += ` and ${filterSql(filter, "$2", types)}`;
+    where.push(filterSql(filter, "$2", types));
   }
-  return { text, params };
+  return { text: rereadSelect(table, types, [], where), params };
+}
+
+/**
+ * The key column of `t` against the keys in the JSON array bound at `param`, cast to the column's
+ * type (an index scan on the key); compared as text only when the type is unknown.
+ */
+function keyMatch(key: string, param: string, types: Map<string, string>): string {
+  const type = types.get(key);
+  return type
+    ? `t.${
+      quoteIdent(key)
+    } = any(array(select jsonb_array_elements_text(${param}::jsonb)::${type}))`
+    : `t.${quoteIdent(key)}::text in (select jsonb_array_elements_text(${param}::jsonb))`;
+}
+
+/**
+ * A re-read's statement, assembled from its parts: the key and the row, then `extra` select
+ * columns, from the table, under every `where` condition. Each part is SQL this module wrote
+ * (validated identifiers, catalog types, `$n` placeholders); no value is ever spliced in.
+ */
+function rereadSelect(
+  table: ResolvedTable,
+  types: Map<string, string>,
+  extra: string[],
+  where: string[],
+): string {
+  const columns = [`${keyText(table.key, types.get(table.key))} as k`, "to_jsonb(t)::text as r"];
+  return `select ${[...columns, ...extra].join(", ")} from ${table.qualified} t ` +
+    `where ${where.join(" and ")}`;
 }
 
 /**
@@ -1886,21 +1913,19 @@ export function rereadQuery(
  * whether the row matches `filters[n]` (`false` for a NULL comparison): one re-read for several
  * subscriptions of one identity with different filters. Each filter value is its own parameter.
  */
-function groupRereadQuery(
+export function groupRereadQuery(
   table: ResolvedTable,
   filters: Array<ParsedFilter | undefined>,
   keys: string[],
   types: Map<string, string>,
 ): { text: string; params: unknown[] } {
-  const base = rereadQuery(table, undefined, keys, types);
-  const params = [...base.params];
+  const params: unknown[] = [JSON.stringify(keys)];
   const columns = filters.map((filter, n) => {
     if (!filter) return `true as m${n}`;
     params.push(filter.value);
     return `coalesce(${filterSql(filter, `$${params.length}`, types)}, false) as m${n}`;
   });
-  const text = base.text.replace(" as r from ", ` as r, ${columns.join(", ")} from `);
-  return { text, params };
+  return { text: rereadSelect(table, types, columns, [keyMatch(table.key, "$1", types)]), params };
 }
 
 /** `select key` of every visible row (bounded), under the caller's scope (and the filter). */

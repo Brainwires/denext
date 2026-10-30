@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`@denext/backend`: a realtime re-read's statement is assembled from its parts.** The filters of
+  a shared re-read were spliced into the finished statement with a text replacement, which
+  rewrote a filter column whose catalog type is spelled with `$'`, `$&` or `$$`. Values were
+  already bound parameters and stay so; identifiers go through the REST layer's quoting helper.
+
 ## [4.10.1] - 2026-10-29
 
 ### Added
