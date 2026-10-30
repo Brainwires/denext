@@ -242,7 +242,7 @@ async function withRrApp(
     app: (req: Request) => Promise<Response>,
     root: string,
   ) => Promise<void>,
-  options: { pageCache?: PageCache; plugin?: ReactRouterOptions } = {},
+  options: { pageCache?: PageCache; plugin?: ReactRouterOptions; flight?: boolean } = {},
 ): Promise<void> {
   resetPlugins();
   const tmpBase = fromFileUrl(new URL("./.tmp/", import.meta.url));
@@ -262,6 +262,9 @@ async function withRrApp(
       getManifest: () => manifest,
       load: defaultLoader,
       pageCache: options.pageCache,
+      ...(options.flight
+        ? { flight: true, appDir: join(root, "app"), flightRoutes: new Set(["/teams/[id]"]) }
+        : {}),
     });
     await run(app, root);
   } finally {
@@ -595,4 +598,137 @@ export function loader({ context }) {
     assertEquals(await api.json(), { trail: ["root"], tenant: "acme" });
     assertEquals(api.headers.get("x-root-middleware"), "ran");
   }, { plugin: { getLoadContext: () => ({ tenant: "acme" }) } });
+});
+
+// React Router's server middleware wraps the whole request: the innermost `next()` serves the
+// page — loaders, render and document (or a client navigation's payload) — and resolves to the
+// response the browser gets, outermost route first, sharing the request's context.
+const WRAPPING_APP: Record<string, string> = {
+  "context.ts": `import { createContext } from "denext/remix";
+export const log = createContext<string[] | null>(null);
+`,
+  "root.tsx": `import { Outlet, useRouteError } from "react-router";
+import { log } from "./context.ts";
+export const middleware = [
+  async ({ request, context }, next) => {
+    const order: string[] = ["root"];
+    context.set(log, order);
+    if (new URL(request.url).searchParams.has("short")) {
+      return new Response("short-circuited", { status: 418 });
+    }
+    const response = await next();
+    order.push("root-after");
+    response.headers.set("x-seen", response.status + " " + response.headers.get("content-type"));
+    response.headers.set("x-order", order.join(">"));
+    if (response.status === 500) return new Response("replaced", { status: 503 });
+    return response;
+  },
+];
+export function Layout({ children }: { children: unknown }) {
+  return <html lang="en"><head /><body>{children}</body></html>;
+}
+export default function App() {
+  return <Outlet />;
+}
+export function ErrorBoundary() {
+  return <p id="root-error">{String(useRouteError())}</p>;
+}
+`,
+  "routes.ts": `import { layout, route } from ${JSON.stringify(DSL)};
+export default [
+  layout("routes/shell.tsx", [
+    route("teams/:id", "routes/team.tsx"),
+    route("boom", "routes/boom.tsx"),
+  ]),
+];
+`,
+  "routes/shell.tsx": `import { Outlet } from "react-router";
+import { log } from "../context.ts";
+export const middleware = [async ({ context }, next) => {
+  context.get(log)?.push("shell");
+  const response = await next();
+  context.get(log)?.push("shell-after");
+  return response;
+}];
+export default function Shell() {
+  return <section><Outlet /></section>;
+}
+`,
+  "routes/team.tsx": `import { log } from "../context.ts";
+export const middleware = [async ({ context }, next) => {
+  context.get(log)?.push("team");
+  const response = await next();
+  context.get(log)?.push("team-after");
+  return response;
+}];
+export function loader({ context, params }) {
+  context.get(log)?.push("loader");
+  return { id: params.id };
+}
+export default function Team({ loaderData }: { loaderData: { id: string } }) {
+  return <p id="team">team {loaderData.id}</p>;
+}
+`,
+  "routes/boom.tsx": `export function loader() {
+  throw new Error("render failed");
+}
+export default function Boom() {
+  return <p>never</p>;
+}
+`,
+};
+
+/** Run `run` against {@link WRAPPING_APP} (Flight on, as a built app serves it). */
+function withWrappingApp(run: (app: (req: Request) => Promise<Response>) => Promise<void>) {
+  return withRrApp(WRAPPING_APP, (app) => run(app), { flight: true });
+}
+
+const WRAPPED_ORDER = "root>shell>team>loader>team-after>shell-after>root-after";
+
+Deno.test("react-router plugin: a middleware's header after next() lands on the rendered document", async () => {
+  await withWrappingApp(async (app) => {
+    const res = await app(new Request("http://localhost/teams/7"));
+    assertStringIncludes(await res.text(), '<p id="team">team');
+    assertEquals(res.status, 200);
+    // next() resolved to the rendered HTML response itself, not a stand-in.
+    assertStringIncludes(res.headers.get("x-seen") ?? "", "200 text/html");
+  });
+});
+
+Deno.test("react-router plugin: middleware runs outermost first around nested routes' loaders", async () => {
+  await withWrappingApp(async (app) => {
+    const res = await app(new Request("http://localhost/teams/7"));
+    await res.body?.cancel();
+    // In on the way down, out on the way up, the loaders in between; one shared context.
+    assertEquals(res.headers.get("x-order"), WRAPPED_ORDER);
+  });
+});
+
+Deno.test("react-router plugin: middleware wraps a client navigation's data request", async () => {
+  await withWrappingApp(async (app) => {
+    const nav = await app(
+      new Request("http://localhost/teams/8", { headers: { "x-denext-nav": "1" } }),
+    );
+    await nav.body?.cancel();
+    assertEquals(nav.status, 200);
+    assertEquals(nav.headers.get("x-denext-flight"), "1");
+    assertStringIncludes(nav.headers.get("x-seen") ?? "", "200 application/json");
+    assertEquals(nav.headers.get("x-order"), WRAPPED_ORDER);
+  });
+});
+
+Deno.test("react-router plugin: a render error reaches next() as its response, which middleware replaces", async () => {
+  await withWrappingApp(async (app) => {
+    const boom = await app(new Request("http://localhost/boom"));
+    assertEquals(boom.status, 503);
+    assertEquals(await boom.text(), "replaced");
+  });
+});
+
+Deno.test("react-router plugin: a middleware's own Response without next() short-circuits the render", async () => {
+  await withWrappingApp(async (app) => {
+    const short = await app(new Request("http://localhost/teams/9?short"));
+    assertEquals(short.status, 418);
+    assertEquals(await short.text(), "short-circuited");
+  });
 });
