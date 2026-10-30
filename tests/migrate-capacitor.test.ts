@@ -574,7 +574,8 @@ Deno.test("migrate CLI --enable-capacitor: runs the install and cap add, and rep
     try {
       await command.run(makeCtx({
         positionals: [dir],
-        flags: { "enable-capacitor": true, "app-id": "com.acme.t3", platform: "ios" },
+        // --yes: the steps run the project's own code, which migrate runs only on an opt-in.
+        flags: { "enable-capacitor": true, "app-id": "com.acme.t3", platform: "ios", yes: true },
       }));
     } finally {
       out.restore();
@@ -637,9 +638,11 @@ async function migrateCapacitorGated(
   try {
     await withTree(t3Like(), async (root) => {
       const dir = join(root, "apps/web");
-      const command = createMigrateCommand((c) => {
+      const command = createMigrateCommand(async (c) => {
         ran.push([c.cmd, ...c.args].join(" "));
-        return Promise.resolve({ code: 0 });
+        // The install puts the project's own Capacitor CLI in place, as pnpm would.
+        if (c.cmd === "pnpm") await installFakeCapacitorCli(c.cwd);
+        return { code: 0 };
       });
       const out = capture();
       try {
@@ -665,7 +668,7 @@ Deno.test("migrate CLI --enable-capacitor: a non-interactive run without --yes r
   assertEquals(ran, [], "the install, the export and cap add all wait for an opt-in");
   assertEquals(asked, [], "a non-interactive run never prompts");
   assertStringIncludes(log, "still to run:");
-  assertStringIncludes(log, "npx cap add ios");
+  assertStringIncludes(log, "npx --no cap add ios");
   assertStringIncludes(log, "runs the project's own code");
   assertStringIncludes(log, "--yes");
 });
