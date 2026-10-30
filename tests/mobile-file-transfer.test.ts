@@ -259,7 +259,8 @@ function streamingFetch(
   const requests: Array<{ url: string; headers: Headers }> = [];
   let release: (() => void) | null = null;
   let pending = 0;
-  let served = false;
+  /** Whether a body has ended: served to its end, or failed at `failAt` (an abort is a pause). */
+  let ended = false;
   const gate = () => new Promise<void>((resolve) => (release = resolve));
   const fetch = (url: string, init: { headers?: HeadersInit; signal?: AbortSignal } = {}) => {
     const headers = new Headers(init.headers);
@@ -272,7 +273,7 @@ function streamingFetch(
       start: (controller) => void (stream = controller),
       async pull(controller) {
         if (at >= size) {
-          served = true;
+          ended = true;
           return controller.close();
         }
         pending++;
@@ -280,6 +281,7 @@ function streamingFetch(
         pending--;
         if (init.signal?.aborted) return controller.error(init.signal.reason);
         if (opts.failAt !== undefined && at >= opts.failAt) {
+          ended = true;
           return controller.error(new TypeError("network connection lost"));
         }
         const end = Math.min(size, at + 1024);
@@ -319,13 +321,13 @@ function streamingFetch(
       }
     },
     /**
-     * Let every chunk through, until a body has been served to its end. (Waiting for the next
-     * chunk with a short limit instead ended early whenever a loaded machine made the downloader
-     * slower than the limit, leaving the transfer stuck.)
+     * Let every chunk through, until a body has been served to its end or has failed (`failAt`).
+     * (Waiting for the next chunk with a short limit instead ended early whenever a loaded machine
+     * made the downloader slower than the limit, leaving the transfer stuck.)
      */
     async drain() {
       for (;;) {
-        await until(() => (pending > 0 && release !== null) || served, "a chunk or the end");
+        await until(() => (pending > 0 && release !== null) || ended, "a chunk or the end");
         if (pending === 0 || release === null) return;
         const r = release!;
         release = null;
