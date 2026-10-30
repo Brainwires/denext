@@ -295,12 +295,18 @@ Deno.test("the release gate re-checks only the release's own changes unless --fu
 Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async () => {
   // JSR refuses a package over 20 MiB at upload (its hard limit), after the tag is pushed
   // (4.0.0's first two publishes). Sum what `deno publish` sends against a guard below that limit.
-  // The guard was 19 MiB; 4.9.0 grew past it, so it is 19.6 MiB while the quota increase asked of
-  // JSR on 2026-10-25 is pending. Splitting the package is 5.0 work.
+  // The guard was 19 MiB; 4.9.0 grew past it, so it was 19.6 MiB while the quota increase asked of
+  // JSR on 2026-10-25 is pending. Raised to 19.85 MiB on 2026-10-29 for the 4.10-c train
+  // (19.545 → 19.79 MiB, all of it source: the OTA app binding and desktop overlay verification,
+  // the lock rework, the resource limits, the next.config sandbox's contained read, the child
+  // probe, the react-reconciler context bridge, the mobile build / doctor checks). Nothing in the
+  // publish set is outside the import graph of an export but the React Native modules that
+  // resolveAlias reaches by path, so there was nothing to drop; 0.15 MiB of headroom to 20 MiB is
+  // left. Splitting the package (the auth package first) is 5.0 work.
   const files = await publishedFiles();
   if (!files) return; // not a git checkout: nothing to measure
   const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
-  assert(mib < 19.6, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
+  assert(mib < 19.85, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
 });
 
 /** Published generated files over 50 KiB that may ship uncompressed, and why. */
