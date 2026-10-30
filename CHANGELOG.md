@@ -151,6 +151,12 @@ and this project adheres to
   the working directory. The Database section's `denext db-admin` child and the Setup page's
   `denext doctor --json` are always waited for to their exit or deadline: project code there may
   print JSON of its own before a long silent stretch of work.
+- **`PrismaDenoSql` on Postgres reports Prisma 7's `RestrictViolation` and `InvalidInputValue`.**
+  A foreign-key `RESTRICT` failure (SQLSTATE 23001) and an invalid input value (22P02) are mapped
+  to those kinds, as `@prisma/adapter-pg` 7 does, instead of the generic `postgres` error, and a
+  deadlock (40P01) is a `TransactionWriteConflict`. The restated contract in
+  `denext/prisma-adapter` follows `@prisma/driver-adapter-utils` 7.10.1 (the new kinds, `table` on
+  a unique violation, optional savepoint methods on `Transaction`).
 
 ### Security
 

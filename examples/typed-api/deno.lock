@@ -75,7 +75,7 @@
           "jsr:@std/path@1",
           "jsr:@std/yaml@1",
           "npm:@mdx-js/mdx@3",
-          "npm:@prisma/driver-adapter-utils@6.19.3",
+          "npm:@prisma/driver-adapter-utils@7.10.1",
           "npm:@supabase/supabase-js@2.117.2",
           "npm:@tanstack/router-plugin@1.168.42",
           "npm:effect@^3.22.0",
