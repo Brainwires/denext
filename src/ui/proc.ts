@@ -336,9 +336,7 @@ function completeDocument(stdout: string): boolean {
  */
 async function killTree(child: Deno.ChildProcess, reads: Promise<unknown>): Promise<void> {
   if (Deno.build.os === "windows") {
-    if (!await settledNow(child.status)) {
-      await quietly(taskkillPath(), ["/PID", String(child.pid), "/T", "/F"]);
-    }
+    if (!await settledNow(child.status)) await taskkillTree(child.pid);
   } else {
     killGroup(child.pid);
   }
@@ -386,20 +384,16 @@ function envOf(name: string): string | undefined {
   }
 }
 
-/** Run `cmd` with `args` and return its stdout ("" when it cannot run). */
-async function quietly(cmd: string, args: string[]): Promise<string> {
+/** `taskkill /T /F` of `pid` and its tree (best effort: it may be gone). */
+async function taskkillTree(pid: number): Promise<void> {
   try {
-    const out = await new Deno.Command(cmd, {
-      args,
+    await new Deno.Command(taskkillPath(), {
+      args: ["/PID", String(pid), "/T", "/F"],
       stdin: "null",
-      stdout: "piped",
+      stdout: "null",
       stderr: "null",
-    })
-      .output();
-    return new TextDecoder().decode(out.stdout);
-  } catch {
-    return "";
-  }
+    }).output();
+  } catch { /* it cannot run */ }
 }
 
 function writeStderr(line: string): void {
