@@ -20,17 +20,14 @@ import { nativePlugin } from "./plugin.ts";
 import { capabilityError, type DesktopNative, onDesktop, viaDesktop } from "./desktop-branch.ts";
 import { WEB_HANDLE_PREFIX, webHandle, webHandleWritable } from "./picked-web.ts";
 import {
+  desktopDownload,
   type DownloadSink,
-  FileTransferError,
-  type FileTransferErrorCode,
   type FileTransferEvent,
   type FileTransferOptions,
   nativeTransfer,
   type NativeTransferStart,
   pageDownload,
   pageUpload,
-  trackedDownload,
-  type TrackedDownloadPause,
   transferPlugin,
   type UploadFileResult,
 } from "./file-transfer.ts";
@@ -615,8 +612,9 @@ function urlOf(fn: string, url: string): string {
  *   {@linkcode onFileTransfer} reports it; {@linkcode pauseFileTransfer} keeps the bytes so far
  *   and {@linkcode resumeFileTransfer} asks for the rest with a range request (a server that
  *   answers 200 starts it over); {@linkcode cancelFileTransfer} or aborting `signal` cancels it
- *   and drops the partial file. A download a restart interrupted continues when the same URL is
- *   downloaded to the same file again.
+ *   and drops the partial file. The runtime keeps the download's record across restarts, so
+ *   {@linkcode fileTransfers} lists it after one and {@linkcode resumeFileTransfer} continues it
+ *   from its partial file (one running at quit is listed as failed, resumable).
  * - Otherwise `fetch(url)` (CORS applies), its body streamed into the Origin Private File System
  *   with progress; a pause keeps the bytes so far, and a resume asks for the rest with a range
  *   request (a server that answers 200 starts it over). {@linkcode cancelFileTransfer} or
@@ -653,106 +651,26 @@ export async function downloadToFile(
     method: "GET",
   });
   if (done) return { path: done.file ?? rel };
+  const shown = isPicked(directory) ? "picked" : directory;
   const desktop = onDesktop() &&
     await viaDesktopFs(
       "downloadToFile",
       directory,
-      (d) => desktopDownload(d, href, rel, directory, options),
+      (d) =>
+        desktopDownload(
+          d,
+          { id: options.id, url: href, directory: shown, path: rel, options },
+          directory,
+        ),
     );
   if (desktop) return desktop.value;
   const native = await filesystemDownload(href, rel, directory, options);
   if (native) return native;
-  const shown = isPicked(directory) ? "picked" : directory;
   await pageDownload(
     { id: options.id, url: href, directory: shown, path: rel, options },
     webSink(directory, rel),
   );
   return { path: isPicked(directory) ? rel : `${directory}/${rel}` };
-}
-
-/** The runtime's `fs.download` failure codes, as the {@linkcode FileTransferError} codes. */
-const DESKTOP_TRANSFER_CODES: Readonly<Record<string, FileTransferErrorCode>> = {
-  download_failed: "HTTP",
-  network: "NETWORK",
-  io: "IO",
-  too_large: "IO",
-  validation: "INVALID",
-  exists: "EXISTS",
-  cancelled: "CANCELLED",
-};
-
-/**
- * A desktop download's failure as the mobile path's: a {@linkcode FileTransferError} for the
- * transfer failures (`HTTP` with the status and body, `NETWORK`, `IO`, `INVALID`, `EXISTS`,
- * `CANCELLED`); anything else (`unavailable`, `forbidden`, …) unchanged.
- */
-function desktopTransferError(err: unknown, id: string): unknown {
-  const e = err as { code?: unknown; message?: unknown; data?: unknown } | null;
-  const code = transferCodeOf(e?.code);
-  if (!code) return err;
-  const message = String(e?.message ?? "failed").replace(/^desktop fs\.download: \w+: /, "");
-  return new FileTransferError(`downloadToFile: ${message}`, { code, id, ...httpDetail(e?.data) });
-}
-
-/** The {@linkcode FileTransferError} code for a runtime `fs.download` code, if it has one. */
-function transferCodeOf(code: unknown): FileTransferErrorCode | undefined {
-  return typeof code === "string" && Object.hasOwn(DESKTOP_TRANSFER_CODES, code)
-    ? DESKTOP_TRANSFER_CODES[code]
-    : undefined;
-}
-
-/** An HTTP failure's `status` and `body` from the runtime's error data. */
-function httpDetail(raw: unknown): { status?: number; body?: string } {
-  const data = (raw ?? {}) as { status?: unknown; body?: unknown };
-  const out: { status?: number; body?: string } = {};
-  if (typeof data.status === "number") out.status = data.status;
-  if (typeof data.body === "string") out.body = data.body;
-  return out;
-}
-
-/** Where a desktop download's `paused` rejection says it stopped (`undefined` for another error). */
-function desktopPause(err: unknown): TrackedDownloadPause | undefined {
-  const e = err as { code?: unknown; data?: unknown } | null;
-  if (e?.code !== "paused") return undefined;
-  const d = (e.data ?? {}) as { bytes?: unknown; total?: unknown; resumable?: unknown };
-  return {
-    bytes: typeof d.bytes === "number" ? d.bytes : 0,
-    total: typeof d.total === "number" ? d.total : null,
-    resumable: d.resumable === true,
-  };
-}
-
-/**
- * A download in a Deno Desktop window: the runtime fetches it with the request `headers` and
- * reports progress. It is a tracked transfer (`fileTransfers()`, `onFileTransfer`,
- * `pauseFileTransfer`, `resumeFileTransfer`, `cancelFileTransfer`): a pause sends
- * `fs.pauseDownload` (the runtime keeps the partial file), a resume `fs.resumeDownload` (a range
- * request guarded by `If-Range`), and a cancel, or `signal` aborting, `fs.cancelDownload` (the
- * partial file is dropped). Its failures are the mobile path's {@linkcode FileTransferError}s.
- */
-function desktopDownload(
-  desktop: DesktopNative,
-  href: string,
-  rel: string,
-  directory: FileDirectory,
-  options: DownloadToFileOptions,
-): Promise<{ path: string }> {
-  const shown = isPicked(directory) ? "picked" : directory;
-  return trackedDownload({ id: options.id, url: href, directory: shown, path: rel, options }, {
-    run: ({ id, signal, onProgress, resume }) =>
-      desktop.fsDownload(href, rel, directory, {
-        id,
-        headers: headersOf(options.headers),
-        signal,
-        onProgress,
-        resume,
-      }),
-    error: desktopTransferError,
-    absent: (err) => (err as { code?: unknown } | null)?.code === "unavailable",
-    pause: (id) => desktop.fsPauseDownload(id),
-    paused: desktopPause,
-    discard: (id) => desktop.fsCancelDownload(id),
-  });
 }
 
 /**

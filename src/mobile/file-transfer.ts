@@ -12,8 +12,9 @@
  * - In a Deno Desktop window the runtime runs a download (`fs.download`); the page tracks it
  *   (listed, evented, paused through `fs.pauseDownload`, resumed through `fs.resumeDownload`,
  *   cancelled through `fs.cancelDownload`). The runtime keeps a paused or interrupted download's
- *   partial file, so a resume (or the same download started again, after a restart too)
- *   continues it with a range request.
+ *   partial file and, like the plugin, its record (`fs.listDownloads`), so after a restart
+ *   {@linkcode fileTransfers} lists it and {@linkcode resumeFileTransfer} continues it with a
+ *   range request.
  * - Elsewhere it runs in the page: `fetch` with the body read as a stream (download progress,
  *   pause and a range-request resume) and `XMLHttpRequest` for uploads (upload progress), so it
  *   lasts as long as the page does.
@@ -21,6 +22,7 @@
  * @module
  */
 
+import { type DesktopNative, onDesktop, viaDesktop } from "./desktop-branch.ts";
 import { withLocalNetworkHint } from "./local-network.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
 
@@ -597,7 +599,8 @@ abstract class SettlingDownload<T> implements PageTransfer {
   /** Run the download's request (`resume`: continue a paused one). */
   protected abstract attempt(resume: boolean): Promise<void>;
 
-  start(): void {
+  /** Start the download (`resume`: continue one an earlier launch recorded, from its bytes). */
+  start(resume = false): void {
     const { signal } = this.spec.options;
     pageTransfers.set(this.info.id, this);
     if (signal?.aborted) {
@@ -606,7 +609,7 @@ abstract class SettlingDownload<T> implements PageTransfer {
     }
     signal?.addEventListener("abort", this.#onAbort, { once: true });
     pageEvent(this, "started");
-    void this.attempt(false);
+    void this.attempt(resume);
   }
 
   abort(reason: AbortWhy): void {
@@ -989,6 +992,176 @@ export function trackedDownload(
   });
 }
 
+// --- Deno Desktop downloads (the runtime's `fs` capability) -----------------------------------
+
+/** The runtime's `fs.download` failure codes, as the {@linkcode FileTransferError} codes. */
+const DESKTOP_TRANSFER_CODES: Readonly<Record<string, FileTransferErrorCode>> = {
+  download_failed: "HTTP",
+  network: "NETWORK",
+  io: "IO",
+  too_large: "IO",
+  validation: "INVALID",
+  exists: "EXISTS",
+  cancelled: "CANCELLED",
+};
+
+/** The {@linkcode FileTransferError} code for a runtime `fs.download` code, if it has one. */
+function transferCodeOf(code: unknown): FileTransferErrorCode | undefined {
+  return typeof code === "string" && Object.hasOwn(DESKTOP_TRANSFER_CODES, code)
+    ? DESKTOP_TRANSFER_CODES[code]
+    : undefined;
+}
+
+/** An HTTP failure's `status` and `body` from the runtime's error data. */
+function httpDetail(raw: unknown): { status?: number; body?: string } {
+  const data = (raw ?? {}) as { status?: unknown; body?: unknown };
+  const out: { status?: number; body?: string } = {};
+  if (typeof data.status === "number") out.status = data.status;
+  if (typeof data.body === "string") out.body = data.body;
+  return out;
+}
+
+/**
+ * A desktop download's failure as the mobile path's: a {@linkcode FileTransferError} for the
+ * transfer failures (`HTTP` with the status and body, `NETWORK`, `IO`, `INVALID`, `EXISTS`,
+ * `CANCELLED`); anything else (`unavailable`, `forbidden`, …) unchanged.
+ */
+function desktopTransferError(err: unknown, id: string): unknown {
+  const e = err as { code?: unknown; message?: unknown; data?: unknown } | null;
+  const code = transferCodeOf(e?.code);
+  if (!code) return err;
+  const message = String(e?.message ?? "failed").replace(/^desktop fs\.download: \w+: /, "");
+  return new FileTransferError(`downloadToFile: ${message}`, { code, id, ...httpDetail(e?.data) });
+}
+
+/** Where a desktop download's `paused` rejection says it stopped (`undefined` for another error). */
+function desktopPause(err: unknown): TrackedDownloadPause | undefined {
+  const e = err as { code?: unknown; data?: unknown } | null;
+  if (e?.code !== "paused") return undefined;
+  const d = (e.data ?? {}) as { bytes?: unknown; total?: unknown; resumable?: unknown };
+  return {
+    bytes: typeof d.bytes === "number" ? d.bytes : 0,
+    total: typeof d.total === "number" ? d.total : null,
+    resumable: d.resumable === true,
+  };
+}
+
+/** The folder a desktop download writes into: an app folder, or a picked one. */
+type DesktopDirectory = Parameters<DesktopNative["fsDownload"]>[2];
+
+/** The engine of a download the Deno Desktop runtime runs (`fs.download` and its controls). */
+function desktopEngine(
+  desktop: DesktopNative,
+  spec: PageTransferSpec,
+  directory: DesktopDirectory,
+): TrackedDownloadEngine {
+  const headers = { ...(spec.options.headers ?? {}) };
+  return {
+    run: ({ id, signal, onProgress, resume }) =>
+      desktop.fsDownload(spec.url, spec.path, directory, {
+        id,
+        headers,
+        signal,
+        onProgress,
+        resume,
+      }),
+    error: desktopTransferError,
+    absent: (err) => (err as { code?: unknown } | null)?.code === "unavailable",
+    pause: (id) => desktop.fsPauseDownload(id),
+    paused: desktopPause,
+    discard: async (id) => void await desktop.fsCancelDownload(id),
+  };
+}
+
+/**
+ * A download in a Deno Desktop window: the runtime fetches it with the request `headers` and
+ * reports progress. It is a tracked transfer (`fileTransfers()`, `onFileTransfer`,
+ * `pauseFileTransfer`, `resumeFileTransfer`, `cancelFileTransfer`): a pause sends
+ * `fs.pauseDownload` (the runtime keeps the partial file), a resume `fs.resumeDownload` (a range
+ * request guarded by `If-Range`), and a cancel, or `signal` aborting, `fs.cancelDownload` (the
+ * partial file is dropped). Its failures are the mobile path's {@linkcode FileTransferError}s.
+ *
+ * @param desktop The desktop module.
+ * @param spec The transfer (`directory` as the page shows it).
+ * @param directory The folder the runtime writes into.
+ * @returns The file's path, once done.
+ */
+export function desktopDownload(
+  desktop: DesktopNative,
+  spec: PageTransferSpec,
+  directory: DesktopDirectory,
+): Promise<{ path: string }> {
+  return trackedDownload(spec, desktopEngine(desktop, spec, directory));
+}
+
+/** The runtime's records (an earlier launch's downloads included); none off desktop or without `fs`. */
+async function desktopRecords(): Promise<FileTransferInfo[]> {
+  if (!onDesktop()) return [];
+  const out = await viaDesktop("fs", (d) => d.fsListDownloads());
+  return (out?.value ?? []).map((raw) => infoOf(fromNative(raw as RawTransfer)));
+}
+
+/** Runtime record `id` (one no page transfer of this page has taken over), if there is one. */
+async function desktopRecord(id: string): Promise<FileTransferInfo | undefined> {
+  const found = (await desktopRecords()).find((r) => r.id === id);
+  return found && !pageTransfers.has(id) ? found : undefined;
+}
+
+/**
+ * Resume a download the runtime recorded and this page does not track (an earlier launch's, or a
+ * reloaded page's): paused, or failed. It becomes this page's tracked transfer, continuing from
+ * its partial file with the request headers the runtime kept. `undefined` off desktop.
+ */
+async function resumeDesktopRecord(id: string): Promise<boolean | undefined> {
+  if (!onDesktop()) return undefined;
+  const record = await desktopRecord(id);
+  if (!record) return undefined;
+  if (record.state !== "paused" && record.state !== "failed") return false;
+  const out = await viaDesktop("fs", (desktop) => {
+    // Taken over meanwhile (a resume racing this one): that one runs it.
+    if (pageTransfers.has(id)) return Promise.resolve(false);
+    const spec: PageTransferSpec = {
+      id,
+      url: record.url,
+      directory: record.directory,
+      path: record.path,
+      options: {},
+    };
+    const directory = record.directory as DesktopDirectory;
+    const done = new Promise<{ path: string }>((resolve, reject) => {
+      const t = new TrackedDownload(spec, desktopEngine(desktop, spec, directory), id, {
+        resolve,
+        reject,
+      });
+      t.info = { ...t.info, bytes: record.bytes, total: record.total };
+      t.start(true);
+    });
+    // Nobody awaits it (the page that started it is gone): its events and record report it.
+    done.catch(() => {});
+    return Promise.resolve(true);
+  });
+  return out?.value;
+}
+
+/**
+ * Cancel (`forget: false`) or forget a download the runtime recorded and this page does not
+ * track: the runtime drops its record and kept partial file. A cancel sends `cancelled`.
+ */
+async function settleDesktopRecord(id: string, forget: boolean): Promise<boolean | undefined> {
+  if (!onDesktop()) return undefined;
+  const record = await desktopRecord(id);
+  if (!record) return undefined;
+  const out = await viaDesktop(
+    "fs",
+    (d) => forget ? d.fsForgetDownload(id) : d.fsCancelDownload(id),
+  );
+  const ok = out?.value === true;
+  if (ok && !forget) {
+    dispatch({ ...record, type: "cancelled", state: "cancelled", resumable: false });
+  }
+  return ok;
+}
+
 /** Cancel a page transfer; `caller` when the caller's own signal aborted it. */
 function cancelPage(id: string, why: "cancel" | "caller"): boolean {
   const t = pageTransfers.get(id);
@@ -1282,7 +1455,10 @@ export function nativeTransfer(
 /**
  * Every transfer this page knows: in the shell, the plugin's records (running, paused, and
  * finished ones not yet forgotten — those that finished while the page was gone included);
- * on the web and in a Deno Desktop window, the ones this page started.
+ * in a Deno Desktop window, the ones this page started and the runtime's records (an earlier
+ * launch's paused, failed and recently done downloads included: a download the app quit during
+ * is `failed`, `resumable` when its partial file can continue); on the web, the ones this page
+ * started.
  *
  * @returns The transfers.
  */
@@ -1291,7 +1467,9 @@ export async function fileTransfers(): Promise<FileTransferInfo[]> {
   const native = plugin
     ? ((await plugin.list()).transfers ?? []).map((raw) => infoOf(fromNative(raw ?? {})))
     : [];
-  return [...native, ...[...pageTransfers.values()].map((t) => t.info)];
+  const page = [...pageTransfers.values()].map((t) => t.info);
+  const recorded = (await desktopRecords()).filter((r) => !pageTransfers.has(r.id));
+  return [...native, ...recorded, ...page];
 }
 
 /**
@@ -1333,6 +1511,8 @@ export async function resumeFileTransfer(id: string): Promise<boolean> {
     page.resume();
     return true;
   }
+  const recorded = await resumeDesktopRecord(id);
+  if (recorded !== undefined) return recorded;
   const plugin = transferPlugin();
   return plugin ? (await plugin.resume({ id })).resumed === true : false;
 }
@@ -1347,6 +1527,8 @@ export async function resumeFileTransfer(id: string): Promise<boolean> {
  */
 export async function cancelFileTransfer(id: string): Promise<boolean> {
   if (pageTransfers.has(id)) return cancelPage(id, "cancel");
+  const recorded = await settleDesktopRecord(id, false);
+  if (recorded !== undefined) return recorded;
   const plugin = transferPlugin();
   return plugin ? (await plugin.cancel({ id })).cancelled === true : false;
 }
@@ -1362,8 +1544,12 @@ export async function forgetFileTransfer(id: string): Promise<boolean> {
   if (page) {
     if (page.info.state === "running" || page.info.state === "paused") return false;
     pageTransfers.delete(id);
+    // The runtime's record of it, on desktop, goes too (else it would be listed again).
+    if (onDesktop()) await viaDesktop("fs", (d) => d.fsForgetDownload(id)).catch(() => {});
     return true;
   }
+  const recorded = await settleDesktopRecord(id, true);
+  if (recorded !== undefined) return recorded;
   const plugin = transferPlugin();
   return plugin ? (await plugin.forget({ id })).forgotten === true : false;
 }

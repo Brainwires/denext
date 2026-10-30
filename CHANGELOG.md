@@ -32,6 +32,19 @@ and this project adheres to
 
 ### Added
 
+- **Deno Desktop downloads are recorded across restarts**, as the mobile `DenextTransfer` plugin
+  records its transfers. The `fs` capability keeps each download started with an `id` into an app
+  folder in `denext-transfers/transfers.json` under the app's data directory, written atomically
+  and readable by the user only; the folder joins the runtime's reserved names, so the page's
+  `fs`, `shell` and drag-out never reach it. After a restart `fileTransfers()` lists the paused,
+  failed and recently done downloads, `resumeFileTransfer(id)` continues a paused or failed one
+  from its partial file with the request headers it was started with, `cancelFileTransfer(id)`
+  drops its partial file and record, and `forgetFileTransfer(id)` drops a settled one. A download
+  that was running when the app quit (or whose page went away) comes back `failed`, code
+  `NETWORK`, `resumable` when its partial file can continue, as iOS reports one a force-quit
+  stopped. A record drops its request headers once it is over for good, and a done record is
+  listed for 7 days. The runtime answers two new `fs` methods, `listDownloads` and
+  `forgetDownload`; `cancelDownload` answers `cancelled: false` for a download that finished first.
 - **The lifecycle-script jail of runtime `3.0.0-denext.1`.** Everything below is gated on the
   runtime version, so stock Deno and older runtimes behave as before; the `3.0.0-denext.2` pin
   turns it on. `jailRuntime(version)` (from `src/build/jail-scripts.ts`) says what a runtime takes.

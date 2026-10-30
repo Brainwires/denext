@@ -8,8 +8,27 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
 import { fsCapability, type FsCapabilityConfig } from "../src/desktop/caps/fs.ts";
 import { openPartial, partialAt, writeSidecar } from "../src/desktop/caps/download-partial.ts";
+import {
+  SETTLED_RETENTION_MS,
+  TRANSFER_RECORDS_DIR,
+} from "../src/desktop/caps/transfer-records.ts";
 import { type DesktopCapCtx, DesktopCapError } from "../src/desktop/extension.ts";
 import { PickedPaths } from "../src/desktop/picked-paths.ts";
+import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
+import {
+  cancelFileTransfer,
+  type FileTransferEvent,
+  fileTransfers,
+  forgetFileTransfer,
+  onFileTransfer,
+  resumeFileTransfer,
+} from "../src/mobile/mod.ts";
+import { resetFileTransfersForTesting } from "../src/mobile/file-transfer.ts";
+import {
+  createFakeDesktopRuntime,
+  type FakeMethod,
+  until,
+} from "./helpers/desktop-fake-runtime.ts";
 
 const OS = Deno.build.os as "darwin" | "windows" | "linux";
 
@@ -85,9 +104,13 @@ function fullAnswer(mode: ServerMode): Response {
   return new Response(stream, { headers });
 }
 
-/** A local server for `https://files.test/*`, with each request's `range` / `if-range` seen. */
+/**
+ * A local server for `https://files.test/*`, with each request's `range` / `if-range` seen (and
+ * its `authorization`).
+ */
 function startServer(mode: ServerMode) {
   const seen: Array<[string | null, string | null]> = [];
+  const auths: Array<string | null> = [];
   const controller = new AbortController();
   const listening = Promise.withResolvers<number>();
   const server = Deno.serve({
@@ -98,11 +121,13 @@ function startServer(mode: ServerMode) {
     onError: () => new Response(null, { status: 500 }),
   }, (req) => {
     seen.push([req.headers.get("range"), req.headers.get("if-range")]);
+    auths.push(req.headers.get("authorization"));
     const from = honoredFrom(mode, req);
     return from === undefined ? fullAnswer(mode) : rangeAnswer(mode, from);
   });
   return {
     seen,
+    auths,
     port: listening.promise,
     async close() {
       controller.abort();
@@ -146,6 +171,7 @@ async function withServer(
   fn: (t: {
     root: string;
     seen: Array<[string | null, string | null]>;
+    auths: Array<string | null>;
     cap: (over?: Partial<FsCapabilityConfig>) => ReturnType<typeof fsCapability>;
   }) => Promise<void>,
 ): Promise<void> {
@@ -169,17 +195,19 @@ async function withServer(
       ...over,
     });
   try {
-    await fn({ root, seen: server.seen, cap });
+    await fn({ root, seen: server.seen, auths: server.auths, cap });
   } finally {
     await server.close();
     await Deno.remove(root, { recursive: true });
   }
 }
 
-/** The files under the data dir (sorted). */
+/** The files under the data dir (sorted), as the page lists them: the download records' folder left out. */
 async function dataFiles(root: string): Promise<string[]> {
   const out: string[] = [];
-  for await (const e of Deno.readDir(join(root, "data"))) out.push(e.name);
+  for await (const e of Deno.readDir(join(root, "data"))) {
+    if (e.name !== TRANSFER_RECORDS_DIR) out.push(e.name);
+  }
   return out.sort();
 }
 
@@ -583,4 +611,279 @@ Deno.test({
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// --- the download records (kept across restarts, as the native plugin keeps its own) ----------
+
+/** The records file under `root`'s data dir. */
+const recordsFile = (root: string) => join(root, "data", TRANSFER_RECORDS_DIR, "transfers.json");
+
+/** What `listDownloads` answers. */
+async function listed(cap: ReturnType<typeof fsCapability>): Promise<Record<string, unknown>[]> {
+  return ((await call(cap, "listDownloads", {})) as { transfers: Record<string, unknown>[] })
+    .transfers;
+}
+
+/** Wait until `data/<path>.part` holds `bytes` bytes (a held download's first chunk). */
+async function waitForPart(root: string, path: string, bytes: number): Promise<void> {
+  const part = join(root, "data", `${path}.part`);
+  const end = Date.now() + 5_000;
+  while ((await Deno.stat(part).then((i) => i.size, () => 0)) < bytes) {
+    if (Date.now() > end) throw new Error("the first chunk never arrived");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+/** Start download `id` of `url` to `data/<path>` on a held server, then pause it at 300 bytes. */
+async function pausedAt300(
+  cap: ReturnType<typeof fsCapability>,
+  mode: ServerMode,
+  root: string,
+  id: string,
+  path: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  mode.holdOnce = 300;
+  const running = dl(cap, URL_A, path, { id, ...extra });
+  running.catch(() => {});
+  await waitForPart(root, path, 300);
+  assertEquals(await call(cap, "pauseDownload", { id }), { paused: true });
+  assertEquals(await rejectCode(running), "paused");
+}
+
+Deno.test({
+  name:
+    "records: a paused download survives a restart: listed, resumed from its partial with its headers",
+}, async () => {
+  const mode: ServerMode = { body: BODY, etag: '"v1"', honorRange: true };
+  await withServer(mode, async (t) => {
+    await pausedAt300(t.cap(), mode, t.root, "r1", "r.bin", {
+      headers: { authorization: "Bearer t" },
+    });
+    // A restart: a new capability instance over the same data dir.
+    const after = t.cap();
+    assertEquals(await listed(after), [{
+      id: "r1",
+      kind: "download",
+      url: URL_A,
+      directory: "data",
+      path: "r.bin",
+      state: "paused",
+      bytes: 300,
+      total: 1000,
+      resumable: true,
+    }]);
+    // The page that started it is gone: the resume sends no headers, the record's go.
+    const out = await dl(after, URL_A, "r.bin", { id: "r1" }, "resumeDownload");
+    assertEquals(out.bytes, 1000);
+    assertEquals(await Deno.readFile(join(t.root, "data", "r.bin")), BODY);
+    assertEquals(t.seen.at(-1), ["bytes=300-", '"v1"']);
+    assertEquals(t.auths, ["Bearer t", "Bearer t"]);
+    const [done] = await listed(after);
+    assertEquals([done.state, done.bytes, done.total, done.file], ["done", 1000, 1000, out.path]);
+    // Over for good: the record no longer keeps the request headers.
+    assert(!(await Deno.readTextFile(recordsFile(t.root))).includes("Bearer"));
+    assertEquals(await listed(t.cap()), [done], "done is listed after another restart");
+  });
+});
+
+Deno.test({
+  name: "records: a download running when the app quit comes back failed and resumable (as on iOS)",
+}, async () => {
+  const mode: ServerMode = { body: BODY, etag: '"v1"', honorRange: true, holdOnce: 300 };
+  await withServer(mode, async (t) => {
+    const first = t.cap();
+    const running = dl(first, URL_A, "q.bin", { id: "q1", headers: { authorization: "Bearer q" } });
+    running.catch(() => {});
+    await waitForPart(t.root, "q.bin", 300);
+    // The app quits here: the files on disk are as the running download left them.
+    const atQuit = await Deno.readTextFile(recordsFile(t.root));
+    assertEquals(JSON.parse(atQuit)[0].state, "running");
+    // (The test stops the old instance's request, then puts the records back as the quit left them.)
+    await call(first, "pauseDownload", { id: "q1" });
+    await rejectCode(running);
+    await Deno.writeTextFile(recordsFile(t.root), atQuit);
+
+    const after = t.cap();
+    const [r] = await listed(after);
+    assertEquals([r.state, r.code, r.bytes, r.total, r.resumable], [
+      "failed",
+      "NETWORK",
+      300,
+      1000,
+      true,
+    ]);
+    assertEquals(r.error, "the download stopped when the app quit");
+    assertEquals((await dl(after, URL_A, "q.bin", { id: "q1" }, "resumeDownload")).bytes, 1000);
+    assertEquals(t.seen.at(-1), ["bytes=300-", '"v1"']);
+    assertEquals(t.auths.at(-1), "Bearer q");
+    assertEquals(await Deno.readFile(join(t.root, "data", "q.bin")), BODY);
+  });
+});
+
+Deno.test({
+  name: "records: a cancel drops the record and the partial (after a restart too); done stays done",
+}, async () => {
+  const mode: ServerMode = { body: BODY, etag: '"v1"', honorRange: true };
+  await withServer(mode, async (t) => {
+    // Cancelled while running: nothing is left, the records folder included.
+    const cap = t.cap();
+    mode.holdOnce = 300;
+    const running = dl(cap, URL_A, "c.bin", { id: "c1" });
+    running.catch(() => {});
+    await waitForPart(t.root, "c.bin", 300);
+    assertEquals(await call(cap, "cancelDownload", { id: "c1" }), { cancelled: true });
+    assertEquals(await rejectCode(running), "cancelled");
+    assertEquals(await listed(cap), []);
+    assertEquals(await namesIn(join(t.root, "data")), []);
+
+    // Paused, restarted, then cancelled: the earlier launch's partial and record go.
+    await pausedAt300(t.cap(), mode, t.root, "c2", "c.bin");
+    const after = t.cap();
+    assertEquals(await call(after, "cancelDownload", { id: "c2" }), { cancelled: true });
+    assertEquals(await listed(after), []);
+    assertEquals(await namesIn(join(t.root, "data")), []);
+    assertEquals(await listed(t.cap()), [], "and it stays gone");
+    assertEquals(await call(after, "cancelDownload", { id: "c2" }), { cancelled: false });
+
+    // A cancel after the download finished is too late: its file and record stay.
+    await dl(after, URL_A, "d.bin", { id: "d1" });
+    assertEquals(await call(t.cap(), "cancelDownload", { id: "d1" }), { cancelled: false });
+    assertEquals(await Deno.readFile(join(t.root, "data", "d.bin")), BODY);
+    assertEquals((await listed(t.cap())).map((r) => [r.id, r.state]), [["d1", "done"]]);
+  });
+});
+
+Deno.test({
+  name:
+    "records: a settled download is listed for the retention period, a paused one until it ends",
+}, async () => {
+  const mode: ServerMode = { body: BODY, etag: '"v1"', honorRange: true };
+  await withServer(mode, async (t) => {
+    const t0 = Date.now();
+    const at = (ms: number) => t.cap({ transferClock: () => t0 + ms });
+    await dl(at(0), URL_A, "old.bin", { id: "old" });
+    await pausedAt300(at(0), mode, t.root, "live", "live.bin");
+    const ids = async (ms: number) => (await listed(at(ms))).map((r) => [r.id, r.state]);
+    assertEquals(await ids(SETTLED_RETENTION_MS - 60_000), [["live", "paused"], ["old", "done"]]);
+    // Past the retention period the done record goes (its file stays: it is the user's).
+    assertEquals(await ids(SETTLED_RETENTION_MS + 1), [["live", "paused"]]);
+    assertEquals(await Deno.readFile(join(t.root, "data", "old.bin")), BODY);
+    assertEquals(await ids(10 * SETTLED_RETENTION_MS), [["live", "paused"]]);
+    // A record that was forgotten goes at once.
+    const cap = at(0);
+    assertEquals(await call(cap, "forgetDownload", { id: "live" }), { forgotten: false });
+    assertEquals(await call(cap, "cancelDownload", { id: "live" }), { cancelled: true });
+    assertEquals(await call(cap, "forgetDownload", { id: "live" }), { forgotten: false });
+    await dl(cap, URL_A, "new.bin", { id: "new" });
+    assertEquals(await call(cap, "forgetDownload", { id: "new" }), { forgotten: true });
+    assertEquals(await listed(at(0)), []);
+  });
+});
+
+Deno.test({
+  name: "records SECURITY: the page's fs never reads, lists, writes or deletes the records folder",
+}, async () => {
+  const mode: ServerMode = { body: BODY, etag: '"v1"', honorRange: true };
+  await withServer(mode, async (t) => {
+    const cap = t.cap();
+    await pausedAt300(cap, mode, t.root, "s1", "s.bin", { headers: { authorization: "Bearer s" } });
+    const before = await Deno.readTextFile(recordsFile(t.root));
+    const file = `${TRANSFER_RECORDS_DIR}/transfers.json`;
+    for (const path of [file, file.toUpperCase(), `./${file}`, `x/../${file}`]) {
+      const at = { path, directory: "data" };
+      assertEquals(await rejectCode(call(cap, "readFile", at)), "forbidden", path);
+      assertEquals(
+        await rejectCode(call(cap, "writeFile", { ...at, data: "[]" })),
+        "forbidden",
+        path,
+      );
+      assertEquals(await rejectCode(call(cap, "deleteFile", at)), "forbidden", path);
+      assertEquals(await rejectCode(dl(cap, URL_A, path)), "forbidden", path);
+    }
+    assertEquals(
+      await rejectCode(call(cap, "listDir", { path: TRANSFER_RECORDS_DIR, directory: "data" })),
+      "forbidden",
+    );
+    const root = await call(cap, "listDir", { path: "", directory: "data" }) as { name: string }[];
+    assertEquals(root.map((e) => e.name).sort(), ["s.bin.part", "s.bin.part.json"]);
+    assertEquals(await Deno.readTextFile(recordsFile(t.root)), before, "untouched");
+    // Written for the user only.
+    if (OS !== "windows") assertEquals((await Deno.stat(recordsFile(t.root))).mode! & 0o777, 0o600);
+  });
+});
+
+/** The `fs` methods of `cap`, as a fake bridge serves them (its events through `emit`). */
+function bridged(
+  cap: ReturnType<typeof fsCapability>,
+  emit: (event: string, data: unknown) => void,
+): Record<string, FakeMethod> {
+  const out: Record<string, FakeMethod> = {};
+  for (const name of Object.keys(cap.methods)) {
+    out[name] = (args) => cap.methods[name].handler(args, ctx({ emit }));
+  }
+  return out;
+}
+
+Deno.test({
+  name:
+    "records: after a restart the page lists, resumes, cancels and forgets the earlier downloads",
+}, async () => {
+  const mode: ServerMode = { body: BODY, etag: '"v1"', honorRange: true };
+  await withServer(mode, async (t) => {
+    await pausedAt300(t.cap(), mode, t.root, "pg", "pg.bin");
+    await pausedAt300(t.cap(), mode, t.root, "pc", "pc.bin");
+    const after = t.cap();
+    const rt = createFakeDesktopRuntime({
+      fs: bridged(after, (event, data) => rt.emit("fs", event, data)),
+    });
+    const restore = rt.install();
+    resetFileTransfersForTesting();
+    const events: FileTransferEvent[] = [];
+    const stop = onFileTransfer((e) => events.push(e));
+    try {
+      const shape = (x: { id: string; state: string; bytes: number; resumable: boolean }) => [
+        x.id,
+        x.state,
+        x.bytes,
+        x.resumable,
+      ];
+      assertEquals((await fileTransfers()).map(shape), [
+        ["pc", "paused", 300, true],
+        ["pg", "paused", 300, true],
+      ]);
+      const [pg] = (await fileTransfers()).filter((x) => x.id === "pg");
+      assertEquals([pg.kind, pg.url, pg.directory, pg.path, pg.total], [
+        "download",
+        URL_A,
+        "data",
+        "pg.bin",
+        1000,
+      ]);
+
+      assert(await resumeFileTransfer("pg"));
+      assertEquals(await resumeFileTransfer("pg"), false, "it runs: a second resume is refused");
+      await until(() => events.some((e) => e.id === "pg" && e.type === "done"));
+      assertEquals(events[0].type, "started");
+      assertEquals(events[0].bytes, 300);
+      const done = events.find((e) => e.id === "pg" && e.type === "done")!;
+      assertEquals(await Deno.readFile(done.file!), BODY);
+      assertEquals(t.seen.at(-1), ["bytes=300-", '"v1"']);
+
+      assert(await cancelFileTransfer("pc"));
+      assertEquals(events.at(-1)?.type, "cancelled");
+      assertEquals(events.at(-1)?.id, "pc");
+      assertEquals(await namesIn(join(t.root, "data")), [TRANSFER_RECORDS_DIR, "pg.bin"]);
+      assertEquals((await fileTransfers()).map((x) => [x.id, x.state]), [["pg", "done"]]);
+
+      assert(await forgetFileTransfer("pg"));
+      assertEquals(await fileTransfers(), []);
+      assertEquals(await listed(t.cap()), [], "forgotten in the runtime too");
+    } finally {
+      stop();
+      resetDesktopBridgeForTesting();
+      restore();
+      resetFileTransfersForTesting();
+    }
+  });
 });
