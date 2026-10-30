@@ -23,6 +23,16 @@ and this project adheres to
   stock Deno, an older toolchain or without the flag the server refuses to start and says which is
   missing. The config validator checks the host names and variable names and refuses a name two
   certificates list. See https://denext.dev/docs/deployment-targets#https-without-a-proxy.
+- **`denext patch create` registers npm patches in deno.json's `patchedDependencies`.** When
+  the project runs on denext's Deno from runtime 3.0.0-denext.3 (the pinned toolchain, not
+  `DENEXT_DENO=stock`), an npm patch is also written as a package-relative copy under
+  `patches/npm/` and registered in the workspace root `deno.json`
+  (`"left-pad@1.3.0": "patches/npm/left-pad+1.3.0.patch"`), so the runtime applies it whenever it
+  installs the package — `deno install`, a Docker build, `deno compile` — and `deno.lock` records
+  its hash. denext's boot-time apply keeps running (a no-op once the runtime has applied it). A
+  re-create replaces the entry, `delete` removes it, and entries written by hand are left alone.
+  Nothing is registered, with a line saying why, without a `node_modules` directory or for a patch
+  that adds or deletes a file, which the runtime can't apply. See https://denext.dev/docs/patches.
 
 ### Changed
 

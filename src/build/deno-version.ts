@@ -194,6 +194,24 @@ export function supportsResolveCertificate(version: string): boolean {
   return compareDenoVersions(version, FIRST_RESOLVE_CERTIFICATE_RUNTIME) >= 0;
 }
 
+/**
+ * The first release of denext's Deno that applies deno.json's `patchedDependencies` to npm
+ * packages on install (Brainwires/deno DENEXT.md item 161), which `denext patch` registers its npm
+ * patches in.
+ */
+export const FIRST_PATCHED_DEPENDENCIES_RUNTIME = "3.0.0-denext.3";
+
+/**
+ * Whether denext's Deno of `version` applies `patchedDependencies` (from
+ * {@linkcode FIRST_PATCHED_DEPENDENCIES_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A version of denext's Deno.
+ * @returns Whether its npm installer applies deno.json's `patchedDependencies`.
+ */
+export function supportsPatchedDependencies(version: string): boolean {
+  return compareDenoVersions(version, FIRST_PATCHED_DEPENDENCIES_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

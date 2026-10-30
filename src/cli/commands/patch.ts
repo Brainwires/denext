@@ -45,6 +45,12 @@ async function create(name: string, dir: string): Promise<void> {
     );
   } else {
     console.log("    re-applied to node_modules at every dev/build/start (idempotent).");
+    if (created.registered) {
+      console.log(
+        `    registered as "${created.registered}" in deno.json "patchedDependencies" (patches/npm/):` +
+          " applied by the runtime on install too.",
+      );
+    }
   }
 }
 
