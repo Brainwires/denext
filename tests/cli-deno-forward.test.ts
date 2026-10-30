@@ -276,6 +276,97 @@ Deno.test("denoPathEnv: a renamed binary gets a shim directory whose deno is it"
   }
 });
 
+Deno.test("denoPathEnv: on Windows the shim is a `deno.exe` link, `;`-joined", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext_path_win_" });
+  try {
+    const target = join(root, "deno-stock");
+    await Deno.writeTextFile(target, "binary");
+    const shimRoot = join(root, "shims");
+    const env = (name: string) => (name === "PATH" ? "C:\\Windows" : undefined);
+    const { PATH } = await denoPathEnv(target, { env, os: "windows", shimRoot });
+    const [dir, rest] = PATH.split(";");
+    assertEquals(rest, "C:\\Windows", "Windows' delimiter, the rest unchanged");
+    assert(dir.startsWith(shimRoot), dir);
+    // A hard link (no privilege needed), so the bytes are the binary's.
+    assertEquals(await Deno.readTextFile(join(dir, "deno.exe")), "binary");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("denoPathEnv: a binary that can be neither linked nor copied leaves PATH alone", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext_path_unlinkable_" });
+  try {
+    // A directory: a hard link to it and a copy of it both fail, so no shim can be written.
+    const target = join(root, "not-a-binary");
+    await Deno.mkdir(target);
+    const env = (name: string) => (name === "PATH" ? "/usr/bin" : undefined);
+    const shimRoot = join(root, "shims");
+    assertEquals(await denoPathEnv(target, { env, os: "windows", shimRoot }), {});
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("denoPathEnv: an unset PATH becomes just the shim; empty segments are skipped", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext_path_empty_" });
+  try {
+    const target = join(root, "deno-2.9.8");
+    await Deno.writeTextFile(target, "binary");
+    const shimRoot = join(root, "shims");
+    const exe = Deno.build.os === "windows" ? "deno.exe" : "deno";
+    const delimiter = Deno.build.os === "windows" ? ";" : ":";
+    const unset = await denoPathEnv(target, { env: () => undefined, shimRoot });
+    assert(unset.PATH.startsWith(shimRoot), unset.PATH);
+    assert(!unset.PATH.includes(delimiter), "nothing is appended to an unset PATH");
+    assertEquals(await Deno.readTextFile(join(unset.PATH, exe)), "binary");
+    // `::/somewhere` — the empty entries name no directory and are passed through untouched.
+    const sparse = `${delimiter}${delimiter}${join(root, "nowhere")}`;
+    const kept = await denoPathEnv(target, {
+      env: (name) => (name === "PATH" ? sparse : undefined),
+      shimRoot,
+    });
+    assertEquals(kept, { PATH: `${unset.PATH}${delimiter}${sparse}` });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "denoPathEnv: a missing binary is not what PATH's `deno` is, so it still gets a shim",
+  ignore: Deno.build.os === "windows", // a Windows shim is a link or copy of an existing file
+  fn: async () => {
+    const root = await Deno.makeTempDir({ prefix: "denext_path_missing_" });
+    try {
+      const bin = join(root, "bin");
+      await Deno.mkdir(bin);
+      await Deno.writeTextFile(join(bin, "deno"), "stock");
+      const missing = join(root, "gone", "deno-old");
+      const env = (name: string) => (name === "PATH" ? bin : undefined);
+      const shimRoot = join(root, "shims");
+      const { PATH } = await denoPathEnv(missing, { env, shimRoot });
+      const [dir, rest] = PATH.split(":");
+      assertEquals(rest, bin);
+      assert(dir.startsWith(shimRoot), dir);
+      assertEquals(await Deno.readLink(join(dir, "deno")), missing);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  },
+});
+
+Deno.test("denoPathEnv: no per-user cache directory (no HOME, no DENO_DIR) changes nothing", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext_path_nohome_" });
+  try {
+    const target = join(root, "deno-2.9.8");
+    await Deno.writeTextFile(target, "binary");
+    const env = (name: string) => (name === "PATH" ? "/usr/bin" : undefined);
+    assertEquals(await denoPathEnv(target, { env }), {});
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 // --- through the real CLI -------------------------------------------------------------------
 
 /** Run the CLI as a subprocess; `env` is added to this process's environment. */
