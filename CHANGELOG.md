@@ -21,6 +21,10 @@ and this project adheres to
   loader throwing it would. Around an action submitted from the page, `next()` now runs the
   action and resolves to its response; on a resource route a thrown `Response` reaches `next()`, and a thrown error does as React
   Router's 500 response (`Unexpected Server Error`), which a middleware can replace.
+- **`@denext/backend`: a realtime re-read's statement is assembled from its parts.** The filters of
+  a shared re-read were spliced into the finished statement with a text replacement, which
+  rewrote a filter column whose catalog type is spelled with `$'`, `$&` or `$$`. Values were
+  already bound parameters and stay so; identifiers go through the REST layer's quoting helper.
 
 ## [4.10.2] - 2026-10-30
 

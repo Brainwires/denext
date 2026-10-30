@@ -54,6 +54,15 @@
 - **A TUS part upload to a presigned URL is given up on after 5 minutes,** so a store that stops
   answering can no longer hold the upload's request forever.
 
+### Fixed
+
+- **A realtime re-read's statement is assembled from its parts, not spliced by text.** A
+  subscriber's filters were added to the shared re-read by replacing text in the finished
+  statement, so a filter column whose catalog type is spelled with `$'`, `$&` or `$$` (a quoted
+  type name) was rewritten by the replacement's own patterns and the re-read failed. Every value
+  was, and still is, a bound parameter, and identifiers are quoted by the same helper the REST
+  layer uses; the statement is unchanged for every other type.
+
 ## 0.7.1 - 2026-10-24
 
 ### Fixed
