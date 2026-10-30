@@ -11,6 +11,7 @@ import {
   serveWithPortFallback,
 } from "../../server/serve-utils.ts";
 import { serveStatic } from "../../server/static.ts";
+import { serveTlsOptions } from "../../server/tls-certificates.ts";
 import { createAppLinksHandler } from "../../server/app-links.ts";
 import { EMITTED_DIR } from "../../plugin/mod.ts";
 import { resolveProject } from "../paths.ts";
@@ -99,15 +100,20 @@ export async function startSpaProdServer(
     return encodings.length > 0 ? await compressOrPassThrough(request, res, encodings) : res;
   };
 
+  // `start.tls`: HTTPS without a proxy (src/server/tls-certificates.ts).
+  const tls = serveTlsOptions(paths.config?.start?.tls);
   return serveWithPortFallback(
     {
       port: options.port ?? 3000,
       hostname: options.hostname ?? "0.0.0.0",
       signal: options.signal,
       strict: options.strictPort,
+      tls,
       onListen: options.onListen ??
         (({ hostname, port }) =>
-          console.log(`denext start ▸ http://${displayHost(hostname)}:${port}`)),
+          console.log(
+            `denext start ▸ ${tls ? "https" : "http"}://${displayHost(hostname)}:${port}`,
+          )),
     },
     handler,
   );

@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`start.tls`: HTTPS for `denext start` without a proxy, a certificate per host name.**
+  `start: { tls: { certificates: [{ hostnames, certFileEnv, keyFileEnv }] } }` in
+  `denext.config.ts` serves HTTPS from `denext start` and a `build --compile` server. Each
+  certificate lists the host names it serves (an exact name, a one-label `*.` wildcard, or `"*"`
+  for every other name and a client that sends none) and names the environment variables that hold
+  its PEM certificate and key files' paths, so neither the key nor its location is in the config;
+  the files are read when the server starts, and an unset variable or unreadable file fails the
+  start. One certificate is served for every name on any Deno. Several are picked per connection
+  by the name the client asks for (SNI) through `resolveCertificate`, which denext's Deno has from
+  runtime 3.0.0-denext.3 behind the unstable net APIs (`"unstable": ["net"]` in `deno.json`); on
+  stock Deno, an older toolchain or without the flag the server refuses to start and says which is
+  missing. The config validator checks the host names and variable names and refuses a name two
+  certificates list. See https://denext.dev/docs/deployment-targets#https-without-a-proxy.
+
 ### Changed
 
 - **Runtime 3.0.0-denext.3: denext pins it** (was `3.0.0-denext.2`; the toolchain, the Deno

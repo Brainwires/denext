@@ -11,6 +11,7 @@ import {
 import { withoutRequestContext } from "./request-context.ts";
 import { serveStatic } from "./static.ts";
 import type { HstsConfig } from "./config.ts";
+import type { ServeTls } from "./tls-certificates.ts";
 
 /** Cache-control for content-hashed, immutable build assets (split chunks, self-hosted fonts). */
 const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
@@ -109,6 +110,11 @@ export interface ServeUtilOptions {
    * to warning and `Deno.exit(0)`. Injectable for tests.
    */
   onDrainTimeout?: () => void;
+  /**
+   * Serve HTTPS: a certificate and key, or a `resolveCertificate` by server name
+   * (`start.tls`, src/server/tls-certificates.ts). Plain HTTP when unset.
+   */
+  tls?: ServeTls;
 }
 
 /**
@@ -268,8 +274,12 @@ function serveOn(
       port,
       hostname: options.hostname ?? "0.0.0.0",
       onListen: options.onListen ??
-        (({ hostname, port }) => console.log(`denext listening on http://${hostname}:${port}`)),
-    },
+        (({ hostname, port }) =>
+          console.log(
+            `denext listening on ${options.tls ? "https" : "http"}://${hostname}:${port}`,
+          )),
+      ...options.tls,
+    } as Deno.ServeTcpOptions,
     // Each request starts with no ambient request context (see `withoutRequestContext`): the
     // runtime may otherwise hand it the context of an earlier request that first loaded a module.
     (request, info) =>
@@ -280,7 +290,7 @@ function serveOn(
         return handler(request);
       }),
   );
-  bound.origin = loopbackOrigin(server.addr);
+  bound.origin = loopbackOrigin(server.addr, options.tls ? "https" : "http");
   const { signal } = options;
   if (signal) {
     const beginShutdown = () => {

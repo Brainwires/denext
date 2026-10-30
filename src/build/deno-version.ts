@@ -176,6 +176,24 @@ export function supportsResourceLimits(version: string): boolean {
   return compareDenoVersions(version, FIRST_RESOURCE_LIMITS_RUNTIME) >= 0;
 }
 
+/**
+ * The first release of denext's Deno whose `Deno.serve` / `Deno.listenTls` take
+ * `resolveCertificate`, a certificate per server name (Brainwires/deno DENEXT.md item 159; behind
+ * `--unstable-net`), which `start.tls` with several certificates needs.
+ */
+export const FIRST_RESOLVE_CERTIFICATE_RUNTIME = "3.0.0-denext.3";
+
+/**
+ * Whether denext's Deno of `version` takes `resolveCertificate` (from
+ * {@linkcode FIRST_RESOLVE_CERTIFICATE_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A version of denext's Deno (`3.0.0-denext.N`, `3.0.0-rc.N`).
+ * @returns Whether it serves a certificate per server name.
+ */
+export function supportsResolveCertificate(version: string): boolean {
+  return compareDenoVersions(version, FIRST_RESOLVE_CERTIFICATE_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

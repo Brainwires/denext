@@ -356,6 +356,8 @@ export {
   type SpaTanstackRouterConfig,
   type StartConfig,
   type StartLimits,
+  type StartTls,
+  type StartTlsCertificate,
   type TailwindConfig,
 } from "./config.ts";
 export { defineConfig } from "./define-config.ts";

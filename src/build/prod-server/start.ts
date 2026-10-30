@@ -20,6 +20,7 @@ import {
   serveWithPortFallback,
 } from "../../server/serve-utils.ts";
 import { type Instrumentation, runShutdownHook } from "../../server/instrumentation.ts";
+import { serveTlsOptions } from "../../server/tls-certificates.ts";
 import { dirExists, type ProjectPaths, resolveProject } from "../paths.ts";
 import { createProdApp, prodLoader } from "./app.ts";
 import { assetResolvers } from "./assets.ts";
@@ -188,6 +189,8 @@ export async function startAppProdServer(
   try {
     const handler = await buildHandler(paths, clientDir, info, load, loaded, compile);
     const shutdownDrainMs = resolveShutdownDrainMs(options.shutdownDrainMs);
+    // `start.tls`: HTTPS without a proxy (its files are read here, so a missing one fails the boot).
+    const tls = serveTlsOptions(paths.config?.start?.tls);
     const server = serveWithPortFallback(
       {
         port: options.port ?? 3000,
@@ -195,9 +198,12 @@ export async function startAppProdServer(
         signal: options.signal,
         strict: options.strictPort,
         shutdownDrainMs,
+        tls,
         onListen: options.onListen ??
           (({ hostname, port }) =>
-            console.log(`denext start ▸ http://${displayHost(hostname)}:${port}`)),
+            console.log(
+              `denext start ▸ ${tls ? "https" : "http"}://${displayHost(hostname)}:${port}`,
+            )),
       },
       handler,
     );
