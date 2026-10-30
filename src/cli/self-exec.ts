@@ -17,7 +17,7 @@ import {
 } from "../build/resource-limits.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
 import { runToExit } from "../build/exited-output.ts";
-import { warnStockDeprecation } from "../build/stock-deprecation.ts";
+import { type StockDenoPath, warnStockDeprecation } from "../build/stock-deprecation.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
@@ -832,7 +832,21 @@ export interface ReexecToolchainDeps {
  */
 function announceChoice(choice: DenoToolchainChoice, deps: ReexecToolchainDeps): void {
   if (choice.warning) deps.warn(choice.warning);
-  if (choice.kind === "stock" && choice.optedOut) warnStockDeprecation("deno-env", deps);
+  const path = stockPathOf(choice);
+  if (path) warnStockDeprecation(path, deps);
+}
+
+/**
+ * The deprecated stock path a {@linkcode DenoToolchainChoice} runs on, or `null`: the explicit
+ * `DENEXT_DENO=stock` opt-out, or a `DENEXT_DENO=<path>` binary that is stock Deno. (A denext that
+ * pins no toolchain, and a process that lacks the grants to start it, say nothing here.)
+ *
+ * @param choice The resolver's choice.
+ * @returns The path for {@linkcode warnStockDeprecation}, or `null`.
+ */
+export function stockPathOf(choice: DenoToolchainChoice): StockDenoPath | null {
+  if (choice.kind === "toolchain") return choice.stock ? "deno-path" : null;
+  return choice.optedOut ? "deno-env" : null;
 }
 
 /**
@@ -879,6 +893,11 @@ async function reexecForRuntimeFlags(deps: ReexecToolchainDeps): Promise<boolean
   return true;
 }
 
+/** This process's Deno, as the gate's seams report it. */
+function ownIdentity(deps: ReexecToolchainDeps): DenoIdentity {
+  return deps.denext ? { deno: deps.denoVersion, denext: deps.denext } : { deno: deps.denoVersion };
+}
+
 /**
  * Whether this `deno run` process already runs on the toolchain: it is denext's Deno (its
  * `Deno.build.denext` marker, or a pre-marker build's version; src/build/deno-version.ts) and the
@@ -888,10 +907,7 @@ async function reexecForRuntimeFlags(deps: ReexecToolchainDeps): Promise<boolean
 function onToolchainNow(deps: ReexecToolchainDeps): boolean {
   const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
   if (marker === "path") return true;
-  const identity = deps.denext
-    ? { deno: deps.denoVersion, denext: deps.denext }
-    : { deno: deps.denoVersion };
-  if (!isDenextDenoVersion(identity, deps.pinnedVersion)) return false;
+  if (!isDenextDenoVersion(ownIdentity(deps), deps.pinnedVersion)) return false;
   return marker === deps.denoVersion || deps.denoVersion === deps.pinnedVersion;
 }
 
@@ -923,7 +939,14 @@ export async function maybeReexecToolchain(
   if (!applies) return deps.handOff ? await handToolchainToChildren(deps) : false;
   if (deps.standalone()) return await handToolchainToChildren(deps);
   const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
-  if (marker === "path") return false;
+  if (marker === "path") {
+    // A child of a `DENEXT_DENO=<path>` run (the parent said so if that binary is stock Deno), or
+    // a process started with the marker already set (a unit or image): its own Deno tells.
+    if (!isDenextDenoVersion(ownIdentity(deps), deps.pinnedVersion)) {
+      warnStockDeprecation("deno-path", deps);
+    }
+    return false;
+  }
   if (onToolchainNow(deps)) return await reexecForRuntimeFlags(deps);
   const choice = await deps.resolve();
   announceChoice(choice, deps);

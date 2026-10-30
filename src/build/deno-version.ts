@@ -18,6 +18,7 @@
 // manifests is denext's by where it came from ({@linkcode isDenextReleaseVersion}).
 
 import toolchainPin from "./deno-toolchain-pin.json" with { type: "json" };
+import { runToExit } from "./exited-output.ts";
 
 /** The minimum supported Deno version. */
 export const MIN_DENO_VERSION = "2.9.0";
@@ -247,6 +248,25 @@ export function parseDenoVersionOutput(text: string): DenoIdentity | null {
   if (!first) return null;
   const marker = MARKER_LINE.exec(text);
   return marker ? { deno: first[1], denext: marker[1] } : { deno: first[1] };
+}
+
+/**
+ * `<bin> --version`'s output.
+ *
+ * @param bin The Deno binary.
+ * @returns The output, or null (not runnable, or no answer within 10 s).
+ */
+export async function denoVersionOutput(bin: string): Promise<string | null> {
+  try {
+    const out = await runToExit(bin, {
+      args: ["--version"],
+      stderr: "null",
+      signal: AbortSignal.timeout(10_000),
+    });
+    return out.success ? new TextDecoder().decode(out.stdout) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

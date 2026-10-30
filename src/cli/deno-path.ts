@@ -17,6 +17,8 @@
 
 import { basename, dirname, isAbsolute, join, relative } from "@std/path";
 import { denoExecutable } from "../build/bundle.ts";
+import { warnStockDeprecation } from "../build/stock-deprecation.ts";
+import { stockPathOf } from "./self-exec.ts";
 import {
   denoToolchainCacheRoot,
   resolveDenoToolchain,
@@ -189,6 +191,8 @@ export interface ForwardedDeno {
  */
 export async function forwardedDeno(): Promise<ForwardedDeno> {
   const choice = await resolveDenoToolchain();
+  const stockPath = stockPathOf(choice);
+  if (stockPath) warnStockDeprecation(stockPath); // once per process tree
   const deno = choice.kind === "toolchain" ? choice.deno : denoExecutable();
   const marker: Record<string, string> = choice.kind === "toolchain"
     ? { [TOOLCHAIN_ACTIVE_ENV]: choice.version }

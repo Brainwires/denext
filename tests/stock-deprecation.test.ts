@@ -11,6 +11,9 @@ import {
   warnIfStockDeno,
   warnStockDeprecation,
 } from "../src/build/stock-deprecation.ts";
+import { resolveDenoToolchain } from "../src/build/deno-toolchain.ts";
+import { forwardedDeno } from "../src/cli/deno-path.ts";
+import { stockPathOf } from "../src/cli/self-exec.ts";
 import { noteStockEsbuild } from "../src/build/esbuild/binary.ts";
 
 const MODULE = new URL("../src/build/stock-deprecation.ts", import.meta.url);
@@ -32,6 +35,7 @@ function world(vars: Record<string, string> = {}) {
 Deno.test("the notice names the cause, 5.0, the fix and the opt-out, on every stock path", () => {
   const paths: Record<StockDenoPath, [string, string]> = {
     "deno-env": ["DENEXT_DENO=stock", "unset DENEXT_DENO"],
+    "deno-path": ["DENEXT_DENO points at a stock Deno binary", "unset DENEXT_DENO, or point it"],
     "desktop-env": ["DENEXT_DESKTOP_RUNTIME=stock", "unset DENEXT_DESKTOP_RUNTIME"],
     "desktop-mismatch": ["stock Deno Desktop runtime", "`denext toolchain install`"],
     "esbuild": ["npm esbuild", "`denext toolchain install`"],
@@ -151,4 +155,90 @@ console.log("child printed it:", new TextDecoder().decode(child.stdout).trim());
   const hushed = await evalChild(script, { [NO_DEPRECATION_WARNINGS_ENV]: "1" });
   assertEquals(hushed.code, 0, hushed.stderr);
   assert(!hushed.stderr.includes(NOTICE), hushed.stderr);
+});
+
+/** A stand-in `deno` file (never run: the `versionOutput` seam answers for it). */
+async function fakeDeno(run: (bin: string) => Promise<void>) {
+  const dir = await Deno.makeTempDir({ prefix: "denext-stock-path-" });
+  try {
+    const bin = `${dir}/deno`;
+    await Deno.writeTextFile(bin, "#!/bin/sh\n");
+    await run(bin);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+}
+
+const STOCK_VERSION =
+  "deno 2.9.8 (stable, release, x86_64-apple-darwin)\nv8 14.0\ntypescript 5.9\n";
+const DENEXT_VERSION = "deno 3.0.0-denext.2 (stable, release, x86_64-apple-darwin)\n" +
+  "denext 3.0.0-denext.2 (Brainwires)\nv8 14.0\n";
+
+Deno.test("DENEXT_DENO=<path>: a stock binary is flagged by the identity marker, denext's is not", async () => {
+  await fakeDeno(async (bin) => {
+    const resolve = (output: string | null) =>
+      resolveDenoToolchain({
+        env: (k) => k === "DENEXT_DENO" ? bin : undefined,
+        versionOutput: () => Promise.resolve(output),
+      });
+    const stock = await resolve(STOCK_VERSION);
+    assert(stock.kind === "toolchain" && stock.stock === true, JSON.stringify(stock));
+    assertEquals(stockPathOf(stock), "deno-path");
+    // Stock Deno of the number denext's own Deno has (3.0.0): the marker decides, not the number.
+    const upstream3 = await resolve("deno 3.0.0 (stable, release, x86_64-apple-darwin)\n");
+    assert(upstream3.kind === "toolchain" && upstream3.stock === true);
+    // denext's Deno: no flag, no notice.
+    const own = await resolve(DENEXT_VERSION);
+    assert(own.kind === "toolchain" && own.stock === undefined, JSON.stringify(own));
+    assertEquals(stockPathOf(own), null);
+    // A binary that can't be asked: unknown, so quiet.
+    const unknown = await resolve(null);
+    assert(unknown.kind === "toolchain" && unknown.stock === undefined);
+    assertEquals(stockPathOf(unknown), null);
+  });
+});
+
+Deno.test({
+  name: "forwardedDeno: DENEXT_DENO=<path> at a stock Deno says so once; the opt-out hides it",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    await fakeDeno(async (bin) => {
+      const saved = new Map(
+        ["DENEXT_DENO", STOCK_DEPRECATION_SHOWN_ENV, NO_DEPRECATION_WARNINGS_ENV].map((
+          k,
+        ) => [k, Deno.env.get(k)]),
+      );
+      const consoleError = console.error;
+      const printed: string[] = [];
+      console.error = (m: unknown) => void printed.push(String(m));
+      try {
+        // A stand-in that answers `--version` like stock Deno.
+        await Deno.writeTextFile(bin, `#!/bin/sh\nprintf '%s' '${STOCK_VERSION}'\n`);
+        await Deno.chmod(bin, 0o755);
+        Deno.env.set("DENEXT_DENO", bin);
+        Deno.env.delete(STOCK_DEPRECATION_SHOWN_ENV);
+        Deno.env.delete(NO_DEPRECATION_WARNINGS_ENV);
+        await forwardedDeno();
+        await forwardedDeno(); // the second sees the marker: still one notice
+        const notices = printed.filter((m) => m.includes(NOTICE));
+        assertEquals(notices.length, 1, printed.join("\n"));
+        assertStringIncludes(notices[0], "DENEXT_DENO points at a stock Deno binary");
+        // The opt-out.
+        printed.length = 0;
+        Deno.env.delete(STOCK_DEPRECATION_SHOWN_ENV);
+        Deno.env.set(NO_DEPRECATION_WARNINGS_ENV, "1");
+        await forwardedDeno();
+        assertEquals(printed.filter((m) => m.includes(NOTICE)), []);
+        // denext's own Deno at that path: no notice.
+        Deno.env.delete(NO_DEPRECATION_WARNINGS_ENV);
+        Deno.env.delete(STOCK_DEPRECATION_SHOWN_ENV);
+        await Deno.writeTextFile(bin, `#!/bin/sh\nprintf '%s' '${DENEXT_VERSION}'\n`);
+        await forwardedDeno();
+        assertEquals(printed.filter((m) => m.includes(NOTICE)), []);
+      } finally {
+        console.error = consoleError;
+        for (const [k, v] of saved) v === undefined ? Deno.env.delete(k) : Deno.env.set(k, v);
+      }
+    });
+  },
 });

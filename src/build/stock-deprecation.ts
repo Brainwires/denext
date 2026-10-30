@@ -5,6 +5,8 @@
 // The paths that call {@linkcode warnStockDeprecation}:
 //
 //   - `DENEXT_DENO=stock` (src/cli/self-exec.ts: a command that keeps the Deno that started it);
+//   - `DENEXT_DENO=<path>` at a binary without denext's identity marker, and a process that runs
+//     with `DENEXT_TOOLCHAIN_ACTIVE=path` on a Deno that is not denext's (the same gate);
 //   - `DENEXT_DESKTOP_RUNTIME=stock`, and `desktop run` / `dev` falling back to the stock Deno
 //     Desktop runtime for a `deno` of another version (src/build/desktop-runtime.ts);
 //   - the npm esbuild, the fallback for stock Deno and a missing toolchain
@@ -27,6 +29,7 @@ export const STOCK_DEPRECATION_SHOWN_ENV = "DENEXT_STOCK_DEPRECATION_SHOWN";
 /** Which stock path is running (it picks the notice's cause and fix). */
 export type StockDenoPath =
   | "deno-env"
+  | "deno-path"
   | "desktop-env"
   | "desktop-mismatch"
   | "esbuild"
@@ -44,6 +47,7 @@ export interface StockDeprecationDeps {
 
 const CAUSE: Readonly<Record<StockDenoPath, string>> = {
   "deno-env": "DENEXT_DENO=stock runs this command on stock Deno",
+  "deno-path": "DENEXT_DENO points at a stock Deno binary, which runs this command",
   "desktop-env": "DENEXT_DESKTOP_RUNTIME=stock builds with the stock Deno Desktop runtime",
   "desktop-mismatch": "this window builds with the stock Deno Desktop runtime, because the " +
     "`deno` that runs `deno desktop` is not denext's Deno",
@@ -54,6 +58,7 @@ const CAUSE: Readonly<Record<StockDenoPath, string>> = {
 
 const FIX: Readonly<Record<StockDenoPath, string>> = {
   "deno-env": "unset DENEXT_DENO (`denext toolchain install` fetches denext's Deno ahead)",
+  "deno-path": "unset DENEXT_DENO, or point it at denext's Deno (`denext toolchain path`)",
   "desktop-env": "unset DENEXT_DESKTOP_RUNTIME (denext's pinned runtime downloads on first use)",
   "desktop-mismatch": "`denext toolchain install`, and unset DENEXT_DENO / DENO_BIN",
   "esbuild": "`denext toolchain install` (the toolchain carries a verified esbuild)",

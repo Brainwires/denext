@@ -41,6 +41,9 @@ and this project adheres to
   `DENEXT_DESKTOP_RUNTIME=stock`, `desktop run` / `dev` falling back to the stock Deno Desktop
   runtime, the npm esbuild fallback, and `createTestApp()` under a plain `deno test` / `deno task`
   on stock Deno. `DENEXT_NO_DEPRECATION_WARNINGS=1` hides it. See the toolchain guide.
+  A `DENEXT_DENO=<path>` that points at a stock Deno binary (told apart from denext's Deno by its
+  identity marker, not its version) and a process that runs with `DENEXT_TOOLCHAIN_ACTIVE=path` on
+  a Deno that is not denext's (a start launched that way) get the same notice.
 
 ### Fixed
 

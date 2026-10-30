@@ -54,7 +54,14 @@ import {
   withDownloadRetries,
 } from "./verified-download.ts";
 import { ESBUILD_VERSION } from "./esbuild/version.ts";
-import { currentDenoIdentity, type DenoIdentity, isPinnedDenextDeno } from "./deno-version.ts";
+import {
+  currentDenoIdentity,
+  type DenoIdentity,
+  denoVersionOutput,
+  isDenextDenoVersion,
+  isPinnedDenextDeno,
+  parseDenoVersionOutput,
+} from "./deno-version.ts";
 import pinJson from "./deno-toolchain-pin.json" with { type: "json" };
 import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
 
@@ -1098,6 +1105,12 @@ export type DenoToolchainChoice =
     readonly version: string;
     /** Say this once before running (the unverified `DENEXT_DENO=<path>` override). */
     readonly warning?: string;
+    /**
+     * Set for a `DENEXT_DENO=<path>` binary whose `deno --version` carries no denext identity: it
+     * is stock Deno (a deprecated path: 5.0 refuses it). Unset when it is denext's, or when its
+     * version can't be read.
+     */
+    readonly stock?: true;
   }
   | {
     readonly kind: "stock";
@@ -1124,6 +1137,8 @@ export interface ResolveDenoToolchainOptions extends EnsureDenoToolchainOptions 
    * `run`, and `read` + `write` on the cache root; never prompts).
    */
   readonly missingGrants?: (cacheRoot: string) => Promise<string[]>;
+  /** `<bin> --version`'s output for a `DENEXT_DENO=<path>` binary, or null (default: run it). */
+  readonly versionOutput?: (bin: string) => Promise<string | null>;
 }
 
 /** The `--allow-*` grants this process lacks for `cacheRoot` (queried, never prompted). */
@@ -1207,7 +1222,10 @@ function toolchainMode(env: EnvGet): { mode: "pinned" | "stock" } | { mode: "pat
  * against the directory denext started in, so a child run in another directory (`--cwd`, a
  * forwarded verb) still finds it.
  */
-async function pathChoice(raw: string): Promise<DenoToolchainChoice> {
+async function pathChoice(
+  raw: string,
+  versionOutput: (bin: string) => Promise<string | null>,
+): Promise<DenoToolchainChoice> {
   const path = resolve(raw);
   if (!(await Deno.stat(path).catch(() => null))?.isFile) {
     throw new DenoToolchainRequiredError(
@@ -1216,12 +1234,15 @@ async function pathChoice(raw: string): Promise<DenoToolchainChoice> {
         "denext's own Deno toolchain.",
     );
   }
+  const identity = parseDenoVersionOutput(await versionOutput(path) ?? "");
   return {
     kind: "toolchain",
     deno: path,
     version: "path",
     warning: `denext: using the Deno at ${path} (${TOOLCHAIN_ENV}); it is not downloaded, ` +
       "pinned or verified.",
+    // Stock by the identity marker, not the version alone (src/build/deno-version.ts).
+    ...(identity && !isDenextDenoVersion(identity) ? { stock: true as const } : {}),
   };
 }
 
@@ -1248,7 +1269,9 @@ export async function resolveDenoToolchain(
   if (mode.mode === "stock") {
     return { kind: "stock", reason: `${TOOLCHAIN_ENV}=stock`, optedOut: true };
   }
-  if (mode.mode === "path") return await pathChoice(mode.path);
+  if (mode.mode === "path") {
+    return await pathChoice(mode.path, options.versionOutput ?? denoVersionOutput);
+  }
   let pin: DenoToolchainPin;
   try {
     pin = options.pin ?? loadDenoToolchainPin(env);
