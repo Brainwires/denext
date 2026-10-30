@@ -216,15 +216,18 @@ Deno.test({
         assertEquals(await cause("insert into p values (2, 'a@x')"), {
           kind: "UniqueConstraintViolation",
           constraint: { fields: ["email"] },
+          table: "p",
           originalCode: "SQLITE_CONSTRAINT_UNIQUE",
           originalMessage: "UNIQUE constraint failed: p.email",
         });
       });
       await t.step("primary key", async () => {
-        assertEquals(
-          (await cause("insert into p values (1, 'b@x')")).kind,
+        const c = await cause("insert into p values (1, 'b@x')");
+        assertEquals([c.kind, c.constraint, c.table], [
           "UniqueConstraintViolation",
-        );
+          { fields: ["id"] },
+          "p",
+        ]);
       });
       await t.step("not null", async () => {
         const c = await cause("insert into p values (3, null)");

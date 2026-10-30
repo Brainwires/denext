@@ -477,9 +477,10 @@ Deno.test({
       try {
         await t.step("unique", async () => {
           const c = await kind(`insert into "${s}".p values (2, 'a@x', null)`);
-          assertEquals([c.kind, c.constraint, c.originalCode], [
+          assertEquals([c.kind, c.constraint, c.table, c.originalCode], [
             "UniqueConstraintViolation",
-            { fields: ["email"] },
+            { index: "p_email_key" },
+            "p",
             "23505",
           ]);
         });
