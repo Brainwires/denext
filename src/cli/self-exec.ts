@@ -17,6 +17,11 @@ import {
 } from "../build/resource-limits.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
 import { runToExit } from "../build/exited-output.ts";
+import {
+  REVOCATION_NOTICED_ENV,
+  type RevocationMode,
+  type RuntimeComponent,
+} from "../build/runtime-revocations.ts";
 import { type StockDenoPath, warnStockDeprecation } from "../build/stock-deprecation.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
@@ -698,6 +703,29 @@ export function mergeRunFlags(base: readonly string[], inherited: readonly strin
   return [...base.filter((t) => !set.has(flagName(t))), ...inherited];
 }
 
+/** The verbs that boot production work and never wait on the network: `start` and `job`. */
+const BOOT_VERBS: ReadonlySet<string> = new Set(["start", "job"]);
+
+/**
+ * How a verb's switch to the toolchain consults the revoked-runtimes list
+ * (src/build/runtime-revocations.ts): `start` and `job` read only the cached list (a production
+ * boot stays deterministic and offline; an image gets the check when it is built), every other
+ * verb refreshes a stale one within its budget. The desktop verbs check the Deno Desktop runtime
+ * with the toolchain, since the two roll back together.
+ *
+ * @param command The verb's name and where it came from.
+ * @returns The mode and the runtimes that move together.
+ */
+export function revocationCheckFor(
+  command: { readonly name: string; readonly source?: "core" | "plugin" | "project" },
+): { mode: RevocationMode; components: RuntimeComponent[] } {
+  const core = (command.source ?? "core") === "core";
+  return {
+    mode: core && BOOT_VERBS.has(command.name) ? "cache-only" : "fetch",
+    components: core && command.name === "desktop" ? ["cli", "desktop"] : ["cli"],
+  };
+}
+
 /**
  * The core verbs that serve HTTP from their own process (`Deno.serve`), and so are the ones
  * Deno's legacy `request.signal` abort reaches: `dev`, `start` and `profile` (which serves the
@@ -832,6 +860,10 @@ export interface ReexecToolchainDeps {
  */
 function announceChoice(choice: DenoToolchainChoice, deps: ReexecToolchainDeps): void {
   if (choice.warning) deps.warn(choice.warning);
+  // A revoked toolchain is said once per process tree: the processes this one starts stay quiet.
+  if (choice.kind === "toolchain" && choice.revocation?.revoked) {
+    deps.setEnv(REVOCATION_NOTICED_ENV, "1");
+  }
   const path = stockPathOf(choice);
   if (path) warnStockDeprecation(path, deps);
 }

@@ -42,7 +42,13 @@ import {
 } from "../../build/desktop-launch-policy.ts";
 import { DENEXT_EXCLUDE, denextExemptions } from "../../build/dep-age.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
-import { DENO_TOOLCHAIN, denoToolchainStatus } from "../../build/deno-toolchain.ts";
+import {
+  DENO_TOOLCHAIN,
+  denoToolchainStatus,
+  type ToolchainSelection,
+  toolchainSelection,
+} from "../../build/deno-toolchain.ts";
+import { revocationStatusLine } from "../../build/runtime-revocations.ts";
 import {
   type LinuxLibc,
   linuxLibcProblem,
@@ -888,6 +894,25 @@ export async function denoToolchainCheck(
 }
 
 /**
+ * The revoked-runtimes list (src/build/runtime-revocations.ts), fetched now: its sequence and
+ * expiry, whether the pinned toolchain is revoked for this host and what runs instead. Warns on a
+ * revoked pin and on an expired list. `null` while no revocation key is configured in this denext
+ * (or `DENEXT_REVOCATION_CHECK=0`): the check is off. Advisory.
+ *
+ * @param select The selection (test seam; default {@linkcode toolchainSelection} in `force` mode).
+ * @returns The check, or `null`.
+ */
+export async function runtimeRevocationsCheck(
+  select: () => Promise<ToolchainSelection> = () => toolchainSelection("force"),
+): Promise<Check | null> {
+  const selected = await select().catch(() => null);
+  const revocation = selected?.revocation;
+  if (!revocation?.configured) return null;
+  const line = revocationStatusLine(revocation);
+  return { name: "runtime revocations", ok: line.ok, detail: line.detail, critical: false };
+}
+
+/**
  * On Linux, whether denext's Deno binaries (the toolchain, `denort`, the Deno Desktop runtime) run
  * on this host: glibc at or above the pin's minimum, not musl. `null` off Linux.
  *
@@ -946,7 +971,9 @@ export async function collectDoctorReport(
   const checks: Check[] = [
     denoVersionCheck(),
     await denoToolchainCheck(dir),
-    ...[await linuxLibcCheck()].filter((c): c is Check => c !== null),
+    ...[await runtimeRevocationsCheck(), await linuxLibcCheck()].filter((c): c is Check =>
+      c !== null
+    ),
   ];
 
   // resolveProject loads + validates denext.config and throws on a malformed one; catch it

@@ -37,7 +37,12 @@ import { encodeHex } from "@std/encoding/hex";
 import { dirname, join, resolve } from "@std/path";
 import { acquireCacheLock } from "./project-locks.ts";
 import { lockTask } from "./file-lock.ts";
-import { denoCacheDir, renameRetrying } from "./desktop-runtime.ts";
+import {
+  denoCacheDir,
+  DESKTOP_RUNTIME_PIN,
+  type DesktopRuntimePin,
+  renameRetrying,
+} from "./desktop-runtime.ts";
 import { extractArchive } from "./safe-extract.ts";
 import {
   assertTrustedCacheDirs,
@@ -64,6 +69,18 @@ import {
 } from "./deno-version.ts";
 import pinJson from "./deno-toolchain-pin.json" with { type: "json" };
 import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
+import {
+  decideRevocation,
+  type LoadRevocationsOptions,
+  loadRuntimeRevocations,
+  REVOCATION_NOTICED_ENV,
+  type RevocationMode,
+  revocationNotice,
+  revocationStatus,
+  type RevocationSubject,
+  type RuntimeComponent,
+  type RuntimeRevocationStatus,
+} from "./runtime-revocations.ts";
 
 /** The esbuild a toolchain archive carries beside `deno` (2.9.7-denext.17 on). */
 export interface DenoToolchainEsbuild {
@@ -154,6 +171,22 @@ export interface DenoToolchainPin {
    * The release's `denort` zips (holding `denort[.exe]`), keyed like `targets`; absent before
    * 2.9.7-denext.20.
    */
+  readonly denort?: Readonly<Record<string, DenoToolchainArtifact>>;
+  /**
+   * The previous pin, run instead of this one when the signed revoked-runtimes list revokes this
+   * one for the host (src/build/runtime-revocations.ts). Never nests another `rollback`.
+   */
+  readonly rollback?: DenoToolchainRollback;
+}
+
+/** A pin's `rollback`: the previous pinned release, as the pin named it. */
+export interface DenoToolchainRollback {
+  readonly version: string;
+  readonly tag?: string;
+  readonly deno?: string;
+  /** The glibc its Linux builds need (see `minGlibcFor`). */
+  readonly minGlibc?: string;
+  readonly targets: Readonly<Record<string, DenoToolchainArtifact>>;
   readonly denort?: Readonly<Record<string, DenoToolchainArtifact>>;
 }
 
@@ -252,6 +285,37 @@ export function loadDenoToolchainPin(env: EnvGet = processEnv): DenoToolchainPin
     throw new Error(`denext: ${TOOLCHAIN_PIN_FILE_ENV}=${file} is not a schema-1 toolchain pin`);
   }
   return pin;
+}
+
+/**
+ * The pin's `rollback` as a pin of its own (no `rollback` of its own), or `null` when it names none.
+ *
+ * @param pin The pin.
+ * @returns The previous release's pin.
+ */
+export function rollbackToolchainPin(pin: DenoToolchainPin): DenoToolchainPin | null {
+  if (!pin.rollback) return null;
+  return {
+    schema: 1,
+    ...(pin.repository ? { repository: pin.repository } : {}),
+    ...pin.rollback,
+  };
+}
+
+/**
+ * The pin of the toolchain this process runs on: the pin in force, or its `rollback` when the
+ * toolchain marker (`DENEXT_TOOLCHAIN_ACTIVE`, set by the command that started this one) names the
+ * rollback's version — the parent ran the rollback because the pinned release is revoked, and
+ * everything this process takes from the pin (its esbuild, TypeScript, `denort`) must match it.
+ *
+ * @param env Env reader.
+ * @returns The pin.
+ */
+export function activeToolchainPin(env: EnvGet = processEnv): DenoToolchainPin {
+  const pin = loadDenoToolchainPin(env);
+  const rollback = rollbackToolchainPin(pin);
+  const marker = env(TOOLCHAIN_ACTIVE_ENV);
+  return rollback && marker === rollback.version ? rollback : pin;
 }
 
 /**
@@ -1067,6 +1131,17 @@ export function denortTargetKey(triple: string): string | undefined {
 }
 
 /**
+ * The Rust target triple of a pin key (`linux-x86_64` → `x86_64-unknown-linux-gnu`), the naming the
+ * revoked-runtimes list uses; `undefined` for a key denext's toolchain is not built for.
+ *
+ * @param key The pin key (`<os>-<arch>`).
+ * @returns The triple, or `undefined`.
+ */
+export function toolchainTargetTriple(key: string): string | undefined {
+  return Object.keys(COMPILE_TARGET_KEYS).find((triple) => COMPILE_TARGET_KEYS[triple] === key);
+}
+
+/**
  * Make the pinned `denort` for `options.target` (an `<os>-<arch>` key, default this host's)
  * available in the cache — SHA-256-verified exactly like the toolchain binary, under
  * `<cache>/<version>/<target>-denort/` — and return its path. Throws
@@ -1111,6 +1186,11 @@ export type DenoToolchainChoice =
      * version can't be read.
      */
     readonly stock?: true;
+    /**
+     * What the revoked-runtimes list said about the pinned toolchain, when it was checked
+     * (src/build/runtime-revocations.ts): `runningRollback` when `deno` is the pin's `rollback`.
+     */
+    readonly revocation?: RuntimeRevocationStatus;
   }
   | {
     readonly kind: "stock";
@@ -1139,6 +1219,25 @@ export interface ResolveDenoToolchainOptions extends EnsureDenoToolchainOptions 
   readonly missingGrants?: (cacheRoot: string) => Promise<string[]>;
   /** `<bin> --version`'s output for a `DENEXT_DENO=<path>` binary, or null (default: run it). */
   readonly versionOutput?: (bin: string) => Promise<string | null>;
+  /**
+   * How the revoked-runtimes list is consulted. Absent: the built-in pin is checked in `fetch` mode
+   * (a pin given as `pin` or by `DENEXT_TOOLCHAIN_PIN_FILE` is not checked); given, it is checked
+   * whatever the pin (tests).
+   */
+  readonly revocations?: ToolchainRevocationOptions;
+}
+
+/** {@linkcode ResolveDenoToolchainOptions.revocations}. */
+export interface ToolchainRevocationOptions extends Omit<LoadRevocationsOptions, "env" | "mode"> {
+  /** Default `fetch`; `cache-only` for `start` / `job` (no network at boot). */
+  readonly mode?: RevocationMode;
+  /**
+   * The runtimes that must roll back together: `["cli"]` (default), or `["cli", "desktop"]` for
+   * the desktop verbs, whose `deno desktop` CLI and libdenort must come from one release.
+   */
+  readonly components?: readonly RuntimeComponent[];
+  /** The Deno Desktop runtime pin (default the built-in one). */
+  readonly desktopPin?: Pick<DesktopRuntimePin, "version" | "targets" | "rollback">;
 }
 
 /** The `--allow-*` grants this process lacks for `cacheRoot` (queried, never prompted). */
@@ -1337,19 +1436,132 @@ async function pinnedChoice(
 ): Promise<DenoToolchainChoice> {
   const target = options.target ?? denoToolchainTarget();
   const cacheRoot = options.cacheRoot ?? denoToolchainCacheRoot(env);
-  const obstacle = await pinnedObstacle(
-    pin,
-    target,
-    cacheRoot,
-    options.missingGrants ?? queryMissingGrants,
-  );
+  // The list is read (and, when stale, fetched within its budget) while the grants are queried.
+  const [obstacle, selected] = await Promise.all([
+    pinnedObstacle(pin, target, cacheRoot, options.missingGrants ?? queryMissingGrants),
+    selectToolchainPin(pin, env, options, target, cacheRoot),
+  ]);
   if (obstacle) return obstacle;
   try {
-    const rt = await ensureDenoToolchain({ ...options, pin, target, cacheRoot });
-    return { kind: "toolchain", deno: rt.deno, version: rt.version };
+    const rt = await ensureDenoToolchain({ ...options, pin: selected.pin, target, cacheRoot });
+    return {
+      kind: "toolchain",
+      deno: rt.deno,
+      version: rt.version,
+      ...(selected.warning ? { warning: selected.warning } : {}),
+      ...(selected.revocation ? { revocation: selected.revocation } : {}),
+    };
   } catch (err) {
     throw new DenoToolchainRequiredError(`${errText(err)}\n${TOOLCHAIN_FIX}`);
   }
+}
+
+/** The pin {@linkcode selectToolchainPin} chose, and what to say about it. */
+export interface ToolchainSelection {
+  /** The pin to install and run: the pin in force, or its `rollback`. */
+  readonly pin: DenoToolchainPin;
+  /** The one-line notice, when the pinned toolchain is revoked and it was not said yet. */
+  readonly warning?: string;
+  /** What the list said, when it was consulted. */
+  readonly revocation?: RuntimeRevocationStatus;
+}
+
+/**
+ * Whether the revoked-runtimes list is consulted for `options`: never for a pin file override
+ * (fork development), nor for a pin a caller passed without asking for the check (tests).
+ */
+function revocationsApply(env: EnvGet, options: ResolveDenoToolchainOptions): boolean {
+  if (env(TOOLCHAIN_PIN_FILE_ENV)) return false;
+  return options.pin === undefined || options.revocations !== undefined;
+}
+
+/** The runtimes a command on `target` runs, as the list names them. */
+function toolchainSubjects(
+  pin: DenoToolchainPin,
+  rollback: DenoToolchainPin | null,
+  target: string,
+  options: ToolchainRevocationOptions,
+): RevocationSubject[] {
+  const triple = toolchainTargetTriple(target);
+  const usable = rollback?.targets[target] ? rollback.version : null;
+  const subjects: RevocationSubject[] = [
+    { component: "cli", version: pin.version!, rollback: usable, triple },
+  ];
+  if (!(options.components ?? ["cli"]).includes("desktop")) return subjects;
+  // libdenort must match the `deno desktop` CLI: the desktop runtime rolls back only to the same
+  // release as the toolchain.
+  const desktop = options.desktopPin ?? DESKTOP_RUNTIME_PIN;
+  const same = desktop.rollback?.version === usable && triple !== undefined &&
+    desktop.rollback?.targets[triple] !== undefined;
+  subjects.push({
+    component: "desktop",
+    version: desktop.version,
+    rollback: same ? usable : null,
+    triple,
+  });
+  return subjects;
+}
+
+/**
+ * The toolchain to run for `pin` (see src/build/runtime-revocations.ts): the pin in force, or its
+ * `rollback` when the revoked-runtimes list revokes it for this host and the rollback is not
+ * revoked too. A process started by a command that already chose (the toolchain marker is set)
+ * takes that choice and consults nothing. Never throws.
+ *
+ * @param pin The pin in force.
+ * @param env Env reader.
+ * @param options The resolver's options (`revocations` configures the check).
+ * @param target The host's pin key.
+ * @param cacheRoot The toolchain cache (where the list is cached).
+ * @returns The pin to run, and what to say.
+ */
+export async function selectToolchainPin(
+  pin: DenoToolchainPin,
+  env: EnvGet,
+  options: ResolveDenoToolchainOptions,
+  target: string,
+  cacheRoot: string,
+): Promise<ToolchainSelection> {
+  const rollback = rollbackToolchainPin(pin);
+  const marker = env(TOOLCHAIN_ACTIVE_ENV);
+  if (marker) return { pin: rollback && marker === rollback.version ? rollback : pin };
+  if (pin.version === null || !revocationsApply(env, options)) return { pin };
+  const r = options.revocations ?? {};
+  const loaded = await loadRuntimeRevocations({ ...r, env, cacheRoot });
+  const decision = decideRevocation(loaded.list, toolchainSubjects(pin, rollback, target, r));
+  const revocation = revocationStatus(loaded, decision, pin.version, rollback?.version ?? null);
+  if (!decision.hit) return loaded.configured ? { pin, revocation } : { pin };
+  const chosen = decision.useRollback ? rollback! : pin;
+  if (env(REVOCATION_NOTICED_ENV) === "1") return { pin: chosen, revocation };
+  const warning = revocationNotice(
+    decision.hit,
+    decision.triple,
+    decision.useRollback ? chosen.version : null,
+  );
+  return { pin: chosen, revocation, warning };
+}
+
+/**
+ * The toolchain this machine would run for the pin in force — the pin, or its rollback when the
+ * revoked-runtimes list revokes it here — as `toolchain status` / `install` / `path` and `doctor`
+ * report it: the list read in `mode`, whatever toolchain marker this process inherited.
+ *
+ * @param mode How the list is read (`force` fetches now, within its 5 s budget).
+ * @param env Env reader.
+ * @returns The selection.
+ */
+export function toolchainSelection(
+  mode: RevocationMode,
+  env: EnvGet = processEnv,
+): Promise<ToolchainSelection> {
+  const unmarked: EnvGet = (name) => name === TOOLCHAIN_ACTIVE_ENV ? undefined : env(name);
+  return selectToolchainPin(
+    loadDenoToolchainPin(env),
+    unmarked,
+    { revocations: { mode } },
+    denoToolchainTarget(),
+    denoToolchainCacheRoot(env),
+  );
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1624,7 +1836,9 @@ async function stepQuery(options: DenoToolchainStatusOptions): Promise<StepQuery
   const env = options.env ?? processEnv;
   const mode = toolchainMode(env).mode;
   if (mode !== "pinned") return { mode: mode === "stock" ? "stock" : "<path>" };
-  const pin = options.pin ?? loadDenoToolchainPin(env);
+  // The pin of the toolchain this process runs: its rollback, when the command that started it
+  // ran that one.
+  const pin = options.pin ?? activeToolchainPin(env);
   const target = options.target ?? denoToolchainTarget();
   const artifact = pinnedTargetArtifact(pin, target);
   const root = options.cacheRoot ?? denoToolchainCacheRoot(env);

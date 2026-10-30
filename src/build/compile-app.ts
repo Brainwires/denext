@@ -60,11 +60,12 @@ import {
   settleCompileLock,
 } from "./compile-lock.ts";
 import {
+  activeToolchainPin,
   denortTargetKey,
   type DenoToolchainPin,
   ensureDenort,
-  loadDenoToolchainPin,
 } from "./deno-toolchain.ts";
+import { assertRuntimeShippable } from "./runtime-revocations.ts";
 
 /** The targets `deno compile --target` takes. */
 export const COMPILE_TARGETS: readonly string[] = [
@@ -377,8 +378,16 @@ export function toolchainCompileFlags(version: string | undefined): string[] {
 export interface DenortBinaryDeps {
   /** The toolchain version this process runs on, or `undefined` off the toolchain. */
   readonly toolchain?: () => string | undefined;
-  /** The pin in force (default {@linkcode loadDenoToolchainPin}). */
+  /**
+   * The pin of the toolchain this process runs (default {@linkcode activeToolchainPin}: the pin
+   * in force, or its rollback when the command that started this one ran that).
+   */
   readonly pin?: () => DenoToolchainPin;
+  /**
+   * Refuse a revoked denort (default: the revoked-runtimes list, `DENEXT_ALLOW_REVOKED_RUNTIME`
+   * to override; src/build/runtime-revocations.ts).
+   */
+  readonly shippable?: (version: string, triple: string) => Promise<void>;
   /** Fetch and verify one (default {@linkcode ensureDenort}). */
   readonly ensure?: (options: { pin: DenoToolchainPin; target: string }) => Promise<
     { denort: string }
@@ -405,11 +414,20 @@ export async function denortBinary(
 ): Promise<string | undefined> {
   const version = (deps.toolchain ?? toolchainVersion)();
   if (version === undefined) return undefined;
-  const pin = (deps.pin ?? loadDenoToolchainPin)();
+  const pin = (deps.pin ?? (() => activeToolchainPin()))();
   if (pin.version !== version) return undefined;
-  const key = denortTargetKey(target ?? Deno.build.target);
+  const triple = target ?? Deno.build.target;
+  const key = denortTargetKey(triple);
   if (key === undefined || !pin.denort?.[key]) return undefined;
+  // Never compile onto a runtime the maintainers revoked for this target (the pin's rollback,
+  // when there is one, is what this process already runs on).
+  await (deps.shippable ?? shippableDenort)(version, triple);
   return (await (deps.ensure ?? ensureDenort)({ pin, target: key })).denort;
+}
+
+/** Refuse a denort the revoked-runtimes list revokes for `triple`. */
+function shippableDenort(version: string, triple: string): Promise<void> {
+  return assertRuntimeShippable("cli", version, triple, "compile onto");
 }
 
 /** `path` exists (file or directory). */

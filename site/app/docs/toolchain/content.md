@@ -249,6 +249,60 @@ The notice is printed once per process tree: the first one sets `DENEXT_STOCK_DE
 in the command's environment, so the processes it starts stay quiet.
 `DENEXT_NO_DEPRECATION_WARNINGS=1` hides it.
 
+## Revoked runtimes
+
+A Deno toolchain or Deno Desktop runtime release that turns out to be broken (it crashes on start
+on some hosts, say) can be revoked after release. The maintainers publish a signed list of revoked
+releases, and denext reads it before it runs its pinned toolchain:
+
+- **The pin is revoked for this host:** denext runs the previous release instead, which the pin
+  names as its `rollback`, provided that release is not revoked too. It is downloaded and verified
+  like the pinned one: its SHA-256 comes from the pin that shipped with your denext, never from
+  the list. The command says so once, on stderr:
+
+  ```text
+  denext: Deno toolchain 3.0.0-denext.3 is revoked for x86_64-unknown-linux-gnu (crashes on start under glibc 2.27;
+    https://…). Running 3.0.0-denext.2 instead. Fixed in denext 4.10.3: run `denext upgrade`.
+  ```
+
+  The processes it starts stay quiet (`DENEXT_REVOCATION_NOTICED=1` in their environment).
+- **No safe fallback is pinned:** the revoked release still runs, with a warning that names the
+  fix (`denext upgrade`, or `DENEXT_DENO=<path>`). Refusing would strand you with nothing to run.
+- **Commands that ship a runtime to others refuse it:** `build --compile` (the `denort` inside the
+  binary), `desktop build` and `desktop package` stop with the reason, unless
+  `DENEXT_ALLOW_REVOKED_RUNTIME=<version>` names the revoked version. `desktop run` and `dev` warn
+  instead. The desktop verbs move the toolchain and the Deno Desktop runtime back together, since
+  the `deno desktop` CLI and libdenort must come from one release.
+
+The list can only disable a pin and choose among the two releases your denext pins. It never names
+a binary of its own, so a stolen signing key could at worst force that one step back.
+
+**When it is checked.** The list is cached under the toolchain cache
+(`<DENO_DIR>/denext-deno/revocations.json`) for 12 hours and re-verified on every read: its
+signature against the public keys compiled into denext, its expiry (60 days after signing; an
+expired list is ignored) and a sequence number that only grows (an older list is never taken back).
+A stale cache is refreshed from `https://denext.dev/runtime/revocations.json`, then from a mirror on
+GitHub, within 1.5 seconds in all. **A command never fails and never waits longer because of the
+list:** offline, an HTTP error, a bad signature or an oversized answer all mean the cached list is
+used, or none, and a failed fetch is not retried for an hour. A process without network permission
+for those hosts (`--deny-net`, or a least-privilege process that would be prompted) does not fetch
+at all.
+
+- `denext start` and `denext job` read the cached list only: a production boot never touches the
+  network for it. A Docker image gets the check when it is built, where `denext toolchain path`
+  runs.
+- `denext toolchain status`, `toolchain install` and `denext doctor` fetch it every time (5 seconds
+  at most) and print the list's sequence, its expiry and what it says about the pinned toolchain.
+  `toolchain status --json` carries the same as `revocation`: `revoked`, `reason`, `advisory`,
+  `fixedIn`, `runningRollback`, `running`, `listSequence`, `listExpiresAt` (and `expiredAt` for a
+  list that was ignored because it expired). `doctor` warns about a revoked pin and an expired list.
+- `toolchain prune` keeps the rollback release's cache, so the fallback works offline.
+- `DENEXT_REVOCATION_CHECK=0` turns the check off. A pin file override
+  (`DENEXT_TOOLCHAIN_PIN_FILE`) and `DENEXT_DENO=stock | <path>` are never checked.
+
+Until the maintainers' signing key is compiled into a denext release, the check does nothing: no
+list is read and nothing is fetched.
+
 ## esbuild
 
 denext's bundling (the SPA and compatibility builds, dev's dependency pre-bundle, `analyze`,

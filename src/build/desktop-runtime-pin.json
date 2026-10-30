@@ -110,5 +110,118 @@
         "format": "tar.gz"
       }
     }
+  },
+  "rollback": {
+    "version": "3.0.0-rc.5",
+    "tag": "denext-runtime-v3.0.0-rc.5",
+    "repository": "https://github.com/Brainwires/deno",
+    "deno": "2.9.8",
+    "denoSha": "19e7994766c343e3f2fe5f35f84b5440c959a966",
+    "laufeySha": "a0f2c26a70703c357efd1d1318f4498036dd425a",
+    "laufeyApiVersion": 49,
+    "targets": {
+      "aarch64-apple-darwin": {
+        "runtimeLib": "libdenort.dylib",
+        "webview": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-aarch64-apple-darwin-webview.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-aarch64-apple-darwin-webview.tar.gz",
+          "sha256": "f3e6ae1a5bec807478d7ad924119e24e2bba9f80d02c73da6b0216b3ff9e9648",
+          "size": 30855842,
+          "format": "tar.gz"
+        },
+        "cef": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-aarch64-apple-darwin-cef.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-aarch64-apple-darwin-cef.tar.gz",
+          "sha256": "2f099fbd550b196befa18c7b3956fa6346f09f602cc941bdf7b256a73d47e8a7",
+          "size": 167691045,
+          "format": "tar.gz"
+        }
+      },
+      "aarch64-pc-windows-msvc": {
+        "runtimeLib": "denort.dll",
+        "webview": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-aarch64-pc-windows-msvc-webview.zip",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-aarch64-pc-windows-msvc-webview.zip",
+          "sha256": "1c5d01961505c5188547de7b7b0a2d19a59e7eaee32671da72234175a689e8bb",
+          "size": 31111475,
+          "format": "zip"
+        },
+        "cef": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-aarch64-pc-windows-msvc-cef.zip",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-aarch64-pc-windows-msvc-cef.zip",
+          "sha256": "5ddc9ee38711956d4ddb15d49b33718b0e0f7318d44899490089b34cac64d37d",
+          "size": 198073403,
+          "format": "zip"
+        }
+      },
+      "aarch64-unknown-linux-gnu": {
+        "runtimeLib": "libdenort.so",
+        "webview": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-aarch64-unknown-linux-gnu-webview.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-aarch64-unknown-linux-gnu-webview.tar.gz",
+          "sha256": "ce51790cf56cf122bdd72a9a7070ea06fe80804fd4eba91fc3e85c9310c15e14",
+          "size": 42187306,
+          "format": "tar.gz"
+        },
+        "cef": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-aarch64-unknown-linux-gnu-cef.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-aarch64-unknown-linux-gnu-cef.tar.gz",
+          "sha256": "cbf8c18869fe90eccc1deb0bc93d67825b8d83908e049df3f0224dac611bbc09",
+          "size": 216210151,
+          "format": "tar.gz"
+        }
+      },
+      "x86_64-apple-darwin": {
+        "runtimeLib": "libdenort.dylib",
+        "webview": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-x86_64-apple-darwin-webview.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-x86_64-apple-darwin-webview.tar.gz",
+          "sha256": "9fa56837f002162b6315560b5a2223ce7942751d6d760bd987887dca2171f6d5",
+          "size": 34553412,
+          "format": "tar.gz"
+        },
+        "cef": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-x86_64-apple-darwin-cef.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-x86_64-apple-darwin-cef.tar.gz",
+          "sha256": "edaeb73584aee769c6c42510a519979caa573b80b3c75aa235e8782b63eb4e5b",
+          "size": 179591634,
+          "format": "tar.gz"
+        }
+      },
+      "x86_64-pc-windows-msvc": {
+        "runtimeLib": "denort.dll",
+        "webview": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-x86_64-pc-windows-msvc-webview.zip",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-x86_64-pc-windows-msvc-webview.zip",
+          "sha256": "1a18b62a304ffed98bdab4e3661bddc73bc4572884414f6f1db8168d282188da",
+          "size": 32893691,
+          "format": "zip"
+        },
+        "cef": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-x86_64-pc-windows-msvc-cef.zip",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-x86_64-pc-windows-msvc-cef.zip",
+          "sha256": "fe796c854d222f31750181cdcb6cbf1a82134e61e04c0e584767a4ac15111a3a",
+          "size": 203856266,
+          "format": "zip"
+        }
+      },
+      "x86_64-unknown-linux-gnu": {
+        "runtimeLib": "libdenort.so",
+        "webview": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-x86_64-unknown-linux-gnu-webview.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-x86_64-unknown-linux-gnu-webview.tar.gz",
+          "sha256": "c4f0e3675142e79c641f9f084f245e2b66748987b0ad727d1eb08c327dde6fc7",
+          "size": 41376882,
+          "format": "tar.gz"
+        },
+        "cef": {
+          "file": "deno-desktop-runtime-3.0.0-rc.5-x86_64-unknown-linux-gnu-cef.tar.gz",
+          "url": "https://github.com/Brainwires/deno/releases/download/denext-runtime-v3.0.0-rc.5/deno-desktop-runtime-3.0.0-rc.5-x86_64-unknown-linux-gnu-cef.tar.gz",
+          "sha256": "894f9dcc808eb4332d1d24e30dc20a270a89ecff185cc28212d4020830da017f",
+          "size": 197473203,
+          "format": "tar.gz"
+        }
+      }
+    }
   }
 }
