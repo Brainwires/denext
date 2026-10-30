@@ -37,6 +37,7 @@ import { servePrerendered } from "./page-prerender.ts";
 import { pageCacheTiming } from "./cache.ts";
 import { serveStreamed } from "./page-stream.ts";
 import { CHILDREN_SLOT, readSlotState, recordSlotState } from "./slot-state.ts";
+import { pageRequestMiddlewareOf } from "./page-request-middleware.ts";
 
 /** What the routing stage hands over once a page matched. */
 export interface MatchedPageRequest {
@@ -47,6 +48,11 @@ export interface MatchedPageRequest {
   soft: boolean;
   /** The locale/basePath-stripped path the page was matched on. */
   routingPath: string;
+  /**
+   * The app's response for an error that escaped the page (reported first). A page request
+   * middleware's `render()` resolves to it instead of rejecting; without it the error rethrows.
+   */
+  recover?: (error: unknown) => Promise<Response>;
 }
 
 /** Soft-navigation JSON payloads are never cached and keyed on the nav header. */
@@ -305,6 +311,32 @@ async function renderAndServe(pr: PageRequest): Promise<Response> {
 /** Serve a matched page (GET/HEAD, or a soft-nav POST carrying an over-large render payload). */
 export async function servePage(state: RequestState, match: MatchedPageRequest): Promise<Response> {
   const pr = await preparePageRequest(state, match);
+  // A page module that fails to load fails inside the render, where its boundaries are.
+  const mod = await pr.pageLoad(pr.page.route.filePath).catch(() => undefined);
+  const middleware = pageRequestMiddlewareOf(mod);
+  if (!middleware) return await servePageStages(state, pr);
+  const recover = match.recover ?? ((error: unknown) => Promise.reject(error));
+  let rendered: Response | undefined;
+  const render = async () => {
+    try {
+      return rendered = await servePageStages(state, pr);
+    } catch (error) {
+      return rendered = await recover(error);
+    }
+  };
+  const response = await middleware({
+    request: state.request,
+    params: pr.page.params,
+    render,
+    recover,
+  });
+  // A response the middleware made without rendering still leaves through `finalize`; one
+  // made from the rendered response already carries what `finalize` added.
+  return rendered === undefined ? finalize(state, response) : response;
+}
+
+/** The page's stages: the ISR cache, the prerendered shell, else the render. */
+async function servePageStages(state: RequestState, pr: PageRequest): Promise<Response> {
   // When the key is narrowed, record which searchParams the render reads: a cached render
   // must not embed a dropped param's value (a shell prerender postpones on one instead).
   const { cacheKeyParams } = state.app.config;

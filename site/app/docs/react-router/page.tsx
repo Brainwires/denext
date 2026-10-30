@@ -141,23 +141,35 @@ export default { plugins: [reactRouter({ getLoadContext: () => ({ db }) })] };`}
         object's properties ride on it (<code>context.db</code>), and typed keys from{" "}
         <code>createContext</code> work through <code>context.get</code> /{" "}
         <code>context.set</code>. Route <code>middleware</code> (or the older{" "}
-        <code>unstable_middleware</code>) runs outermost route first, each route's once per request,
-        before that route's loader or action; a thrown <code>redirect()</code> or{" "}
-        <code>Response</code>{" "}
-        stops the request as a loader's would. On a resource route and on a plain (no-JavaScript)
-        POST to a page's action, <code>next()</code>{" "}
-        runs the handler and resolves to its response. On a page render there is no single handler
-        to wrap, so <code>next()</code>{" "}
-        resolves at once to a stand-in response: headers set on it reach the page's response, and
-        returning a different <code>Response</code> answers like a thrown one.
+        <code>unstable_middleware</code>) wraps the whole request, as React Router's server
+        middleware does: it runs outermost route first, each middleware once, and its{" "}
+        <code>next()</code>{" "}
+        resolves to the response the browser gets. On a page that is the rendered document, or a
+        client navigation's payload (React Router's <code>.data</code>{" "}
+        request), after every loader, the render and the route's error boundaries ran, so a
+        middleware can read the status, set headers on the document, time the render, or return its
+        own <code>Response</code> instead. A render error reaches <code>next()</code>{" "}
+        as the error response (the boundary's, at its status), never as a throw. A middleware that
+        returns a <code>Response</code> without calling <code>next()</code>{" "}
+        answers with it and nothing renders. A thrown <code>redirect()</code> or{" "}
+        <code>Response</code> before <code>next()</code>{" "}
+        answers as that route's loader throwing it would: a redirect, or the nearest error boundary
+        at its status. On a resource route, a plain (no-JavaScript) POST to a page's action and an
+        action submitted from the page, <code>next()</code>{" "}
+        runs the handler and resolves to its response; on a resource route an error the handler
+        throws reaches <code>next()</code>{" "}
+        as React Router's 500 response, which a middleware can replace.
       </p>
 
       <h2>Limitations</h2>
       <ul>
         <li>
-          On a page render, route <code>middleware</code>'s <code>next()</code>{" "}
-          resolves before the loaders run (code after it is not timed around the render), and a
-          parent route's loader may run before a child route's middleware. A{" "}
+          A route <code>middleware</code> that throws after <code>next()</code>{" "}
+          answers with the thrown{" "}
+          <code>Response</code>, or the app's error response for an error, rather than rendering an
+          error boundary. A page written out by <code>denext export</code>{" "}
+          is rendered outside a request, so there its middleware runs ahead of the loaders and{" "}
+          <code>next()</code> resolves at once to a stand-in response. A{" "}
           <code>clientMiddleware</code> export does not run.
         </li>
         <li>

@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **React Router route `middleware` now wraps the render.** Its `next()` resolved at once to a
+  stand-in response on a page, ahead of the loaders; it now resolves to the response the browser
+  gets, as React Router's server middleware does for a document or `.data` request: the rendered
+  document, or a client navigation's payload, after every loader and the render ran. A
+  middleware can read the status, set headers on the document, time the render or return its own
+  `Response`; one returning a `Response` without calling `next()` short-circuits the render, and
+  a render error reaches `next()` as the error response at its status. The chain runs outermost
+  route first with one shared `context`, and a throw before `next()` answers as that route's
+  loader throwing it would. Around an action submitted from the page, `next()` now runs the
+  action and resolves to its response; on a resource route a thrown `Response` reaches `next()`, and a thrown error does as React
+  Router's 500 response (`Unexpected Server Error`), which a middleware can replace.
+
 ## [4.10.2] - 2026-10-30
 
 ### Added

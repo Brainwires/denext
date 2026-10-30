@@ -408,7 +408,14 @@ function dispatchPage(
   const soft = state.request.headers.get("x-denext-nav") === "1";
   const matched = matchPage(manifest, routingPath, { soft });
   if (!matched) return null;
-  return servePage(state, { manifest, matched, localeInfo, soft, routingPath });
+  return servePage(state, {
+    manifest,
+    matched,
+    localeInfo,
+    soft,
+    routingPath,
+    recover: (error) => handlePipelineError(state, error),
+  });
 }
 
 /** The app's root not-found UI, as a full document (HEAD gets the headers only). */
