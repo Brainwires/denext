@@ -1,6 +1,6 @@
 // Networked e2e for `denext migrate` on a Prisma app whose datasource is a database SERVER
-// (Postgres, CockroachDB, MySQL): migrate a Node-shaped Next + Prisma app (tests/fixtures/prisma-server-db),
-// run the `prisma:setup` task it writes (install → `prisma generate` → `prisma migrate deploy`
+// (Postgres, CockroachDB, MySQL): migrate a Node-shaped Next + Prisma 6 app (tests/fixtures/prisma-server-db)
+// to Prisma 7, run the `prisma:setup` task it writes (install → `prisma generate` → `prisma migrate deploy`
 // of a real SQL migration), drive the migrated client against the live database (CRUD over
 // JSON / Decimal / BigInt / Bytes / DateTime, relations, interactive + batch transactions,
 // P2002, raw queries), then build and serve the app: a Server Component page reads through
@@ -24,7 +24,7 @@ import { startCliServer, withEnv } from "./harness.ts";
 const REPO = fromFileUrl(new URL("../../", import.meta.url));
 const CLI = join(REPO, "cli.ts");
 const FIXTURE = join(REPO, "tests/fixtures/prisma-server-db");
-const PRISMA = "npm:prisma@6.19.3";
+const PRISMA = "npm:prisma@7.10.1";
 
 const SETUP_TIMEOUT_MS = 300_000;
 const STEP_TIMEOUT_MS = 180_000;
@@ -54,8 +54,8 @@ async function run(
   }
 }
 
-/** Copy the fixture, set its provider and write the initial SQL migration Prisma generates. */
-async function prepareApp(provider: string, env: Record<string, string>): Promise<string> {
+/** Copy the fixture and set its provider. */
+async function prepareApp(provider: string): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: `denext-prisma-${provider}-` });
   await copy(FIXTURE, dir, { overwrite: true });
   const schemaPath = join(dir, "prisma/schema.prisma");
@@ -66,9 +66,17 @@ async function prepareApp(provider: string, env: Record<string, string>): Promis
     schema = schema.replaceAll("@default(autoincrement())", "@default(sequence())");
   }
   await Deno.writeTextFile(schemaPath, schema);
+  return dir;
+}
+
+/**
+ * Write the initial SQL migration Prisma generates and empty the database. Runs on the migrated
+ * app: Prisma 7 takes the datasource URL from the `prisma.config.ts` migrate wrote.
+ */
+async function writeInitialMigration(dir: string, provider: string, env: Record<string, string>) {
   const diff = await run(
     ["run", "-A", "--no-config", PRISMA, "migrate", "diff", "--from-empty"]
-      .concat(["--to-schema-datamodel", "prisma/schema.prisma", "--script"]),
+      .concat(["--to-schema", "prisma/schema.prisma", "--script"]),
     dir,
     env,
   );
@@ -86,14 +94,12 @@ async function prepareApp(provider: string, env: Record<string, string>): Promis
     "DROP TABLE IF EXISTS posts, users, _prisma_migrations;\n",
   );
   const reset = await run(
-    ["run", "-A", "--no-config", PRISMA, "db", "execute", "--file", "reset.sql"]
-      .concat(["--schema", "prisma/schema.prisma"]),
+    ["run", "-A", "--no-config", PRISMA, "db", "execute", "--file", "reset.sql"],
     dir,
     env,
   );
   assert(reset.ok, "resetting the database failed:\n" + reset.out);
   await Deno.remove(join(dir, "reset.sql"));
-  return dir;
 }
 
 for (
@@ -109,7 +115,7 @@ for (
     ignore: !url,
   }, async (t) => {
     const env = { DATABASE_URL: url!, PRISMA_PROVIDER: provider };
-    const dir = await prepareApp(provider, env);
+    const dir = await prepareApp(provider);
     try {
       await t.step("denext migrate wires the adapter", async () => {
         const migrated = await run(
@@ -121,6 +127,11 @@ for (
         const db = await Deno.readTextFile(join(dir, "lib/db.ts"));
         assertStringIncludes(db, `from "${adapter}"`);
         assertStringIncludes(db, "new PrismaClient({ adapter: __denextPrismaAdapter() })");
+        assertStringIncludes(
+          await Deno.readTextFile(join(dir, "prisma.config.ts")),
+          "datasource: { url: process.env.DATABASE_URL },",
+        );
+        await writeInitialMigration(dir, provider, env);
       });
 
       await t.step("prisma:setup installs, generates and runs `migrate deploy`", async () => {

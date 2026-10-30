@@ -107,6 +107,19 @@ and this project adheres to
   during a trim and skips the GC on a large live heap (`DENO_IDLE_TRIM_MAX_GC_HEAP_MB`). The glibc
   floor stays 2.27. The [runtime reference](https://denext.dev/docs/runtime-reference) lists the
   new APIs.
+- **`denext migrate` moves Prisma apps to Prisma 7.** It pins `prisma`, `@prisma/client` and the
+  `@prisma/adapter-*` packages at 7.10.1 whichever major the app was on (any `@prisma/adapter-*`
+  in `package.json` too), and applies the Prisma 7 upgrade guide: the schema's datasource `url`
+  (and `directUrl`, as the CLI's `url`, and `shadowDatabaseUrl`) moves to a `prisma.config.ts`
+  that reads the same variables through `process.env`, with a relative SQLite path rebased so the
+  CLI and the app keep opening the same file; the generator drops the `queryCompiler` /
+  `driverAdapters` preview features (other preview features stay); the injected SQLite adapter is
+  `PrismaBetterSqlite3`; the `better-sqlite3` link advertises 12.6.2; and `prisma:setup` runs
+  `prisma generate` and then a plain `db push` or `migrate deploy`, passing the app's `.env` with
+  `--env-file`. A Prisma 7 app keeps its own `prisma.config.ts` datasource, the output directory
+  of its `prisma-client` generator and any adapter it already passes to `new PrismaClient()`;
+  before, it was pinned back to Prisma 6, whose CLI rejected its schema without a `url`. The
+  seed is written to `prisma.config.ts`'s `migrations.seed`, where Prisma 7 reads it.
 
 ### Fixed
 
@@ -153,6 +166,11 @@ and this project adheres to
   a restart a resume of such a download is refused (`validation`) until the page starts it again
   with its headers, which continues from the partial file. The file is `0600` on macOS and Linux;
   Windows ignores the mode and it takes the user profile's ACL.
+- **`denext migrate` no longer pins a Prisma dependency tree with a high advisory.** It pinned
+  Prisma 6.19.3, and every Prisma 6 release's `@prisma/config` pins `deepmerge-ts` 7.1.5
+  ([GHSA-ggr8-5vv4-36mx](https://github.com/advisories/GHSA-ggr8-5vv4-36mx)), so every Prisma app
+  it migrated got that version. It now pins Prisma 7.10.1 (`deepmerge-ts` 8.0.2); migrating again
+  moves an app migrated before to it (see Changed).
 
 ## [4.10.3] - 2026-10-30
 

@@ -43,7 +43,13 @@ const EPIC_STACK: Bed = {
     },
     {
       path: "prisma/schema.prisma",
-      contains: ['provider        = "prisma-client"', 'runtime         = "deno"'],
+      contains: ['provider     = "prisma-client"', 'runtime      = "deno"'],
+      // Prisma 7 takes the datasource URL from prisma.config.ts only.
+      absent: ["queryCompiler", 'env("DATABASE_URL")'],
+    },
+    {
+      path: "prisma.config.ts",
+      contains: ["datasource: { url: denextSqliteUrl(process.env.DATABASE_URL"],
     },
     {
       path: "deno.json",
