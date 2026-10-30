@@ -1,0 +1,482 @@
+/* Loopy: a teal vinyl-coated paper clip. Every move is keyed off the SVG's data-state
+   (components/Loopy.tsx); the durations match lib/loopy-machine.ts's stateDurationMs. */
+
+:root {
+  --wire: #17a08a;
+  --wire-edge: #0b6b5c;
+  --wire-shine: #a6efe0;
+  --ink: #1d2b33;
+  --paper: #fbf8f1;
+  --bubble: #ffffff;
+  --bubble-edge: #d9d2c3;
+  --accent: #17a08a;
+  color-scheme: light;
+  font-family: ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  /* Phase A windows are opaque; once denext has transparent windows (plans: loopy-native) this
+     goes transparent and Loopy floats on the desktop itself. */
+  background: var(--paper);
+  color: var(--ink);
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.companion {
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  height: 100vh;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 10px 10px 6px;
+}
+
+.companion:not(.is-desktop) {
+  height: auto;
+  min-height: 100vh;
+  grid-template-rows: minmax(150px, auto) auto auto auto;
+}
+
+/* ---------------------------------------------------------------- speech bubble */
+
+.bubble-slot {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-start;
+  padding: 0 0 4px 4px;
+  min-height: 0;
+}
+
+.bubble {
+  position: relative;
+  max-width: 240px;
+  padding: 10px 26px 10px 12px;
+  background: var(--bubble);
+  border: 1.5px solid var(--bubble-edge);
+  border-radius: 14px;
+  box-shadow: 0 3px 10px rgb(0 0 0 / 0.08);
+  font-size: 13.5px;
+  line-height: 1.35;
+  animation: bubble-in 220ms cubic-bezier(0.3, 1.4, 0.6, 1) both;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* The tail points down-left, at Loopy's top loop. */
+.bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -8px;
+  left: 48px;
+  width: 14px;
+  height: 14px;
+  background: var(--bubble);
+  border-right: 1.5px solid var(--bubble-edge);
+  border-bottom: 1.5px solid var(--bubble-edge);
+  transform: rotate(45deg);
+}
+
+.bubble[data-mood="attention"] {
+  border-color: #e0a63a;
+}
+
+.bubble[data-mood="success"] {
+  border-color: var(--accent);
+}
+
+.bubble-text {
+  margin: 0;
+  max-height: 110px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.bubble-close {
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #8a8478;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.bubble-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+button {
+  font: inherit;
+  /* Buttons stay clickable inside the window drag region on CEF. */
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+.bubble-actions button,
+.controls button,
+.demo button {
+  padding: 3px 10px;
+  border: 1.5px solid var(--wire-edge);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--wire-edge);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.bubble-actions button:first-child {
+  background: var(--wire);
+  border-color: var(--wire);
+  color: #fff;
+}
+
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.92);
+  }
+}
+
+/* ---------------------------------------------------------------- stage + controls */
+
+.stage {
+  position: relative;
+  display: flex;
+  justify-content: flex-start;
+  padding-left: 24px;
+  cursor: grab;
+}
+
+.squash {
+  position: relative;
+  transform-origin: 50% 96%;
+}
+
+/* The poke target: Loopy's top loop (the face), in the SVG's proportions. */
+.poke {
+  position: absolute;
+  left: 28%;
+  top: 10%;
+  width: 36%;
+  height: 26%;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.controls {
+  position: absolute;
+  right: 8px;
+  bottom: 6px;
+  display: flex;
+  gap: 6px;
+  opacity: 0.35;
+  transition: opacity 150ms;
+}
+
+.companion:not(.is-desktop) .controls {
+  position: static;
+  justify-content: flex-end;
+}
+
+.companion:hover .controls,
+.controls:focus-within {
+  opacity: 1;
+}
+
+.demo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+  margin-top: 10px;
+}
+
+/* ---------------------------------------------------------------- Loopy */
+
+.loopy {
+  display: block;
+  width: 120px;
+  height: 200px;
+  overflow: visible;
+}
+
+/* In the small desktop window Loopy is a little smaller, leaving room for the bubble. */
+.is-desktop .loopy {
+  width: 90px;
+  height: 150px;
+}
+
+.loopy path,
+.loopy-wire-edge,
+.loopy-wire,
+.loopy-wire-shine {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.loopy-wire-edge {
+  stroke: var(--wire-edge);
+  stroke-width: 10;
+}
+
+.loopy-wire {
+  stroke: var(--wire);
+  stroke-width: 7.5;
+}
+
+.loopy-wire-shine {
+  stroke: var(--wire-shine);
+  stroke-width: 2;
+  opacity: 0.8;
+  transform: translate(-1.6px, -1.2px);
+}
+
+.loopy-eyes circle {
+  fill: var(--ink);
+}
+
+.loopy-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.loopy .loopy-mouth {
+  stroke: var(--ink);
+  stroke-width: 2.2;
+}
+
+.loopy-shadow {
+  fill: rgb(0 0 0 / 0.12);
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.loopy-body {
+  transform-box: view-box;
+  transform-origin: 60px 186px;
+}
+
+.loopy-arm {
+  transform-box: view-box;
+  transform-origin: 84px 160px;
+  transition: transform 300ms cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+
+.loopy-thought,
+.loopy-sparkles {
+  opacity: 0;
+}
+
+.loopy-thought circle {
+  fill: var(--wire-edge);
+}
+
+.loopy-sparkles path {
+  fill: #f2b544;
+  stroke: none;
+}
+
+/* hidden: folded away */
+.loopy[data-state="hidden"] .loopy-body {
+  transform: scale(1, 0.04);
+  opacity: 0;
+}
+
+.loopy[data-state="hidden"] .loopy-shadow {
+  opacity: 0;
+}
+
+/* idle: a gentle sway about the bottom bend */
+.loopy[data-state="idle"] .loopy-body,
+.loopy[data-state="blink"] .loopy-body {
+  animation: sway 3.4s ease-in-out infinite;
+}
+
+@keyframes sway {
+  0%,
+  100% {
+    transform: rotate(-2.5deg);
+  }
+  50% {
+    transform: rotate(2.5deg);
+  }
+}
+
+/* blink */
+.loopy[data-state="blink"] .loopy-eyes {
+  animation: blink 160ms ease-in-out;
+}
+
+@keyframes blink {
+  50% {
+    transform: scaleY(0.1);
+  }
+}
+
+/* appear: spring up from the desk */
+.loopy[data-state="appear"] .loopy-body {
+  animation: spring 650ms cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+
+@keyframes spring {
+  0% {
+    transform: translateY(30px) scale(0.7, 0.1);
+    opacity: 0;
+  }
+  35% {
+    transform: translateY(-14px) scale(0.9, 1.15);
+    opacity: 1;
+  }
+  60% {
+    transform: translateY(0) scale(1.12, 0.88);
+  }
+  80% {
+    transform: scale(0.96, 1.04);
+  }
+  100% {
+    transform: none;
+  }
+}
+
+/* think: a tilt, eyes up, a trail of dots */
+.loopy[data-state="think"] .loopy-body {
+  transform: rotate(-5deg);
+  transition: transform 300ms ease-out;
+}
+
+.loopy[data-state="think"] .loopy-eyes {
+  transform: translate(2px, -2.5px);
+}
+
+.loopy[data-state="think"] .loopy-thought {
+  opacity: 1;
+}
+
+.loopy[data-state="think"] .loopy-thought circle {
+  animation: dot 1.2s ease-in-out infinite;
+}
+
+.loopy[data-state="think"] .loopy-thought circle:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.loopy[data-state="think"] .loopy-thought circle:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes dot {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* point: the outer leg unbends up toward the bubble, and Loopy leans after it */
+.loopy[data-state="point"] .loopy-arm {
+  transform: rotate(34deg);
+}
+
+.loopy[data-state="point"] .loopy-body {
+  transform: rotate(4deg);
+  transition: transform 300ms ease-out;
+}
+
+.loopy[data-state="point"] .loopy-eyes {
+  transform: translate(2px, -1.5px);
+}
+
+/* celebrate: two hops and a shimmer */
+.loopy[data-state="celebrate"] .loopy-body {
+  animation: hop 1.2s cubic-bezier(0.3, 0.7, 0.4, 1);
+}
+
+.loopy[data-state="celebrate"] .loopy-sparkles {
+  animation: sparkle 1.2s ease-out;
+}
+
+@keyframes hop {
+  0%,
+  45%,
+  100% {
+    transform: none;
+  }
+  10%,
+  55% {
+    transform: scale(1.1, 0.88);
+  }
+  25%,
+  70% {
+    transform: translateY(-26px) rotate(-6deg) scale(0.95, 1.06);
+  }
+  85% {
+    transform: translateY(-14px) rotate(6deg);
+  }
+}
+
+@keyframes sparkle {
+  20%,
+  70% {
+    opacity: 1;
+  }
+}
+
+/* dismiss: fold down into the desk */
+.loopy[data-state="dismiss"] .loopy-body {
+  animation: fold 450ms cubic-bezier(0.6, 0, 0.8, 0.4) both;
+}
+
+.loopy[data-state="dismiss"] .loopy-shadow {
+  animation: fold-shadow 450ms ease-in both;
+}
+
+@keyframes fold {
+  30% {
+    transform: scale(1.06, 0.92) rotate(3deg);
+  }
+  100% {
+    transform: scale(1, 0.04);
+    opacity: 0;
+  }
+}
+
+@keyframes fold-shadow {
+  to {
+    opacity: 0;
+    transform: scaleX(0.4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loopy *,
+  .bubble {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition: none !important;
+  }
+}

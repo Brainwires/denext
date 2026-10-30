@@ -240,6 +240,9 @@ entry = [
   "examples/clerk/desktop/e2e.ts",
   "examples/clerk/e2e/*.ts",
   "examples/rn-desktop/desktop.ts",
+  # examples/companion (Loopy): the Deno Desktop entry and the inbox CLI (`deno task say`).
+  "examples/companion/desktop.ts",
+  "examples/companion/scripts/loopy-say.ts",
   "examples/native/capacitor.config.ts",
   "examples/native/scripts/*.ts",
   "examples/prisma/scripts/*.ts",
