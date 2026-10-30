@@ -38,6 +38,7 @@ import {
 import {
   type BuildCommand,
   type BuildRunner,
+  buildStepEnv,
   formatBuildPlan,
   iosHostError,
   type MobileBuildOptions,
@@ -318,15 +319,20 @@ export async function replacePlaceholderIcons(
 
 /**
  * Run a command with the terminal attached; `env` is added to the inherited environment (a Yarn
- * install's no-scripts switches, signing secrets). Shared by `denext mobile build`, `submit` and
- * `add`.
+ * install's no-scripts switches, signing secrets). A step with `scrubSigningEnv` (the export and
+ * `cap sync`) gets the inherited environment without the signing credentials instead. Shared
+ * by `denext mobile build`, `submit` and `add`.
  */
-export const runInheritedCommand: BuildRunner = async ({ cmd, args, cwd, env }) => {
+export const runInheritedCommand: BuildRunner = async (command) => {
+  const { cmd, args, cwd } = command;
+  // The export and `cap sync` steps run without the signing credentials.
+  const { env, clearEnv } = buildStepEnv(command, () => Deno.env.toObject());
   try {
     const { code } = await new Deno.Command(cmd, {
       args: [...args],
       cwd,
-      ...(env ? { env: { ...env } } : {}),
+      ...(env ? { env } : {}),
+      clearEnv,
       stdin: "inherit",
       stdout: "inherit",
       stderr: "inherit",
@@ -823,7 +829,9 @@ export const MOBILE_BUILD_HELP = "\n" +
   "  Decoding and resizing run on @denext/photon (wasm).\n" +
   "\n" +
   "  build: `denext export` (--app, default the Capacitor project; a flavor's env is added),\n" +
-  "  the flavor's edits, `npx cap sync <platform>`, then the native build. Without --release:\n" +
+  "  the flavor's edits, `npx --no cap sync <platform>` (the project's own @capacitor/cli),\n" +
+  "  with --release `denext mobile doctor --release` (any error stops the build), then the native\n" +
+  "  build. The export and cap sync never see the signing variables. Without --release:\n" +
   "  a Debug build (Android: a debug-signed .apk). iOS signs automatically (-allowProvisioning\n" +
   "  Updates) for --team / DENEXT_IOS_TEAM, with DENEXT_ASC_KEY_PATH / _KEY_ID / _ISSUER_ID as the\n" +
   "  API key on a machine with no Apple ID signed in; --unsigned needs no certificate. Android\n" +

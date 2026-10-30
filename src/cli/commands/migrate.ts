@@ -391,7 +391,7 @@ function expoNextSteps(e: NonNullable<MigrateResult["expo"]>, capacitor: boolean
     ...(e.missingPackages.length ? [`install ${e.missingPackages.join(" ")}`] : []),
     ...(capacitor ? [] : [
       "install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/android (^8)",
-      "deno task export && npx cap add ios && npx cap add android",
+      "deno task export && npx --no cap add ios && npx --no cap add android",
     ]),
     ...(e.mobile.command ? [e.mobile.command] : []),
   ];
@@ -650,7 +650,8 @@ function reportCapacitor(c: CapacitorMigrateInfo): void {
 function reportCapacitorSteps(outcome: CapacitorStepsOutcome): void {
   for (const line of outcome.ran) console.log(`    ran: ${line}`);
   if (outcome.failed) {
-    console.log(`    ✗ failed (exit ${outcome.failed.code}): ${outcome.failed.line}`);
+    const { code, line, reason } = outcome.failed;
+    console.log(`    ✗ failed (${reason ?? `exit ${code}`}): ${line}`);
   }
   if (outcome.pending.length) {
     console.log("    still to run:");

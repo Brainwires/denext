@@ -312,7 +312,7 @@ Then it installs the pinned Capacitor 8 packages it lacks (`@capacitor/cli`,
 `core`, and the platforms') as dev dependencies with the project's package manager
 without running the project's lifecycle scripts (a monorepo's own `prepare`, a
 `postinstall`): npm, pnpm and bun get `--ignore-scripts`, e.g.
-`pnpm add -D --ignore-scripts @capacitor/cli@^8.5.2 …`, and Yarn, which rejects
+`pnpm add -D --ignore-scripts --save-exact @capacitor/cli@8.5.2 …`, and Yarn, which rejects
 that flag in Berry, runs with `npm_config_ignore_scripts=true` (Yarn 1) and
 `YARN_ENABLE_SCRIPTS=0` (Berry) in its environment. With no lockfile it does not
 pick a manager for you: it prints the command. With `--platform ios,android` it

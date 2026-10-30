@@ -62,12 +62,14 @@ Deno.test("mobile add sentry: @sentry/capacitor with its exact sibling SDK, and 
       "capacitor.config.json": JSON.stringify({ appId: "dev.example", webDir: "out" }),
       "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
       "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+      "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
       ".git/HEAD": "ref: refs/heads/main\n",
     });
     const plan = await planMobileCapabilities({ capabilities: ["sentry"], cwd: dir });
     assertEquals(plan.install?.args, [
       "install",
       "--ignore-scripts",
+      "--save-exact",
       "@sentry/capacitor@4.4.0",
       "@sentry/browser@10.69.0",
     ]);

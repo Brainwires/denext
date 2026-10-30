@@ -29,6 +29,7 @@ import { join, resolve } from "@std/path";
 import { commit, objectDeleteEdits } from "./config-edit.ts";
 import { parseModule } from "./swc-ast.ts";
 import type { CommandRunner } from "./mobile-capabilities.ts";
+import { assertCapacitorCli, capCommand } from "./capacitor-cli.ts";
 import {
   CAPACITOR_CONFIGS,
   capacitorConfigFile,
@@ -54,7 +55,7 @@ export interface MobileDevServer {
 
 /** The edges of {@linkcode runMobileDev}, injected so tests never spawn a server or `cap`. */
 export interface MobileDevDeps {
-  /** Runs `npx cap copy` in the Capacitor project. */
+  /** Runs `npx --no cap copy` in the Capacitor project. */
   readonly run: CommandRunner;
   /** Start `denext dev`, or attach to one already answering at the target URL. */
   readonly startServer: () => Promise<MobileDevServer>;
@@ -660,12 +661,14 @@ async function xcodeProject(root: string): Promise<string> {
   }
 }
 
-/** `npx cap copy`: pushes the (edited or restored) config into the native projects. */
+/** `npx --no cap copy`: pushes the (edited or restored) config into the native projects. */
 async function capCopy(deps: Pick<MobileDevDeps, "run">, root: string): Promise<void> {
-  const { code } = await deps.run({ cmd: "npx", args: ["cap", "copy"], cwd: root });
+  // The project's own Capacitor CLI, or a clear error (never a registry `cap`).
+  await assertCapacitorCli(root);
+  const { code } = await deps.run(capCommand(["copy"], root));
   if (code !== 0) {
     throw new Error(
-      `\`npx cap copy\` exited with ${code} (it needs the web assets built once: ` +
+      `\`npx --no cap copy\` exited with ${code} (it needs the web assets built once: ` +
         "run your build / `denext export` into the config's webDir first)",
     );
   }
@@ -725,6 +728,8 @@ export async function runMobileDev(options: MobileDevOptions, deps: MobileDevDep
   if (healed) deps.log(`  restored ${healed} from an earlier session that did not exit cleanly`);
   const file = await capacitorConfigFile(root);
   if (!file) throw new Error(`no Capacitor project (capacitor.config.*) in ${root}`);
+  // Before the config is edited or a server started: `cap copy` is the project's own CLI.
+  await assertCapacitorCli(root);
   // Listen for Ctrl-C from the start, so one pressed during `cap copy` still ends in a restore
   // (rather than the default exit, which would leave the edited config for the next run); stop
   // listening when the session ends, however it ends.

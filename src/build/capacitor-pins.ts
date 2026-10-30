@@ -15,8 +15,13 @@ export const YARN_NO_SCRIPTS_ENV: Readonly<Record<string, string>> = {
   YARN_ENABLE_SCRIPTS: "0",
 };
 
-/** The Capacitor release the shell targets (Capacitor 8, as every `mobile add` plugin). */
-export const CAPACITOR_VERSION = "^8.5.2";
+/**
+ * The Capacitor release the shell targets (Capacitor 8, as every `mobile add` plugin), pinned
+ * exactly: a range would let the package manager take a release published minutes ago, past the
+ * project's minimum dependency age. Bump it only to a version that has cleared Deno's default
+ * hold (two days).
+ */
+export const CAPACITOR_VERSION = "8.5.2";
 
 /**
  * The Capacitor build outputs and copied web assets a project ignores. Capacitor 8 builds iOS

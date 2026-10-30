@@ -12,10 +12,9 @@ import type { ModifyEventWithPromptOptions } from '../schemas/interfaces/modify-
 import type { EventEditAction } from '../schemas/types/event-edit-action.d.ts';
 export interface EventOperations {
     /**
-     * Opens a calendar UI to create an event.
-     * On Android and iOS, opens the system editor. On Android, `id` is always `null`.
-     * On Web, shows a confirm dialog, then builds an `.ics` `File` when the user confirms.
-     * See MCP `docs://web-behavior` for Web details.
+     * Opens the system calendar interface to create a new event.
+     * On Android always returns `null` for `id`.
+     * Fetch the events to find the ID of the newly created event.
      *
      * @example
      * const options = {
@@ -24,7 +23,7 @@ export interface EventOperations {
      * }
      * await CapacitorCalendar.createEventWithPrompt(options)
      *
-     * @platform Android, iOS, Web
+     * @platform Android, iOS
      * @since 0.1.0
      */
     createEventWithPrompt(options?: CreateEventWithPromptOptions): Promise<CreateEventWithPromptResult>;
@@ -48,15 +47,19 @@ export interface EventOperations {
     /**
      * Creates an event in the calendar.
      * On Android and iOS, inserts into the system calendar and returns its `id`.
-     * On Web, builds an `.ics` `File` as `ics` (no calendar store). See MCP `docs://web-behavior`.
+     * On Web, there is no system calendar store: builds an `.ics` `File` as `ics`.
+     * The app must download or open that file (for example with `downloadIcsFile(...)`);
+     * this method does not trigger a download.
      *
      * @example
      * const { id, ics } = await CapacitorCalendar.createEvent({
      *   title: 'Team standup',
      *   startDate: Date.now(),
      *   icsFileName: 'team-standup.ics',
-     *   autoDownloadIcsFile: true,
      * });
+     * if (ics) {
+     *   await downloadIcsFile(ics);
+     * }
      *
      * @platform Android, iOS, Web
      * @since 0.4.0

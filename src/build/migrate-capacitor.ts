@@ -14,6 +14,7 @@ import { CAPACITOR_CONFIGS, readCapacitorConfig } from "./capacitor-config.ts";
 import { nativeDirsOf } from "./capacitor-native-dirs.ts";
 import { CAPACITOR_VERSION, capacitorBuildIgnores, YARN_NO_SCRIPTS_ENV } from "./capacitor-pins.ts";
 import type { CommandRunner, PlannedCommand } from "./mobile-capabilities.ts";
+import { assertCapacitorCli, capCommand, capSubcommand } from "./capacitor-cli.ts";
 
 /** A native platform Capacitor adds. */
 export type CapacitorPlatform = "ios" | "android";
@@ -265,7 +266,7 @@ function missingPackages(
 }
 
 /**
- * The install command for `specs` as dev dependencies. It never runs the project's own
+ * The install command for `specs` as dev dependencies, saved exactly. It never runs the project's own
  * lifecycle scripts (a monorepo's `prepare`, a `postinstall`): the Capacitor packages need no
  * install script. npm, pnpm and bun take `--ignore-scripts`; Yarn gets
  * {@link YARN_NO_SCRIPTS_ENV}.
@@ -275,12 +276,14 @@ function installCommand(
   specs: string[],
   cwd: string,
 ): PlannedCommand {
+  // Saved exactly, as pinned: a range in package.json would let a later install take a newer
+  // release, past the project's minimum dependency age.
   if (pm === "yarn") {
-    return { cmd: pm, args: ["add", "-D", ...specs], cwd, env: YARN_NO_SCRIPTS_ENV };
+    return { cmd: pm, args: ["add", "-D", "--exact", ...specs], cwd, env: YARN_NO_SCRIPTS_ENV };
   }
   const args = pm === "npm"
-    ? ["install", "-D", "--ignore-scripts"]
-    : ["add", "-D", "--ignore-scripts"];
+    ? ["install", "-D", "--ignore-scripts", "--save-exact"]
+    : ["add", "-D", "--ignore-scripts", pm === "bun" ? "--exact" : "--save-exact"];
   return { cmd: pm, args: [...args, ...specs], cwd };
 }
 
@@ -326,7 +329,7 @@ async function capacitorSteps(
   for (const p of platforms) {
     const there = await exists(join(dir, p)) ? `${p}/ already exists` : undefined;
     steps.push(
-      step(`add ${p}`, { cmd: "npx", args: ["cap", "add", p], cwd: dir }, there ?? notInstalled),
+      step(`add ${p}`, capCommand(["add", p], dir), there ?? notInstalled),
     );
   }
   return steps;
@@ -335,15 +338,15 @@ async function capacitorSteps(
 /**
  * The `mobile:*` tasks a Capacitor target gets: export + OTA stamp + `cap sync`, open each
  * native IDE, and a signed store build per platform. `cap` runs the app's installed Capacitor
- * CLI (`npx cap`, as `denext mobile` does) when a package manager installs it, else Capacitor's
- * CLI from Deno's npm cache.
+ * CLI (`npx --no cap`, as `denext mobile` does: `--no` never fetches the unrelated registry
+ * package `cap`) when a package manager installs it, else Capacitor's CLI from Deno's npm cache.
  */
 export function capacitorTasks(
   cli: string,
   o: { run: string; installed: boolean },
 ): Record<string, string> {
   const cap = o.installed
-    ? "npx cap"
+    ? "npx --no cap"
     : `deno run -A --node-modules-dir npm:@capacitor/cli@${CAPACITOR_VERSION}`;
   return {
     // `mobile sync` keeps the iOS shell's plugin paths off pnpm's store (installed Capacitor).
@@ -542,10 +545,24 @@ export async function appRouterServerFiles(dir: string): Promise<string[]> {
 export interface CapacitorStepsOutcome {
   /** The lines that ran and succeeded. */
   ran: string[];
-  /** The step that failed, and its exit code. */
-  failed?: { line: string; code: number };
+  /**
+   * The step that failed, and its exit code; `reason` when it never started (a `cap` step whose
+   * `@capacitor/cli` is not installed: denext never fetches `cap` from the registry).
+   */
+  failed?: { line: string; code: number; reason?: string };
   /** Steps not run: skipped ones (with the reason), and every step after a failure. */
   pending: Array<{ line: string; reason: string }>;
+}
+
+/** Why a `cap` step cannot start (its `@capacitor/cli` is not installed), or undefined. */
+async function capacitorCliMissing(command: PlannedCommand): Promise<string | undefined> {
+  if (capSubcommand(command) === undefined) return undefined;
+  try {
+    await assertCapacitorCli(command.cwd);
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
 }
 
 /**
@@ -567,6 +584,11 @@ export async function runCapacitorSteps(
     }
     if (s.skip) {
       out.pending.push({ line: s.line, reason: s.skip });
+      continue;
+    }
+    const missing = await capacitorCliMissing(s.command);
+    if (missing !== undefined) {
+      out.failed = { line: s.line, code: 1, reason: missing };
       continue;
     }
     const { code } = await run(s.command);

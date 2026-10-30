@@ -69,6 +69,8 @@ import {
   formatCapabilityTable,
 } from "../../build/mobile-capabilities.ts";
 import { logStabilized } from "../../build/mobile-build.ts";
+import { assertCapacitorCli, capCommand } from "../../build/capacitor-cli.ts";
+import { type NpmPublishTimes, npmRegistryPublishTimes } from "../../build/npm-pin-age.ts";
 import { nativeText } from "../../build/capacitor-native-dirs.ts";
 import { stabilizeSpmPluginPaths } from "../../build/spm-plugin-paths.ts";
 import {
@@ -600,7 +602,11 @@ function listFlag(value: string | number | boolean | undefined): string[] {
 }
 
 /** `denext mobile add <capability...>`. */
-async function addCapabilities(ctx: CommandContext, run: CommandRunner): Promise<void> {
+async function addCapabilities(
+  ctx: CommandContext,
+  run: CommandRunner,
+  publishTimes: NpmPublishTimes,
+): Promise<void> {
   if (ctx.flags.list === true) {
     console.log(formatCapabilityTable());
     return;
@@ -615,6 +621,7 @@ async function addCapabilities(ctx: CommandContext, run: CommandRunner): Promise
       dir: typeof dir === "string" ? dir : undefined,
       dryRun,
       run,
+      publishTimes,
       schemes: listFlag(ctx.flags.scheme),
       domains: listFlag(ctx.flags.domain),
       appGroups: listFlag(ctx.flags["app-group"]),
@@ -757,16 +764,21 @@ async function mobileFingerprint(ctx: CommandContext): Promise<void> {
 }
 
 /**
- * `denext mobile sync [ios|android]`: `npx cap sync` in the Capacitor project, then the iOS
+ * `denext mobile sync [ios|android]`: `npx --no cap sync` in the Capacitor project, then the iOS
  * shell's plugin paths rewritten from pnpm's store to `node_modules/<name>` (see
  * `stabilizeSpmPluginPaths`), so a committed `ios/` builds on another checkout.
  */
 async function mobileSync(ctx: CommandContext, run: CommandRunner): Promise<void> {
-  const args = ["cap", "sync", ...syncPlatform(ctx.positionals[1])];
+  const args = ["sync", ...syncPlatform(ctx.positionals[1])];
   try {
     const root = await findProject(resolve(ctx.global.cwd ?? "."), stringFlag(ctx.flags.dir));
-    const { code } = await run({ cmd: "npx", args, cwd: root });
-    if (code !== 0) throw new Error(`\`npx ${args.join(" ")}\` exited with ${code}.`);
+    // The project's own Capacitor CLI, or a clear error (never a registry `cap`).
+    await assertCapacitorCli(root);
+    const command = capCommand(args, root);
+    const { code } = await run(command);
+    if (code !== 0) {
+      throw new Error(`\`npx ${command.args.join(" ")}\` exited with ${code}.`);
+    }
     logStabilized(await stabilizeSpmPluginPaths(root), (line) => console.log(line));
   } catch (err) {
     fail(`denext mobile sync: ${err instanceof Error ? err.message : String(err)}`);
@@ -789,15 +801,20 @@ function stringFlag(value: unknown): string | undefined {
  * Build the `mobile` verb with `run` as the subprocess runner for `add` (tests pass a fake).
  *
  * @param run Runs `add`'s package install and `cap sync`.
+ * @param publishTimes The npm publish times `add` checks its exact pins' age with (tests pass a
+ *   fake; default: the npm registry).
  * @returns The command spec.
  */
-export function createMobileCommand(run: CommandRunner = runInheritedCommand): CommandSpec {
+export function createMobileCommand(
+  run: CommandRunner = runInheritedCommand,
+  publishTimes: NpmPublishTimes = npmRegistryPublishTimes(),
+): CommandSpec {
   return {
     ...mobileCommandSpec,
     run: async (ctx) => {
       const action = ctx.positionals[0];
       if (action === "add-ota") return await addOta(ctx);
-      if (action === "add") return await addCapabilities(ctx, run);
+      if (action === "add") return await addCapabilities(ctx, run, publishTimes);
       if (action === "sync") return await mobileSync(ctx, run);
       if (action === "dev") return await mobileDev(ctx, run);
       if (action === "fingerprint") return await mobileFingerprint(ctx);

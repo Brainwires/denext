@@ -4,7 +4,7 @@
 //   export   `denext export <app>` (with the flavor's env), unless --skip-export
 //   flavor   the flavor's app id / name / server URL (and icons) applied to capacitor.config.* and
 //            the native project, restored byte for byte when the build ends
-//   sync     `npx cap sync <platform>`
+//   sync     `npx --no cap sync <platform>` (the project's own @capacitor/cli, never a download)
 //   ios      xcodebuild archive (Debug, or Release with --release), then -exportArchive with
 //            automatic signing (a team, and an App Store Connect API key when one is configured)
 //            into a signed .ipa; --unsigned archives with CODE_SIGNING_ALLOWED=NO and zips the
@@ -21,6 +21,7 @@
 // (app id, version, build number, SHA-256) that `denext mobile submit` reads.
 
 import { stabilizeSpmPluginPaths } from "./spm-plugin-paths.ts";
+import { assertCapacitorCli, capCommand, capSubcommand } from "./capacitor-cli.ts";
 import { basename, join } from "@std/path";
 import { toPosixPath } from "./mobile-paths.ts";
 import type { MobileFlavorConfig } from "../server/config.ts";
@@ -32,6 +33,8 @@ import {
   androidVersions,
   applyAndroidVersions,
   applyFlavor,
+  assertFlavorAppId,
+  assertVersionName,
   capacitorIdentity,
   flavorAppId,
   iosVersions,
@@ -40,11 +43,22 @@ import {
   NativeSnapshot,
   type ResolvedFlavor,
 } from "./mobile-flavor.ts";
-import { loadNativeDirs, nativeJoin, nativeText } from "./capacitor-native-dirs.ts";
+import { loadNativeDirs, nativeJoin, nativeRel, nativeText } from "./capacitor-native-dirs.ts";
+import {
+  type MobileDoctorOptions,
+  type MobileDoctorReport,
+  runMobileDoctor,
+} from "./mobile-doctor.ts";
 
 /** A command a build step runs; `env` carries secrets and is never printed. */
 export interface BuildCommand extends PlannedCommand {
   readonly env?: Readonly<Record<string, string>>;
+  /**
+   * Run without the signing and store credentials in the inherited environment (see
+   * {@linkcode withoutSigningEnv}): the web export (the project's build plugins) and `cap sync`
+   * need none of them.
+   */
+  readonly scrubSigningEnv?: boolean;
 }
 
 /** Runs a {@linkcode BuildCommand}, resolving its exit code. */
@@ -145,6 +159,52 @@ const SIGNING_ENV = {
   keystorePassword: ["DENEXT_ANDROID_KEYSTORE_PASSWORD", "ANDROID_KEYSTORE_PASSWORD"],
   keyPassword: ["DENEXT_ANDROID_KEY_PASSWORD", "ANDROID_KEY_PASSWORD"],
 } as const;
+
+/** The credential variables of the tools around a store build (fastlane match / supply, …). */
+const STORE_ENV_PREFIXES = ["MATCH_", "SUPPLY_", "FASTLANE_", "APP_STORE_CONNECT_API_KEY_"];
+
+/** Other store credentials `denext mobile submit` reads. */
+const STORE_ENV_NAMES = ["DENEXT_PLAY_SERVICE_ACCOUNT"];
+
+/**
+ * `env` without the signing and store credentials: every `SIGNING_ENV` name (the keystore
+ * passwords, the App Store Connect key), fastlane's `MATCH_*` / `SUPPLY_*` / `FASTLANE_*` and
+ * `APP_STORE_CONNECT_API_KEY_*`, and the Play service account. Names compare case-insensitively
+ * (Windows environment names are).
+ *
+ * @param env The inherited environment.
+ * @returns A copy without those variables.
+ */
+export function withoutSigningEnv(env: Readonly<Record<string, string>>): Record<string, string> {
+  const names = new Set(
+    [...Object.values(SIGNING_ENV).flat(), ...STORE_ENV_NAMES].map((n) => n.toUpperCase()),
+  );
+  const out: Record<string, string> = {};
+  for (const [name, value] of Object.entries(env)) {
+    const upper = name.toUpperCase();
+    if (names.has(upper) || STORE_ENV_PREFIXES.some((p) => upper.startsWith(p))) continue;
+    out[name] = value;
+  }
+  return out;
+}
+
+/**
+ * The environment a build step runs with: `command.env` over the inherited one, which is
+ * scrubbed of the signing credentials when the command asks ({@linkcode withoutSigningEnv}).
+ * `clearEnv` says to pass `env` as the whole environment rather than on top of the inherited one.
+ *
+ * @param command The step.
+ * @param inherited The process environment (`Deno.env.toObject()`).
+ */
+export function buildStepEnv(
+  command: Pick<BuildCommand, "env" | "scrubSigningEnv">,
+  inherited: () => Record<string, string>,
+): { env?: Record<string, string>; clearEnv: boolean } {
+  if (!command.scrubSigningEnv) {
+    return { ...(command.env ? { env: { ...command.env } } : {}), clearEnv: false };
+  }
+  return { env: { ...withoutSigningEnv(inherited()), ...command.env }, clearEnv: true };
+}
 
 /**
  * Signing inputs from flags, falling back to the environment variables listed in `SIGNING_ENV`. A key
@@ -409,8 +469,13 @@ function webCommands(
     args: [...opts.cli, "export", opts.appDir, "--platform", opts.platform],
     cwd: opts.appDir,
     ...(flavor?.env ? { env: flavor.env } : {}),
+    // Project build plugins run here: they get none of the signing secrets.
+    scrubSigningEnv: true,
   };
-  const sync: BuildCommand = { cmd: "npx", args: ["cap", "sync", opts.platform], cwd: opts.root };
+  const sync: BuildCommand = {
+    ...capCommand(["sync", opts.platform], opts.root),
+    scrubSigningEnv: true,
+  };
   return opts.skipExport ? [sync] : [exportCmd, sync];
 }
 
@@ -518,6 +583,7 @@ export async function planMobileBuild(opts: MobileBuildOptions): Promise<MobileB
     throw new Error(`no ${platform}/ in ${root} (run \`npx cap add ${platform}\` first)`);
   }
   const identity = await capacitorIdentity(root);
+  assertBuildInputs(opts, identity.appId);
   const versions = await projectVersions(root, platform);
   const native = platform === "ios" ? await iosNative(opts) : androidNative(opts);
   const unsigned = native.signing.mode === "unsigned";
@@ -538,6 +604,37 @@ export async function planMobileBuild(opts: MobileBuildOptions): Promise<MobileB
     ...(native.exportOptions ? { exportOptions: native.exportOptions } : {}),
     warnings: native.warnings,
   };
+}
+
+/** An Apple team id: ten uppercase letters and digits. */
+const TEAM_ID = /^[A-Z0-9]{10}$/;
+
+/**
+ * Refuse inputs that land in native sources or build settings in a shape they cannot carry: a
+ * `--version-name` outside letters, digits, `.`, `+` and `-`, a flavor app id that is not
+ * reverse-DNS, and an Apple team id that is not ten uppercase letters and digits (it is written
+ * into ExportOptions.plist and passed as DEVELOPMENT_TEAM).
+ */
+function assertBuildInputs(opts: MobileBuildOptions, baseId: string | undefined): void {
+  if (opts.versionName !== undefined) assertVersionName(opts.versionName);
+  assertFlavorInputs(opts.flavor?.config, baseId);
+  if (opts.platform === "ios") assertTeamId(opts.signing?.team);
+}
+
+/** The flavor's app id, when it sets one (`appId` / `appIdSuffix` over a known base id). */
+function assertFlavorInputs(flavor: MobileFlavorConfig | undefined, baseId: string | undefined) {
+  if (!baseId || !(flavor?.appId || flavor?.appIdSuffix)) return;
+  const id = flavorAppId(baseId, flavor);
+  if (id !== baseId) assertFlavorAppId(id);
+}
+
+/** The Apple team id, when one is given. */
+function assertTeamId(team: string | undefined): void {
+  if (team === undefined || TEAM_ID.test(team)) return;
+  throw new Error(
+    `the Apple team id ${JSON.stringify(team)} is not ten uppercase letters and digits ` +
+      "(--team / DENEXT_IOS_TEAM, as in the Membership details of developer.apple.com)",
+  );
 }
 
 /**
@@ -588,6 +685,8 @@ export interface MobileBuildDeps {
   /** Writes the flavor's icons before the native build (`mobile assets`), when it has any. */
   readonly flavorAssets?: (snapshot: NativeSnapshot) => Promise<void>;
   readonly now?: () => Date;
+  /** The release gate's doctor (default: {@linkcode runMobileDoctor}; tests pass a fake). */
+  readonly doctor?: (opts: MobileDoctorOptions) => Promise<MobileDoctorReport>;
 }
 
 /** Hex SHA-256 of a file. */
@@ -625,9 +724,9 @@ async function runStep(c: BuildCommand, deps: MobileBuildDeps): Promise<void> {
   if (isCapSync(c) && c.cwd) logStabilized(await stabilizeSpmPluginPaths(c.cwd), deps.log);
 }
 
-/** Whether `c` is `npx cap sync …`. */
+/** Whether `c` is `npx --no cap sync …`. */
 function isCapSync(c: BuildCommand): boolean {
-  return c.args[0] === "cap" && c.args[1] === "sync";
+  return capSubcommand(c) === "sync";
 }
 
 /** Report the Package.swift plugin paths {@linkcode stabilizeSpmPluginPaths} rewrote. */
@@ -680,8 +779,8 @@ async function devServerProblem(root: string): Promise<string | undefined> {
  * Refuse a release build that would ship pointing at a dev server: a `denext mobile dev`
  * session's backup is on disk (the config is still the session's), or the Capacitor config's
  * `server` block names a LAN / loopback `http` URL or allows cleartext. A flavor's `serverUrl`
- * sets the server deliberately and is not second-guessed. `cap sync` rewrites the native copies
- * from this config, so checking it covers them.
+ * sets the server deliberately and is not second-guessed, unless it is not https. `cap sync`
+ * rewrites the native copies from this config, so checking it covers them.
  *
  * @param plan The plan about to run.
  * @throws {Error} When the release would carry a dev server.
@@ -695,7 +794,17 @@ async function assertReleaseServer(plan: MobileBuildPlan): Promise<void> {
         "server. End the session, or run `denext mobile dev --restore`, then build again",
     );
   }
-  if (plan.flavor?.config.serverUrl) return;
+  const flavorUrl = plan.flavor?.config.serverUrl;
+  if (flavorUrl) {
+    // Set deliberately, but a release never loads its UI over plain http (a LAN dev server).
+    if (!/^https:\/\//i.test(flavorUrl.trim())) {
+      throw new Error(
+        `the flavor ${plan.flavor!.name}'s serverUrl (${flavorUrl}) is not https: a release ` +
+          "would load its UI over plain http. Use an https URL for a release flavor",
+      );
+    }
+    return;
+  }
   const problem = await devServerProblem(plan.root);
   if (problem) {
     throw new Error(
@@ -703,6 +812,58 @@ async function assertReleaseServer(plan: MobileBuildPlan): Promise<void> {
         "(`denext mobile dev --restore` puts back a config a dev session left), or set the " +
         "server deliberately with a flavor's `serverUrl`",
     );
+  }
+}
+
+/** The other platform's native folder, as findings name it (`ios/…` for an Android build). */
+function otherPlatformPrefix(plan: MobileBuildPlan): string {
+  return `${nativeRel(plan.root, plan.platform === "ios" ? "android" : "ios")}/`;
+}
+
+/**
+ * The release gate: `denext mobile doctor --release` over the synced project, refusing the build
+ * on any error (a debuggable WebView, a wildcard or http `allowNavigation`, the legacy bridge,
+ * cleartext, a leftover `NSAllowsLocalNetworking`, …). Findings about the other platform's
+ * native project do not block this one, and with a flavor's (https) `serverUrl` its
+ * `server-url` finding is the flavor's deliberate setting.
+ *
+ * @param plan The plan being run.
+ * @param deps The doctor to use.
+ * @throws {Error} Listing each error and its fix.
+ */
+async function assertReleaseDoctor(plan: MobileBuildPlan, deps: MobileBuildDeps): Promise<void> {
+  if (plan.configuration !== "Release") return;
+  const doctor = deps.doctor ?? runMobileDoctor;
+  const report = await doctor({ root: plan.root, profile: "release", appDir: plan.appDir });
+  const other = otherPlatformPrefix(plan);
+  const errors = report.findings.filter((f) =>
+    f.level === "error" && !f.message.startsWith(other) &&
+    !(f.check === "server-url" && plan.flavor?.config.serverUrl)
+  );
+  if (errors.length === 0) return;
+  throw new Error(
+    `the release checks (\`denext mobile doctor --release\`) found ${errors.length} error(s):\n` +
+      errors.map((f) => `  [${f.check}] ${f.message}\n    fix: ${f.fix}`).join("\n"),
+  );
+}
+
+/** The project's own Capacitor CLI for every `cap` step, or a clear error before anything runs. */
+async function assertPlanCapacitorCli(plan: MobileBuildPlan): Promise<void> {
+  for (const c of plan.commands) {
+    if (capSubcommand(c) !== undefined) await assertCapacitorCli(c.cwd);
+  }
+}
+
+/** `cap sync` and the native build, with the release checks between them. */
+async function runSyncAndNative(
+  plan: MobileBuildPlan,
+  commands: readonly BuildCommand[],
+  deps: MobileBuildDeps,
+): Promise<void> {
+  for (const c of commands) {
+    await runStep(c, deps);
+    // After `cap sync` wrote the native copies the shell loads, before the native build.
+    if (isCapSync(c)) await assertReleaseDoctor(plan, deps);
   }
 }
 
@@ -722,13 +883,14 @@ export async function runMobileBuild(
 ): Promise<BuildArtifact> {
   await loadNativeDirs(plan.root);
   await assertReleaseServer(plan);
+  await assertPlanCapacitorCli(plan);
   const snapshot = new NativeSnapshot(plan.root);
   const exportFirst = plan.commands[0]?.args.includes("export") ? 1 : 0;
   try {
     // The export runs before the flavor is applied (it builds the web UI, not the shell).
     for (const c of plan.commands.slice(0, exportFirst)) await runStep(c, deps);
     await applyEdits(plan, opts, snapshot, deps);
-    for (const c of plan.commands.slice(exportFirst)) await runStep(c, deps);
+    await runSyncAndNative(plan, plan.commands.slice(exportFirst), deps);
     if (plan.archive) await packageUnsignedIpa(plan, deps.run);
   } finally {
     const edited = snapshot.files.length;

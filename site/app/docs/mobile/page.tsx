@@ -104,9 +104,9 @@ export default function Mobile() {
         <strong>1. Scaffold.</strong> <code>--capacitor</code> adds a{" "}
         <code>capacitor.config.ts</code>{" "}
         that bundles the export (<code>webDir: "out"</code>) into the native shells, a{" "}
-        <code>package.json</code> pinning Capacitor 8 (<code>^8.5.2</code>), an <code>export</code>
+        <code>package.json</code> pinning Capacitor 8 exactly (<code>8.5.2</code>), an{" "}
+        <code>export</code> task and the <code>mobile:*</code> tasks. Add <code>--desktop</code>
         {" "}
-        task and the <code>mobile:*</code> tasks. Add <code>--desktop</code>{" "}
         to scaffold the desktop target too. Change <code>appId</code> and <code>appName</code> in
         {" "}
         <code>capacitor.config.ts</code>{" "}
@@ -148,8 +148,8 @@ export default {
       <Code lang="bash">
         {`denext install                # Capacitor's CLI + platforms are npm packages
 denext task export            # out/
-denext run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add ios       # once
-denext run -A --node-modules-dir npm:@capacitor/cli@^8.5.2 add android   # once`}
+denext run -A --node-modules-dir npm:@capacitor/cli@8.5.2 add ios       # once
+denext run -A --node-modules-dir npm:@capacitor/cli@8.5.2 add android   # once`}
       </Code>
       <p>
         <strong>4. Run it on a phone.</strong>{" "}
@@ -274,7 +274,9 @@ denext mobile dev web --dir mobile # the denext project in web/, Capacitor in mo
         (and the fastlane lanes, which run it) refuses while that backup is on disk, or while the
         Capacitor config's <code>server</code> names a LAN / loopback <code>http</code> URL or sets
         {" "}
-        <code>cleartext</code>, unless a flavor's <code>serverUrl</code> sets the server on purpose.
+        <code>cleartext</code>, unless a flavor's <code>serverUrl</code>{" "}
+        sets the server on purpose (an <code>https</code> one: a release flavor&apos;s{" "}
+        <code>http</code> <code>serverUrl</code> is refused).
       </p>
       <p>
         On iOS, <code>cleartext</code> does nothing (it is Android's{" "}
@@ -510,11 +512,38 @@ export default function RootLayout({ children }: { children: VNodeChildren }) {
         <code>npm_config_ignore_scripts</code> and <code>YARN_ENABLE_SCRIPTS</code> as{" "}
         <code>denext migrate</code>&apos;s does), declares any Android permissions they need, and
         runs{" "}
-        <code>npx cap sync</code>. The install runs in the Capacitor project folder. Before the web
-        export exists (no <code>index.html</code> in the config&apos;s{" "}
+        <code>npx --no cap sync</code>. The install runs in the Capacitor project folder. Before the
+        web export exists (no <code>index.html</code> in the config&apos;s{" "}
         <code>webDir</code>), sync would stop at the missing folder, so it runs{" "}
-        <code>npx cap update</code> instead (the native half of sync) and says what is left:{" "}
+        <code>npx --no cap update</code> instead (the native half of sync) and says what is left:
+        {" "}
         <code>denext export</code>, then <code>npx cap sync</code>.
+      </p>
+      <p>
+        Every plugin is pinned to one exact version and saved exactly (<code>--save-exact</code> /
+        {" "}
+        <code>--exact</code>), never a range a package manager would resolve to whatever was
+        published last. Before installing, <code>denext mobile add</code>{" "}
+        reads each pinned version&apos;s publish time from the npm registry and refuses one your
+        minimum dependency age does not let in yet (the rule <code>create</code>,{" "}
+        <code>migrate</code> and <code>upgrade</code> apply: <code>minimumDependencyAge</code> in
+        {" "}
+        <code>deno.json</code>, <code>min-release-age</code> in <code>.npmrc</code>,{" "}
+        <code>DENEXT_MIN_DEP_AGE</code>, else Deno&apos;s two days; an <code>npm:</code>{" "}
+        entry in its <code>exclude</code>{" "}
+        lifts it for that package). When the registry cannot be reached it installs the pins and
+        says their age was not checked.
+      </p>
+      <p>
+        Every <code>cap</code> command denext runs (<code>mobile add</code>, <code>sync</code>,{" "}
+        <code>dev</code>, <code>build</code>,{" "}
+        <code>migrate --enable-capacitor</code>) is the project&apos;s own{" "}
+        <code>@capacitor/cli</code>: denext checks that the package resolves from the project (its
+        {" "}
+        <code>node_modules</code> or one above it) and runs{" "}
+        <code>npx --no cap …</code>, so a missing CLI stops with &quot;install @capacitor/cli&quot;
+        instead of npx downloading the unrelated npm package named <code>cap</code> (which{" "}
+        <code>npm exec</code> does without asking when stdin is not a terminal or CI is detected).
       </p>
       <Code lang="bash">
         {`denext mobile add --list                    # the capabilities and their plugins
@@ -4114,7 +4143,9 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
           cleartext: <code>server.cleartext</code>, App Transport Security exceptions (<code>
             NSAllowsArbitraryLoads
           </code>, <code>NSAllowsLocalNetworking</code>, insecure exception domains), and{" "}
-          <code>usesCleartextTraffic</code>;
+          <code>usesCleartextTraffic</code>, and a network security config (the manifest&apos;s{" "}
+          <code>android:networkSecurityConfig</code>) whose <code>base-config</code> or a{" "}
+          <code>domain-config</code> sets <code>cleartextTrafficPermitted=&quot;true&quot;</code>;
         </li>
         <li>
           WebView debugging enabled for release (<code>
@@ -4130,7 +4161,10 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
         <li>a missing or invalid privacy manifest (the check above);</li>
         <li>missing app icons (iOS asset catalog, Android launcher) and launch screens;</li>
         <li>
-          <code>server.allowNavigation</code> containing <code>&quot;*&quot;</code>;
+          <code>server.allowNavigation</code> containing <code>&quot;*&quot;</code>{" "}
+          or a wildcard over hosts you do not own (<code>*.com</code>, <code>app.*</code>), an{" "}
+          <code>http:</code> entry (an error with <code>--release</code>), and{" "}
+          <code>*.example.com</code> (a warning: every subdomain);
         </li>
         <li>
           no Content-Security-Policy meta tag in the export&apos;s <code>index.html</code>;
@@ -4159,10 +4193,16 @@ denext mobile privacy --check    # exit 1 on an error: a CI gate`}
         mixed content (<code>android.allowMixedContent</code>), <code>allowNavigation *</code>,{" "}
         <code>android:debuggable</code>, <code>android.useLegacyBridge</code>{" "}
         (its bridge answers plugin calls from every frame), a missing CSP and secrets in the export
-        are errors, and <code>loggingBehavior: &quot;production&quot;</code>{" "}
-        is a warning. Run both after <code>denext export</code> and <code>npx cap sync</code>{" "}
-        (the CI recipe does). Both profiles also report a{" "}
-        <code>DenextBridgeViewController.swift</code>{" "}
+        are errors, and <code>loggingBehavior: &quot;production&quot;</code> is a warning, as is
+        {" "}
+        <code>plugins.DenextBridge.frameGuard: false</code> for a hosted app&apos;s own{" "}
+        <code>server.url</code> (an error once an <code>allowNavigation</code>{" "}
+        origin is among the pages it opens to the plugins). Run both after{" "}
+        <code>denext export</code> and <code>npx cap sync</code> (the CI recipe does);{" "}
+        <code>denext mobile build --release</code> runs the release profile itself after its{" "}
+        <code>cap sync</code>{" "}
+        and refuses on any error (<a href="/docs/mobile-build#release-checks">release checks</a>).
+        Both profiles also report a <code>DenextBridgeViewController.swift</code>{" "}
         written before the main-frame guard: the one every <code>denext mobile add</code>{" "}
         of a denext native plugin now writes accepts native plugin calls from the page&apos;s main
         frame only, never from an iframe (Capacitor&apos;s own iOS handler answers every frame).

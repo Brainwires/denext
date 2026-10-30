@@ -70,6 +70,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/mcp-devtools.test.ts",
   "tests/migrate-effect-fixture.test.ts",
   "tests/migrate-spa.test.ts",
+  "tests/mobile-build-hardening.test.ts",
   "tests/mobile-build.test.ts",
   "tests/mobile-fastlane.test.ts",
   "tests/mobile-sentry.test.ts",

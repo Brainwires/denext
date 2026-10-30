@@ -20,6 +20,7 @@ import {
 } from "../src/cli/commands/migrate.ts";
 import type { PlannedCommand } from "../src/build/mobile-capabilities.ts";
 import { capture, makeCtx } from "./_cli-coverage-helpers.ts";
+import { installFakeCapacitorCli } from "./_capacitor-cli.ts";
 
 const REPO_ROOT = Deno.cwd();
 
@@ -111,7 +112,7 @@ document.getElementById("root")!.textContent = [channel, http, ws, key].join();
   };
 }
 
-const CAP = "^8.5.2";
+const CAP = "8.5.2";
 
 Deno.test("migrate --enable-capacitor: a T3-shaped Vite SPA gets a Capacitor target", async () => {
   await withTree(t3Like(), async (root) => {
@@ -158,8 +159,8 @@ export default config;
       String(deno.tasks["mobile:sync"]).endsWith(" mobile sync"),
       "`denext mobile sync`: cap sync, then the iOS plugin paths kept off pnpm's store",
     );
-    assertEquals(deno.tasks["mobile:ios"], "npx cap open ios");
-    assertEquals(deno.tasks["mobile:android"], "npx cap open android");
+    assertEquals(deno.tasks["mobile:ios"], "npx --no cap open ios");
+    assertEquals(deno.tasks["mobile:android"], "npx --no cap open android");
     assertStringIncludes(deno.tasks["mobile:build:ios"], "--node-modules-dir=none");
     assert(String(deno.tasks["mobile:build:ios"]).endsWith(" mobile build ios"));
     assert(String(deno.tasks["mobile:build:android"]).endsWith(" mobile build android"));
@@ -181,12 +182,12 @@ export default config;
     assertEquals(c.steps[0].label, "install");
     assertEquals(c.steps[0].command, {
       cmd: "pnpm",
-      args: ["add", "-D", "--ignore-scripts", ...c.packages],
+      args: ["add", "-D", "--ignore-scripts", "--save-exact", ...c.packages],
       cwd: dir,
     });
     assertEquals(
       c.steps[0].line,
-      `pnpm add -D --ignore-scripts @capacitor/cli@${CAP} @capacitor/core@${CAP} ` +
+      `pnpm add -D --ignore-scripts --save-exact @capacitor/cli@${CAP} @capacitor/core@${CAP} ` +
         `@capacitor/ios@${CAP} @capacitor/android@${CAP}`,
     );
     assertEquals(c.steps[0].skip, undefined);
@@ -210,25 +211,25 @@ Deno.test("migrate --enable-capacitor: every package manager installs without li
   const cases: Array<[string, PlannedCommand, string]> = [
     ["package-lock.json", {
       cmd: "npm",
-      args: ["install", "-D", "--ignore-scripts"],
+      args: ["install", "-D", "--ignore-scripts", "--save-exact"],
       cwd: "",
-    }, "npm install -D --ignore-scripts"],
+    }, "npm install -D --ignore-scripts --save-exact"],
     ["pnpm-lock.yaml", {
       cmd: "pnpm",
-      args: ["add", "-D", "--ignore-scripts"],
+      args: ["add", "-D", "--ignore-scripts", "--save-exact"],
       cwd: "",
-    }, "pnpm add -D --ignore-scripts"],
+    }, "pnpm add -D --ignore-scripts --save-exact"],
     ["bun.lock", {
       cmd: "bun",
-      args: ["add", "-D", "--ignore-scripts"],
+      args: ["add", "-D", "--ignore-scripts", "--exact"],
       cwd: "",
-    }, "bun add -D --ignore-scripts"],
+    }, "bun add -D --ignore-scripts --exact"],
     ["yarn.lock", {
       cmd: "yarn",
-      args: ["add", "-D"],
+      args: ["add", "-D", "--exact"],
       cwd: "",
       env: { npm_config_ignore_scripts: "true", YARN_ENABLE_SCRIPTS: "0" },
-    }, "npm_config_ignore_scripts=true YARN_ENABLE_SCRIPTS=0 yarn add -D"],
+    }, "npm_config_ignore_scripts=true YARN_ENABLE_SCRIPTS=0 yarn add -D --exact"],
   ];
   for (const [lockfile, expected, line] of cases) {
     await withTree({
@@ -300,7 +301,7 @@ Deno.test("migrate --enable-capacitor: --app-id, --platform, and packages alread
       assertEquals(c.steps.map((s) => s.label), ["install", "export", "add ios", "add android"]);
       assertStringIncludes(c.steps[1].line, " export .");
       assertEquals(c.steps[1].command.cmd, "deno");
-      assertEquals(c.steps[2].line, "npx cap add ios");
+      assertEquals(c.steps[2].line, "npx --no cap add ios");
       assertEquals(c.steps[2].skip, undefined);
       assertEquals(c.steps[3].skip, "android/ already exists");
       const cap = await Deno.readTextFile(join(dir, "capacitor.config.ts"));
@@ -369,7 +370,7 @@ Deno.test("migrate --enable-capacitor: a kept config is reported; no lockfile â†
       );
       assertEquals(
         c.steps[0].line,
-        `npm install -D --ignore-scripts @capacitor/cli@${CAP} ` +
+        `npm install -D --ignore-scripts --save-exact @capacitor/cli@${CAP} ` +
           `@capacitor/core@${CAP} @capacitor/ios@${CAP}`,
       );
       assertStringIncludes(c.steps[0].skip!, "no lockfile");
@@ -426,10 +427,10 @@ Deno.test("migrate --check --enable-capacitor: the files, the commands and the r
     const changed = report.changes.map((c) => `${c.action} ${c.path}`);
     assert(changed.includes("create capacitor.config.ts"), changed.join(", "));
     assertEquals(report.commands, [
-      `pnpm add -D --ignore-scripts @capacitor/cli@${CAP} @capacitor/core@${CAP} ` +
+      `pnpm add -D --ignore-scripts --save-exact @capacitor/cli@${CAP} @capacitor/core@${CAP} ` +
       `@capacitor/ios@${CAP}`,
       report.commands![1],
-      "npx cap add ios",
+      "npx --no cap add ios",
     ]);
     assertStringIncludes(report.commands![1], " export .");
     assert(report.review.some((f) => f.item === "CORS"), "CORS is a review item");
@@ -466,7 +467,7 @@ Deno.test("migrate --enable-capacitor: a Next App Router app, and a Pages Router
       assertStringIncludes(cfg, 'icon: "./assets/icon.png"');
       assert(!cfg.includes("precompress"), "the App Router export never precompresses");
       const deno = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
-      assertEquals(deno.tasks["mobile:ios"], "npx cap open ios");
+      assertEquals(deno.tasks["mobile:ios"], "npx --no cap open ios");
       const review = c.review.map((f) => `${f.item}: ${f.reason}`).join("\n");
       assertStringIncludes(review, "server code: app/actions.ts, app/api/hello/route.ts:");
       assertStringIncludes(review, "denext mobile add export-routes");
@@ -508,7 +509,7 @@ Deno.test("migrate --from expo --enable-capacitor: the same shell, the steps, --
       assertEquals(plain.capacitor, undefined, "the shell steps need the flag");
       assertEquals(plain.expo!.capacitor.appId, "com.acme.app");
       const deno = JSON.parse(await Deno.readTextFile(join(dir, "deno.json")));
-      assertEquals(deno.tasks["mobile:ios"], "npx cap open ios");
+      assertEquals(deno.tasks["mobile:ios"], "npx --no cap open ios");
       assertStringIncludes(await Deno.readTextFile(join(dir, ".gitignore")), "\nios/App/build/\n");
 
       const r = await migrateProject(dir, {
@@ -532,6 +533,35 @@ Deno.test("migrate CLI --enable-capacitor: runs the install and cap add, and rep
   await withTree(t3Like(), async (root) => {
     const dir = join(root, "apps/web");
     const ran: PlannedCommand[] = [];
+    const command = createMigrateCommand(async (c) => {
+      ran.push(c);
+      // The install puts the project's own Capacitor CLI in place, as pnpm would.
+      if (c.cmd === "pnpm") await installFakeCapacitorCli(c.cwd);
+      return { code: 0 };
+    });
+    const out = capture();
+    try {
+      await command.run(makeCtx({
+        positionals: [dir],
+        flags: { "enable-capacitor": true, "app-id": "com.acme.t3", platform: "ios" },
+      }));
+    } finally {
+      out.restore();
+    }
+    assertEquals(ran.map((c) => c.cmd), ["pnpm", "deno", "npx"]);
+    assertEquals(ran[2].args, ["--no", "cap", "add", "ios"]);
+    const log = out.logs.join("\n");
+    assertStringIncludes(log, "Capacitor: wrote capacitor.config.ts");
+    assertStringIncludes(log, "com.acme.t3");
+    assertStringIncludes(log, "ran: npx --no cap add ios");
+    assertStringIncludes(log, "CORS");
+  });
+});
+
+Deno.test("migrate CLI --enable-capacitor: no @capacitor/cli after the install, so cap add never runs npx", async () => {
+  await withTree(t3Like(), async (root) => {
+    const dir = join(root, "apps/web");
+    const ran: PlannedCommand[] = [];
     const command = createMigrateCommand((c) => {
       ran.push(c);
       return Promise.resolve({ code: 0 });
@@ -545,13 +575,11 @@ Deno.test("migrate CLI --enable-capacitor: runs the install and cap add, and rep
     } finally {
       out.restore();
     }
-    assertEquals(ran.map((c) => c.cmd), ["pnpm", "deno", "npx"]);
-    assertEquals(ran[2].args, ["cap", "add", "ios"]);
+    // npx would fall back to the registry's unrelated `cap` package: it is never started.
+    assertEquals(ran.map((c) => c.cmd), ["pnpm", "deno"]);
     const log = out.logs.join("\n");
-    assertStringIncludes(log, "Capacitor: wrote capacitor.config.ts");
-    assertStringIncludes(log, "com.acme.t3");
-    assertStringIncludes(log, "ran: npx cap add ios");
-    assertStringIncludes(log, "CORS");
+    assertStringIncludes(log, "@capacitor/cli is not installed");
+    assertStringIncludes(log, "npx --no cap add ios");
   });
 });
 
@@ -569,8 +597,8 @@ Deno.test("migrate CLI --enable-capacitor: a failed install prints what is left"
       out.restore();
     }
     const log = out.logs.join("\n");
-    assertStringIncludes(log, "failed (exit 1): pnpm add -D --ignore-scripts");
-    assertStringIncludes(log, "npx cap add ios");
+    assertStringIncludes(log, "failed (exit 1): pnpm add -D --ignore-scripts --save-exact");
+    assertStringIncludes(log, "npx --no cap add ios");
   });
 });
 
