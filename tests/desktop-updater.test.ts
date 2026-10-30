@@ -14,9 +14,13 @@ import {
   type DesktopUpdaterConfig,
   desktopUpdateReset,
   desktopUpdateStatus,
+  openDesktopUi,
   prepareDesktopUpdate,
   resolveDesktopUiDir,
 } from "../src/desktop/updater.ts";
+import { desktopUiFiles } from "../src/build/desktop-ui-files.ts";
+import { createDesktopHandler } from "../src/build/desktop.ts";
+import { refuseReservedDataPath } from "../src/desktop/path-scope.ts";
 import { makeOtaManifest, type OtaManifest, sha256Hex } from "../src/mobile/ota-manifest.ts";
 import { writeOtaManifest } from "../src/build/ota-manifest.ts";
 import {
@@ -639,7 +643,18 @@ Deno.test("desktop updater: prepare reuses unchanged overlay files; a failed tri
   });
 });
 
-Deno.test("desktop updater: launch re-verification serves only a complete, signed overlay with an index.html", async () => {
+/** The rejected version and the active pointer's, after a launch rolled something back. */
+async function rolledBack(config: DesktopUpdaterConfig): Promise<[string | null, string | null]> {
+  const status = await desktopUpdateStatus(config);
+  return [status.rejected, status.current ?? status.pending];
+}
+
+/** Whether `path` exists. */
+function exists(path: string): Promise<boolean> {
+  return Deno.lstat(path).then(() => true, () => false);
+}
+
+Deno.test("desktop updater: launch re-verification serves only a complete, signed overlay with an index.html; anything else is rolled back", async () => {
   await withFeed(async ({ k, data }) => {
     const config = cfg(data, k.publicKey);
     const resolveFor = async (version: string) => {
@@ -651,26 +666,32 @@ Deno.test("desktop updater: launch re-verification serves only a complete, signe
     assertEquals(await resolveDesktopUiDir("/bundled", config), "/bundled");
 
     const good = await signedFiles(k, UI);
-    // The pointer names a version with no overlay dir at all.
+    // The pointer names a version with no overlay dir at all: rolled back, reported as rejected.
     assertEquals(await resolveFor(good.version), "/bundled");
-    // The overlay's manifest is for another version.
+    assertEquals(await rolledBack(config), [good.version, null]);
+    // The overlay's manifest is for another version: rolled back, its folder deleted.
     await layOut(join(data, "versions", "other"), good, UI);
     assertEquals(await resolveFor("other"), "/bundled");
+    assertEquals(await rolledBack(config), ["other", null]);
+    assertEquals(await exists(join(data, "versions", "other")), false);
     // A signed manifest that names an escaping path.
     const escaping = await signedFiles(k, { "../escape.js": "x" });
     await writeManifestJson(join(data, "versions", escaping.version), escaping);
     assertEquals(await resolveFor(escaping.version), "/bundled");
+    assertEquals(await rolledBack(config), [escaping.version, null]);
     // A listed file is missing from disk.
     const vdir = join(data, "versions", good.version);
     await layOut(vdir, good, UI);
     await Deno.remove(join(vdir, "b.js"));
     assertEquals(await resolveFor(good.version), "/bundled");
-    await Deno.writeTextFile(join(vdir, "b.js"), UI["b.js"]);
+    assertEquals(await exists(vdir), false);
+    await layOut(vdir, good, UI);
     assertEquals(await resolveFor(good.version), vdir, "control: the complete overlay is served");
     // Signed and intact, but the shell the runtime serves is absent.
     const shellless = await signedFiles(k, { "a.js": "a()" });
     await layOut(join(data, "versions", shellless.version), shellless, { "a.js": "a()" });
     assertEquals(await resolveFor(shellless.version), "/bundled");
+    assertEquals(await rolledBack(config), [shellless.version, null]);
   });
 });
 
@@ -679,30 +700,31 @@ Deno.test("desktop updater: launch re-verification refuses an overlay whose stor
     const config = cfg(data, k.publicKey);
     const good = await signedFiles(k, UI, { sequence: 5, notes: "signed notes" });
     const vdir = join(data, "versions", good.version);
-    await layOut(vdir, good, UI);
-    await writePointer(data, good.version, false);
-    assertEquals(
-      await resolveDesktopUiDir("/bundled", config),
-      vdir,
-      "control: the intact overlay",
-    );
+    /** Lay the intact overlay out as the confirmed one, then apply `edit` to it and launch. */
+    const launchAfter = async (edit: () => Promise<void>) => {
+      await layOut(vdir, good, UI);
+      await writePointer(data, good.version, false);
+      await edit();
+      return await resolveDesktopUiDir("/bundled", config);
+    };
+    assertEquals(await launchAfter(async () => {}), vdir, "control: the intact overlay");
     // A signed field edited in the stored manifest: the signature no longer verifies.
-    await writeManifestJson(vdir, { ...good, notes: "edited notes" });
-    assertEquals(await resolveDesktopUiDir("/bundled", config), "/bundled");
+    assertEquals(
+      await launchAfter(() => writeManifestJson(vdir, { ...good, notes: "edited notes" })),
+      "/bundled",
+    );
+    assertEquals(await rolledBack(config), [good.version, null]);
     // The signature stripped.
     const { signature: _dropped, ...unsigned } = good;
-    await writeManifestJson(vdir, unsigned as OtaManifest);
-    assertEquals(await resolveDesktopUiDir("/bundled", config), "/bundled");
+    assertEquals(
+      await launchAfter(() => writeManifestJson(vdir, unsigned as OtaManifest)),
+      "/bundled",
+    );
     // Re-signed by another key (the files and version intact).
     const other = await keys();
-    await writeManifestJson(
-      vdir,
-      await signedFiles(other, UI, { sequence: 5, notes: "signed notes" }),
-    );
-    assertEquals(await resolveDesktopUiDir("/bundled", config), "/bundled");
+    const foreign = await signedFiles(other, UI, { sequence: 5, notes: "signed notes" });
+    assertEquals(await launchAfter(() => writeManifestJson(vdir, foreign)), "/bundled");
     // A file and its manifest entry changed together: the version no longer matches.
-    await writeManifestJson(vdir, good);
-    await Deno.writeTextFile(join(vdir, "a.js"), "evil()");
     const forged = {
       ...good,
       files: await Promise.all(
@@ -713,11 +735,15 @@ Deno.test("desktop updater: launch re-verification refuses an overlay whose stor
         ),
       ),
     };
-    await writeManifestJson(vdir, forged);
-    assertEquals(await resolveDesktopUiDir("/bundled", config), "/bundled");
-    // Every launch checks again: restored, it is served again.
-    await layOut(vdir, good, UI);
-    assertEquals(await resolveDesktopUiDir("/bundled", config), vdir);
+    assertEquals(
+      await launchAfter(async () => {
+        await Deno.writeTextFile(join(vdir, "a.js"), "evil()");
+        await writeManifestJson(vdir, forged);
+      }),
+      "/bundled",
+    );
+    // Every launch checks again: intact, it is served again.
+    assertEquals(await launchAfter(async () => {}), vdir);
   });
 });
 
@@ -741,18 +767,14 @@ Deno.test("desktop updater: apply re-verifies the staging dir (missing, unsafe, 
     await Deno.writeTextFile(join(staging, "a.js"), "tampered()");
     assertEquals(await code(manifest.version), "integrity");
 
-    // Restored, it applies; an unsequenced manifest keeps the recorded highest sequence.
+    // Restored, it applies; with no sequence accepted yet an unsequenced manifest has no floor.
     await Deno.writeTextFile(join(staging, "a.js"), UI["a.js"]);
-    await Deno.writeTextFile(
-      join(data, "state.json"),
-      JSON.stringify({ highestSequence: 7, rejected: null }),
-    );
     await applyDesktopUpdate(manifest.version, config);
     const status = await desktopUpdateStatus(config);
     assertEquals([status.pending, status.current, status.highestSequence], [
       manifest.version,
       null,
-      7,
+      null,
     ]);
   });
 });
@@ -965,4 +987,266 @@ Deno.test("desktop updater SECURITY (AU6-L1): an expiry-aware bundle refuses an 
     restore();
     for (const d of [feed, bundled, data]) await Deno.remove(d, { recursive: true });
   }
+});
+
+// ---------------------------------------------------------------------------------------------
+// The overlay holds nothing but its signed files, each verified again when it is served (M1), and
+// apply re-checks the downgrade floor and the expiry (L2).
+
+const PRELOAD_PATH = "_denext/desktop-preload.js";
+
+/** A bundled export (the app's own UI) in a fresh temp dir. */
+async function bundledExport(): Promise<string> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_dupd_bundle_" });
+  await Deno.writeTextFile(join(dir, "index.html"), "<html>bundled</html>");
+  await Deno.writeTextFile(join(dir, "a.js"), "bundled()");
+  return dir;
+}
+
+/** Lay `files` out as the confirmed overlay in `data` and open the UI over `bundled`. */
+async function openConfirmed(
+  k: Keys,
+  data: string,
+  bundled: string,
+  files: Files = UI,
+  plant?: (vdir: string) => Promise<void>,
+) {
+  const manifest = await signedFiles(k, files, { sequence: 10 });
+  const vdir = join(data, "versions", manifest.version);
+  await layOut(vdir, manifest, files);
+  await plant?.(vdir);
+  await writePointer(data, manifest.version, false, null, 10);
+  return { manifest, vdir, ui: await openDesktopUi(bundled, cfg(data, k.publicKey)) };
+}
+
+Deno.test("desktop updater SECURITY (M1): an overlay holding a file its manifest does not list is refused at launch", async () => {
+  await withFeed(async ({ k, data }) => {
+    const bundled = await bundledExport();
+    try {
+      const plants: Array<[string, (vdir: string) => Promise<void>]> = [
+        ["an extra page", (v) => Deno.writeTextFile(join(v, "evil.html"), "<script>x()</script>")],
+        ["an extra script", async (v) => {
+          await Deno.mkdir(join(v, "_denext", "client"), { recursive: true });
+          await Deno.writeTextFile(join(v, "_denext", "client", "evil.js"), "x()");
+        }],
+        // The preload is injected into every top-level page with the bridge token.
+        ["a planted preload", (v) => Deno.writeTextFile(join(v, PRELOAD_PATH), "steal()")],
+        ["a precompressed sibling", (v) => Deno.writeTextFile(join(v, "a.js.gz"), "gz")],
+      ];
+      for (const [what, plant] of plants) {
+        const { manifest, vdir, ui } = await openConfirmed(k, data, bundled, UI, plant);
+        assertEquals(ui.overlay, null, what);
+        assertEquals(await rolledBack(cfg(data, k.publicKey)), [manifest.version, null], what);
+        assertEquals(await exists(vdir), false, `${what}: the overlay folder is deleted`);
+      }
+      // Control: the same overlay without the plant is served.
+      const { vdir, ui } = await openConfirmed(k, data, bundled);
+      assertEquals(ui.overlay?.dir, vdir);
+    } finally {
+      await Deno.remove(bundled, { recursive: true });
+    }
+  });
+});
+
+Deno.test({
+  name:
+    "desktop updater SECURITY (M1): a symbolic link anywhere in the overlay is refused at launch",
+  ignore: Deno.build.os === "windows", // creating a symlink needs a privilege there
+  fn: async () => {
+    await withFeed(async ({ k, data }) => {
+      const bundled = await bundledExport();
+      const outside = await Deno.makeTempDir({ prefix: "denext_dupd_outside_" });
+      try {
+        await Deno.writeTextFile(join(outside, "b.js"), UI["b.js"]);
+        // A listed file replaced by a link to identical bytes elsewhere, and a linked directory.
+        const linkedFile = await openConfirmed(k, data, bundled, UI, async (v) => {
+          await Deno.remove(join(v, "b.js"));
+          await Deno.symlink(join(outside, "b.js"), join(v, "b.js"));
+        });
+        assertEquals(linkedFile.ui.overlay, null);
+        const linkedDir = await openConfirmed(k, data, bundled, UI, async (v) => {
+          await Deno.symlink(outside, join(v, "assets"));
+        });
+        assertEquals(linkedDir.ui.overlay, null);
+        assertEquals(
+          (await desktopUpdateStatus(cfg(data, k.publicKey))).rejected,
+          linkedDir.manifest.version,
+        );
+      } finally {
+        for (const d of [bundled, outside]) await Deno.remove(d, { recursive: true });
+      }
+    });
+  },
+});
+
+Deno.test("desktop updater SECURITY (M1): a file changed after launch is never served; the bundled UI is", async () => {
+  await withFeed(async ({ k, data }) => {
+    const bundled = await bundledExport();
+    try {
+      const { manifest, vdir, ui } = await openConfirmed(k, data, bundled);
+      const files = desktopUiFiles(ui);
+      const handle = createDesktopHandler({}, files, undefined, "token");
+      const get = async (path: string) => {
+        const res = await handle(
+          new Request(`http://127.0.0.1:8000${path}`),
+          new URL(`http://127.0.0.1:8000${path}`),
+        );
+        return [res.status, await res.text()] as const;
+      };
+      assertEquals(await get("/a.js"), [200, "a()"], "the verified overlay file");
+      // Once the file is older than the settle window its stamp stands in for the hash…
+      await new Promise((r) => setTimeout(r, 2_100));
+      assertEquals(await get("/a.js"), [200, "a()"], "verified, its stamp recorded");
+      assertEquals(await get("/a.js"), [200, "a()"], "again, by its verified stamp");
+      // …until it is rewritten in place, size and mtime kept: the stamp's ctime still moves.
+      const info = await Deno.stat(join(vdir, "a.js"));
+      await Deno.writeTextFile(join(vdir, "a.js"), "x()");
+      await Deno.utime(join(vdir, "a.js"), info.atime!, info.mtime!);
+      assertEquals(await get("/a.js"), [200, "bundled()"], "the bundled export, not the change");
+      assertEquals(ui.overlay!.withdrawn, true);
+      assertEquals(await files.text("/index.html"), "<html>bundled</html>");
+      assertEquals(await rolledBack(cfg(data, k.publicKey)), [manifest.version, null]);
+    } finally {
+      await Deno.remove(bundled, { recursive: true });
+    }
+  });
+});
+
+Deno.test("desktop updater SECURITY (M1): a file added or removed after launch withdraws the overlay", async () => {
+  await withFeed(async ({ k, data }) => {
+    const bundled = await bundledExport();
+    try {
+      // Added: a page the signed manifest does not list.
+      const added = await openConfirmed(k, data, bundled);
+      await Deno.writeTextFile(join(added.vdir, "evil.html"), "<script>x()</script>");
+      assertEquals(await added.ui.overlay!.read("evil.html"), { status: "withdrawn" });
+      assertEquals(await added.ui.overlay!.read("a.js"), { status: "withdrawn" });
+      // Removed: a listed file gone.
+      const removed = await openConfirmed(k, data, bundled);
+      assertEquals((await removed.ui.overlay!.read("b.js")).status, "ok");
+      await Deno.remove(join(removed.vdir, "b.js"));
+      assertEquals(await removed.ui.overlay!.read("b.js"), { status: "withdrawn" });
+      // A path that names nothing is only missing; a directory of the UI too.
+      const intact = await openConfirmed(k, data, bundled, { ...UI, "assets/c.js": "c()" });
+      assertEquals(await intact.ui.overlay!.read("nope.js"), { status: "missing" });
+      assertEquals(await intact.ui.overlay!.read("assets"), { status: "missing" });
+      assertEquals(await intact.ui.overlay!.read("../escape"), { status: "missing" });
+      assertEquals(intact.ui.overlay!.withdrawn, false);
+    } finally {
+      await Deno.remove(bundled, { recursive: true });
+    }
+  });
+});
+
+Deno.test("desktop updater SECURITY (M1): the preload comes only from a verified manifest entry", async () => {
+  await withFeed(async ({ k, data }) => {
+    const bundled = await bundledExport();
+    try {
+      // Listed and intact: the overlay's own preload.
+      const listed = await openConfirmed(k, data, bundled, { ...UI, [PRELOAD_PATH]: "bridge()" });
+      assertEquals(await desktopUiFiles(listed.ui).preload(), "bridge()");
+      // Not listed, planted after launch: never read; the overlay is withdrawn and the bundled
+      // export (which has none) is what remains.
+      const unlisted = await openConfirmed(k, data, bundled);
+      await Deno.mkdir(join(unlisted.vdir, "_denext"), { recursive: true });
+      await Deno.writeTextFile(join(unlisted.vdir, PRELOAD_PATH), "steal()");
+      assertEquals(await desktopUiFiles(unlisted.ui).preload(), undefined);
+      assertEquals(unlisted.ui.overlay!.withdrawn, true);
+      // Listed but changed after launch: the bundled export's preload, not the change.
+      await Deno.mkdir(join(bundled, "_denext"), { recursive: true });
+      await Deno.writeTextFile(join(bundled, PRELOAD_PATH), "bundledBridge()");
+      const changed = await openConfirmed(k, data, bundled, { ...UI, [PRELOAD_PATH]: "bridge()" });
+      await Deno.writeTextFile(join(changed.vdir, PRELOAD_PATH), "steal()");
+      assertEquals(await desktopUiFiles(changed.ui).preload(), "bundledBridge()");
+    } finally {
+      await Deno.remove(bundled, { recursive: true });
+    }
+  });
+});
+
+Deno.test("desktop updater SECURITY (M1): a custom dataDir is reserved from the page's capabilities", async () => {
+  await withFeed(async ({ k }) => {
+    const appData = await Deno.makeTempDir({ prefix: "denext_dupd_appdata_" });
+    const bundled = await bundledExport();
+    try {
+      // The overlay kept outside the app-support folder's reserved `ui-updates`, under a folder the
+      // page's fs capability may otherwise reach.
+      const custom = join(appData, "my-ui");
+      const target = join(custom, "versions", "v", "index.html");
+      await refuseReservedDataPath(appData, target); // not reserved before the runtime opens it
+      await openDesktopUi(bundled, { ...cfg(custom, k.publicKey) });
+      const err = await assertRejects(() => refuseReservedDataPath(appData, target));
+      assertStringIncludes((err as Error).message, "reserved for the desktop runtime");
+      await assertRejects(() => refuseReservedDataPath(appData, custom));
+      await refuseReservedDataPath(appData, join(appData, "my-ui-notes.txt")); // a sibling is not
+    } finally {
+      for (const d of [appData, bundled]) await Deno.remove(d, { recursive: true });
+    }
+  });
+});
+
+Deno.test("desktop updater SECURITY (L2): apply refuses a staged version that is now a downgrade or expired", async () => {
+  await withFeed(async ({ k, data }) => {
+    const config = cfg(data, k.publicKey);
+    const code = async (version: string) =>
+      ((await assertRejects(() => applyDesktopUpdate(version, config))) as DesktopUpdateError)
+        .code;
+    const stage = async (manifest: OtaManifest) =>
+      await layOut(join(data, `staging-${manifest.version}`), manifest, UI);
+    await Deno.writeTextFile(
+      join(data, "state.json"),
+      JSON.stringify({ highestSequence: 7, rejected: null }),
+    );
+    // Staged earlier, but a newer sequence was accepted since.
+    const older = await signedFiles(k, UI, { sequence: 6 });
+    await stage(older);
+    assertEquals(await code(older.version), "downgrade");
+    const same = await signedFiles(k, UI, { sequence: 7, notes: "same" });
+    await stage(same);
+    assertEquals(await code(same.version), "downgrade");
+    const unsequenced = await signedFiles(k, UI, { notes: "none" });
+    await stage(unsequenced);
+    assertEquals(await code(unsequenced.version), "downgrade");
+    // The bundled export's sequence is the floor too.
+    await Deno.writeTextFile(
+      join(data, "state.json"),
+      JSON.stringify({ highestSequence: null, rejected: null }),
+    );
+    await Deno.writeTextFile(
+      join(data, "bundle.json"),
+      JSON.stringify({ bundle: "ota:x", sequence: 9 }),
+    );
+    const belowBundle = await signedFiles(k, UI, { sequence: 8, notes: "below" });
+    await stage(belowBundle);
+    assertEquals(await code(belowBundle.version), "downgrade");
+    // Expired since it was staged.
+    const past = Math.floor(Date.now() / 1000) - 60;
+    const expired = await signedFiles(k, UI, { sequence: 20, expiresAt: past });
+    await stage(expired);
+    assertEquals(await code(expired.version), "expired");
+    // None was applied.
+    assertEquals((await desktopUpdateStatus(config)).pending, null);
+  });
+});
+
+Deno.test("desktop updater SECURITY (L2): apply deletes every other staged version", async () => {
+  await withFeed(async ({ k, data }) => {
+    const config = cfg(data, k.publicKey);
+    const v1 = await signedFiles(k, UI, { sequence: 1 });
+    const ui2 = { ...UI, "b.js": "b2()" };
+    const v2 = await signedFiles(k, ui2, { sequence: 2 });
+    await layOut(join(data, `staging-${v1.version}`), v1, UI);
+    await layOut(join(data, `staging-${v2.version}`), v2, ui2);
+    await applyDesktopUpdate(v2.version, config);
+    // v1 stays staged no longer: an apply call cannot bring it back.
+    assertEquals(await exists(join(data, `staging-${v1.version}`)), false);
+    assertEquals((await desktopUpdateStatus(config)).staged, null);
+    assertEquals(await code(), "not_staged");
+    async function code() {
+      return ((await assertRejects(() =>
+        applyDesktopUpdate(v1.version, config)
+      )) as DesktopUpdateError)
+        .code;
+    }
+  });
 });

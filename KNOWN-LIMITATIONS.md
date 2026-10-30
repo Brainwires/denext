@@ -663,6 +663,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **The Linux clipboard** is readable by an app in the background while the session is unlocked,
   as on macOS and Windows; a locked session refuses reads only where the locker sets logind's
   `LockedHint` ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
+- **UI overlay files are served whole.** A file of a UI update (`denext/desktop/updater`) is read
+  into memory and checked before it is sent, never streamed from its folder, so a large media file
+  in an overlay costs its size per request (the bundled export still streams). Where the OS reports
+  no inode or change time the file is hashed on every read. `denext desktop package` reads the
+  floor sequence from `out/_denext/ota.json`, the default export folder.
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move

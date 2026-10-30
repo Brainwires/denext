@@ -37,6 +37,7 @@ import {
 import type { DesktopOs } from "./desktop-capabilities.ts";
 import { parsePlist, type PlistNode, renderPlist } from "./plist-value.ts";
 import { parseOtaPublicKey } from "./ota-signing.ts";
+import { isOtaManifest, OTA_MANIFEST_PATH } from "../mobile/ota-manifest.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
 import {
   desktopPasskeyRpIds,
@@ -751,13 +752,56 @@ export async function syncDesktopAppConfigAt(
 }
 
 /**
+ * Why the export in `<root>/out` cannot ship with `desktop.update.ui`, or `null` when it can (or the
+ * UI updater is off). The bundled export's OTA manifest `sequence` is the downgrade floor before any
+ * overlay is accepted: without one, an older signed UI update (one a feed still serves, or an
+ * attacker replays) would be taken over the newer UI the app ships with.
+ *
+ * @param root The project root.
+ * @param config The project config.
+ * @returns The problem and its fix, or `null`.
+ */
+export async function desktopUiUpdateFloorProblem(
+  root: string,
+  config: unknown,
+): Promise<string | null> {
+  const ui = (config as { desktop?: { update?: { ui?: unknown } } } | null | undefined)?.desktop
+    ?.update?.ui;
+  if (ui === undefined) return null;
+  const path = join(root, "out", ...OTA_MANIFEST_PATH.split("/"));
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(await Deno.readTextFile(path));
+  } catch {
+    manifest = undefined;
+  }
+  if (isOtaManifest(manifest) && manifest.sequence !== undefined) return null;
+  const found = manifest === undefined
+    ? `has no OTA manifest (out/${OTA_MANIFEST_PATH})`
+    : isOtaManifest(manifest)
+    ? `has an OTA manifest (out/${OTA_MANIFEST_PATH}) without a sequence`
+    : `has an invalid OTA manifest (out/${OTA_MANIFEST_PATH})`;
+  return `desktop.update.ui is set, but the export the app ships ${found}. Its sequence is the ` +
+    "floor that keeps an older signed UI update from replacing the UI the app ships with. Stamp " +
+    "a signed one: set spa.ota: true and DENEXT_OTA_SIGNING_KEY for the export, or run " +
+    "`denext ota manifest out --sign ota.key` after it (the sequence defaults to the Unix time).";
+}
+
+/**
  * {@linkcode syncDesktopAppConfigAt} for the project that owns `entryUrl` (a script in its
- * `scripts/` folder): what the scaffolded `scripts/package-*.ts` call before `deno desktop`.
+ * `scripts/` folder): what the scaffolded `scripts/package-*.ts` call before `deno desktop`. With
+ * `desktop.update.ui` set it first requires the export to carry a sequenced OTA manifest
+ * ({@linkcode desktopUiUpdateFloorProblem}), so no app ships its UI updater without a downgrade
+ * floor.
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @returns What changed.
+ * @throws When `desktop.update.ui` is set and the export carries no sequenced OTA manifest.
  */
 export async function syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport> {
   const root = fromFileUrl(new URL("..", entryUrl));
-  return await syncDesktopAppConfigAt(root, await loadConfigBeside(entryUrl));
+  const config = await loadConfigBeside(entryUrl);
+  const floor = await desktopUiUpdateFloorProblem(root, config);
+  if (floor) throw new Error(floor);
+  return await syncDesktopAppConfigAt(root, config);
 }
