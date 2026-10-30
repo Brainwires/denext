@@ -81,9 +81,16 @@ async function walkLocks(root: string, dir: string): Promise<string[]> {
 /** The git-tracked `examples/**\/deno.lock` files, or `null` when `root` is not a git checkout. */
 async function trackedExampleLocks(root: string): Promise<string[] | null> {
   try {
+    // A git hook exports GIT_DIR / GIT_INDEX_FILE for the repository it runs in; `root` is the
+    // repository asked about, so the child sees none of them.
+    const env = Object.fromEntries(
+      Object.entries(Deno.env.toObject()).filter(([k]) => !k.startsWith("GIT_")),
+    );
     const { code, stdout } = await new Deno.Command("git", {
       args: ["ls-files", "-z", "--", ":(glob)examples/**/deno.lock"],
       cwd: root,
+      env,
+      clearEnv: true,
       stdout: "piped",
       stderr: "null",
     }).output();

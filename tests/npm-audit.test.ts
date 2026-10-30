@@ -126,6 +126,11 @@ Deno.test("npm audit: it covers the root lock, then every example's own lock", a
 
 Deno.test("npm audit: in a git checkout only tracked locks count, nested ones included", async () => {
   const root = await Deno.makeTempDir();
+  // A git hook runs the tests with GIT_DIR / GIT_INDEX_FILE set for the real repository; the
+  // fixture's own git commands (and the gate's `git ls-files`) must not see them.
+  const leaked = Deno.env.toObject();
+  const gitVars = Object.keys(leaked).filter((k) => k.startsWith("GIT_"));
+  for (const k of gitVars) Deno.env.delete(k);
   const git = async (...args: string[]) => {
     const { code } = await new Deno.Command("git", {
       args,
@@ -156,6 +161,7 @@ Deno.test("npm audit: in a git checkout only tracked locks count, nested ones in
       "examples/c/web/deno.lock",
     ]);
   } finally {
+    for (const k of gitVars) Deno.env.set(k, leaked[k]);
     await Deno.remove(root, { recursive: true });
   }
 });
