@@ -563,6 +563,8 @@ Deno.test("Lustre hub: the connection and the view cap are checked again after e
   hub.dispose();
 
   // Without authorize, the viewer's identity is the await: two mounts race for the one slot.
+  // Both passed the admission cap check (both are held), and their awaits (the props digest, the
+  // identity) settle in either order, so either may win: the cap holds for whichever does.
   const { id: open } = counterView({ authorize: undefined });
   const d = conn();
   hold = true;
@@ -570,8 +572,10 @@ Deno.test("Lustre hub: the connection and the view cap are checked again after e
   const b = hub.mount(d, await mountFrame(open, { start: 2 }, "l2"));
   await release(2);
   await Promise.all([a, b]);
-  assertEquals((await next(d, isLustre(0))).vid, "l1");
-  assertEquals((await next(d, isError("limit"))).subId, "l2", "re-checked after the identity");
+  const placed = (await next(d, isLustre(0))).vid;
+  const refused = (await next(d, isError("limit"))).subId;
+  assertEquals([placed, refused].sort(), ["l1", "l2"], "re-checked after the identity");
+  assertEquals([...d.lustreViews.keys()], [placed]);
   assertEquals(hub.running(), 1);
   hub.dispose();
 
