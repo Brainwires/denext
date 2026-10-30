@@ -10,6 +10,43 @@ and this project adheres to
 
 ### Added
 
+- **Tray-first and overlay desktop apps, and several windows** (`denext/desktop/window`,
+  `denext/desktop/app`, `denext.config.ts`'s `desktop`). `desktop.window.show: false` starts the app
+  with no visible window and no flash, and `frameless`, `transparent` and `focusable: false` (a
+  non-activating panel) make the first window an overlay; all four are written to
+  `.deno-desktop/app.json`'s `initialWindow`, which every supported runtime reads.
+  `desktop.window.alwaysOnTop` (a boolean or a level), `opacity`, `skipTaskbar` and
+  `visibleOnAllWorkspaces` are applied at launch. `desktop.app.keepAlive` keeps the app running with
+  no window (on by default with a tray; a page's `window.close()` then closes its own window), and
+  `desktop.app.dock: false` / `setDockVisible()` hide the macOS Dock icon; a Dock click with no
+  window showing shows the main window (`onDockReopen`). `desktop.tray` (or `runDesktop({ tray })`)
+  is a tray icon the backend owns: made before any page loads, kept across reloads, its clicks
+  handed to `desktop.ts`'s handlers (`DesktopRuntime.tray`) and every page (`getTray()`), with an
+  optional panel at the icon (the runtime's `Tray.attachPanel`, toggled by a click, hidden on blur,
+  placed inside the work area so it opens above a bottom taskbar; `showTrayPanel` /
+  `hideTrayPanel` / `toggleTrayPanel`). `openWindow()` opens another window of the app on one of
+  its pages and returns a handle (`show`, `hide`, `focus`, `close`, `navigate`, `setBounds`,
+  `getBounds`, `onClosed`, `onFocus`, `onBlur`), with an optional capability subset; `getWindows`,
+  `windowHandle` and `currentWindowId` find them, and `DesktopRuntime.windows` opens them from the
+  backend. Each window's page drives its own window: the bridge tells windows apart by a per-window
+  token the runtime hands only that window's documents, and a reload releases only that window's
+  tray icons, close guard and drops. `onWindowFocus` / `onWindowBlur`, `setWindowOpacity`,
+  `setAlwaysOnTop(flag, level)` and, where the runtime has them (none yet; `windowCapabilities()`
+  turns each on), `setIgnoreMouseEvents(ignore, { forward })`, `setHitRegion(rects)`,
+  `setVisibleOnAllWorkspaces` and `setSkipTaskbar`. `windowCapabilities()` adds `transparent`,
+  `nonActivating`, `opacity`, `clickThrough`, `clickThroughForward`, `hitRegion`,
+  `visibleOnAllWorkspaces`, `skipTaskbar`, `alwaysOnTopLevels` and `focusEvents`;
+  `appCapabilities()` adds `dockVisibility`, `backendTray` and `trayPanel`. A capability's
+  `onPageLoad` gets the window's id, and `perWindow: true` has it called for every window.
+- **`speak()` / `stopSpeaking()` in `denext/mobile`**: the Capacitor text-to-speech plugin in the
+  shell, else the Web Speech API (WKWebView, WebView2, CEF on macOS and Windows), else the desktop
+  runtime's OS speech through the new `textToSpeech` capability once the runtime has
+  `Deno.desktop.speech` (for WebKitGTK on Linux).
+- **examples/companion and examples/hangar use them.** Loopy is a transparent, frameless overlay
+  that never takes the focus, on top on every Space, with no Dock or taskbar entry and a tray to
+  show, hide and quit it; it lets clicks through outside itself where the runtime can. Hangar
+  starts with no window and no Dock icon, owns its tray in the backend, shows a real panel at the
+  icon, and opens each page in a window of its own, staying alive with every window closed.
 - **Hangar, a tray-first desktop example** (`examples/hangar`): an app that lives in the tray /
   menu bar and manages QEMU disk images and running VMs. It adopts existing VM folders that start
   with a `start.sh` and creates its own from a `hangar.json`; starts VMs headless or windowed,
