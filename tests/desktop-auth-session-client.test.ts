@@ -11,7 +11,11 @@ import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
 import { createFakeDesktopRuntime, type FakeMethod } from "./helpers/desktop-fake-runtime.ts";
 import { installFakeDocument } from "./helpers/fake-overlay-dom.ts";
 
-const AUTH_URL = "https://auth.example.com/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%2Fcb";
+/** RFC 7636 Appendix B's S256 challenge: a well-formed PKCE pair. */
+const PKCE =
+  "&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256";
+const BARE_AUTH_URL = "https://auth.example.com/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%2Fcb";
+const AUTH_URL = BARE_AUTH_URL + PKCE;
 
 /** Run `fn` with `__denext` and `fetch` stubbed, restoring both afterwards. */
 async function withDesktop(
@@ -324,4 +328,55 @@ Deno.test("openAuthSession (desktop, loopback): signal and cancelOverlay reach t
   } finally {
     restore();
   }
+});
+
+Deno.test("openAuthSession (desktop): a URL without PKCE → pkce_required, no session started", async () => {
+  const { openAuthSession, resetAuthSessionForTesting } = await import(
+    "../src/mobile/auth-session.ts"
+  );
+  resetAuthSessionForTesting();
+  await withDesktop("tok-1", neverFetch, async () => {
+    // The loopback flow (a loopback redirect_uri) and the custom-scheme one alike.
+    for (const url of [BARE_AUTH_URL, SCHEME_URL]) {
+      const err = await assertRejects(() =>
+        openAuthSession(url, { callbackScheme: "myapp", cancelOverlay: false })
+      );
+      assertEquals(codeOf(err), "pkce_required", url);
+    }
+  });
+});
+
+Deno.test("openAuthSession (desktop, loopback): the PKCE waiver reaches the runtime", async () => {
+  const { openAuthSession, resetAuthSessionForTesting } = await import(
+    "../src/mobile/auth-session.ts"
+  );
+  resetAuthSessionForTesting();
+  let body: Record<string, unknown> | undefined;
+  const fetchImpl: typeof fetch = (_input, init) => {
+    body = JSON.parse(String(init?.body));
+    return Promise.resolve(jsonResponse(200, { url: "http://127.0.0.1:5000/cb?code=c" }));
+  };
+  const reason = "the provider binds the code to a client secret";
+  await withDesktop("tok-1", fetchImpl, async () => {
+    const res = await openAuthSession(BARE_AUTH_URL, {
+      callbackScheme: "myapp",
+      pkce: "not-applicable",
+      reason,
+      cancelOverlay: false,
+    });
+    assertEquals(res.url, "http://127.0.0.1:5000/cb?code=c");
+  });
+  assertEquals(body?.pkce, "not-applicable");
+  assertEquals(body?.reason, reason);
+  // Without a reason the waiver is refused before any request.
+  await withDesktop("tok-1", neverFetch, async () => {
+    const err = await assertRejects(() =>
+      openAuthSession(BARE_AUTH_URL, {
+        callbackScheme: "myapp",
+        pkce: "not-applicable",
+        cancelOverlay: false,
+      })
+    );
+    assertEquals(codeOf(err), "invalid");
+  });
 });

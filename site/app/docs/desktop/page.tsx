@@ -1006,7 +1006,11 @@ denext desktop package --target-os windows --format msi,zip`}
 import { openAuthSession, runtimePlatform } from "denext/mobile";
 
 export async function signIn() {
-  const state = crypto.randomUUID(); // and a PKCE verifier + code_challenge
+  const state = crypto.randomUUID();
+  const verifier = crypto.randomUUID() + crypto.randomUUID();
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
   const desktop = runtimePlatform() === "desktop";
   const authorize = new URL("https://auth.example.com/authorize");
   authorize.searchParams.set(
@@ -1014,6 +1018,8 @@ export async function signIn() {
     desktop ? "http://127.0.0.1/auth/callback" : "myapp://auth/callback",
   );
   authorize.searchParams.set("state", state);
+  authorize.searchParams.set("code_challenge", challenge); // required: pkce_required otherwise
+  authorize.searchParams.set("code_challenge_method", "S256");
   // callbackScheme is required by the type, and ignored with a loopback redirect_uri.
   const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
   const params = new URL(url).searchParams;
@@ -1036,13 +1042,22 @@ export async function signIn() {
         </li>
         <li>
           <strong>
-            PKCE and <code>state</code> are your job,
+            PKCE S256 and <code>state</code> are required,
           </strong>{" "}
-          here more than anywhere. Any process on the machine can connect to the loopback port, and
-          the first request to the callback path wins, so a local program that finds the port can
-          race a forged redirect in before the real browser. Generate <code>state</code>{" "}
-          and re-check it on the callback, and use PKCE so an intercepted <code>code</code>{" "}
-          is useless without your verifier.
+          here more than anywhere. Any process on the machine can connect to the loopback port, so a
+          local program that finds it can race a forged redirect in before the real browser (RFC
+          8252 §8.1). The runtime listens on <code>127.0.0.1</code> and <code>::1</code>{" "}
+          alike, on one port (IPv4 alone on a host without IPv6), so no other program can hold the
+          address a browser tries first. When the authorization URL carries a{" "}
+          <code>state</code>, only a callback with that exact <code>state</code>{" "}
+          completes the session; any other gets an error page and the session keeps waiting. The
+          authorization URL must carry a <code>code_challenge</code> and{" "}
+          <code>code_challenge_method=S256</code>, so an intercepted <code>code</code>{" "}
+          is useless without your verifier; without them the runtime refuses the session with{" "}
+          <code>pkce_required</code>, as on every other platform. A provider that binds the code to
+          the client another way takes <code>pkce: "not-applicable"</code> with a{" "}
+          <code>reason</code>, and then the URL must carry a <code>state</code>. Generate{" "}
+          <code>state</code> and re-check it on the callback too.
         </li>
         <li>
           <strong>The browser reports no cancel, so denext shows one.</strong>{" "}
@@ -1073,10 +1088,11 @@ export async function signIn() {
   loopbackPort: 1455,      // redirect_uri: http://localhost:1455/auth/callback
 });`}
           </Code>
-          The listener binds <code>127.0.0.1</code> (<code>::1</code> for a <code>[::1]</code>{" "}
-          redirect; browsers reach a <code>localhost</code>{" "}
-          redirect over IPv4 when nothing answers on IPv6). If another program holds the port, the
-          call rejects <code>port_in_use</code>{" "}
+          The listener binds both <code>127.0.0.1</code> and <code>::1</code> on that port, so a
+          {" "}
+          <code>localhost</code>{" "}
+          redirect reaches it whichever address the browser tries (RFC 8252 §7.3). If another
+          program holds the port on either address, the call rejects <code>port_in_use</code>{" "}
           before the browser opens: ask the user to quit the other program (often another sign-in
           tool for the same provider) and retry. RFC 8252 allows a fixed port, but a known port is
           easier for a local program to take first, so <code>state</code>{" "}

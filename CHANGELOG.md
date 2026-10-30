@@ -430,6 +430,25 @@ and this project adheres to
 - **The fastlane CI workflow pins its actions.** `denext mobile add fastlane --ci` writes every
   action as a commit SHA with its tag in a comment, decodes the upload keystore with a private
   umask, and deletes it in an `if: always()` step.
+- **Deno Desktop's loopback `openAuthSession` requires PKCE S256**, as every other platform has
+  since 4.9.0. An authorization URL without one `code_challenge` (a 43-character base64url SHA-256)
+  and one `code_challenge_method=S256` is refused with `pkce_required` before the system browser
+  opens, by `openAuthSession` in the page and again by the runtime's auth-session endpoint, unless
+  the call passes `pkce: "not-applicable"` with a `reason` (now forwarded to the runtime). Any
+  local process can connect to the loopback redirect port, so PKCE is what keeps an intercepted
+  `code` unredeemable (RFC 8252 §8.1, RFC 7636). The custom-scheme flow already required it; the
+  page now checks it there too, before the runtime does. An app whose loopback sign-in builds its
+  URL without PKCE must add it (or the documented waiver). Affected: the loopback flow since 2.10.0.
+- **Deno Desktop's loopback redirect listener binds `::1` as well as `127.0.0.1`**, on one port
+  (RFC 8252 §7.3; IPv4 alone where the host has no IPv6). Before, it bound IPv4 only, so with a
+  fixed `loopbackPort` and a `localhost` redirect another local program could listen on
+  `[::1]:<port>` and receive the redirect from a browser that tries IPv6 first. A fixed port held on
+  either address now rejects `port_in_use` before the browser opens. Affected: `loopbackPort` since
+  3.1.0.
+- **The loopback listener checks `state`.** When the authorization URL carries a `state`, only a
+  callback with exactly that `state` completes the session; a forged redirect gets an error page
+  and the session keeps waiting until its timeout. A PKCE waiver (`pkce: "not-applicable"`) now
+  needs a `state` in the URL, as the custom-scheme flow does.
 
 ### Documentation
 

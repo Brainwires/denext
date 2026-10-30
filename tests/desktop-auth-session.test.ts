@@ -14,8 +14,11 @@ import { until } from "./helpers/desktop-fake-runtime.ts";
 
 const TOKEN = "per-launch-token-abcdef";
 const ENDPOINT = "http://127.0.0.1:8000/_denext/desktop/auth-session";
+/** RFC 7636 Appendix B's S256 challenge: a well-formed PKCE pair for the URLs below. */
+const PKCE =
+  "&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256";
 const VALID_AUTH_URL = "https://auth.example.com/authorize?client_id=x&state=s1&redirect_uri=" +
-  encodeURIComponent("http://127.0.0.1/callback");
+  encodeURIComponent("http://127.0.0.1/callback") + PKCE;
 
 /** SHA-256 → base64, matching the CSP hash form the runtime emits. */
 async function sha256Base64(text: string): Promise<string> {
@@ -355,4 +358,119 @@ Deno.test("injectDesktopGlobal: no CSP meta ⇒ script injected, nothing to patc
     `<script>globalThis.__denext={"desktop":true,"token":"t","os":"${Deno.build.os}"}`,
   );
   assert(!out.includes("sha256-"));
+});
+
+Deno.test("desktop auth-session: an authUrl without PKCE → 400 pkce_required, browser never opened", async () => {
+  resetDesktopAuthSessionForTesting();
+  let opened = false;
+  const open = () => void (opened = true);
+  const bare = "https://auth.example.com/authorize?client_id=x&state=s1&redirect_uri=" +
+    encodeURIComponent("http://127.0.0.1/callback");
+  const cases = [
+    bare,
+    // A plain challenge, a short one, and a repeated one are not S256.
+    bare + PKCE.replace("S256", "plain"),
+    bare + "&code_challenge=short&code_challenge_method=S256",
+    bare + PKCE + PKCE,
+  ];
+  for (const authUrl of cases) {
+    const res = await handleDesktopAuthSession(req({ authUrl }), TOKEN, open);
+    assertEquals(res.status, 400, authUrl);
+    assertEquals((await res.json()).code, "pkce_required", authUrl);
+  }
+  assertEquals(opened, false);
+});
+
+Deno.test('desktop auth-session: pkce "not-applicable" with a reason opens the loopback flow', async () => {
+  resetDesktopAuthSessionForTesting();
+  const bare = "https://auth.example.com/authorize?client_id=x&state=s1&redirect_uri=" +
+    encodeURIComponent("http://127.0.0.1/callback");
+  const browser = trackedBrowser();
+  const res = await handleDesktopAuthSession(
+    req({
+      authUrl: bare,
+      pkce: "not-applicable",
+      reason: "the provider binds the code to a client secret",
+      timeoutMs: 50,
+    }),
+    TOKEN,
+    browser.open,
+  );
+  // It got past validation: the browser opened and the session waited until its timeout.
+  assertEquals(res.status, 408);
+  assert(browser.opened());
+});
+
+Deno.test("desktop auth-session: a PKCE waiver without a reason, or another pkce value → 400 invalid", async () => {
+  resetDesktopAuthSessionForTesting();
+  const bare = "https://auth.example.com/authorize?client_id=x&redirect_uri=" +
+    encodeURIComponent("http://127.0.0.1/callback");
+  for (
+    const extra of [{ pkce: "not-applicable" }, { pkce: "not-applicable", reason: "  " }, {
+      pkce: "plain",
+      reason: "x",
+    }]
+  ) {
+    const res = await handleDesktopAuthSession(
+      req({ authUrl: bare, ...extra }),
+      TOKEN,
+      noopBrowser,
+    );
+    assertEquals(res.status, 400);
+    assertEquals((await res.json()).code, "invalid");
+  }
+});
+
+Deno.test("desktop auth-session: a callback without the authUrl's state does not settle the session", async () => {
+  resetDesktopAuthSessionForTesting();
+  const forged: Promise<[number, string]>[] = [];
+  let real: Promise<string> | undefined;
+  const hit = (href: string) =>
+    fetch(href).then(async (r) => [r.status, await r.text()] as [number, string]);
+  const openBrowser = (authUrl: string) => {
+    const redirect = new URL(new URL(authUrl).searchParams.get("redirect_uri")!);
+    const at = (query: string) => `${redirect.origin}${redirect.pathname}?${query}`;
+    // Another local process races forged redirects in first: another state, none, two.
+    forged.push(hit(at("code=evil&state=other")));
+    forged.push(hit(at("code=evil")));
+    forged.push(hit(at("code=evil&state=s1&state=s1")));
+    real = Promise.all(forged).then(() => hit(at("code=real&state=s1")).then(([, t]) => t));
+  };
+  const res = await handleDesktopAuthSession(
+    req({ authUrl: VALID_AUTH_URL, timeoutMs: 5_000 }),
+    TOKEN,
+    openBrowser,
+  );
+  assertEquals(res.status, 200);
+  const { url } = await res.json();
+  assertStringIncludes(url, "code=real");
+  for (const [status] of await Promise.all(forged)) assertEquals(status, 400);
+  assertStringIncludes(await real!, "You can close this tab.");
+});
+
+Deno.test("desktop auth-session: a PKCE waiver needs a state in the authUrl → 400 invalid", async () => {
+  resetDesktopAuthSessionForTesting();
+  let opened = false;
+  const res = await handleDesktopAuthSession(
+    req({
+      authUrl: "https://auth.example.com/authorize?client_id=x&redirect_uri=" +
+        encodeURIComponent("http://127.0.0.1/callback"),
+      pkce: "not-applicable",
+      reason: "the provider binds the code to a client secret",
+      timeoutMs: 200,
+    }),
+    TOKEN,
+    () => void (opened = true),
+  );
+  assertEquals(res.status, 400);
+  assertEquals((await res.json()).code, "invalid");
+  // A URL with two states has no one state the callback could be held to.
+  const twice = await handleDesktopAuthSession(
+    req({ authUrl: VALID_AUTH_URL + "&state=s2" }),
+    TOKEN,
+    () => void (opened = true),
+  );
+  assertEquals(twice.status, 400);
+  assertEquals((await twice.json()).code, "invalid");
+  assertEquals(opened, false);
 });

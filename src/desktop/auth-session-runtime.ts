@@ -1,9 +1,15 @@
 /**
  * Deno Desktop OAuth sign-in, server half: the RFC 8252 loopback-redirect flow. On a
  * token-gated POST it opens the system browser at the (rewritten) authorization URL and binds a
- * one-shot `127.0.0.1` listener on an ephemeral port for the redirect — or, with `loopbackPort`,
- * on that fixed port (a provider that only accepts its registered `http://localhost:1455/…`) —
- * then answers the caller with the captured callback URL.
+ * one-shot listener for the redirect on `127.0.0.1` and `::1` (RFC 8252 §7.3; IPv4 alone on a host
+ * without IPv6) on one ephemeral port — or, with `loopbackPort`, on that fixed port (a provider
+ * that only accepts its registered `http://localhost:1455/…`) — then answers the caller with the
+ * captured callback URL, once one carries the authorization URL's `state`.
+ *
+ * The authorization URL must carry PKCE S256 (RFC 7636), as on every `openAuthSession` path, unless
+ * the caller waives it with `pkce: "not-applicable"` and a `reason`: another local process can
+ * hold or race the loopback port and take the redirect (RFC 8252 §8.1), and only the verifier the
+ * page kept makes the `code` it carries redeemable.
  *
  * This is AUTH-CRITICAL. Every check fails closed, the token compare is constant-time, and the
  * code/state carried in the auth and callback URLs are NEVER logged.
@@ -47,6 +53,11 @@ let openSessionKey: string | undefined;
 const SESSION_KEY = /^[A-Za-z0-9-]{16,128}$/;
 /** What the open session's wait resolves with when the page cancels it. */
 const CANCELLED = Symbol("cancelled");
+
+/** A PKCE S256 `code_challenge`: base64url(SHA-256), 43 characters, no padding (RFC 7636 §4.2). */
+const S256_CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
+/** The longest `reason` kept for a `pkce: "not-applicable"` session. */
+const MAX_PKCE_REASON = 500;
 
 /** A structured JSON error envelope the client half maps back to an `AuthSessionError`. */
 function fail(status: number, code: AuthSessionErrorCode, message: string): Response {
@@ -141,8 +152,9 @@ export async function defaultOpenBrowser(url: string): Promise<void> {
 /**
  * Validate a desktop auth-session request, failing closed in order: POST (405), constant-time
  * token (403), loopback `Origin` (403), JSON content-type (415), and a JSON body whose `authUrl`
- * is an absolute `https:` URL with a loopback, fragment-less `redirect_uri` and an optional
- * positive `timeoutMs` (400 `invalid`). Returns the parsed inputs, or the error {@link Response}.
+ * is an absolute `https:` URL with a loopback, fragment-less `redirect_uri`, PKCE S256 (400
+ * `pkce_required`) and an optional positive `timeoutMs` (400 `invalid`). Returns the parsed
+ * inputs, or the error {@link Response}.
  */
 /**
  * Where the request came from (403 when refused). Memory world: the in-process memory transport
@@ -194,6 +206,8 @@ interface AuthStart {
   loopbackPort?: number;
   /** The starting page's session key (its cancel must name it). */
   session?: string;
+  /** The `authUrl`'s `state`, which the callback must carry back byte for byte; `null`: none. */
+  state: string | null;
 }
 
 /** A cancel request, naming the session it ends. */
@@ -246,6 +260,8 @@ interface AuthPayload {
   cancel?: unknown;
   loopbackPort?: unknown;
   session?: unknown;
+  pkce?: unknown;
+  reason?: unknown;
 }
 
 /** The `authUrl` as an absolute https URL with a loopback `redirect_uri`, or the 400. */
@@ -259,6 +275,9 @@ function parseAuthUrl(authUrl: unknown): { authUrl: URL; redirectUri: URL } | Re
   if (parsed.protocol !== "https:") {
     return fail(400, "invalid", "authUrl must be an absolute https: URL");
   }
+  if (parsed.searchParams.getAll("state").length > 1) {
+    return fail(400, "invalid", "the URL carries state more than once");
+  }
   const redirect = parsed.searchParams.get("redirect_uri");
   if (redirect === null || !isLoopbackRedirect(redirect)) {
     return fail(400, "invalid", "redirect_uri must be a loopback http: URI without a fragment");
@@ -266,10 +285,57 @@ function parseAuthUrl(authUrl: unknown): { authUrl: URL; redirectUri: URL } | Re
   return { authUrl: parsed, redirectUri: new URL(redirect) };
 }
 
+/** The single value of a query parameter, or `null` when it is absent or repeated. */
+function singleParam(url: URL, name: string): string | null {
+  const all = url.searchParams.getAll(name);
+  return all.length === 1 ? all[0] : null;
+}
+
+/**
+ * PKCE S256 in the authorization URL (RFC 7636; RFC 8252 §8.1 makes it the loopback flow's defence
+ * against another local process taking the redirect): one `code_challenge` (a SHA-256's base64url)
+ * and one `code_challenge_method=S256`, unless `pkce: "not-applicable"` with a `reason` — the same
+ * rule as every other `openAuthSession` path. `null` when it holds, else the 400.
+ */
+function pkceRefusal(authUrl: URL, payload: AuthPayload): Response | null {
+  if (payload.pkce !== undefined) {
+    return pkceWaiverRefusal(payload) ??
+      (singleParam(authUrl, "state") === null
+        ? fail(400, "invalid", 'pkce: "not-applicable" needs a state the callback must carry')
+        : null);
+  }
+  if (
+    S256_CHALLENGE.test(singleParam(authUrl, "code_challenge") ?? "") &&
+    singleParam(authUrl, "code_challenge_method") === "S256"
+  ) return null;
+  return fail(
+    400,
+    "pkce_required",
+    "the URL must carry PKCE: one code_challenge (a 43-character base64url SHA-256) and " +
+      'code_challenge_method=S256 (or pass pkce: "not-applicable" with a reason)',
+  );
+}
+
+/** A `pkce` waiver: `"not-applicable"` with a non-empty, bounded `reason`, else the 400 `invalid`. */
+function pkceWaiverRefusal({ pkce, reason }: AuthPayload): Response | null {
+  if (pkce !== "not-applicable") {
+    return fail(400, "invalid", 'pkce must be "not-applicable" when given');
+  }
+  const text = typeof reason === "string" ? reason.trim() : "";
+  if (text !== "" && text.length <= MAX_PKCE_REASON) return null;
+  return fail(
+    400,
+    "invalid",
+    'pkce: "not-applicable" needs a reason (how the provider binds the callback)',
+  );
+}
+
 /** A start request's inputs (everything but the session key), or the 400. */
 function parseAuthStart(payload: AuthPayload): AuthStart | Response {
   const urls = parseAuthUrl(payload.authUrl);
   if (urls instanceof Response) return urls;
+  const pkce = pkceRefusal(urls.authUrl, payload);
+  if (pkce) return pkce;
   const { timeoutMs } = payload;
   if (
     timeoutMs !== undefined &&
@@ -281,6 +347,7 @@ function parseAuthStart(payload: AuthPayload): AuthStart | Response {
   if (loopbackPort instanceof Response) return loopbackPort;
   return {
     ...urls,
+    state: singleParam(urls.authUrl, "state"),
     timeoutMs: timeoutMs as number | undefined,
     ...(loopbackPort !== undefined ? { loopbackPort } : {}),
   };
@@ -306,14 +373,20 @@ async function validateAuthRequest(
  *    origin; in the memory world the memory transport and an `Origin` absent or equal to the app
  *    origin ({@link DesktopRequestAccess});
  * 4. `content-type` starts with `application/json`, else 415;
- * 5. body `{ authUrl, timeoutMs?, loopbackPort? }`: `authUrl` parses and is `https:` with a
- *    loopback, fragment-less `redirect_uri`, `timeoutMs` (if present) is a positive finite number,
- *    and `loopbackPort` (if present) is a port the `redirect_uri` does not contradict, else 400
- *    `{code:"invalid"}`.
+ * 5. body `{ authUrl, timeoutMs?, loopbackPort?, pkce?, reason? }`: `authUrl` parses and is
+ *    `https:` with a loopback, fragment-less `redirect_uri`, `timeoutMs` (if present) is a positive
+ *    finite number, and `loopbackPort` (if present) is a port the `redirect_uri` does not
+ *    contradict, else 400 `{code:"invalid"}`;
+ * 6. PKCE S256: `authUrl` carries one `code_challenge` (43 base64url characters) and one
+ *    `code_challenge_method=S256`, else 400 `{code:"pkce_required"}` — unless `pkce` is
+ *    `"not-applicable"` with a non-empty `reason` (any other `pkce`, or no reason: 400 `invalid`),
+ *    and then the `authUrl` must carry a `state` (400 `invalid`); a repeated `state` is `invalid`.
  *
- * Then a single-session guard (409 `{code:"busy"}`), the loopback listener (a fixed
- * `loopbackPort` already in use: 409 `{code:"port_in_use"}`), and a timeout
- * (408 `{code:"timeout"}`). On success: 200 `{ url }`.
+ * Then a single-session guard (409 `{code:"busy"}`), the loopback listener on `127.0.0.1` and
+ * `::1` alike (a fixed `loopbackPort` either address of which is in use: 409
+ * `{code:"port_in_use"}`), and a timeout (408 `{code:"timeout"}`). Only a callback that carries the
+ * `authUrl`'s `state` (when it has one) completes the session; another one is answered 400 and the
+ * listener keeps waiting. On success: 200 `{ url }`.
  *
  * A body of `{ cancel: true, session }` (behind the same checks 1–4) ends the open session
  * instead: the page's cancel, since the system browser reports no cancellation. A session started
@@ -345,13 +418,18 @@ export async function handleDesktopAuthSession(
   if (busy) return fail(409, "busy", "another desktop auth session is still open");
   busy = true;
 
-  let server: Deno.HttpServer | undefined;
+  let servers: Deno.HttpServer[] = [];
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     let onCallback: (url: string) => void = () => {};
-    const bound = bindCallbackListener(redirectUri, parsed.loopbackPort, (url) => onCallback(url));
+    const bound = bindCallbackListener(
+      redirectUri,
+      parsed.loopbackPort,
+      parsed.state,
+      (url) => onCallback(url),
+    );
     if (bound instanceof Response) return bound;
-    server = bound.server;
+    servers = bound.servers;
     openSessionKey = parsed.session;
     const callbackUrl = await new Promise<string | null | typeof CANCELLED>((resolve) => {
       cancelOpen = () => resolve(CANCELLED);
@@ -376,68 +454,139 @@ export async function handleDesktopAuthSession(
     if (timer !== undefined) clearTimeout(timer);
     cancelOpen = undefined;
     openSessionKey = undefined;
-    if (server) await server.shutdown().catch(() => {});
+    await shutdownAll(servers);
     busy = false;
   }
 }
 
-/** The address a fixed-port listener binds for the `redirect_uri` host (`[::1]` → IPv6). */
-function bindHost(redirectUri: URL): string {
-  return redirectUri.hostname === "[::1]" ? "::1" : "127.0.0.1";
+/** The page the browser tab shows when a request to the redirect path is not this session's. */
+const MISMATCH_HTML = '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+  "<title>Not this sign-in</title></head><body><p>This sign-in link does not belong to the " +
+  "open sign-in.</p></body></html>";
+
+/** How many ephemeral ports are tried for one free on both loopback addresses. */
+const EPHEMERAL_ATTEMPTS = 16;
+
+/** A static, script-free HTML answer. */
+function htmlPage(status: number, html: string): Response {
+  return new Response(html, {
+    status,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'none'",
+    },
+  });
+}
+
+/**
+ * Whether a callback to the redirect path is this session's: when the authorization URL carried a
+ * `state`, the callback carries exactly that one (compared in constant time). Any other request is
+ * answered and ignored, so a forged redirect cannot end the session.
+ */
+function carriesState(url: URL, state: string | null): boolean {
+  if (state === null) return true;
+  const got = url.searchParams.getAll("state");
+  return got.length === 1 && timingSafeEqual(got[0], state);
+}
+
+/** Close every listener of a session (a failed shutdown is ignored). */
+async function shutdownAll(servers: readonly Deno.HttpServer[]): Promise<void> {
+  await Promise.all(servers.map((server) => server.shutdown().catch(() => {})));
+}
+
+/** One loopback listener on `hostname:port` (0: an ephemeral port the OS picks). */
+function listenOn(hostname: string, port: number, handler: Deno.ServeHandler): Deno.HttpServer {
+  return Deno.serve({
+    hostname,
+    port,
+    // Silence the default "Listening on…" line; keep the port off any log.
+    onListen: () => {},
+    onError: () => new Response(null, { status: 500 }),
+  }, handler);
+}
+
+/**
+ * The `::1` half of a dual bind on `port`: the server; `"in-use"` when another listener holds
+ * `[::1]:port`; `null` when the host has no IPv6 loopback (then the IPv4 listener alone is the
+ * redirect's only loopback address, and nobody else can hold the other).
+ */
+function listenV6(port: number, handler: Deno.ServeHandler): Deno.HttpServer | "in-use" | null {
+  try {
+    return listenOn("::1", port, handler);
+  } catch (err) {
+    return err instanceof Deno.errors.AddrInUse ? "in-use" : null;
+  }
+}
+
+/**
+ * Bind `127.0.0.1` and `::1` on the same port (RFC 8252 §7.3: both IP versions), so no other local
+ * process can hold the other loopback address and catch a redirect the browser sends there (a
+ * `localhost` redirect may be tried on `::1` first). A fixed `port` either address of which is
+ * taken is `"in-use"`; an ephemeral one (`0`) is re-picked until both halves are free. A host
+ * without IPv6 gets the IPv4 listener alone.
+ */
+function dualBind(port: number, handler: Deno.ServeHandler): Deno.HttpServer[] | "in-use" {
+  for (let attempt = 0; attempt < (port === 0 ? EPHEMERAL_ATTEMPTS : 1); attempt++) {
+    // A taken fixed port throws AddrInUse here, which the caller maps to `port_in_use`.
+    const v4 = listenOn("127.0.0.1", port, handler);
+    const v6 = listenV6((v4.addr as Deno.NetAddr).port, handler);
+    if (v6 === null) return [v4];
+    if (v6 !== "in-use") return [v4, v6];
+    void v4.shutdown().catch(() => {});
+  }
+  return "in-use";
 }
 
 /**
  * Bind the one-shot listener for the redirect and say which `redirect_uri` the browser is sent to.
+ * Both loopback addresses are bound on one port ({@link dualBind}); a host without IPv6 binds
+ * `127.0.0.1` alone.
  *
- * - Ephemeral (no `loopbackPort`): `127.0.0.1` on a port the OS picks; the `redirect_uri` host and
- *   port are rewritten to it, its path and query kept.
- * - Fixed (`loopbackPort`): that port, on `::1` for a `[::1]` redirect and `127.0.0.1` otherwise
- *   (a `localhost` redirect reaches it: browsers fall back to IPv4). The `redirect_uri` keeps its
- *   host as written, since a provider compares it with the registered one, and gains the port.
- *   A port in use answers 409 `port_in_use`.
+ * - Ephemeral (no `loopbackPort`): a port the OS picks that is free on both; the `redirect_uri`
+ *   host is rewritten to the literal `127.0.0.1` (RFC 8252 §8.3) and its port to the listener's,
+ *   its path and query kept.
+ * - Fixed (`loopbackPort`): that port. The `redirect_uri` keeps its host as written, since a
+ *   provider compares it with the registered one (a `localhost` registration such as
+ *   `http://localhost:1455/…` stays usable: the dual bind holds every address `localhost` resolves
+ *   to), and gains the port. Either address in use answers 409 `port_in_use`.
  *
- * Only a request to the redirect's path is taken; anything else is a 404.
+ * Only a request to the redirect's path carrying the authorization URL's `state` (when it had one)
+ * completes the session; another request to that path gets a 400 page and the session keeps
+ * waiting, and anything else is a 404.
  */
 function bindCallbackListener(
   redirectUri: URL,
   loopbackPort: number | undefined,
+  state: string | null,
   onCallback: (url: string) => void,
-): { server: Deno.HttpServer; redirect: string } | Response {
+): { servers: Deno.HttpServer[]; redirect: string } | Response {
   const redirectPath = redirectUri.pathname;
-  let server: Deno.HttpServer;
+  const handler: Deno.ServeHandler = (req) => {
+    const url = new URL(req.url);
+    if (url.pathname !== redirectPath) return new Response("not found", { status: 404 });
+    if (!carriesState(url, state)) return htmlPage(400, MISMATCH_HTML);
+    // The code/state ride the query on a loopback redirect — capture the whole URL.
+    onCallback(req.url);
+    return htmlPage(200, SUCCESS_HTML);
+  };
+  let servers: Deno.HttpServer[] | "in-use";
   try {
-    server = Deno.serve(
-      {
-        hostname: loopbackPort === undefined ? "127.0.0.1" : bindHost(redirectUri),
-        port: loopbackPort ?? 0,
-        // Silence the default "Listening on…" line; keep the port off any log.
-        onListen: () => {},
-        onError: () => new Response(null, { status: 500 }),
-      },
-      (req) => {
-        const path = new URL(req.url).pathname;
-        if (path !== redirectPath) return new Response("not found", { status: 404 });
-        // The code/state ride the query on a loopback redirect — capture the whole URL.
-        onCallback(req.url);
-        return new Response(SUCCESS_HTML, {
-          status: 200,
-          headers: {
-            "content-type": "text/html; charset=utf-8",
-            "content-security-policy": "default-src 'none'",
-          },
-        });
-      },
-    );
+    servers = dualBind(loopbackPort ?? 0, handler);
   } catch (err) {
-    if (err instanceof Deno.errors.AddrInUse) {
-      return fail(409, "port_in_use", `loopback port ${loopbackPort} is in use`);
-    }
+    servers = err instanceof Deno.errors.AddrInUse ? "in-use" : [];
+  }
+  if (servers === "in-use") {
+    return loopbackPort === undefined
+      ? fail(500, "unsupported", "no loopback port was free on both 127.0.0.1 and ::1")
+      : fail(409, "port_in_use", `loopback port ${loopbackPort} is in use`);
+  }
+  if (servers.length === 0) {
     return fail(500, "unsupported", "could not listen for the OAuth redirect");
   }
   const redirect = new URL(redirectUri.href);
   if (loopbackPort === undefined) redirect.hostname = "127.0.0.1";
-  redirect.port = String((server.addr as Deno.NetAddr).port);
-  return { server, redirect: redirect.href };
+  redirect.port = String((servers[0].addr as Deno.NetAddr).port);
+  return { servers, redirect: redirect.href };
 }
 
 /** Forget the module's single-session flag (tests only). */
