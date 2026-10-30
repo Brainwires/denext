@@ -293,6 +293,20 @@
       "runFrom": "example"
     },
     {
+      "name": "hangar",
+      "title": "Hangar (a tray-first desktop app for QEMU VMs)",
+      "blurb": "A denext desktop app that lives in the tray / menu bar and manages QEMU disk images and running VM instances: a panel at the tray icon on left click, a menu on right click (the running VMs, start…",
+      "url": "https://github.com/Brainwires/denext/tree/main/examples/hangar",
+      "tags": [
+        "desktop",
+        "app-router"
+      ],
+      "hasReadme": true,
+      "category": "native",
+      "run": "denext task desktop            # export + open the app (denext's pinned Deno Desktop runtime)\ndenext task desktop:package    # write scripts/package-*.ts from the scaffold, then package\ndenext task dev                # the UI in a browser (no backend: it says so)",
+      "runFrom": "example"
+    },
+    {
       "name": "hello",
       "title": "hello — the denext starter tour",
       "blurb": "The smallest end-to-end denext app, and the one the docs and benchmarks lean on.",

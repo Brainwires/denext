@@ -332,6 +332,15 @@ ignorePatterns = [
   "examples/clerk/e2e/**",
   "examples/clerk/app/desktop-e2e.tsx",
   "examples/clerk/desktop/e2e.ts",
+  # examples/hangar's window side: the entry, the `hangar` desktop extension (loaded by path from
+  # `desktop.capabilities.extensions`), the real host (`ps`, `lsof`, `qemu-img`, unix sockets) and
+  # the pages, which run only in a Deno Desktop window against real QEMU processes. I/O against a
+  # native window and the machine, untestable without them. Its VM logic (lib/, everything but the
+  # real host) stays analyzed and is tested against a fake host by tests/hangar.test.ts.
+  "examples/hangar/desktop.ts",
+  "examples/hangar/desktop/**",
+  "examples/hangar/lib/deno-host.ts",
+  "examples/hangar/app/**",
   # harness/ssr-measure.ts drives the server-rendered list bench in headless Chromium (CDP I/O
   # only; its pure parts live in harness/ssr-report.ts, which stays analyzed and tested).
   "examples/scroll-bench/harness/ssr-measure.ts",
@@ -451,3 +460,14 @@ exports = ["transform", "version"]
 [[ignoreExports]]
 file = "src/compat/remix/client.ts"
 exports = ["Link", "LinkProps", "useParams", "useSearchParams"]
+
+# examples/hangar's lib/ exports read only by its window side (ignored above: the pages and the
+# real host), so the graph sees no importer: the window sizes and the start-menu prefix
+# (app/window-mode.ts, app/tray-shell.tsx) and the `ps` arguments (lib/deno-host.ts).
+[[ignoreExports]]
+file = "examples/hangar/lib/tray.ts"
+exports = ["PANEL_SIZE", "FULL_SIZE", "START_PREFIX"]
+
+[[ignoreExports]]
+file = "examples/hangar/lib/processes.ts"
+exports = ["PS_ARGS"]
