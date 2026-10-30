@@ -84,6 +84,13 @@ and this project adheres to
 
 ### Fixed
 
+- **The npm audit gate audits only git-tracked lockfiles, and all of them.** `deno task audit:npm`
+  picked lockfiles from the filesystem, so a gitignored `examples/<name>/deno.lock` left by a local
+  run (never shipped) could fail a release push, while tracked locks one level deeper
+  (`examples/<name>/<sub>/deno.lock`) were never audited. It now takes the root lock plus every
+  tracked `deno.lock` under `examples/`, at any depth. Outside a git checkout it falls back to
+  walking the filesystem and says so.
+
 - **A `VirtualList` unmounted mid-batch leaves nothing scheduled.** With `progressive`, the next
   batch of rows (and, with `initialNumToRender`, the overscan added after the first paint) waits
   for a painted frame and then a task; an unmount in between left that frame or task armed, to run
@@ -232,6 +239,10 @@ and this project adheres to
 
 ### Security
 
+- **The drizzle example's `drizzle-orm` range reaches the fix for GHSA-gpj5-g38j-94v9.** A 0.x
+  caret pins the minor version, so `^0.44.7` could not resolve to 0.45.2, the release that fixes
+  SQL injection through improperly escaped identifiers. `package.json` and `deno.json` now ask for
+  `^0.45.2`.
 - **`deno task audit:npm` audits the examples too.** It runs `deno audit` over every example's own
   `deno.lock` as well as the root one, and fails on a high or critical advisory in any of them;
   `deno task precheck` also runs it when an example's `package.json` changes.

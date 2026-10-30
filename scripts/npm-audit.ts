@@ -1,6 +1,7 @@
 // `deno audit` over the repository's root `deno.lock` (the npm packages the workspace packages, the
-// build tooling and the tests resolve) and every example's own `examples/<name>/deno.lock` (what
-// users copy), failing on a high or critical advisory in any of them:
+// build tooling and the tests resolve) and every git-tracked `deno.lock` under `examples/`, nested
+// ones included (what users copy; a lock git ignores never ships and is not audited), failing on a
+// high or critical advisory in any of them:
 //
 //   deno task audit:npm
 //
@@ -59,25 +60,58 @@ export interface Allowed {
 export function isNpmAuditInput(path: string): boolean {
   return path === "deno.lock" || path === "deno.json" || path === ALLOW_FILE ||
     /^packages\/[^/]+\/deno\.json$/.test(path) ||
-    /^examples\/[^/]+\/(deno\.lock|deno\.json|package\.json)$/.test(path);
+    /^examples\/(?:[^/]+\/)+(deno\.lock|deno\.json|package\.json)$/.test(path);
+}
+
+/** Directory names the filesystem fallback never descends into. */
+const SKIPPED_DIRS: readonly string[] = ["node_modules", ".git"];
+
+/** Every `deno.lock` under `dir` (repository-relative), at any depth. */
+async function walkLocks(root: string, dir: string): Promise<string[]> {
+  const found: string[] = [];
+  for await (const e of Deno.readDir(join(root, dir))) {
+    const rel = `${dir}/${e.name}`;
+    if (e.isDirectory) {
+      if (!SKIPPED_DIRS.includes(e.name)) found.push(...await walkLocks(root, rel));
+    } else if (e.isFile && e.name === "deno.lock") found.push(rel);
+  }
+  return found;
+}
+
+/** The git-tracked `examples/**\/deno.lock` files, or `null` when `root` is not a git checkout. */
+async function trackedExampleLocks(root: string): Promise<string[] | null> {
+  try {
+    const { code, stdout } = await new Deno.Command("git", {
+      args: ["ls-files", "-z", "--", ":(glob)examples/**/deno.lock"],
+      cwd: root,
+      stdout: "piped",
+      stderr: "null",
+    }).output();
+    if (code !== 0) return null;
+    return new TextDecoder().decode(stdout).split("\0").filter(Boolean);
+  } catch (err) {
+    if (err instanceof Deno.errors.NotFound) return null;
+    throw err;
+  }
 }
 
 /**
- * The lockfiles the audit covers, repository-relative: the root `deno.lock`, then each
- * `examples/<name>/deno.lock` in name order.
+ * The lockfiles the audit covers, repository-relative: the root `deno.lock`, then every
+ * git-tracked `deno.lock` under `examples/`, nested ones included, in name order. A lock git
+ * ignores (a local example run leaves them) never ships and is skipped. Outside a git checkout
+ * there is no tracked set, so the filesystem is walked instead and a note says so.
  *
  * @param root The repository root.
  */
 export async function auditedLocks(root: string = ROOT): Promise<string[]> {
-  const examples: string[] = [];
-  for await (const e of Deno.readDir(join(root, "examples"))) {
-    if (!e.isDirectory) continue;
+  let examples = await trackedExampleLocks(root);
+  if (examples === null) {
+    console.warn(`npm-audit: ${root} is not a git checkout; auditing every deno.lock on disk`);
     try {
-      if ((await Deno.stat(join(root, "examples", e.name, "deno.lock"))).isFile) {
-        examples.push(`examples/${e.name}/deno.lock`);
-      }
+      examples = await walkLocks(root, "examples");
     } catch (err) {
       if (!(err instanceof Deno.errors.NotFound)) throw err;
+      examples = [];
     }
   }
   return ["deno.lock", ...examples.sort()];
