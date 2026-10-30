@@ -623,8 +623,9 @@ The docs corpus (`deno task docs:corpus`) is the `@denext/docs-corpus` package
 
 The native templates `denext mobile add …` writes (Swift, Java, Kotlin, XML) are edited in
 `src/build/native-templates/*.ts`, which is not published: `deno task gen:native-templates`
-packs them Brotli-compressed into `src/build/native-templates.packed.ts` (the pre-commit hook
-repacks when a source is staged; `tests/native-templates-packed.test.ts` fails on drift). The
+packs them Brotli-compressed into `packages/docs-corpus/native-templates.ts` (shipped in
+`@denext/docs-corpus`, which denext pins at its own version) and writes their layout into
+`src/build/native-templates.packed.ts` (the pre-commit hook repacks when a source is staged; `tests/native-templates-packed.test.ts` fails on drift). The
 JSR package has a 20 MiB cap: a generated file over 50 KiB ships compressed or is listed, with
 its reason, in `tests/release-tools.test.ts`.
 

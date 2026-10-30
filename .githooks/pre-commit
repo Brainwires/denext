@@ -44,18 +44,19 @@ fi
 # entrypoint parses from it, so a flag added to a verb — or pulled in by a rebase — that the
 # committed table lacks is an "unknown flag" on development. Stage it when it moved (the drift
 # test in tests/cli-startup-graph.test.ts stays the backstop).
-for generated in src/cli/command-table.generated.ts src/cli/lazy-modules.generated.ts; do
+for generated in src/cli/command-table.generated.ts packages/docs-corpus/cli-commands.ts \
+  src/cli/lazy-modules.generated.ts; do
   if ! git diff --quiet -- "$generated"; then
     git add -- "$generated"
   fi
 done
 
-# The packed native templates (src/build/native-templates.packed.ts) are generated from the
-# readable sources under src/build/native-templates/. When the commit stages a source, repack
-# and stage it (tests/native-templates-packed.test.ts stays the backstop).
+# The packed native templates (src/build/native-templates.packed.ts, and the pack itself in
+# packages/docs-corpus/native-templates.ts) are generated from the readable sources under
+# src/build/native-templates/. When the commit stages a source, repack and stage both (tests/native-templates-packed.test.ts stays the backstop).
 if git diff --cached --name-only --diff-filter=ACMDR | grep -q '^src/build/native-templates/'; then
   "$DENO" task gen:native-templates
-  git add -- src/build/native-templates.packed.ts
+  git add -- src/build/native-templates.packed.ts packages/docs-corpus/native-templates.ts
 fi
 
 # The generated docs corpus (packages/docs-corpus/mod.ts, `@denext/docs-corpus`) and llms files (site/public/llms*.txt) are

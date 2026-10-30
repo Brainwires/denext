@@ -24,6 +24,16 @@ and this project adheres to
   listed for 7 days. The runtime answers two new `fs` methods, `listDownloads` and
   `forgetDownload`; `cancelDownload` answers `cancelled: false` for a download that finished first.
 
+### Changed
+
+- **The `@denext/denext` package is 0.42 MiB smaller** (19.85 → 19.43 MiB, against JSR's 20 MiB
+  cap). Four generated data files it read moved into `@denext/docs-corpus`, which denext already
+  pins at exactly its own version and which every release publishes first: the packed native
+  templates `denext mobile add` writes, the `denext.config.ts` JSON Schema the project UI renders
+  its forms from, the CLI's verb descriptions and the Google Fonts family list behind
+  `next/font/google`. No import path or behaviour changes; the repository keeps
+  `denext.config.schema.json`, which the JSR package no longer carries.
+
 ### Fixed
 
 - **React Router route `middleware` now wraps the render.** Its `next()` resolved at once to a

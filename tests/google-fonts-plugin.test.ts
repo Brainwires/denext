@@ -3,7 +3,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import * as esbuild from "../src/build/esbuild/mod.ts";
-import { GOOGLE_FONT_FAMILIES } from "../src/compat/next/font/google-families.ts";
+import { GOOGLE_FONT_FAMILIES } from "@denext/docs-corpus/google-font-families";
 import { googleFontFamiliesModule, googleFontsPlugin } from "../src/build/google-fonts-plugin.ts";
 
 Deno.test("google fonts: the catalogue is large, sorted, and yields unique identifiers", () => {

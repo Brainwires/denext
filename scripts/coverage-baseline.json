@@ -371,7 +371,6 @@
   "src/compat/next/font/fallback.ts": [98, 88, 100],
   "src/compat/next/font/font-file.ts": [88, 80, 87],
   "src/compat/next/font/font-metrics.ts": [100, 0, 0],
-  "src/compat/next/font/google-families.ts": [100, 0, 0],
   "src/compat/next/font/google-fetch.ts": [97, 78, 100],
   "src/compat/next/font/google.ts": [98, 95, 100],
   "src/compat/next/font/local.ts": [94, 83, 100],
