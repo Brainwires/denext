@@ -47,20 +47,57 @@ and this project adheres to
   A list expires 21 days after signing; `deno task release` re-signs it when fewer than 10 days
   remain, and compiles the published list's sequence into the release as its floor (`floor`).
 
+- **`start.tls`: HTTPS for `denext start` without a proxy, a certificate per host name.**
+  `start: { tls: { certificates: [{ hostnames, certFileEnv, keyFileEnv }] } }` in
+  `denext.config.ts` serves HTTPS from `denext start` and a `build --compile` server. Each
+  certificate lists the host names it serves (an exact name, a one-label `*.` wildcard, or `"*"`
+  for every other name and a client that sends none) and names the environment variables that hold
+  its PEM certificate and key files' paths, so neither the key nor its location is in the config;
+  the files are read when the server starts, and an unset variable or unreadable file fails the
+  start. One certificate is served for every name on any Deno. Several are picked per connection
+  by the name the client asks for (SNI) through `resolveCertificate`, which denext's Deno has from
+  runtime 3.0.0-denext.3 behind the unstable net APIs (`"unstable": ["net"]` in `deno.json`); on
+  stock Deno, an older toolchain or without the flag the server refuses to start and says which is
+  missing. The config validator checks the host names and variable names and refuses a name two
+  certificates list. `denext/server` exports the `StartTls`, `StartTlsCertificate`, `ServeTls` and
+  `CertifiedKeyPem` types (`serveWithPortFallback` takes a `tls` option). See
+  https://denext.dev/docs/deployment-targets#https-without-a-proxy.
+
+- **`denext patch create` registers npm patches in deno.json's `patchedDependencies`.** When
+  the project runs on denext's Deno from runtime 3.0.0-denext.3 (the pinned toolchain, not
+  `DENEXT_DENO=stock`), an npm patch is also written as a package-relative copy under
+  `patches/npm/` and registered in the workspace root `deno.json`
+  (`"left-pad@1.3.0": "patches/npm/left-pad+1.3.0.patch"`), so the runtime applies it whenever it
+  installs the package — `deno install`, a Docker build, `deno compile` — and `deno.lock` records
+  its hash. denext's boot-time apply keeps running (a no-op once the runtime has applied it). A
+  re-create replaces the entry, `delete` removes it, and entries written by hand are left alone.
+  Nothing is registered, with a line saying why, without a `node_modules` directory or for a patch
+  that adds or deletes a file, which the runtime can't apply. See https://denext.dev/docs/patches.
+
 ### Changed
 
 - **Runtime 3.0.0-denext.3: denext pins it** (was `3.0.0-denext.2`; the toolchain, the Deno
   Desktop runtime and CI's Linux toolchain zip move together; both pins name `3.0.0-denext.2` as
-  their `rollback`). It moves to V8 15.2.124.45 and adds
-  runtime APIs denext doesn't use yet: the `HTMLRewriter` global (`--unstable-html-rewriter`),
-  `resolveCertificate` (a certificate per server name for `Deno.listenTls` / `Deno.serve`), a cookie
-  jar for `fetch` (`Deno.CookieJar`, `Deno.Cookie`, `Deno.CookieMap`; `--unstable-cookies`) and npm
-  `patchedDependencies`. Also: better-sqlite3 under Jest's module registry, a shell-spawned `node`
-  shim keeps the npm resolution, a package.json script's arguments lose npm's leading `--`,
-  `node:test` parents wait for unawaited subtests, a desktop bind call from a page that is gone is
-  rejected and dropped, and the idle trim keeps a wake-up during a trim and skips the GC on a large
-  live heap (`DENO_IDLE_TRIM_MAX_GC_HEAP_MB`). The glibc floor stays 2.27. The
-  [runtime reference](https://denext.dev/docs/runtime-reference) lists the new APIs.
+  their `rollback`). It moves to V8 15.2.124.45 and adds runtime APIs: the `HTMLRewriter` global
+  (`--unstable-html-rewriter`), `resolveCertificate` (a certificate per server name for
+  `Deno.listenTls` / `Deno.serve`, which `start.tls` uses), a cookie jar for `fetch`
+  (`Deno.CookieJar`, `Deno.Cookie`, `Deno.CookieMap`; `--unstable-cookies`) and npm
+  `patchedDependencies` (which `denext patch` registers in). Also: better-sqlite3 under Jest's
+  module registry, a shell-spawned `node` shim keeps the npm resolution, a package.json script's
+  arguments lose npm's leading `--`, `node:test` parents wait for unawaited subtests, a desktop
+  bind call from a page that is gone is rejected and dropped, and the idle trim keeps a wake-up
+  during a trim and skips the GC on a large live heap (`DENO_IDLE_TRIM_MAX_GC_HEAP_MB`). The glibc
+  floor stays 2.27. The [runtime reference](https://denext.dev/docs/runtime-reference) lists the
+  new APIs.
+
+### Fixed
+
+- **A SPA shell's inline script that writes a `<script>` tag keeps working under
+  `nextScriptWorkers`.** The per-response nonce stamp put `nonce="…"` into every `<script` it
+  found, a script's string literal included (`"<script src=…><\/script>"`), which ended the string
+  early and broke the script; a `</head>` in a script's string drew the Partytown boot tag into it
+  too. The stamp now treats the content of `script`, `style`, `textarea` and `title` elements and
+  of comments as text, and an attribute value may hold `>`.
 
 ### Security
 

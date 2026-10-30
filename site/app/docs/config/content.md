@@ -335,6 +335,14 @@ itself (it reads neither the config keys nor the env vars for them).
   into the generated Docker image / systemd unit; never for `dev`, tests or
   `denext job`; not applied on stock Deno (a warning says so). See
   [Deployment targets › Resource limits](/docs/deployment-targets#resource-limits).
+  `start.tls` — `{ certificates: { hostnames, certFileEnv, keyFileEnv }[] }`:
+  serve HTTPS without a proxy. Each certificate lists the host names it serves
+  (exact, a one-label `*.` wildcard, or `"*"` for any other name and a client
+  without SNI) and names the environment variables holding its PEM certificate
+  and key files' paths, read when the server starts. One certificate works on
+  any Deno; several are picked per connection by SNI on denext's Deno from
+  runtime 3.0.0-denext.3 with `"unstable": ["net"]` in `deno.json`. See
+  [Deployment targets › HTTPS without a proxy](/docs/deployment-targets#https-without-a-proxy).
 
 ```ts
 export default {

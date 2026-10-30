@@ -40,6 +40,34 @@ denext patch apply                      # what dev/build/start do at boot`}
         reverts the files and removes the patch.
       </p>
 
+      <h3>Applied on install, too (denext's Deno 3.0.0-denext.3+)</h3>
+      <p>
+        When the project runs on denext's Deno from runtime <code>3.0.0-denext.3</code>{" "}
+        (the pinned toolchain; not under <code>DENEXT_DENO=stock</code>), <code>create</code>{" "}
+        also registers the patch in the workspace root <code>deno.json</code>
+        's{" "}
+        <code>patchedDependencies</code>, which that runtime applies whenever it installs the
+        package: a plain <code>deno install</code>, a Docker build, <code>deno compile</code>.{" "}
+        <code>deno.lock</code> records the patch's hash, so <code>--frozen</code>{" "}
+        refuses an edited patch nobody re-locked.
+      </p>
+      <Code lang="json">
+        {`{
+  "nodeModulesDir": "auto",
+  "patchedDependencies": { "left-pad@1.3.0": "patches/npm/left-pad+1.3.0.patch" }
+}`}
+      </Code>
+      <p>
+        <code>patches/npm/</code>{" "}
+        holds a copy of the patch with paths inside the package, the form the runtime reads; commit
+        it with the rest. The boot-time apply keeps running and finds the files already patched. A
+        re-<code>create</code> replaces the entry, <code>delete</code>{" "}
+        removes it, and entries you wrote yourself are left alone. No entry is written, with a line
+        saying why, when the project has no <code>node_modules</code>{" "}
+        directory (the runtime refuses to resolve one) or the patch adds or deletes a file (the
+        runtime changes existing files only); <code>apply</code> at boot covers those.
+      </p>
+
       <h2>Patching denext</h2>
       <p>
         The framework arrives from JSR, so there is no file to edit in place.{" "}
