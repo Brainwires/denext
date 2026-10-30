@@ -63,7 +63,13 @@ and this project adheres to
   (and, under `DENEXT_CHILD_PROBE=1`, its CPU samples and debug log's tail). Output that stopped
   mid-document is never used: that child still ends at its deadline. `DENEXT_CHILD_EXIT_GRACE_MS`
   sets the grace (default 5000; `0` waits for the exit). The repository's `deno doc --json` /
-  `deno info --json` children get the same treatment.
+  `deno info --json` children get the same treatment. So do `denext ui`'s listing children (`denext commands --json`,
+  `denext job --list` / `--history` / `--clear-history --json`), which print their document as
+  their last act; their document must end the output, so a JSON value printed earlier and followed
+  by more output is never taken for it. The Database section's `denext db-admin` child (its
+  statements and migrations write) and the Setup page's `denext doctor --json` (its route probes)
+  are always waited for to their exit or deadline: project code there may print JSON of its own
+  before a long silent stretch of work.
 - **A Live View resume matches the view, the props and the viewer, not the token.** A resume
   compared the signed-props token itself, so a page that re-rendered with a freshly issued token
   (after a `gone` token, a soft navigation back, an ISR re-render) ran `init` again. It now matches

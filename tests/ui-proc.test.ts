@@ -312,3 +312,34 @@ for (const code of [0, 3]) {
     assertEquals(notices, []);
   });
 }
+
+Deno.test("runDeno jsonDocument: a document followed by more output is not the answer", async () => {
+  // A JSON value printed early (a project's own log), then a progress line, then silent work:
+  // the silence is work, not a teardown hang.
+  const notices: string[] = [];
+  const started = performance.now();
+  const result = await runDeno(
+    ["eval", docProgram(`${PRETTY} + "migrating…\\n"`, SPIN)],
+    {
+      cwd: Deno.cwd(),
+      signal: AbortSignal.timeout(1_500),
+      jsonDocument: { graceMs: 300, onSettled: (line) => notices.push(line) },
+    },
+  );
+  assert(performance.now() - started >= 1_500, "it ran to its deadline");
+  assert(result.code !== 0, "the deadline killed it");
+  assertEquals(notices, []);
+});
+
+Deno.test("runDeno jsonDocument: only the verbs that print last and exit opt in", async () => {
+  // `denext db-admin` (statements and migrations write) and `denext doctor` (route probes) run
+  // project work after project code may have printed JSON: they wait for their exit.
+  const root = new URL("../src/ui/features/", import.meta.url);
+  const optIn: string[] = [];
+  for await (const entry of Deno.readDir(root)) {
+    if (!entry.isFile || !entry.name.endsWith(".ts")) continue;
+    const source = await Deno.readTextFile(new URL(entry.name, root));
+    if (/jsonDocument:\s*\{/.test(source)) optIn.push(entry.name);
+  }
+  assertEquals(optIn.sort(), ["commands.ts", "config-cron.ts"]);
+});

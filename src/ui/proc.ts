@@ -50,11 +50,18 @@ export interface RunDenoOptions {
  * For a child whose result is one JSON document on stdout. On Windows such a child has been seen
  * to write its complete document, then spin at 100% CPU in its teardown and never exit (the same
  * failure `boundedSpawn`'s `jsonStdout` handles for `deno info --json`). Each chunk on either pipe
- * restarts a silence window; when it runs out and the stdout so far is one complete JSON object
- * or array, the child and its descendants are killed and the run returns exit code 0 with that
+ * restarts a silence window; when it runs out and stdout ends with one complete JSON object or
+ * array, the child and its descendants are killed and the run returns exit code 0 with that
  * output, after one notice line naming the pid. A partial document never parses, so a child that
  * stopped mid-output still waits for its exit or its `signal`; a child that exits first keeps its
  * own status.
+ *
+ * Only for a verb that prints its document as its LAST act and exits, and whose silent work
+ * before it is short and read-mostly: `denext commands --json` and `denext job --list` /
+ * `--history` / `--clear-history --json` (which prints after the clear is done). Not for a child
+ * that runs project work for long silent stretches after project code may have printed a JSON
+ * value of its own (`denext db-admin`, whose statements and migrations write; `denext doctor`'s
+ * route probes): a silence there is work, so those wait for their exit or their deadline.
  */
 export interface JsonDocumentChild {
   /** The silence that settles a complete document (default `DENEXT_CHILD_EXIT_GRACE_MS`, 5 s). */
@@ -286,9 +293,10 @@ class DocumentWatch {
 }
 
 /**
- * Whether `stdout` is one complete JSON object or array: the whole of it, or the bare-`{` to
- * bare-`}` span a pretty-printing verb writes ({@linkcode parseJsonDocument}). A document still
- * being written never parses.
+ * Whether `stdout` ENDS with one complete JSON object or array: the whole of it, or the bare-`{`
+ * to bare-`}` span a pretty-printing verb writes ({@linkcode parseJsonDocument}) when that span
+ * closes on stdout's last line. A document still being written never parses, and one followed by
+ * more output (a JSON value a project logged early, then a progress line) is not the answer.
  */
 function completeDocument(stdout: string): boolean {
   const text = stdout.trim();
@@ -298,7 +306,7 @@ function completeDocument(stdout: string): boolean {
       return true;
     } catch { /* not the whole of it; try the span */ }
   }
-  return parseJsonDocument(stdout) !== null;
+  return /(^|\n)\}$/.test(text.replace(/\r/g, "")) && parseJsonDocument(stdout) !== null;
 }
 
 /**

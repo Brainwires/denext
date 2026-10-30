@@ -717,7 +717,11 @@ cache in an earlier layer (`RUN denext install`) so later builds don't pay for i
 **Cause.** A `deno info --json` child of the build wrote its whole JSON output and then went
 silent without exiting (seen on loaded Windows machines: the process spins in its teardown). After
 `DENEXT_CHILD_EXIT_GRACE_MS` (5 s) of silence with a complete document, denext kills it and uses
-that output, so the build goes on. The line is a warning, not a failure.
+that output, so the build goes on. The line is a warning, not a failure. `denext ui` does the
+same for its listing children (`denext commands --json`, `denext job --list` / `--history` /
+`--clear-history --json`), whose document must end their output. Its `denext db-admin` and
+`denext doctor --json` children are always waited for to their exit or deadline: they run project
+work that may print JSON of its own and then stay silent while it works.
 
 **Fix.** Nothing is needed. To report it, rebuild with `DENEXT_CHILD_PROBE=1`: the line then
 carries the child's CPU samples and the tail of its debug log. `DENEXT_CHILD_EXIT_GRACE_MS=0`
