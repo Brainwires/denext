@@ -45,9 +45,12 @@ function hangingStandIn(lines: number): string[] {
 Deno.test("boundedDeno: a child that never exits fails within its deadline, retried once, with its debug tail", async () => {
   const notices: string[] = [];
   const started = performance.now();
+  // The attempts run in this process's serial child turn, which another test file's `deno info`
+  // child (`deno test --parallel`: one process) may hold for its own deadline, 120 s per attempt.
+  // So the outer bound only stops a hang; each attempt's own bound is its report's kill time.
   const outcome = await within(
     boundedDeno(hangingStandIn(200), { deadlineMs: 1_500, onStall: (l) => notices.push(l) }),
-    60_000,
+    540_000,
   );
   assertEquals(outcome.status, "rejected");
   const err = (outcome as PromiseRejectedResult).reason;
@@ -62,6 +65,9 @@ Deno.test("boundedDeno: a child that never exits fails within its deadline, retr
   );
   for (const attempt of err.attempts) {
     assertMatch(attempt, /^ {2}pid \d+, killed \d+\.\d s after its start/);
+    // Killed at its 1.5 s deadline, after the CPU samples (2 s apart, bounded at 30 s).
+    const killedAfter = Number(/killed (\d+\.\d) s after its start/.exec(attempt)![1]);
+    assert(killedAfter >= 1.5 && killedAfter < 35, attempt);
     assertMatch(attempt, /\n {4}cpu: /);
     // Deno's own debug lines come first: at least the stand-in's 200.
     assertMatch(attempt, /stderr: \d{3,} lines, last \d+\.\d s before the kill/);

@@ -2966,6 +2966,7 @@ import java.security.PublicKey;
 import java.security.Signature;
 import java.security.interfaces.ECPublicKey;
 import java.security.spec.X509EncodedKeySpec;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -4369,8 +4370,33 @@ final class DenextOtaStore {
             return false;
         }
         String version = relative.substring(0, slash);
+        // A case-insensitive volume's canonical path is the spelling the volume stores (macOS
+        // realpath(3)), so another case of a UI file (APP.JS for app.js) would resolve to the
+        // manifest's own spelling. The request names no file of the manifest: refuse it, as the
+        // router does ({@link InstalledUi#check}).
+        String tail = "/" + relative;
+        String requested = lexicalPath(new File(file).getAbsolutePath());
+        if (!requested.endsWith(tail) && requested.toLowerCase(Locale.ROOT).endsWith(tail.toLowerCase(Locale.ROOT))) {
+            return false;
+        }
         String base = versionDirectory(version).getAbsolutePath();
         return admit(base, relative.substring(slash), base.equals(served));
+    }
+
+    /** {@code path} (absolute) with its {@code .}, {@code ..} and empty segments resolved, links left alone. */
+    static String lexicalPath(String path) {
+        ArrayDeque<String> segments = new ArrayDeque<>();
+        for (String segment : path.split("/")) {
+            if (segment.isEmpty() || segment.equals(".")) {
+                continue;
+            }
+            if (segment.equals("..")) {
+                segments.pollLast();
+            } else {
+                segments.addLast(segment);
+            }
+        }
+        return "/" + String.join("/", segments);
     }
 
     /** The {@code /_capacitor_file_} path the local server reads for a refused file: a directory, which it cannot read. */

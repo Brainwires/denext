@@ -286,7 +286,8 @@ and this project adheres to
     platforms, through the router and `/_capacitor_file_` alike. It used to count as a file
     outside the signed manifest and quarantine the version, so any script in the page, a
     third-party one included, could take the app's current UI out of service. A file the manifest
-    does not list under any spelling still quarantines it.
+    does not list under any spelling still quarantines it. On Android, a `/_capacitor_file_` path
+    that the volume's canonical path respells as the manifest's own file is refused too, as on iOS.
   - **Breaking for signed deploys of a web export:** an app that embeds a public key now takes only
     its own platform's stamped export, so a web export signed with the same key cannot install
     itself on a phone (`platform_mismatch`). `denext mobile build` and `denext export --platform

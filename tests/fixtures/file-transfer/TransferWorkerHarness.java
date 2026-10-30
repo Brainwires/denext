@@ -484,9 +484,10 @@ public final class TransferWorkerHarness {
         File oldPart = new File(shared.getPath() + ".denext-part");
         File other = new File(shared.getPath() + ".notes.txt");
         // Files of the user's that only look like partial files: 8 characters, but not the hex an
-        // attempt is named with.
+        // attempt is named with. Not another case of `dead`'s tag: on a case-insensitive volume
+        // (Windows, macOS) that would be `deadMeta` itself.
         File lookalike = new File(shared.getPath() + ".draft-v2.denext-part");
-        File lookalikeMeta = new File(shared.getPath() + ".DEADBEEF.denext-part.meta");
+        File lookalikeMeta = new File(shared.getPath() + ".CAFEF00D.denext-part.meta");
         for (File f : new File[] {dead, deadMeta, oldPart, other, lookalike, lookalikeMeta}) {
             Files.write(f.toPath(), DenextTransferHttp.BODY);
         }
