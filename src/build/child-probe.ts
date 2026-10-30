@@ -225,7 +225,12 @@ async function probedOutput(
     child.kill("SIGKILL");
   } catch { /* exited meanwhile */ }
   let grace: ReturnType<typeof setTimeout> | undefined;
-  await Promise.race([reads, new Promise((r) => grace = setTimeout(r, 10_000))]);
+  // Its exit too, not only its pipes: on Windows the pipes end before the killed child's exit is
+  // reported, and a stall error thrown in between leaves that wait pending (a leaked op).
+  await Promise.race([
+    Promise.all([reads, child.status]),
+    new Promise((r) => grace = setTimeout(r, 10_000)),
+  ]);
   clearTimeout(grace);
   const ago = (t: number) =>
     t === 0 ? "never" : `${((killedAt - t) / 1000).toFixed(1)} s before the kill`;

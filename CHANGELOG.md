@@ -41,7 +41,8 @@ and this project adheres to
   and `deno bundle` children, and the esbuild loader's own `deno info` children, then run with
   Deno's debug log on, and one still running at its deadline is reported, in the retry warning
   and the final error, with the log's last 80 lines and two CPU samples taken before the kill
-  (`Get-Process` with the threads' wait reasons on Windows, `ps` elsewhere). Off by default:
+  (`Get-Process` with the threads' wait reasons on Windows, `ps` elsewhere); the killed child's
+  exit is awaited before the error is thrown (on Windows its pipes end first). Off by default:
   without it the children run as before.
 - **`secureStore.set(key, value, { accessibility })`** picks the iOS Keychain class:
   `"whenUnlocked"` (the default, unchanged), `"whenUnlockedThisDeviceOnly"`, `"afterFirstUnlock"`,
