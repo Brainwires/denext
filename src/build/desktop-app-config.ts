@@ -507,10 +507,12 @@ export async function writeLaufeyLaunchConfig(
     // Only for a runtime that reads the policy: on one without activation policies an LSUIElement
     // app could never show its Dock icon again (`setActivationPolicy` is missing there).
     if (launch.activationPolicy === "accessory") {
-      await Deno.writeTextFile(
-        plist,
-        withActivationPolicy(await Deno.readTextFile(plist), "accessory"),
-      );
+      // A bundle with no Info.plist (never one `deno desktop` writes) has nothing to mark.
+      const text = await Deno.readTextFile(plist).catch((e) => {
+        if (e instanceof Deno.errors.NotFound) return null;
+        throw e;
+      });
+      if (text !== null) await Deno.writeTextFile(plist, withActivationPolicy(text, "accessory"));
     }
   }
   return path;

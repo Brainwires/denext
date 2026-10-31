@@ -545,6 +545,10 @@ Deno.test("activationPolicy accessory: the bundle's LSUIElement, so no Dock tile
       // A runtime without activation policies could never show the Dock icon again: none there.
       assertEquals((await Deno.readTextFile(plist)).includes("LSUIElement"), expected);
     }
+    // A bundle with no Info.plist (a test double, never `deno desktop`'s) is left alone.
+    const bare = join(dir, "Bare.app");
+    await Deno.mkdir(join(bare, "Contents"), { recursive: true });
+    await writeLaufeyLaunchConfig(entry, "darwin", bare, { activationPolicy: true });
     await Deno.writeTextFile(plist, INFO_PLIST);
     const linux = join(dir, "linux");
     await writeLaufeyLaunchConfig(entry, "linux", linux, { activationPolicy: true });
