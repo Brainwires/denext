@@ -55,11 +55,12 @@ Deno.test("checkoutFile: published, vendored, npm-compat and incomplete copies i
 });
 
 Deno.test("checkoutFile: when the disk cannot tell, the location decides", async () => {
-  // A stat that fails for another reason than "not found" (a file where a folder should be).
+  // A stat that fails for another reason than "not found" (a file where a folder should be:
+  // ENOTDIR on Linux and macOS; Windows answers "path not found", so there it is simply missing).
   await inLayout(["src/build/x.ts", "packages"], (dir) => {
     assertEquals(
       checkoutFile(CORPUS, url(dir, "src/build/x.ts")),
-      url(dir, "packages/docs-corpus/mod.ts"),
+      Deno.build.os === "windows" ? undefined : url(dir, "packages/docs-corpus/mod.ts"),
     );
   });
   // No read permission: never a stat (which would prompt), the checkout path all the same.
