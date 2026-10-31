@@ -3,7 +3,9 @@
 //
 //   config            `mobile.icon` in denext.config.* (read statically, never imported)
 //   assets            assets/icon.png (or resources/), the Capacitor convention
-//   expo              an Expo app config in the project or a sibling app of the same monorepo:
+//   expo              an Expo app config in the project or a sibling app of the same monorepo
+//                     (a member of the workspace the project is a member of, never an unrelated
+//                     folder beside it):
 //                     `icon` / `ios.icon` / `android.icon`, `android.adaptiveIcon`, `splash`
 //                     (app.json, or app.config.* read statically by ./expo-app-config.ts; a value
 //                     computed in code is reported and skipped, never executed)
@@ -17,7 +19,8 @@
 // `mobile.icon`), `denext mobile build` (which replaces Capacitor's placeholder icon) and
 // `denext mobile doctor --store` (which flags the placeholder).
 
-import { dirname, extname, join, resolve } from "@std/path";
+import { dirname, extname, join, relative, resolve, SEPARATOR } from "@std/path";
+import { globToRegExp } from "@std/path/posix";
 import { posixRelative } from "./mobile-paths.ts";
 import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel } from "./config-edit.ts";
@@ -263,27 +266,119 @@ async function isWorkspaceRoot(dir: string): Promise<boolean> {
   return !!deno && Array.isArray(deno.workspace);
 }
 
-/** Whether `dir` sits inside a monorepo (a workspace root at most four levels above it). */
-async function inMonorepo(dir: string): Promise<boolean> {
+/** The monorepo root `dir` sits in (a workspace root at most four levels above it), or `null`. */
+async function monorepoRoot(dir: string): Promise<string | null> {
   let cur = dirname(dir);
   for (let i = 0; i < 4; i++) {
-    if (await isWorkspaceRoot(cur)) return true;
+    if (await isWorkspaceRoot(cur)) return cur;
     const up = dirname(cur);
     if (up === cur) break;
     cur = up;
   }
-  return false;
+  return null;
 }
 
-/** The project, then (in a monorepo) its sibling app folders, that hold an Expo app config. */
+/** The strings of `value` when it is an array, else none. */
+function stringsOf(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+/** pnpm-workspace.yaml's `packages:` entries (the block list; enough for the file's usual shape). */
+function pnpmPackages(text: string): string[] {
+  const out: string[] = [];
+  let inPackages = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^packages\s*:/.test(line)) {
+      inPackages = true;
+      continue;
+    }
+    if (!inPackages) continue;
+    const item = /^\s+-\s*(["']?)(.+?)\1\s*(#.*)?$/.exec(line);
+    if (item) out.push(item[2]);
+    else if (/^\S/.test(line)) break;
+  }
+  return out;
+}
+
+/** package.json's `workspaces` (an array, or `{ packages }`), or `null` when it has none. */
+function packageJsonWorkspaces(pkg: Record<string, unknown> | null): string[] | null {
+  const ws = pkg?.workspaces;
+  if (Array.isArray(ws)) return stringsOf(ws);
+  if (ws && typeof ws === "object") return stringsOf((ws as { packages?: unknown }).packages);
+  return null;
+}
+
+/** rush.json's project folders, or `null` when it lists none. */
+function rushProjects(rush: Record<string, unknown> | null): string[] | null {
+  if (!rush || !Array.isArray(rush.projects)) return null;
+  return (rush.projects as unknown[]).map((p) => (p as { projectFolder?: unknown })?.projectFolder)
+    .filter((f): f is string => typeof f === "string");
+}
+
+/** An array key of a JSON file, or `null` when the file or the array is missing. */
+function arrayKey(json: Record<string, unknown> | null, key: string): string[] | null {
+  return json && Array.isArray(json[key]) ? stringsOf(json[key]) : null;
+}
+
+/**
+ * The member globs the workspace root `dir` lists (deno.json `workspace`, package.json
+ * `workspaces`, pnpm-workspace.yaml `packages`, lerna.json `packages`, rush.json's project
+ * folders; `!` excludes), or `null` when its markers list none (nx.json or turbo.json alone).
+ */
+async function workspaceMemberGlobs(dir: string): Promise<string[] | null> {
+  const pnpm = await Deno.readTextFile(join(dir, "pnpm-workspace.yaml")).catch(() => null);
+  const lists = [
+    arrayKey(await readJsonFile(join(dir, "deno.json")), "workspace"),
+    packageJsonWorkspaces(await readJsonFile(join(dir, "package.json"))),
+    pnpm === null ? null : pnpmPackages(pnpm),
+    arrayKey(await readJsonFile(join(dir, "lerna.json")), "packages"),
+    rushProjects(await readJsonFile(join(dir, "rush.json"))),
+  ].filter((list): list is string[] => list !== null);
+  return lists.length > 0 ? lists.flat() : null;
+}
+
+/** Whether `dir` (under the workspace root `root`) is one of the members `globs` list. */
+function isWorkspaceMember(root: string, globs: readonly string[], dir: string): boolean {
+  const rel = relative(root, dir).split(SEPARATOR).join("/");
+  const test = (glob: string) => {
+    const pattern = glob.replace(/^\.\//, "").replace(/\/+$/, "");
+    return pattern !== "" &&
+      globToRegExp(pattern, { extended: true, globstar: true }).test(rel);
+  };
+  const include = globs.filter((g) => !g.startsWith("!"));
+  const exclude = globs.filter((g) => g.startsWith("!")).map((g) => g.slice(1));
+  return include.some(test) && !exclude.some(test);
+}
+
+/**
+ * The project, then (when it is a member of a monorepo) the sibling app folders that are members
+ * of the same workspace, that hold an Expo app config. A folder beside the project that the
+ * workspace does not list is not one of its apps (the examples of a repo whose root is a workspace
+ * of other packages): its icon is never taken.
+ */
 async function expoDirs(root: string): Promise<string[]> {
-  const candidates = [root, ...(await inMonorepo(root) ? await siblingDirs(root) : [])];
+  const candidates = [root, ...await workspaceSiblings(root)];
   const dirs: string[] = [];
   for (const dir of candidates) if (await hasExpoConfig(dir)) dirs.push(dir);
   return dirs;
 }
 
-/** The other app folders beside `root` (sorted; no dot folders, no node_modules). */
+/**
+ * The other app folders beside `root` that belong to the same monorepo: every sibling when the
+ * workspace lists no members (nx, turbo), else the listed members, and none when `root` itself
+ * is not a member, or not in a monorepo.
+ */
+async function workspaceSiblings(root: string): Promise<string[]> {
+  const workspace = await monorepoRoot(root);
+  if (workspace === null) return [];
+  const globs = await workspaceMemberGlobs(workspace);
+  const siblings = await siblingDirs(root);
+  if (globs === null) return siblings;
+  if (!isWorkspaceMember(workspace, globs, root)) return [];
+  return siblings.filter((dir) => isWorkspaceMember(workspace, globs, dir));
+}
+
+/** The other folders beside `root` (sorted; no dot folders, no node_modules). */
 async function siblingDirs(root: string): Promise<string[]> {
   const parent = dirname(root);
   const siblings: string[] = [];

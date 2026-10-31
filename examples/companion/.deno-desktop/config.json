@@ -15,7 +15,8 @@
       "focusable": false,
       "alwaysOnTop": "status",
       "visibleOnAllWorkspaces": true,
-      "skipTaskbar": true
+      "skipTaskbar": true,
+      "overlay": true
     },
     "backdrop": "none",
     "tray": {

@@ -2475,6 +2475,7 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
       visibleOnAllWorkspaces: true, // every Space / virtual desktop
       skipTaskbar: true,            // Windows, Linux
       opacity: 1,
+      overlay: true,                // Linux Wayland: a layer-shell surface (runtime 3.0.0-denext.7)
     },
   },
 };`}
@@ -2512,6 +2513,18 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
         compositors, KDE Plasma, COSMIC): above every window, on every workspace, out of the task
         list (<code>layerShell</code>); elsewhere it is an ordinary window. The Linux packages
         recommend gtk-layer-shell for it. <a href="/docs/examples">examples/companion</a> is one.
+      </p>
+      <p>
+        On Wayland that is the only way a window stays on top, joins every workspace, keeps off the
+        taskbar or never takes the focus: the compositor ignores an ordinary window&apos;s requests
+        for them (KWin and Mutter focus a <code>focusable: false</code> window as it maps, so{" "}
+        <code>nonActivating</code> is reported only with <code>layerShell</code>).{" "}
+        <code>desktop.window.overlay: true</code>{" "}
+        makes the main window one from its first frame (written to{" "}
+        <code>.deno-desktop/app.json</code>; runtime 3.0.0-denext.7, left out with a warning on an
+        older one), and a tray panel is one wherever <code>layerShell</code>{" "}
+        is, opening at the click. GNOME has no layer-shell: there the window is an ordinary one the
+        compositor places.
       </p>
       <h3 id="desktop-multi-window">More windows</h3>
       <p>

@@ -100,7 +100,26 @@ and this project adheres to
   publishes go out as usual. For a key whose next subscriber must not get what was published for
   an earlier one.
 
+- **`desktop.window.overlay`: the main window as a Wayland layer-shell surface** (Deno Desktop
+  runtime 3.0.0-denext.7, gated on `FIRST_INITIAL_OVERLAY_RUNTIME`). On Linux Wayland a window can't
+  ask to be on top, on every workspace, off the taskbar or unfocused; a layer-shell surface is all
+  of those, where the compositor has wlr-layer-shell (KDE Plasma, wlroots compositors, COSMIC; not
+  GNOME) and `libgtk-layer-shell` is installed. `overlay: true` is written to
+  `.deno-desktop/app.json` (`initialWindow.overlay`) so the window the app starts with is created as
+  one; on an older runtime it is left out with a warning (that runtime refuses the key), and it is
+  an ordinary window on every other OS and desktop. On the same runtime app.json also carries
+  `desktop.app.name` (`name`), which titles a window the app leaves untitled (a tray panel showed
+  the bundle's file name, `MyApp-arm64`). examples/companion (Loopy) sets it.
+
 ### Changed
+
+- **The Expo icon fallback takes only a real monorepo sibling.** `denext mobile assets`, the
+  desktop packager's derived icon and `denext migrate` took the Expo app config of any folder
+  beside the project once a workspace root sat above it, so examples/companion and examples/hangar
+  were packaged with examples/expo-app's icon (denext's root is a Deno workspace of `packages/*`,
+  not of the examples). A sibling now counts only when the workspace lists both it and the project
+  (deno.json `workspace`, package.json `workspaces`, pnpm-workspace.yaml, lerna.json, rush.json;
+  `!` exclusions honoured); a workspace that lists no members (nx, turbo alone) keeps every sibling.
 
 - **denext pins Deno runtime 3.0.0-denext.6** (`deno task desktop:pin-runtime
   denext-runtime-v3.0.0-denext.6`): the toolchain and the Deno Desktop runtime move from
