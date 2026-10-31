@@ -14,6 +14,10 @@ and this project adheres to
   config validator and the package scripts' flag derivation refuse an entry that is not one host
   (`"cdn.example.net,0.0.0.0"` would have baked two, a URL or an empty string is no host) and a
   value that is not an array of strings, instead of folding it into the binary's network grant.
+- **A Windows desktop package signs every file the full-app update check treats as a program.**
+  The packaging step picked the files to Authenticode-sign with a narrower PE test than the
+  runtime's update check (it skipped a header offset under 64 bytes or past 64 MiB), so such a
+  file shipped unsigned and every update of the app was refused. Both now use the same rule.
 
 ## [4.11.2] - 2026-10-31
 
