@@ -109,6 +109,81 @@ and this project adheres to
   own StatusNotifierItem on Linux, the macOS activation policy and `Deno.desktop.speech`; the window
   capabilities `feat/desktop-windowing` already detects now report them.
 
+## [4.10.5] - 2026-10-31
+
+### Added
+
+- **Crash reports from denext's side.** Runtime `3.0.0-denext.5` sends opt-in crash reports
+  (`DENEXT_CRASH_REPORT_URL`); denext now wires them up. The generated Docker stack lists
+  `DENEXT_CRASH_REPORT_URL` (empty) in `.env.example` and passes it to the app and migration
+  containers. `denext doctor` warns when the variable is set to a URL the runtime ignores
+  (`http:`, a `file://` URL with a host, not a URL) or when the running Deno sends no reports
+  (stock Deno, or a runtime older than `3.0.0-denext.5`). The new `denext crash-report test` runs
+  the toolchain's self-test (`DENEXT_CRASH_REPORT_SELFTEST=1`), which panics on purpose and sends
+  one report, and shows the line written to a `file:` URL. denext's CLI hops hand
+  `DENEXT_CRASH_REPORT_APP=denext@<version>` to the Deno they re-run on, unless it is already set.
+  None of these print the URL's value, which may carry an ingest token. Guide:
+  [Crash reports](https://denext.dev/docs/deployment-targets#crash-reports).
+
+### Changed
+
+- **Capacitor 8.6.0.** `denext create --capacitor`, `denext migrate --enable-capacitor` and
+  `--from expo` pin `@capacitor/core`, `cli`, `ios` and `android` to `8.6.0` (was `8.5.2`), now
+  that it has cleared Deno's two-day dependency-age hold; the Capacitor examples move with them
+  (`package.json`, `deno.lock`, `package-lock.json` and the iOS Swift package pin). Its
+  `@capacitor/cli` takes `xcode` 4, which drops `uuid` 7.0.3
+  ([GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq), moderate) from
+  `examples/clerk`, `mobile`, `native-views` and `expo-app`.
+
+### Fixed
+
+- **Tailwind builds run on macOS 27 on Apple Silicon.** The pinned Tailwind v4.3.0 standalone
+  binary for `macos-arm64` was killed at launch (exit 137, `Tailwind compile failed (137)`): it is
+  a Bun-compiled executable whose ad-hoc code signature carries a wrong hash for the last page
+  before the signature, and macOS 27 maps that page at launch, so the kernel's page check sends
+  SIGKILL (later Tailwind releases carry the same defect and run only because that page is never
+  touched). After the download passes its SHA-256 pin, denext now recomputes the page hashes of
+  the binary's ad-hoc signature before caching it, the change `codesign --force --sign -` would
+  make, done in place so the result is pinned as well; a binary an older denext cached is
+  verified against the release pin and repaired on its next use, with no new download.
+- **The migration beds keep a dependency-age hold on npm.** They ran every command with
+  `DENEXT_MIN_DEP_AGE=0`, so a bed's build could resolve an npm release published minutes before
+  and fail on a tarball the registry did not serve yet (`tslib` 2.9.1). The migrated app's
+  `deno.json` now carries `minimumDependencyAge: { age: "P1D", exclude: ["jsr:@denext/*"] }`: a
+  day's hold on everything but the `@denext` packages a release has just published, which the
+  checkout under test pins.
+- **`denext mcp`'s docs search works from a checkout in the day after a release.** Run from a
+  checkout of the denext repository outside its workspace (CI running the checkout's CLI from
+  another directory, an app that links a checkout by path), `denext_search_docs`,
+  `denext_read_docs` and the `denext://guide` / `denext://docs` resources loaded the corpus as
+  `@denext/docs-corpus` at denext's exact version through the caller's import map, which Deno's
+  minimum dependency age refuses for a day after it is published (and which, for an unreleased
+  commit, holds another commit's corpus). A checkout now reads its own
+  `packages/docs-corpus/mod.ts`, as it already did for the packed native templates; a published
+  denext still imports the exact `@denext/docs-corpus` release.
+- **`denext/testing` renders SVG and MathML.** Its in-memory DOM had no `createElementNS`, so
+  `render()` of a component that renders SVG threw before mounting. Elements now carry a namespace:
+  `<svg>` and `<math>` subtrees are created in the SVG and MathML namespaces (a `<foreignObject>`'s
+  content is HTML again), SVG tag names keep their case (`foreignObject`, `linearGradient`) in
+  `tagName` and in `html()` / `innerHTML`, and queried elements report `namespaceURI` and
+  `localName` and read namespaced attributes with `getAttributeNS` (`setAttributeNS`,
+  `hasAttributeNS` and `removeAttributeNS` work as in a browser). Markup assigned to `innerHTML`
+  is parsed into the same namespaces, an SVG element closing with `/>`. Events fire on SVG
+  elements like any other.
+- **TanStack Router route splitting works on a project reached through a Windows 8.3 short path.**
+  With `spa.tanstackRouter: { autoCodeSplitting: true }`, a project opened as
+  `C:\Users\LONGNA~1\…` (a short-name `TEMP`, or a working directory a tool handed over in that
+  form) built with every route in the startup chunk: esbuild names each module by the path it was
+  reached through, while the route generator keys its routes by the real, long path, so no route
+  file matched. Every module is now compared, and handed to the splitter, by its real path (8.3
+  names expanded, symlinks resolved), on both sides.
+- **The API reference carries no terminal colour codes.** `deno doc --json` writes ANSI colour codes
+  into a template-literal type's text even with its output piped, and ten signatures in the API
+  reference (`ContactType`, `CalendarFormatType`, …), `llms-full.txt` and the docs corpus carried
+  them. The scripts that read `deno doc` now run it with `NO_COLOR=1`, the reference generator
+  strips any colour code that still arrives, and a test fails on an escape byte in the committed
+  reference or `llms-full.txt`.
+
 ## [4.10.4] - 2026-10-31
 
 ### Added
@@ -20225,7 +20300,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.4...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.5...development
+[4.10.5]: https://jsr.io/@denext/denext@4.10.5
 [4.10.4]: https://jsr.io/@denext/denext@4.10.4
 [4.10.3]: https://jsr.io/@denext/denext@4.10.3
 [4.10.2]: https://jsr.io/@denext/denext@4.10.2

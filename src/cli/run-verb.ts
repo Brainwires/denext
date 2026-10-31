@@ -65,6 +65,7 @@ import {
   START_LIMITS_ENV,
 } from "../build/resource-limits.ts";
 import { VERSION } from "../version.ts";
+import { crashReportAppEnv } from "../build/crash-report.ts";
 import type { CommandContext, CommandSpec } from "./command.ts";
 import { envTierFor, projectDir } from "./shared.ts";
 import { SHUTDOWN_SIGNALS } from "./shutdown.ts";
@@ -298,6 +299,14 @@ async function forwardShutdown(child: Deno.ChildProcess): Promise<number> {
 }
 
 /**
+ * The application name a CLI hop onto `runtime` hands down for crash reports
+ * (`DENEXT_CRASH_REPORT_APP=denext@<version>`, src/build/crash-report.ts), unless already set.
+ */
+function hopCrashReportEnv(runtime: string | undefined): Record<string, string> {
+  return crashReportAppEnv({ runtime, env: readEnv, version: VERSION });
+}
+
+/**
  * Run a CLI child — `deno run [flags] <cli> <this process's argv>` under `deno` with `env` added
  * — stdio inherited and shutdown signals forwarded; resolves the code to exit with. The one
  * spawn behind both whole-invocation re-execs: the pinned denext ({@linkcode maybeReexecPinned})
@@ -350,7 +359,13 @@ function maybeReexecPinned(
           ...minDepAgeArgs(),
         ],
         cli,
-        { ...childEnv, DENEXT_PINNED_ACTIVE: "1" },
+        {
+          ...hopCrashReportEnv(
+            childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity()),
+          ),
+          ...childEnv,
+          DENEXT_PINNED_ACTIVE: "1",
+        },
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),
@@ -517,6 +532,7 @@ async function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise
         await toolchainChildFlags(marker, gateDir(command, ctx), []),
         entrypointArg(entryUrl()),
         {
+          ...hopCrashReportEnv(marker),
           ...env,
           ...await startIdleTrimEnv(command, gateDir(command, ctx), marker),
           ...hopLimits(LIMIT_HOPS.toolchain, marker, limits).env,
@@ -573,7 +589,11 @@ async function reexecWithConfig(
       entrypointArg(entryUrl()),
       ...Deno.args,
     ],
-    env: { ...limits.env, [activeEnv]: "1" },
+    env: {
+      ...hopCrashReportEnv(childToolchainMarker((n) => Deno.env.get(n), currentDenoIdentity())),
+      ...limits.env,
+      [activeEnv]: "1",
+    },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
@@ -743,7 +763,11 @@ async function limitsGate(command: CommandSpec, ctx: CommandContext): Promise<bo
             : []),
         ],
         entrypointArg(entryUrl()),
-        { ...await startIdleTrimEnv(command, dir, runtime), ...env },
+        {
+          ...hopCrashReportEnv(runtime),
+          ...await startIdleTrimEnv(command, dir, runtime),
+          ...env,
+        },
       ),
     exit: (code) => Deno.exit(code),
     warn: (message) => console.error(message),

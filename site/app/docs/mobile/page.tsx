@@ -104,7 +104,7 @@ export default function Mobile() {
         <strong>1. Scaffold.</strong> <code>--capacitor</code> adds a{" "}
         <code>capacitor.config.ts</code>{" "}
         that bundles the export (<code>webDir: "out"</code>) into the native shells, a{" "}
-        <code>package.json</code> pinning Capacitor 8 exactly (<code>8.5.2</code>), an{" "}
+        <code>package.json</code> pinning Capacitor 8 exactly (<code>8.6.0</code>), an{" "}
         <code>export</code> task and the <code>mobile:*</code> tasks. Add <code>--desktop</code>
         {" "}
         to scaffold the desktop target too. Change <code>appId</code> and <code>appName</code> in
@@ -148,8 +148,8 @@ export default {
       <Code lang="bash">
         {`denext install                # Capacitor's CLI + platforms are npm packages
 denext task export            # out/
-denext run -A --node-modules-dir npm:@capacitor/cli@8.5.2 add ios       # once
-denext run -A --node-modules-dir npm:@capacitor/cli@8.5.2 add android   # once`}
+denext run -A --node-modules-dir npm:@capacitor/cli@8.6.0 add ios       # once
+denext run -A --node-modules-dir npm:@capacitor/cli@8.6.0 add android   # once`}
       </Code>
       <p>
         <strong>4. Run it on a phone.</strong>{" "}
