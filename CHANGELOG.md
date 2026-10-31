@@ -65,6 +65,13 @@ and this project adheres to
   file matched. Every module is now compared, and handed to the splitter, by its real path (8.3
   names expanded, symlinks resolved), on both sides.
 
+- **The API reference carries no terminal colour codes.** `deno doc --json` writes ANSI colour codes
+  into a template-literal type's text even with its output piped, and ten signatures in the API
+  reference (`ContactType`, `CalendarFormatType`, …), `llms-full.txt` and the docs corpus carried
+  them. The scripts that read `deno doc` now run it with `NO_COLOR=1`, the reference generator
+  strips any colour code that still arrives, and a test fails on an escape byte in the committed
+  reference or `llms-full.txt`.
+
 ## [4.10.4] - 2026-10-31
 
 ### Added
