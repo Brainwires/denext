@@ -51,7 +51,7 @@ import type { DesktopAppApi, DesktopRect, DesktopScreen } from "../launch-events
 import { platformFacts } from "./platform.ts";
 import { confineRelative, refuseReservedDataPath } from "../path-scope.ts";
 import { PickedPaths } from "../picked-paths.ts";
-import { DEFAULT_VIBRANCY } from "../window-config.ts";
+import { applyWindowLevel, DEFAULT_VIBRANCY } from "../window-config.ts";
 
 /** How long a guarded close may go unacknowledged before a repeated close request wins. */
 export const UNRESPONSIVE_MS = 5_000;
@@ -870,7 +870,7 @@ const LEVELS = new Set(["floating", "status", "pop-up-menu", "screen-saver"]);
 /** The most rectangles a hit region takes. */
 const MAX_HIT_RECTS = 64;
 
-/** `setAlwaysOnTop`: on or off, at a level (the runtime ignores it until it has levels). */
+/** `setAlwaysOnTop`: on or off, at a level (applied through the runtime's level op when it has one). */
 function setAlwaysOnTop(s: WindowState, args: unknown): null {
   const a = argsOf(args);
   const on = bool(a.alwaysOnTop, "alwaysOnTop");
@@ -880,7 +880,10 @@ function setAlwaysOnTop(s: WindowState, args: unknown): null {
   if (!LEVELS.has(a.level as string)) {
     throw invalid('level must be "floating", "status", "pop-up-menu" or "screen-saver"');
   }
-  return act(s, "setAlwaysOnTop", "stay on top", on, a.level);
+  act(s, "setAlwaysOnTop", "stay on top", on, a.level);
+  // The runtime's native setAlwaysOnTop can shadow its level-aware wrapper (macOS, denext.6).
+  applyWindowLevel(need(s), a.level as string);
+  return null;
 }
 
 /**
