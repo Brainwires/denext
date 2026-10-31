@@ -35,6 +35,16 @@ and this project adheres to
   `packages/docs-corpus/mod.ts`, as it already did for the packed native templates; a published
   denext still imports the exact `@denext/docs-corpus` release.
 
+- **`denext/testing` renders SVG and MathML.** Its in-memory DOM had no `createElementNS`, so
+  `render()` of a component that renders SVG threw before mounting. Elements now carry a namespace:
+  `<svg>` and `<math>` subtrees are created in the SVG and MathML namespaces (a `<foreignObject>`'s
+  content is HTML again), SVG tag names keep their case (`foreignObject`, `linearGradient`) in
+  `tagName` and in `html()` / `innerHTML`, and queried elements report `namespaceURI` and
+  `localName` and read namespaced attributes with `getAttributeNS` (`setAttributeNS`,
+  `hasAttributeNS` and `removeAttributeNS` work as in a browser). Markup assigned to `innerHTML`
+  is parsed into the same namespaces, an SVG element closing with `/>`. Events fire on SVG
+  elements like any other.
+
 ### Changed
 
 - **Capacitor 8.6.0.** `denext create --capacitor`, `denext migrate --enable-capacitor` and
