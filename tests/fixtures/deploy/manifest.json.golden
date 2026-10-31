@@ -177,6 +177,14 @@
       ]
     },
     {
+      "name": "DENEXT_CRASH_REPORT_URL",
+      "required": false,
+      "public": false,
+      "sources": [
+        "stack"
+      ]
+    },
+    {
       "name": "DENEXT_PUBLIC_SITE_NAME",
       "required": false,
       "public": true,
