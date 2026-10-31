@@ -33,7 +33,7 @@ import {
 import { enableLiveDevtools } from "../../server/live-devtools.ts";
 import { getManifest, getUnbundled } from "./manifest.ts";
 import { broadcastError, explainForOverlay, reloadStream } from "./reload.ts";
-import { DEV_RELOAD_SCRIPT } from "./reload-script.ts";
+import { DEV_RELOAD_SCRIPT } from "./dev-scripts.packed.ts";
 import { devErrorPage } from "./error-page.ts";
 import { serveImmutableAsset } from "../../server/serve-utils.ts";
 import { preparePartytown, servePartytown } from "../partytown.ts";

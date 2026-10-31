@@ -25,8 +25,7 @@ import {
 import { type NavItem, UI_CSS_PATH, UI_JS_PATH } from "./layout.ts";
 import { Badge, Mono, Note, Panel } from "./components.ts";
 import { renderView } from "./view.ts";
-import { UI_CSS } from "./styles.ts";
-import { UI_JS } from "./client.ts";
+import { UI_CSS, UI_JS } from "./assets.packed.ts";
 import { broadcast, sseProcess } from "./events.ts";
 import { runDeno } from "./proc.ts";
 import { forwardedDeno } from "../cli/deno-path.ts";
