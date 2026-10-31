@@ -1114,7 +1114,47 @@ export interface DesktopConfig {
      * `app.json` with this key before then.
      */
     allowedNavigationOrigins?: string[];
+    /**
+     * Keep the app running when its last window closes (Electron's `window-all-closed` without a
+     * quit, Tauri's `prevent_exit`): the process stays up, reachable through {@link
+     * DesktopConfig.tray}, the macOS Dock (`onDockReopen` in `denext/desktop/app`) or a second
+     * launch. Default: on when {@link DesktopConfig.tray} is set, else off (closing the last window
+     * quits). Sets the runtime's `Deno.desktop.quitOnLastWindowClosed`; a page's `window.close()`
+     * then closes its window instead of quitting.
+     */
+    keepAlive?: boolean;
+    /**
+     * Show the app's icon in the macOS Dock (default `true`). `false` makes it an accessory app (a
+     * menu-bar / tray app or a desktop companion), so give it a {@link DesktopConfig.tray} or
+     * another way back in. From runtime `3.0.0-denext.6` it is the `"accessory"` activation policy
+     * from the first frame (`activationPolicy`); on an older runtime the backend hides the icon
+     * once it starts, so it shows briefly at launch. On Windows and Linux
+     * the app's windows are kept off the taskbar instead where the runtime can
+     * (`setSkipTaskbar`); a `focusable: false` window is always off it.
+     */
+    dock?: boolean;
+    /**
+     * The macOS activation policy the app starts in (runtime `3.0.0-denext.6` and later):
+     * `"accessory"` has no Dock icon and no menu bar from its first frame (a menu-bar / tray app
+     * or a desktop companion), `"regular"` is an ordinary app. Written to the packaged app's
+     * `laufey-launch.json` (`denext desktop run` / `dev`: `LAUFEY_ACTIVATION_POLICY`).
+     * `desktop.app.dock: false` implies `"accessory"`. Switch it while the app runs with
+     * `setActivationPolicy` (`denext/desktop/app`, or `DesktopRuntime.setActivationPolicy` in
+     * `desktop.ts`). On an older runtime `dock: false` still hides the icon, once the backend
+     * starts. Windows and Linux have no policy.
+     */
+    activationPolicy?: "regular" | "accessory";
   };
+  /**
+   * A tray icon (macOS menu bar extra, Windows notification area, Linux StatusNotifierItem /
+   * AppIndicator) the app's backend owns: created by `runDesktop` before any page loads, kept
+   * across page reloads, and reachable from every window (`getTray()` in `denext/desktop/app`) and
+   * from `desktop.ts` (`DesktopRuntime.tray`, with `runDesktop({ tray })` handlers). Setting it
+   * keeps the app alive with no window ({@link DesktopConfig.app}`.keepAlive`). Where the session
+   * has no tray host (stock GNOME without the AppIndicator extension) no icon is shown and the
+   * first window is shown instead.
+   */
+  tray?: DesktopTrayConfig;
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
   /**
@@ -1496,6 +1536,86 @@ export interface DesktopSize {
   height: number;
 }
 
+/**
+ * One entry of a {@link DesktopTrayConfig} menu: an action (`id` + `label`), a separator
+ * (`separator: true`), a standard item (`role`) or a submenu (`label` + `submenu`, one level).
+ */
+export interface DesktopTrayMenuItem {
+  /** The id the backend's and pages' menu handlers receive (an action). */
+  id?: string;
+  /** The item's or submenu's text. */
+  label?: string;
+  /** Greyed out. */
+  disabled?: boolean;
+  /** A checkmark next to it. */
+  checked?: boolean;
+  /** A separator line instead of an item. */
+  separator?: boolean;
+  /** A standard item the OS handles (`"quit"`). */
+  role?: "quit" | "about" | "hide" | "hideOthers" | "unhide";
+  /** A submenu's entries (actions and separators). */
+  submenu?: readonly DesktopTrayMenuEntry[];
+}
+
+/** One entry of a tray submenu ({@link DesktopTrayMenuItem.submenu}). */
+export interface DesktopTrayMenuEntry {
+  /** The id the menu handlers receive. */
+  id?: string;
+  /** The item's text. */
+  label?: string;
+  /** Greyed out. */
+  disabled?: boolean;
+  /** A checkmark next to it. */
+  checked?: boolean;
+  /** A separator line instead of an item. */
+  separator?: boolean;
+}
+
+/** The backend-owned tray icon ({@link DesktopConfig.tray}). */
+export interface DesktopTrayConfig {
+  /**
+   * The icon: a PNG in the export, as a path from its root (`"/tray.png"` for `public/tray.png`).
+   * On macOS a black-and-transparent image is drawn as a template image.
+   */
+  icon: string;
+  /** The icon in dark mode, where the OS tells them apart (a path in the export). */
+  iconDark?: string;
+  /** Shown on hover. */
+  tooltip?: string;
+  /** The menu (right click; on Linux usually any click). */
+  menu?: readonly DesktopTrayMenuItem[];
+  /**
+   * A panel at the tray icon: a frameless, non-activating window that a click on the icon toggles
+   * and that hides when it loses focus (the runtime's `Tray.attachPanel`). It is placed under the
+   * icon in a top menu bar and above it in a bottom taskbar, inside the display's work area; on
+   * Linux, where the tray has no position, it stays where it last was.
+   */
+  panel?: DesktopTrayPanelConfig;
+}
+
+/** The tray panel ({@link DesktopTrayConfig.panel}). */
+export interface DesktopTrayPanelConfig {
+  /** The page it shows: a path of the app (`"/panel"`). */
+  url: string;
+  /**
+   * Width in CSS pixels (default 360).
+   *
+   * @minimum 1
+   */
+  width?: number;
+  /**
+   * Height in CSS pixels (default 480).
+   *
+   * @minimum 1
+   */
+  height?: number;
+  /** Hide it when it loses focus (default `true`). */
+  hideOnBlur?: boolean;
+}
+
+/** How far above other windows an always-on-top window floats (Electron's level names). */
+export type DesktopWindowLevel = "floating" | "status" | "pop-up-menu" | "screen-saver";
+
 /** The initial window ({@link DesktopConfig.window}), applied when the runtime adopts it. */
 export interface DesktopWindowConfig {
   /**
@@ -1514,6 +1634,56 @@ export interface DesktopWindowConfig {
   title?: string;
   /** Whether the user can resize the window (default `true`). */
   resizable?: boolean;
+  /**
+   * Show the window when the app starts (default `true`). `false` starts the app with no visible
+   * window — a tray / menu-bar app — with no flash: the page still loads in the hidden window,
+   * which `showWindow()` (`denext/desktop/window`) reveals. Written to `.deno-desktop/app.json`
+   * (`initialWindow.showOnFirstLoad`).
+   */
+  show?: boolean;
+  /**
+   * No title bar or window chrome (a creation-time option, written to `.deno-desktop/app.json`
+   * `initialWindow`). Give the page a drag region (`makeWindowDraggable`).
+   */
+  frameless?: boolean;
+  /**
+   * A transparent window background: what the page leaves transparent (`html, body { background:
+   * transparent }`) shows the desktop. Creation-time. macOS and Linux with the system WebView;
+   * Windows and CEF paint an opaque background (`windowCapabilities().transparent`).
+   */
+  transparent?: boolean;
+  /**
+   * `false` makes a non-activating panel (Electron's and Tauri's `focusable: false`): showing it or
+   * clicking it never takes focus from the app the user is in; it floats above normal windows,
+   * joins every Space on macOS, and stays off the taskbar and Alt-Tab on Windows and Linux.
+   * Creation-time (the runtime's `noActivate`). Default `true`.
+   */
+  focusable?: boolean;
+  /**
+   * Keep the window above other windows: `true` (`"floating"`) or a level. A level above
+   * `"floating"` needs a runtime that reports `windowCapabilities().alwaysOnTopLevels`; elsewhere
+   * it floats at `"floating"`.
+   */
+  alwaysOnTop?: boolean | DesktopWindowLevel;
+  /**
+   * The whole window's opacity, `0`–`1` (default `1`), web content and chrome alike.
+   *
+   * @minimum 0
+   * @maximum 1
+   */
+  opacity?: number;
+  /**
+   * Keep the window off the taskbar (Windows, Linux). Needs a runtime with
+   * `BrowserWindow.setSkipTaskbar` (`windowCapabilities().skipTaskbar`); a `focusable: false`
+   * window is off it on every runtime.
+   */
+  skipTaskbar?: boolean;
+  /**
+   * Show the window on every Space / virtual desktop, over full-screen apps too. Needs a runtime
+   * with `BrowserWindow.setVisibleOnAllWorkspaces` (`windowCapabilities().visibleOnAllWorkspaces`);
+   * on macOS a `focusable: false` window already joins every Space.
+   */
+  visibleOnAllWorkspaces?: boolean;
 }
 
 /** The production server's settings (see {@link DenextConfig.start}). */

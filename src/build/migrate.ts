@@ -37,7 +37,7 @@ import { VERSION } from "../version.ts";
 import { appendGitignore } from "./gitignore.ts";
 import { ensureVscodeDeno, withDenextUnstable } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
-import CATALOG from "../plugin/catalog.json" with { type: "json" };
+import { pluginCatalog } from "../plugin/catalog.ts";
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
 import {
   formatIconSearch,
@@ -170,7 +170,7 @@ const DENEXT_OWNED = new Set([
  * minor line.
  */
 function catalogSpec(name: string): string {
-  const entry = CATALOG.plugins.find((p) => p.name === name);
+  const entry = pluginCatalog().plugins.find((p) => p.name === name);
   if (!entry) throw new Error(`the first-party plugin catalog has no entry for "${name}"`);
   return entry.spec;
 }

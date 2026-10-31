@@ -416,6 +416,18 @@ Deno.test("doctor: a deno.json that still exempts jsr:@denext/* gets a fix point
     assertStringIncludes(other!.detail, 'exempts "jsr:@denext/denext", "@denext/ui"');
     assertStringIncludes(other!.detail, "yourself (denext never writes it)");
     assertFalse(other!.detail.includes("`denext upgrade` removes"), other!.detail);
+    // The failure says why the hold matters and how a test harness marks its exemption deliberate.
+    assertStringIncludes(other!.detail, "keeps a compromised release out");
+    assertStringIncludes(other!.detail, "DENEXT_ALLOW_DENEXT_AGE_EXEMPTION=1");
+    assertStringIncludes(other!.detail, "docs/toolchain#supply-chain-hold");
+    // Marked deliberate: a pass that still names what is exempt; any other value is not a mark.
+    const env = (value: string) => (name: string) =>
+      name === "DENEXT_ALLOW_DENEXT_AGE_EXEMPTION" ? value : undefined;
+    const allowed = await depAgeExemptionCheck(dir, env("1"));
+    assertEquals([allowed?.ok, allowed?.critical], [true, false]);
+    assertStringIncludes(allowed!.detail, 'exempts "jsr:@denext/denext", "@denext/ui"');
+    assertStringIncludes(allowed!.detail, "allowed by DENEXT_ALLOW_DENEXT_AGE_EXEMPTION=1");
+    assertEquals((await depAgeExemptionCheck(dir, env("true")))?.ok, false);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

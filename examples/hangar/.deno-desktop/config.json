@@ -1,0 +1,92 @@
+{
+  "desktop": {
+    "installers": {
+      "macos": [],
+      "linux": [],
+      "windows": []
+    },
+    "app": {
+      "name": "Hangar",
+      "identifier": "dev.denext.hangar",
+      "origin": "hangar://app",
+      "singleInstance": true,
+      "keepAlive": true,
+      "activationPolicy": "accessory"
+    },
+    "window": {
+      "width": 900,
+      "height": 640,
+      "title": "Hangar",
+      "show": false
+    },
+    "minSize": {
+      "width": 320,
+      "height": 360
+    },
+    "tray": {
+      "icon": "/tray.png",
+      "tooltip": "Hangar",
+      "menu": [
+        {
+          "id": "none",
+          "label": "No VMs running",
+          "disabled": true
+        },
+        {
+          "separator": true
+        },
+        {
+          "id": "panel",
+          "label": "Show panel"
+        },
+        {
+          "id": "open:/",
+          "label": "Open Hangar"
+        },
+        {
+          "id": "open:/images",
+          "label": "Images"
+        },
+        {
+          "id": "open:/create",
+          "label": "New VM"
+        },
+        {
+          "id": "open:/settings",
+          "label": "Settings"
+        },
+        {
+          "separator": true
+        },
+        {
+          "role": "quit"
+        }
+      ],
+      "panel": {
+        "url": "/panel",
+        "width": 360,
+        "height": 480
+      }
+    },
+    "capabilities": {
+      "clipboard": true,
+      "extensions": [
+        "./desktop/hangar.ts"
+      ]
+    },
+    "extraPermissions": {
+      "run": [
+        "*"
+      ],
+      "write": [
+        "~/VMs"
+      ],
+      "sys": [
+        "systemMemoryInfo"
+      ],
+      "env": [
+        "HOME"
+      ]
+    }
+  }
+}

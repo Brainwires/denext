@@ -63,6 +63,13 @@ export interface DesktopCapCtx {
    */
   readonly window?: unknown;
   /**
+   * Which of the app's windows the call came from: `"main"` (the window the app started with, and
+   * any page that cannot say), `"panel"` (the tray panel) or the id `openWindow` returned.
+   * {@linkcode DesktopCapCtx.window} is that window. The bridge always sets it; absent (a context
+   * built by hand, in a test) means `"main"`.
+   */
+  readonly windowId?: string;
+  /**
    * Aborts when the handler exceeds its timeout, so a long native call can cooperate. For a
    * method with `timeoutMs: false` it also aborts when the calling page's request goes away (that
    * page reloaded, navigated or closed).
@@ -145,11 +152,19 @@ export interface DesktopCapability {
   /** The event names this capability may emit (empty when it emits none). */
   readonly events?: readonly string[];
   /**
-   * Called when the window starts a NEW top-level page load (a reload or a navigation): the page
+   * Called when a window starts a NEW top-level page load (a reload or a navigation): the page
    * that owned any per-page state is gone, so release it (keep-awake holds, open handles). Errors
    * are logged, never surfaced. The same idea as the mobile native views' teardown on navigation.
+   * It is called for the main window's page loads, with `"main"`, and — only when
+   * {@linkcode DesktopCapability.perWindow} is set — for every other window's too, with its id.
    */
-  readonly onPageLoad?: () => void | Promise<void>;
+  readonly onPageLoad?: (windowId?: string) => void | Promise<void>;
+  /**
+   * The capability keeps per-page state for each window (keyed by
+   * {@linkcode DesktopCapCtx.windowId}), so {@linkcode DesktopCapability.onPageLoad} is called for
+   * every window's page loads, not just the main window's.
+   */
+  readonly perWindow?: boolean;
 }
 
 /**

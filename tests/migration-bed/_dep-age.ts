@@ -23,9 +23,14 @@ export const BED_DEPENDENCY_AGE: { readonly age: string; readonly exclude: reado
 
 /**
  * The environment the beds' commands run with: an inherited `DENEXT_MIN_DEP_AGE` emptied, so it
- * neither lifts nor replaces {@linkcode BED_DEPENDENCY_AGE} (denext reads an empty value as unset).
+ * neither lifts nor replaces {@linkcode BED_DEPENDENCY_AGE} (denext reads an empty value as unset),
+ * and `DENEXT_ALLOW_DENEXT_AGE_EXEMPTION=1`, so `denext doctor` takes the `jsr:@denext/*` exclusion
+ * as the bed's own deliberate rule instead of failing its dependency-age check (an app's fails).
  */
-export const BED_ENV: Readonly<Record<string, string>> = { DENEXT_MIN_DEP_AGE: "" };
+export const BED_ENV: Readonly<Record<string, string>> = {
+  DENEXT_MIN_DEP_AGE: "",
+  DENEXT_ALLOW_DENEXT_AGE_EXEMPTION: "1",
+};
 
 /**
  * Write {@linkcode BED_DEPENDENCY_AGE} into the migrated app's `deno.json` (replacing any rule

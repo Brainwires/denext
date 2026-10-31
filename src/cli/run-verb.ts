@@ -33,6 +33,7 @@ import { currentDenoIdentity, isDenextDenoVersion } from "../build/deno-version.
 import { applyNativeCheckEngine } from "../ts/engine.ts";
 import { denoPathEnv } from "./deno-path.ts";
 import { resolveProject } from "../build/paths.ts";
+import { runsFromCheckout } from "../build/checkout-file.ts";
 import {
   buildAppCss,
   injectAppConfigRedirects,
@@ -617,14 +618,16 @@ async function reexecWithConfig(
  * a bare `import "drizzle-orm"` in an app's server module would otherwise be "not a
  * dependency and not in import map". (A `jsr:`/compiled CLI already discovers the
  * app's config from the CWD, so this is a source-checkout/monorepo fix — hence the
- * `file://` guard.) CSS-using projects are handled by {@linkcode maybeReexecForCss}.
+ * checkout guard: a published copy reached by path (`vendor/jsr.io/…`, `node_modules/`) is
+ * `file://` too, but carries no framework `deno.json` to merge and its imports are already
+ * fully qualified.) CSS-using projects are handled by {@linkcode maybeReexecForCss}.
  */
 async function maybeReexecForModules(
   dir: string,
   limits: ChildLimits = NO_LIMITS,
 ): Promise<boolean> {
   if (Deno.env.get("DENEXT_MODULE_ACTIVE") || Deno.env.get("DENEXT_CSS_ACTIVE")) return false;
-  if (!entryUrl().startsWith("file://")) return false;
+  if (!runsFromCheckout(entryUrl())) return false;
   const paths = await resolveProject(dir);
   if (paths.configPath === join(frameworkRoot(), "deno.json")) return false;
   const appCfg = await readConfig(paths.configPath);

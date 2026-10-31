@@ -11,6 +11,8 @@ import {
   parseDesktopAppOrigin,
 } from "../../desktop/app-origin.ts";
 import { desktopDenoFlagError } from "../../desktop/deno-flags.ts";
+import { desktopTrayProblem } from "../../desktop/tray-config.ts";
+import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
 import { type Fail, isPlainObject, num, oneOf, validatePermissionLists } from "./shared.ts";
 
@@ -154,13 +156,31 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   validateDeepLinks(a.deepLinks, fail);
   validateBridgeOrigins(a.bridgeOrigins, fail);
   validateNavigationOrigins(a.allowedNavigationOrigins, fail);
-  if (a.singleInstance !== undefined && typeof a.singleInstance !== "boolean") {
-    fail("desktop.app.singleInstance", "must be a boolean");
+  for (const key of ["singleInstance", "keepAlive", "dock"]) {
+    if (a[key] !== undefined && typeof a[key] !== "boolean") {
+      fail(`desktop.app.${key}`, "must be a boolean");
+    }
   }
   if (a.name !== undefined && (typeof a.name !== "string" || a.name.trim() === "")) {
     fail("desktop.app.name", "must be a non-empty string");
   }
+  validateActivationPolicy(a, fail);
   validateDesktopIcons(a.icons, fail);
+}
+
+/** `desktop.app.activationPolicy`: `"regular"` or `"accessory"`, and not regular with no Dock. */
+function validateActivationPolicy(a: Record<string, unknown>, fail: Fail): void {
+  const policy = a.activationPolicy;
+  if (policy === undefined) return;
+  if (policy !== "regular" && policy !== "accessory") {
+    fail("desktop.app.activationPolicy", 'must be "regular" or "accessory"');
+  }
+  if (policy === "regular" && a.dock === false) {
+    fail(
+      "desktop.app.activationPolicy",
+      'is "regular" (a Dock icon) but desktop.app.dock is false: drop one of them',
+    );
+  }
 }
 
 /** `desktop.app.icons`: `{ macos?, windows?, linux? }` file paths. */
@@ -198,7 +218,10 @@ function validateDesktopSize(v: unknown, field: string, fail: Fail): void {
   num(fail, `${field}.height`, size.height, { min: 1 });
 }
 
-/** `desktop.window`: optional width/height (≥ 1), title, resizable. */
+/**
+ * `desktop.window`: optional width/height (≥ 1), title, and the flags (resizable, show, frameless,
+ * transparent, focusable, skipTaskbar, visibleOnAllWorkspaces), alwaysOnTop, opacity.
+ */
 function validateDesktopWindow(win: unknown, fail: Fail): void {
   if (win === undefined) return;
   if (!isPlainObject(win)) fail("desktop.window", "must be an object");
@@ -208,14 +231,21 @@ function validateDesktopWindow(win: unknown, fail: Fail): void {
   if (w.title !== undefined && typeof w.title !== "string") {
     fail("desktop.window.title", "must be a string");
   }
-  if (w.resizable !== undefined && typeof w.resizable !== "boolean") {
-    fail("desktop.window.resizable", "must be a boolean");
-  }
+  const problem = desktopWindowKeyProblem(w);
+  if (problem) fail(`desktop.${problem[0]}`, problem[1]);
+}
+
+/** `desktop.tray`: an icon path in the export, optional texts, a menu and a panel. */
+function validateDesktopTray(tray: unknown, fail: Fail): void {
+  if (tray === undefined) return;
+  const problem = desktopTrayProblem(tray);
+  if (problem) fail(`desktop.${problem[0]}`, problem[1]);
 }
 
 /** The window-shape keys: window, titleBar, backdrop, minSize ≤ maxSize, inspectable, preload. */
 function validateDesktopWindowing(d: Record<string, unknown>, fail: Fail): void {
   validateDesktopWindow(d.window, fail);
+  validateDesktopTray(d.tray, fail);
   oneOf(d.titleBar, ["default", "hidden", "hiddenInset"], "desktop.titleBar", fail);
   oneOf(d.backdrop, ["none", "mica", "acrylic", "vibrancy"], "desktop.backdrop", fail);
   validateDesktopSize(d.minSize, "desktop.minSize", fail);

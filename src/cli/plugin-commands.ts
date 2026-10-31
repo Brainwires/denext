@@ -10,7 +10,7 @@
 // `setup` is arbitrary user code (it may hit the network or hang), and `denext --help`
 // must still answer promptly.
 
-import { resolveProject } from "../build/paths.ts";
+import { ProbeScope, resolveProject } from "../build/paths.ts";
 import { applyPlugins, getPluginCommands, pluginGeneration } from "../plugin/mod.ts";
 import { defaultLoader } from "../server/default-loader.ts";
 import type { CommandRegistry, CommandSpec } from "./command.ts";
@@ -67,11 +67,12 @@ async function withBudget<T>(work: Promise<T>, ms: number): Promise<T | typeof T
 /**
  * Every verb the project at `dir` contributes, config shorthand first. Resolving the
  * project is the only cost for an app with neither `commands:` nor `plugins` — one
- * config read, no plugin setup.
+ * config read, no plugin setup. `probes` holds the resolution's file probes, so a caller
+ * that gives up on the budget can stop them.
  */
-async function collectProjectCommands(dir: string): Promise<CommandSpec[]> {
+async function collectProjectCommands(dir: string, probes: ProbeScope): Promise<CommandSpec[]> {
   const startedUnder = pluginGeneration();
-  const paths = await resolveProject(dir);
+  const paths = await resolveProject(dir, probes);
   // A later resetPlugins() (the next discovery) supersedes this run: importing the config may
   // outlive the caller's budget, and a stale run must not mark plugins the next one will skip.
   if (pluginGeneration() !== startedUnder) return [];
@@ -134,9 +135,10 @@ export async function loadPluginCommands(
   options: LoadCommandsOptions = {},
 ): Promise<LoadCommandsResult> {
   const timeoutMs = options.timeoutMs ?? COMMAND_LOAD_BUDGET_MS;
+  const probes = new ProbeScope();
   let collected: CommandSpec[] | typeof TIMED_OUT;
   try {
-    collected = await withBudget(collectProjectCommands(dir), timeoutMs);
+    collected = await withBudget(collectProjectCommands(dir, probes), timeoutMs);
   } catch (error) {
     return {
       loaded: 0,
@@ -144,7 +146,14 @@ export async function loadPluginCommands(
       error: error instanceof Error ? error.message : String(error),
     };
   }
-  if (collected === TIMED_OUT) return { loaded: 0, timedOut: true };
+  if (collected === TIMED_OUT) {
+    // The abandoned run may be mid `Deno.stat` (a slow disk, a loaded machine): stop it starting
+    // more and wait out the one in flight, so nothing the framework started outlives this call.
+    // A config import or plugin `setup` still running is user code, and starts no probe.
+    probes.abort();
+    await probes.settled();
+    return { loaded: 0, timedOut: true };
+  }
   return { loaded: registerNew(registry, collected), timedOut: false };
 }
 

@@ -2888,7 +2888,12 @@ const status = await requestTrackingPermission();       // "authorized" | "denie
         (<code>@capacitor-community/text-to-speech</code>) is the OS speech engine behind{" "}
         <code>expo-speech</code>: the Android WebView has no{" "}
         <code>speechSynthesis</code>, so the Android shell needs it; elsewhere the shim uses the Web
-        Speech API.
+        Speech API. <code>denext/mobile</code>&apos;s own <code>speak(text, options)</code>{" "}
+        (resolving once said) and <code>stopSpeaking()</code>{" "}
+        take the same plugin, else the Web Speech API (Deno Desktop windows included), else, in a
+        Deno Desktop window without it (WebKitGTK), the runtime&apos;s OS speech (runtime
+        3.0.0-denext.6: AVSpeechSynthesizer, SAPI, speech-dispatcher, which the Linux packages
+        recommend).
       </p>
       <p>
         The same goes for <code>contacts</code> (<code>@capgo/capacitor-contacts</code>, behind{" "}

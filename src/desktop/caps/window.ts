@@ -19,6 +19,14 @@
  * - `drop`: files were dropped on the window — the page takes them with `takeDrops`.
  * - `titleBarPreferences`: the user changed their title bar settings — the page reads
  *   `titleBarPreferences` (runtime 2.9.7-denext.12).
+ * - `focus` / `blur`: the window gained or lost the keyboard focus (every runtime).
+ *
+ * Overlay windows (a desktop companion, a HUD): the opacity, click-through
+ * (`setIgnoreMouseEvents`), a click-catching hit region (`setHitRegion`), every-workspace
+ * visibility, the taskbar entry and always-on-top levels. Each is feature-detected on the
+ * runtime's `BrowserWindow` and reported by `capabilities` (runtime 3.0.0-denext.6 has them all);
+ * a runtime without one answers `unsupported`. Click-through with no way back (no `forward`, and no tray icon to
+ * reach the app) is refused: the window could never be clicked again.
  *
  * Close guard. A close event must be answered synchronously, but the page is across the bridge:
  * with the guard on (`setCloseGuard`), a close is prevented and `closeRequested` is emitted; the
@@ -62,6 +70,17 @@ const MAX_SHARE_TEXT = 64 * 1024;
 /** How a share sheet can end (`BrowserWindow.share`, runtime 2.9.7-denext.20). */
 const SHARE_OUTCOMES = new Set(["completed", "shown", "cancelled", "not_supported", "failed"]);
 
+/** The events the `window` capability emits. */
+export const WINDOW_EVENTS: readonly string[] = [
+  "state",
+  "display",
+  "closeRequested",
+  "drop",
+  "titleBarPreferences",
+  "focus",
+  "blur",
+];
+
 /** The window state events the runtime fires (each becomes a `state` signal). */
 const STATE_EVENTS = [
   "maximize",
@@ -103,7 +122,13 @@ interface BrowserWindowLike {
   getMaximumSize?(): [number, number];
   setTitle?(title: string): void;
   setResizable?(resizable: boolean): void;
-  setAlwaysOnTop?(alwaysOnTop: boolean): void;
+  setAlwaysOnTop?(alwaysOnTop: boolean, level?: string): void;
+  setOpacity?(opacity: number): void;
+  getOpacity?(): number;
+  setIgnoreMouseEvents?(ignore: boolean, options?: { forward?: boolean }): void;
+  setHitRegion?(rects: DesktopRect[] | null): void;
+  setVisibleOnAllWorkspaces?(visible: boolean, options?: { visibleOnFullScreen?: boolean }): void;
+  setSkipTaskbar?(skip: boolean): void;
   setTitleBarStyle?(style: string): boolean;
   setWindowButtonPosition?(position: { x: number; y: number } | null): boolean;
   setBackgroundMaterial?(material: string): boolean;
@@ -171,6 +196,16 @@ export interface WindowControllerOptions {
   readonly emit: (cap: string, event: string, data: unknown) => void;
   /** End the process once the window closed for good (default `Deno.exit`). */
   readonly exit?: (code: number) => void;
+  /**
+   * Called once the window closed for good, instead of ending the process: the app decides
+   * (another window is open, or `desktop.app.keepAlive`).
+   */
+  readonly closed?: () => void;
+  /**
+   * Whether the app has another way in than this window (a tray icon): click-through without
+   * `forward` is refused otherwise. Default: none.
+   */
+  readonly wayBack?: () => boolean;
   /** The per-launch picked-path set (dropped files land here; drag-out resolves handles). */
   readonly picked?: PickedPaths;
   /** The app's own folders, the only paths (besides handles) a drag-out may carry. */
@@ -292,6 +327,7 @@ async function capabilitiesOf(
   const has = (name: keyof BrowserWindowLike) => typeof win?.[name] === "function";
   const facts = await platformFacts(api);
   return {
+    ...overlayCapabilities(win, has, facts.cookieEncryption),
     state: has("maximize"),
     stateEvents: false,
     sizeConstraints: has("setMinimumSize"),
@@ -326,6 +362,37 @@ async function capabilitiesOf(
     // Wayland cannot place windows; CEF's cookie store may be unencrypted.
     sessionType: facts.sessionType,
     cookieEncryption: facts.cookieEncryption,
+  };
+}
+
+/**
+ * The overlay features a window has, as far as the runtime's `BrowserWindow` shows (the runtime's
+ * own `windowCapabilities()` report, read after, wins): click-through and its pointer forwarding,
+ * a hit region, every workspace, the taskbar entry, opacity, always-on-top levels, a transparent
+ * background (the system WebView on macOS and Linux: CEF reports a cookie store, WebView2 runs on
+ * Windows), non-activating panels and focus events (every runtime with a window).
+ */
+function overlayCapabilities(
+  win: BrowserWindowLike | undefined,
+  has: (name: keyof BrowserWindowLike) => boolean,
+  cookieEncryption: unknown,
+): Record<string, boolean> {
+  const cef = cookieEncryption === "os" || cookieEncryption === "basic";
+  return {
+    clickThrough: has("setIgnoreMouseEvents"),
+    clickThroughForward: false,
+    hitRegion: has("setHitRegion"),
+    visibleOnAllWorkspaces: has("setVisibleOnAllWorkspaces"),
+    skipTaskbar: has("setSkipTaskbar"),
+    opacity: has("setOpacity"),
+    alwaysOnTopLevels: false,
+    transparent: win !== undefined && Deno.build.os !== "windows" && !cef,
+    nonActivating: win !== undefined,
+    focusEvents: win !== undefined,
+    // Reported by the runtime's windowCapabilities() from 3.0.0-denext.6; false until then.
+    visibleOnFullScreen: false,
+    layerShell: false,
+    activationPolicy: false,
   };
 }
 
@@ -463,7 +530,10 @@ function act<K extends keyof BrowserWindowLike>(
   return null;
 }
 
-/** Close the window for good and end the process (the single-window app quits). */
+/**
+ * Close the window for good, then end the process — or, with a `closed` hook, let the app decide
+ * (another window is open, or the app stays alive).
+ */
 function finishClose(s: WindowState): void {
   s.guard = false;
   s.pending = undefined;
@@ -471,7 +541,8 @@ function finishClose(s: WindowState): void {
     if (typeof s.win?.close === "function") s.win.close();
   } finally {
     // Let the RPC answer flush before the process goes away.
-    setTimeout(() => s.exit(0), 0);
+    const closed = s.options.closed;
+    setTimeout(() => closed ? closed() : s.exit(0), 0);
   }
 }
 
@@ -744,10 +815,7 @@ function windowLookMethods(s: WindowState): DesktopCapability["methods"] {
       handler: (args) =>
         act(s, "setResizable", "change resizability", bool(argsOf(args).resizable, "resizable")),
     },
-    setAlwaysOnTop: {
-      handler: (args) =>
-        act(s, "setAlwaysOnTop", "stay on top", bool(argsOf(args).alwaysOnTop, "alwaysOnTop")),
-    },
+    setAlwaysOnTop: { handler: (args) => setAlwaysOnTop(s, args) },
     setTitleBarStyle: {
       handler: (args) => {
         const style = argsOf(args).style;
@@ -769,6 +837,94 @@ function windowLookMethods(s: WindowState): DesktopCapability["methods"] {
       },
     },
     setBackdrop: { handler: (args) => setBackdrop(s, args) },
+  };
+}
+
+/** The always-on-top levels (Electron's names), lowest first. */
+const LEVELS = new Set(["floating", "status", "pop-up-menu", "screen-saver"]);
+/** The most rectangles a hit region takes. */
+const MAX_HIT_RECTS = 64;
+
+/** `setAlwaysOnTop`: on or off, at a level (the runtime ignores it until it has levels). */
+function setAlwaysOnTop(s: WindowState, args: unknown): null {
+  const a = argsOf(args);
+  const on = bool(a.alwaysOnTop, "alwaysOnTop");
+  if (a.level === undefined || a.level === "floating" || !on) {
+    return act(s, "setAlwaysOnTop", "stay on top", on);
+  }
+  if (!LEVELS.has(a.level as string)) {
+    throw invalid('level must be "floating", "status", "pop-up-menu" or "screen-saver"');
+  }
+  return act(s, "setAlwaysOnTop", "stay on top", on, a.level);
+}
+
+/**
+ * `setIgnoreMouseEvents`: let clicks through to what is under the window. Without `forward` the
+ * window can never be clicked again, so that needs another way in (a tray icon).
+ */
+function setIgnoreMouseEvents(s: WindowState, args: unknown): null {
+  const a = argsOf(args);
+  const ignore = bool(a.ignore, "ignore");
+  const forward = a.forward === undefined ? false : bool(a.forward, "forward");
+  need(s);
+  if (ignore && !forward && s.options.wayBack?.() !== true) {
+    throw invalid(
+      "click-through without forward needs another way back to the window (a tray icon); " +
+        "pass { forward: true } or use setHitRegion",
+    );
+  }
+  return act(s, "setIgnoreMouseEvents", "let clicks through", ignore, { forward });
+}
+
+/** `setHitRegion`: the rectangles (page CSS pixels) that catch clicks; `null` the whole window. */
+function setHitRegion(s: WindowState, args: unknown): null {
+  const raw = argsOf(args).rects;
+  if (raw === null || raw === undefined) return act(s, "setHitRegion", "set a hit region", null);
+  if (!Array.isArray(raw) || raw.length > MAX_HIT_RECTS) {
+    throw invalid(`rects must be an array of at most ${MAX_HIT_RECTS} rectangles, or null`);
+  }
+  const rects = raw.map((r) => {
+    const o = argsOf(r);
+    return {
+      x: num(o.x, "x"),
+      y: num(o.y, "y"),
+      width: num(o.width, "width", 0),
+      height: num(o.height, "height", 0),
+    };
+  });
+  return act(s, "setHitRegion", "set a hit region", rects);
+}
+
+/** The overlay methods: opacity, click-through, hit region, workspaces and the taskbar. */
+function windowOverlayMethods(s: WindowState): DesktopCapability["methods"] {
+  return {
+    setOpacity: {
+      handler: (args) => {
+        const o = argsOf(args).opacity;
+        if (typeof o !== "number" || !Number.isFinite(o) || o < 0 || o > 1) {
+          throw invalid("opacity must be a number from 0 to 1");
+        }
+        return act(s, "setOpacity", "change its opacity", o);
+      },
+    },
+    setIgnoreMouseEvents: { handler: (args) => setIgnoreMouseEvents(s, args) },
+    setHitRegion: { handler: (args) => setHitRegion(s, args) },
+    setVisibleOnAllWorkspaces: {
+      handler: (args) => {
+        const a = argsOf(args);
+        const visible = bool(a.visible, "visible");
+        const visibleOnFullScreen = a.visibleOnFullScreen === undefined
+          ? false
+          : bool(a.visibleOnFullScreen, "visibleOnFullScreen");
+        return act(s, "setVisibleOnAllWorkspaces", "show on every workspace", visible, {
+          visibleOnFullScreen,
+        });
+      },
+    },
+    setSkipTaskbar: {
+      handler: (args) =>
+        act(s, "setSkipTaskbar", "leave the taskbar", bool(argsOf(args).skip, "skip")),
+    },
   };
 }
 
@@ -852,6 +1008,8 @@ function installWindowEvents(s: WindowState): void {
   s.installed = true;
   for (const type of STATE_EVENTS) win.addEventListener(type, () => s.emit("state", null));
   win.addEventListener("drop", (e) => void acceptDrop(s, (e as CustomEvent).detail));
+  win.addEventListener("focus", () => s.emit("focus", null));
+  win.addEventListener("blur", () => s.emit("blur", null));
   s.api?.addEventListener?.("displaychanged", () => s.emit("display", null));
   // The user's title bar settings changed (runtime 2.9.7-denext.12).
   s.api?.addEventListener?.(
@@ -886,7 +1044,7 @@ export function createWindowController(options: WindowControllerOptions): Window
   };
   const capability: DesktopCapability = {
     name: "window",
-    events: ["state", "display", "closeRequested", "drop", "titleBarPreferences"],
+    events: WINDOW_EVENTS,
     onPageLoad: () => {
       // The page that guarded the close, or that files were dropped on, is gone.
       s.guard = false;
@@ -896,6 +1054,7 @@ export function createWindowController(options: WindowControllerOptions): Window
     methods: {
       ...windowStateMethods(s),
       ...windowLookMethods(s),
+      ...windowOverlayMethods(s),
       ...windowCloseAndDragMethods(s),
     },
   };

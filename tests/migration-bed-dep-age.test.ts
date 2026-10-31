@@ -51,3 +51,18 @@ Deno.test("migration beds: no bed command turns the dependency-age hold off", as
   assert(!/DENEXT_MIN_DEP_AGE["']?\s*:\s*["']0["']/.test(harness), "_bed.ts sets the hold to 0");
   assert(harness.includes("holdBedDependencies(app)"), "_bed.ts no longer writes the bed rule");
 });
+
+Deno.test("migration beds: doctor takes the bed's @denext exemption as deliberate", async () => {
+  const { depAgeExemptionCheck } = await import("../src/cli/commands/doctor.ts");
+  const app = await Deno.makeTempDir({ prefix: "denext_bed_age_doctor_" });
+  try {
+    await Deno.writeTextFile(join(app, "deno.json"), "{}");
+    await holdBedDependencies(app);
+    const check = await depAgeExemptionCheck(app, (name) => BED_ENV[name]);
+    assertEquals([check?.ok, check?.critical], [true, false]);
+    // Without the bed's environment it is an app's exemption: a failure.
+    assertEquals((await depAgeExemptionCheck(app, () => undefined))?.ok, false);
+  } finally {
+    await Deno.remove(app, { recursive: true });
+  }
+});

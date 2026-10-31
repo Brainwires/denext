@@ -13,7 +13,8 @@
 //                            written only for an entry that imports it
 //   laufey-launch.json       the backend's launch settings (`appId`, `customSchemes`,
 //                            `singleInstance`, `inspectable`, `bridgeOrigins`,
-//                            `passkeyRpIds`, `strictPolicy`, on Linux
+//                            `passkeyRpIds`, `strictPolicy`, on macOS
+//                            `activationPolicy`, on Linux
 //                            `requireSandbox`, on Windows `proxy`), read at process
 //                            start from the packaged bundle:
 //                            `<App>.app/Contents/Resources/` on macOS, next to the executable on
@@ -39,7 +40,9 @@ import { parsePlist, type PlistNode, renderPlist } from "./plist-value.ts";
 import { parseOtaPublicKey } from "./ota-signing.ts";
 import { isOtaManifest, OTA_MANIFEST_PATH } from "../mobile/ota-manifest.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
+import { desktopInitialWindow, resolveDesktopWindowSettings } from "../desktop/window-config.ts";
 import {
+  activationPolicyRuntime,
   desktopPasskeyRpIds,
   PASSKEY_RP_IDS_FIX,
   strictLaunchRuntime,
@@ -99,6 +102,38 @@ export interface LaufeyLaunchConfig {
    * (`desktop.windows.proxy`, runtime 2.9.7-denext.20). Written only for Windows, when set.
    */
   readonly proxy?: "system" | "direct";
+  /**
+   * macOS: the activation policy the app starts in (runtime `3.0.0-denext.6`+):
+   * `"accessory"` shows no Dock icon from the first frame (`desktop.app.activationPolicy`, or
+   * `desktop.app.dock: false`). Written only for macOS, and only when set.
+   */
+  readonly activationPolicy?: DesktopActivationPolicy;
+}
+
+/** The macOS activation policy an app starts in: a Dock icon (`"regular"`) or none (`"accessory"`). */
+export type DesktopActivationPolicy = "regular" | "accessory";
+
+/**
+ * The activation policy the app starts in (`desktop.app.activationPolicy`), else `"accessory"`
+ * when `desktop.app.dock` is `false`, else `undefined` (the runtime's default, a Dock icon).
+ *
+ * @param config The project config.
+ * @returns The policy, or `undefined`.
+ */
+export function desktopActivationPolicy(config: unknown): DesktopActivationPolicy | undefined {
+  const app = appBlock(config);
+  const policy = app?.activationPolicy;
+  if (policy === "regular" || policy === "accessory") return policy;
+  return app?.dock === false ? "accessory" : undefined;
+}
+
+/** The activation policy for a macOS launch of a runtime that reads it, else `undefined`. */
+function macActivationPolicy(
+  config: unknown,
+  os: string,
+  policyKnown: boolean,
+): DesktopActivationPolicy | undefined {
+  return os === "darwin" && policyKnown ? desktopActivationPolicy(config) : undefined;
 }
 
 /** Where a window is launched from, for {@linkcode desktopInspectable}. */
@@ -302,32 +337,39 @@ export function laufeyLaunchEnv(launch: LaufeyLaunchConfig | null): Record<strin
   }
   if (launch?.inspectable !== undefined) env.LAUFEY_INSPECTABLE = launch.inspectable ? "1" : "0";
   if (launch?.proxy) env.LAUFEY_PROXY = launch.proxy;
+  if (launch?.activationPolicy) env.LAUFEY_ACTIVATION_POLICY = launch.activationPolicy;
   return env;
 }
 
 /**
  * The `LAUFEY_*` env of an unpackaged window (`denext desktop run` / `dev`): the app id, the
- * origin's custom scheme, whether DevTools open ({@linkcode desktopInspectable}) and, on Windows,
- * the proxy setting. Single instance is left out on purpose: a dev window must never hand itself
+ * origin's custom scheme, whether DevTools open ({@linkcode desktopInspectable}), on Windows the
+ * proxy setting and on macOS the activation policy ({@linkcode desktopActivationPolicy}, when the
+ * runtime reads it). Single instance is left out on purpose: a dev window must never hand itself
  * to an installed copy.
  *
  * @param config The project config.
  * @param mode `"dev"` or `"run"`.
  * @param os The OS the window runs on (default this one).
+ * @param policyKnown Whether the runtime reads `LAUFEY_ACTIVATION_POLICY` (default
+ *   `activationPolicyRuntime()`).
  * @returns The env vars.
  */
 export function unpackagedLaunchEnv(
   config: unknown,
   mode: Exclude<DesktopLaunchMode, "package">,
   os: string = Deno.build.os,
+  policyKnown: boolean = activationPolicyRuntime(),
 ): Record<string, string> {
   const launch = desktopLaunchConfig(config);
   const proxy = os === "windows" ? desktopWindowsProxy(config) : undefined;
+  const activationPolicy = macActivationPolicy(config, os, policyKnown);
   return laufeyLaunchEnv({
     ...(launch?.appId ? { appId: launch.appId } : {}),
     ...(launch?.customSchemes ? { customSchemes: launch.customSchemes } : {}),
     inspectable: desktopInspectable(config, mode),
     ...(proxy ? { proxy } : {}),
+    ...(activationPolicy ? { activationPolicy } : {}),
   });
 }
 
@@ -354,14 +396,17 @@ export function laufeyLaunchPath(os: DesktopOs, bundle: string): string {
  * @param config The project config.
  * @param os The target OS.
  * @param strict Whether the runtime reads `"strictPolicy"` (`strictLaunchRuntime`).
+ * @param policyKnown Whether the runtime reads `"activationPolicy"` (`activationPolicyRuntime`).
  * @returns The settings.
  */
 function packagedLaunchConfig(
   config: unknown,
   os: DesktopOs,
   strict: boolean,
+  policyKnown: boolean,
 ): LaufeyLaunchConfig {
   const proxy = os === "windows" ? desktopWindowsProxy(config) : undefined;
+  const activationPolicy = macActivationPolicy(config, os, policyKnown);
   const passkeyRpIds = desktopPasskeyRpIds(config);
   // DevTools are off in a packaged app unless `desktop.inspectable: true`, so the file is always
   // written: without it the runtime would leave them on.
@@ -372,6 +417,7 @@ function packagedLaunchConfig(
     ...(passkeyRpIds ? { passkeyRpIds } : {}),
     ...(os === "linux" && desktopRequireSandbox(config) ? { requireSandbox: true } : {}),
     ...(proxy ? { proxy } : {}),
+    ...(activationPolicy ? { activationPolicy } : {}),
     ...(strict ? { strictPolicy: true } : {}),
   };
 }
@@ -383,6 +429,11 @@ export interface LaufeyLaunchWriteOptions {
    * runtime from `3.0.0-denext.1`, not `DENEXT_DESKTOP_RUNTIME=stock` or a local runtime build).
    */
   readonly strict?: boolean;
+  /**
+   * Whether the runtime reads `"activationPolicy"` (default `activationPolicyRuntime()`: denext's
+   * pinned runtime from `3.0.0-denext.6`).
+   */
+  readonly activationPolicy?: boolean;
 }
 
 /**
@@ -405,7 +456,12 @@ export async function writeLaufeyLaunchConfig(
   options: LaufeyLaunchWriteOptions = {},
 ): Promise<string | null> {
   const config = await loadConfigBeside(entryUrl);
-  const launch = packagedLaunchConfig(config, os, options.strict ?? strictLaunchRuntime());
+  const launch = packagedLaunchConfig(
+    config,
+    os,
+    options.strict ?? strictLaunchRuntime(),
+    options.activationPolicy ?? activationPolicyRuntime(),
+  );
   if (launch.passkeyRpIds?.length === 0) {
     console.warn(
       "  denext: desktop.capabilities.passkeys lists no relying party, so the packaged app " +
@@ -513,9 +569,11 @@ async function writeJsonEdit(
  * the origin + identifier (when an origin is set), the deep-link schemes (the runtime's list for
  * launch arguments, `openurl` and scheme registration), `singleInstance` (the intent; the lock
  * itself is `laufey-launch.json`'s) and `allowedNavigationOrigins` (the navigation guard's extra
- * origins, only when configured: a runtime before 2.9.7-denext.18 refuses the key). The
- * identifier rides along whenever it is valid, since the runtime needs it to register schemes on
- * Linux and next to `singleInstance`.
+ * origins, only when configured: a runtime before 2.9.7-denext.18 refuses the key) and
+ * `initialWindow` (the window the runtime starts with, only when `desktop.window` hides it at
+ * launch or makes it frameless, transparent or non-activating; every supported runtime reads it).
+ * The identifier rides along whenever it is valid, since the runtime needs it to register schemes
+ * on Linux and next to `singleInstance`.
  */
 function appJsonBody(
   config: unknown,
@@ -529,6 +587,9 @@ function appJsonBody(
     singleInstance: typeof app?.singleInstance === "boolean" ? app.singleInstance : undefined,
     update: updatePublicKey ? { publicKey: updatePublicKey } : undefined,
     allowedNavigationOrigins: nonEmpty(desktopNavigationOrigins(config)),
+    initialWindow: desktopInitialWindow(
+      resolveDesktopWindowSettings((config as { desktop?: unknown } | undefined)?.desktop),
+    ),
   });
   if (Object.keys(wanted).length === 0) return null;
   const identifier = validAppIdentifier(identity?.identifier ?? app?.identifier);
@@ -540,6 +601,7 @@ function appJsonBody(
     singleInstance: identifier ? wanted.singleInstance : undefined,
     update: wanted.update,
     allowedNavigationOrigins: wanted.allowedNavigationOrigins,
+    initialWindow: wanted.initialWindow,
   });
 }
 

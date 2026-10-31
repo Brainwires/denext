@@ -313,7 +313,11 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   // and the config schema, the CLI's verb descriptions and the Google Fonts families ship
   // Brotli-packed. Those three moved to docs-corpus first, which broke the CLI run from a checkout
   // outside its workspace: it resolved the corpus from JSR, where the commit's modules were not
-  // published yet, or not past Deno's minimum dependency age. Raise it only with the reason.
+  // published yet, or not past Deno's minimum dependency age. The 4.10-f train (19.73 MiB) packed
+  // the `denext ui` assets, the dev page scripts, the scaffolded desktop packaging scripts and the
+  // expo / React Native manifests in-package (scripts/gen-packed-texts.ts, tests/packed-texts.test.ts)
+  // → 19.59 MiB; the guard stays at 19.75 MiB for the trains merging after it. Raise it only with
+  // the reason.
   const files = await publishedFiles();
   if (!files) return; // not a git checkout: nothing to measure
   const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
@@ -325,6 +329,7 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
       "denext.config.schema.json",
       "src/build/native-templates/ota.ts",
       "src/compat/next/font/google-families.ts",
+      "src/plugin/catalog.json",
     ]
   ) assert(!files.has(file), `${file} is published again`);
   for (
@@ -337,6 +342,7 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
       "src/cli/command-meta.packed.ts",
       "src/ui/form/config-schema.packed.ts",
       "src/compat/next/font/google-families.packed.ts",
+      "src/plugin/catalog.packed.ts",
     ]
   ) assert(files.has(file), `${file} is not published`);
 });

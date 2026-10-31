@@ -62,6 +62,12 @@ const RPC_PATH = "/_denext/desktop/rpc";
 const EVENTS_PATH = "/_denext/desktop/events";
 /** The header carrying the per-launch token. */
 const TOKEN_HEADER = "x-denext-desktop-token";
+/** The header naming the calling window (its per-window token; absent: the main window). */
+const WINDOW_HEADER = "x-denext-desktop-window";
+/** The header naming the calling document (a random id per page load). */
+const PAGE_HEADER = "x-denext-desktop-page";
+/** How many retired page ids are remembered per window (late requests from a page gone). */
+const RETIRED_PAGES = 16;
 /** The largest RPC body accepted, in bytes (matches the client's cap). */
 const MAX_RPC_BODY_BYTES = 4 * 1024 * 1024;
 /** The default per-method handler timeout, in ms. */
@@ -71,8 +77,23 @@ const DEFAULT_HANDLER_TIMEOUT_MS = 30_000;
 export interface DesktopBridgeOptions {
   /** The OS app-support directory handed to handlers as {@link DesktopCapCtx.appSupportDir}. */
   readonly appSupportDir?: string;
-  /** A getter for the app window (Deno's `BrowserWindow`), for window/menu/tray capabilities. */
-  readonly getWindow?: () => unknown;
+  /**
+   * A getter for an app window (Deno's `BrowserWindow`) by window id, for window/menu/tray
+   * capabilities ({@linkcode DesktopCapCtx.window} is the calling window's).
+   */
+  readonly getWindow?: (windowId: string) => unknown;
+  /**
+   * The window a per-window token names, or `undefined` for none (the request is refused: a
+   * closed window's page). Without it every request is the main window's.
+   */
+  readonly resolveWindow?: (windowToken: string) => string | undefined;
+  /**
+   * Whether `window` may call capability `cap` (a window opened with a capability subset). A
+   * refused call answers `unavailable`, the page's web fallback. Default: every window, every cap.
+   */
+  readonly allowed?: (window: string, cap: string) => boolean;
+  /** How many windows are open (default 1): with more than one, page loads are told per window. */
+  readonly windowCount?: () => number;
   /** When true (dev), an unexpected handler error includes its message; production stays generic. */
   readonly dev?: boolean;
   /** The retained-event buffer size for replay (see {@link DesktopEventLog}). */
@@ -96,13 +117,24 @@ export interface DesktopBridge {
     token: string,
     info?: DesktopServeInfo,
   ): Promise<Response | null>;
-  /** Push an event to the page's stream (its `cap` need not be a registered capability's). */
-  emit(cap: string, event: string, data: unknown): void;
   /**
-   * The window started a new top-level page load: run every capability's
-   * {@link DesktopCapability.onPageLoad} so state the previous page owned is released. Never throws.
+   * Push an event to the pages' streams (its `cap` need not be a registered capability's): every
+   * window's, or only `target`'s.
    */
-  pageLoaded(): Promise<void>;
+  emit(cap: string, event: string, data: unknown, target?: string): void;
+  /**
+   * A window started a new top-level page load: run the capabilities'
+   * {@link DesktopCapability.onPageLoad} so state the previous page owned is released (every
+   * capability's for the main window, the {@link DesktopCapability.perWindow} ones' for another).
+   * Never throws.
+   */
+  pageLoaded(windowId?: string): Promise<void>;
+  /**
+   * The server saw a top-level navigation it cannot attribute to a window: with one window open,
+   * that window's page load ({@link pageLoaded}); with several, nothing — each page's first request
+   * then says which window reloaded.
+   */
+  navigationStarted(): Promise<void>;
   /** The event log (tests). */
   readonly events: DesktopEventLog;
 }
@@ -348,9 +380,14 @@ export function createDesktopBridge(
   const dev = options.dev ?? false;
   const trust = options.trust ?? LOOPBACK_TRUST;
 
-  /** Validate input, run the handler under its deadline, strip output — into an envelope. */
+  const pages = createPageTracker((windowId) => pageLoaded(windowId));
+
   /** The context a handler runs with; `signal` is the deadline's abort signal. */
-  const makeCtx = (cap: DesktopCapability, signal: AbortSignal): DesktopCapCtx => ({
+  const makeCtx = (
+    cap: DesktopCapability,
+    signal: AbortSignal,
+    windowId: string,
+  ): DesktopCapCtx => ({
     emit: (event, data) => {
       if (cap.events?.includes(event) !== true) {
         throw new Error(`desktop cap "${cap.name}" emitted undeclared event "${event}"`);
@@ -359,16 +396,37 @@ export function createDesktopBridge(
     },
     appSupportDir: options.appSupportDir ?? "",
     os: Deno.build.os as "darwin" | "windows" | "linux",
-    window: options.getWindow?.(),
+    window: options.getWindow?.(windowId),
+    windowId,
     signal,
     runOnMainThread: runOnDesktopMainThread,
   });
+
+  /** The calling window's id, or the 403 for a window token that names no open window. */
+  const callerWindow = (request: Request): string | Response => {
+    const presented = request.headers.get(WINDOW_HEADER);
+    if (presented === null || presented === "" || !options.resolveWindow) return "main";
+    return options.resolveWindow(presented) ?? fail(403, "forbidden", "unknown window");
+  };
+
+  const pageLoaded = async (windowId: string = "main") => {
+    pages.forget(windowId);
+    for (const cap of registry.values()) {
+      if (!cap.onPageLoad || (windowId !== "main" && cap.perWindow !== true)) continue;
+      try {
+        await cap.onPageLoad(windowId);
+      } catch (err) {
+        console.error(`desktop: ${cap.name}.onPageLoad failed`, dev ? err : "");
+      }
+    }
+  };
 
   const invokeMethod = async (
     cap: DesktopCapability,
     method: CapMethod,
     args: unknown,
     request: Request,
+    windowId: string,
   ): Promise<Response> => {
     const inp = await checkInput(method, args);
     if (inp instanceof Response) return inp;
@@ -378,7 +436,7 @@ export function createDesktopBridge(
       method.timeoutMs === false ? AbortSignal.any([deadline, request.signal]) : deadline;
     const ran = await runHandlerWithDeadline(
       method,
-      (signal) => makeCtx(cap, lifeline(signal)),
+      (signal) => makeCtx(cap, lifeline(signal), windowId),
       inp.input,
       dev,
     );
@@ -394,25 +452,43 @@ export function createDesktopBridge(
   ): Promise<Response> => {
     const gate = gateRpc(request, token, trust, info);
     if (gate) return gate;
+    const windowId = callerWindow(request);
+    if (windowId instanceof Response) return windowId;
     const call = await readRpcCall(request);
     if (call instanceof Response) return call;
-    // Allowlist: an unknown capability or method is `unavailable` (the page falls back to web).
-    const cap = registry.get(call.cap);
-    // OWN methods only: `methods` is a plain object, so `constructor` / `__proto__` / `toString`
-    // would otherwise resolve through the prototype and crash as a 500 instead of `unavailable`.
-    const method = cap && Object.hasOwn(cap.methods, call.method)
-      ? cap.methods[call.method]
-      : undefined;
-    if (!cap || !method) {
+    await pages.seen(windowId, request.headers.get(PAGE_HEADER));
+    const found = lookUp(windowId, call.cap, call.method);
+    if (!found) {
       return fail(404, "unavailable", `capability ${call.cap}.${call.method} is not enabled`);
     }
-    return await invokeMethod(cap, method, call.args, request);
+    return await invokeMethod(found.cap, found.method, call.args, request, windowId);
   };
 
-  const handleEvents = (request: Request, token: string, info?: DesktopServeInfo): Response => {
+  /**
+   * The capability method a call names, or `undefined`. Allowlist: an unknown capability or
+   * method is `unavailable` (the page falls back to web), as is one the calling window was not
+   * given.
+   */
+  const lookUp = (windowId: string, capName: string, methodName: string) => {
+    if (options.allowed?.(windowId, capName) === false) return undefined;
+    const cap = registry.get(capName);
+    // OWN methods only: `methods` is a plain object, so `constructor` / `__proto__` / `toString`
+    // would otherwise resolve through the prototype and crash as a 500 instead of `unavailable`.
+    if (!cap || !Object.hasOwn(cap.methods, methodName)) return undefined;
+    return { cap, method: cap.methods[methodName] };
+  };
+
+  const handleEvents = async (
+    request: Request,
+    token: string,
+    info?: DesktopServeInfo,
+  ): Promise<Response> => {
     const gate = gateEvents(request, token, trust, info);
     if (gate) return gate;
-    const stream = events.open(request.headers.get("last-event-id"));
+    const windowId = callerWindow(request);
+    if (windowId instanceof Response) return new Response(null, { status: 403 });
+    await pages.seen(windowId, request.headers.get(PAGE_HEADER));
+    const stream = events.open(request.headers.get("last-event-id"), windowId);
     return new Response(stream, {
       headers: {
         "content-type": "text/event-stream; charset=utf-8",
@@ -425,22 +501,58 @@ export function createDesktopBridge(
   return {
     handle: async (request, url, token, info) => {
       if (url.pathname === RPC_PATH) return await handleRpc(request, token, info);
-      if (url.pathname === EVENTS_PATH) return handleEvents(request, token, info);
+      if (url.pathname === EVENTS_PATH) return await handleEvents(request, token, info);
       return null;
     },
-    emit: (cap, event, data) => {
-      events.append(cap, event, data);
+    emit: (cap, event, data, target) => {
+      events.append(cap, event, data, target);
     },
-    pageLoaded: async () => {
-      for (const cap of registry.values()) {
-        if (!cap.onPageLoad) continue;
-        try {
-          await cap.onPageLoad();
-        } catch (err) {
-          console.error(`desktop: ${cap.name}.onPageLoad failed`, dev ? err : "");
-        }
-      }
+    pageLoaded,
+    navigationStarted: async () => {
+      if ((options.windowCount?.() ?? 1) <= 1) await pageLoaded("main");
     },
     events,
+  };
+}
+
+/** Which page each window shows, by the page id its requests carry. */
+interface PageTracker {
+  /**
+   * A request from `pageId` in `windowId`: when the window showed another page before, that page
+   * is gone, so its state is released first. A page that already went (a late request) changes
+   * nothing.
+   */
+  seen(windowId: string, pageId: string | null): Promise<void>;
+  /** The window's page went (released by the caller): the next page id is its first. */
+  forget(windowId: string): void;
+}
+
+/**
+ * Track the page each window shows, so a window's reload is noticed from its new page's first
+ * request when the navigation itself could not be attributed (several windows).
+ *
+ * @param released Release what `windowId`'s previous page held.
+ */
+function createPageTracker(released: (windowId: string) => Promise<void>): PageTracker {
+  const current = new Map<string, string>();
+  const retired = new Map<string, string[]>();
+  return {
+    seen: async (windowId, pageId) => {
+      if (pageId === null || pageId === "" || pageId.length > 64) return;
+      const was = current.get(windowId);
+      if (was === pageId || retired.get(windowId)?.includes(pageId)) return;
+      // The release forgets the previous page (it retires its id).
+      if (was !== undefined) await released(windowId);
+      current.set(windowId, pageId);
+    },
+    forget: (windowId) => {
+      const was = current.get(windowId);
+      if (was === undefined) return;
+      current.delete(windowId);
+      const list = retired.get(windowId) ?? [];
+      list.push(was);
+      if (list.length > RETIRED_PAGES) list.shift();
+      retired.set(windowId, list);
+    },
   };
 }

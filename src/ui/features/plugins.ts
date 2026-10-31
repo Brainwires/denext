@@ -21,7 +21,7 @@ import { isJsrSpec } from "../jsr.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
 import { CONFIG_FILES } from "../../build/paths.ts";
-import CATALOG from "../../plugin/catalog.json" with { type: "json" };
+import { pluginCatalog } from "../../plugin/catalog.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
 import {
   type ConfiguredPlugin,
@@ -74,7 +74,7 @@ export interface CatalogRow {
 }
 
 /** The catalogued first-party packages, in catalog order. */
-export const CATALOG_ROWS: readonly CatalogRow[] = CATALOG
+export const CATALOG_ROWS: readonly CatalogRow[] = pluginCatalog()
   .plugins as unknown as readonly CatalogRow[];
 
 /** Where a catalogued package's documentation lives (always absolute — the UI is not the site). */

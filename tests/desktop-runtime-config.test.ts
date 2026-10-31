@@ -163,7 +163,7 @@ Deno.test({
 
 Deno.test("the examples' desktop entries import .deno-desktop/config.json, committed in sync with the config", async () => {
   const { desktopRuntimeConfigText } = await import("../src/build/desktop-app-config.ts");
-  for (const example of ["native", "clerk", "desktop-kitchen-sink", "rn-desktop"]) {
+  for (const example of ["native", "clerk", "desktop-kitchen-sink", "rn-desktop", "companion"]) {
     const dir = join(REPO, "examples", example);
     const entry = await Deno.readTextFile(join(dir, "desktop.ts"));
     assertStringIncludes(

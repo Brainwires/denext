@@ -8,6 +8,142 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.0] - 2026-10-31
+
+### Added
+
+- **Tray events with their detail, `popUpMenu()`, and the macOS activation policy** (Deno Desktop
+  runtime 3.0.0-denext.6, gated on `FIRST_OVERLAY_TRAY_RUNTIME`). A tray's handlers get the
+  runtime's `TrayMouseEvent` detail (`button`, `modifiers`, `x` / `y`, `double`; `null` on an older
+  runtime): `onClick(handler(event, detail))` hears the primary button, and `tray.on(type, handler)`
+  in `denext/desktop/app` (the backend handle's `on` and `runDesktop({ tray: { onContextMenu } })`
+  in `desktop.ts`) hears `click`, `dblclick`, `contextmenu` (a right click), `auxclick` (a middle
+  click) and `mouseenter` / `mouseleave` (macOS, Windows). `tray.popUpMenu()` opens the tray's menu
+  at the icon from another gesture than the right click. `appCapabilities()` folds in
+  `Deno.Tray.capabilities()` (`trayClick`, `trayDoubleClick`, `trayRightClick`, `trayMiddleClick`,
+  `trayHover`, `trayModifiers`, `trayPosition`, `trayPopUpMenu`) and adds `activationPolicy`.
+  `setActivationPolicy("regular" | "accessory" | "prohibited")` / `getActivationPolicy()` (and
+  `DesktopRuntime.setActivationPolicy` / `getActivationPolicy`) drive `Deno.dock`'s policy, falling
+  back to the Dock icon's visibility on an older runtime. `desktop.app.activationPolicy`
+  (`"regular"` / `"accessory"`; `desktop.app.dock: false` means `"accessory"`) is written to the
+  packaged macOS app's `laufey-launch.json` and passed as `LAUFEY_ACTIVATION_POLICY` to
+  `denext desktop run` / `dev`, so an accessory app shows no Dock icon from its first frame;
+  `"regular"` with `dock: false` is a config error. `openWindow` takes `overlay: true` (a
+  wlr-layer-shell surface on wlroots compositors, KDE Plasma and COSMIC) and passes `skipTaskbar` at
+  creation; `windowCapabilities()` adds `visibleOnFullScreen`, `layerShell` and `activationPolicy`.
+  The `.deb` recommends `libgtk-layer-shell0` and `speech-dispatcher`, the `.rpm` gtk-layer-shell
+  (by soname) and `speech-dispatcher`.
+- **Tray-first and overlay desktop apps, and several windows** (`denext/desktop/window`,
+  `denext/desktop/app`, `denext.config.ts`'s `desktop`). `desktop.window.show: false` starts the app
+  with no visible window and no flash, and `frameless`, `transparent` and `focusable: false` (a
+  non-activating panel) make the first window an overlay; all four are written to
+  `.deno-desktop/app.json`'s `initialWindow`, which every supported runtime reads.
+  `desktop.window.alwaysOnTop` (a boolean or a level), `opacity`, `skipTaskbar` and
+  `visibleOnAllWorkspaces` are applied at launch. `desktop.app.keepAlive` keeps the app running with
+  no window (on by default with a tray; a page's `window.close()` then closes its own window), and
+  `desktop.app.dock: false` / `setDockVisible()` hide the macOS Dock icon; a Dock click with no
+  window showing shows the main window (`onDockReopen`). `desktop.tray` (or `runDesktop({ tray })`)
+  is a tray icon the backend owns: made before any page loads, kept across reloads, its clicks
+  handed to `desktop.ts`'s handlers (`DesktopRuntime.tray`) and every page (`getTray()`), with an
+  optional panel at the icon (the runtime's `Tray.attachPanel`, toggled by a click, hidden on blur,
+  placed inside the work area so it opens above a bottom taskbar; `showTrayPanel` /
+  `hideTrayPanel` / `toggleTrayPanel`). `openWindow()` opens another window of the app on one of
+  its pages and returns a handle (`show`, `hide`, `focus`, `close`, `navigate`, `setBounds`,
+  `getBounds`, `onClosed`, `onFocus`, `onBlur`), with an optional capability subset; `getWindows`,
+  `windowHandle` and `currentWindowId` find them, and `DesktopRuntime.windows` opens them from the
+  backend. Each window's page drives its own window: the bridge tells windows apart by a per-window
+  token the runtime hands only that window's documents, and a reload releases only that window's
+  tray icons, close guard and drops. `onWindowFocus` / `onWindowBlur`, `setWindowOpacity`,
+  `setAlwaysOnTop(flag, level)` and, from runtime 3.0.0-denext.6 (`windowCapabilities()` turns
+  each on), `setIgnoreMouseEvents(ignore, { forward })`, `setHitRegion(rects)`,
+  `setVisibleOnAllWorkspaces` and `setSkipTaskbar`. `windowCapabilities()` adds `transparent`,
+  `nonActivating`, `opacity`, `clickThrough`, `clickThroughForward`, `hitRegion`,
+  `visibleOnAllWorkspaces`, `skipTaskbar`, `alwaysOnTopLevels` and `focusEvents`;
+  `appCapabilities()` adds `dockVisibility`, `backendTray` and `trayPanel`. A capability's
+  `onPageLoad` gets the window's id, and `perWindow: true` has it called for every window.
+- **`speak()` / `stopSpeaking()` in `denext/mobile`**: the Capacitor text-to-speech plugin in the
+  shell, else the Web Speech API (WKWebView, WebView2, CEF on macOS and Windows), else the desktop
+  runtime's OS speech through the new `textToSpeech` capability (`Deno.desktop.speech`, runtime
+  3.0.0-denext.6; for WebKitGTK on Linux).
+- **examples/companion and examples/hangar use them.** Loopy is a transparent, frameless overlay
+  that never takes the focus, on top on every Space, with no Dock or taskbar entry and a tray to
+  show, hide and quit it; it lets clicks through outside itself where the runtime can. With runtime
+  3.0.0-denext.6 Loopy starts as an accessory app (no Dock icon flash), catches clicks only on
+  itself (a hit region), floats at the `"status"` level on every Space including full-screen apps,
+  and reads its bubbles aloud with the OS's voice when **Voice on** is set. Hangar launches as an
+  accessory app, opens its menu on a Control-click (`popUpMenu`), refreshes its tooltip on hover
+  and is a regular app with a Dock icon only while a full window is open (`setActivationPolicy`).
+  Hangar
+  starts with no window and no Dock icon, owns its tray in the backend, shows a real panel at the
+  icon, and opens each page in a window of its own, staying alive with every window closed.
+- **Hangar, a tray-first desktop example** (`examples/hangar`): an app that lives in the tray /
+  menu bar and manages QEMU disk images and running VMs. It adopts existing VM folders that start
+  with a `start.sh` and creates its own from a `hangar.json`; starts VMs headless or windowed,
+  shuts them down over QMP (`system_powerdown`, then `quit` after a timeout) and force stops one by
+  its exact pid; shows QMP status, RAM and CPU per VM against a RAM budget; and lists, creates,
+  grows, converts and snapshots images with `qemu-img`. Destructive actions take a typed confirm
+  that the backend checks again, and every action stays inside a library VM's folder. The backend
+  is a `defineDesktopExtension` over a fake-able host, tested without QEMU; the README lists what
+  the example approximates today (a window hidden at launch, the page-owned tray, the main window
+  resized at the tray icon as the panel).
+- **examples/companion: Loopy, a desktop companion** — an original paper-clip character (a teal
+  Gem-style double-oval clip, drawn in hand-written SVG and animated with CSS and Web Animations)
+  that sits in a small always-on-top Deno Desktop window in the bottom-right corner of the primary
+  display, talks in speech bubbles with optional buttons, and reacts to other programs: a
+  token-protected loopback inbox (`POST /api/loopy/say`, token generated on the first run and kept
+  owner-only in the app's data folder) takes messages from scripts, and `scripts/loopy-say.ts` posts
+  them (`--wait` returns the pressed button). A sample `Notification` / `Stop` hook pair makes Loopy
+  pop up when a Claude Code session needs approval or finishes. The window chrome is
+  feature-detected through `windowCapabilities()`, and in a browser (`denext dev`) Loopy renders in
+  the page with demo buttons for every move.
+
+### Changed
+
+- **denext pins Deno runtime 3.0.0-denext.6** (`deno task desktop:pin-runtime
+  denext-runtime-v3.0.0-denext.6`): the toolchain and the Deno Desktop runtime move from
+  3.0.0-denext.5 together (every archive checked against the release's manifest, SHA256SUMS and
+  build-provenance attestation), and both pins name 3.0.0-denext.5 as their rollback. ci.yml's
+  backend-integration toolchain zip follows. V8 (15.2.124.45) and the glibc floor (2.27) are
+  unchanged. The release is a Deno Desktop one: overlay windows (click-through, hit regions, every
+  workspace, the taskbar entry, always-on-top levels, hidden and layer-shell windows, transparent
+  WebView2 windows), tray events with their detail, `popUpMenu`, `Tray.capabilities()` and laufey's
+  own StatusNotifierItem on Linux, the macOS activation policy and `Deno.desktop.speech`; the window
+  capabilities `feat/desktop-windowing` already detects now report them.
+
+### Fixed
+
+- **A paused Deno Desktop download resumes at once.** `pauseFileTransfer` on a Deno Desktop
+  download answered as soon as the runtime acknowledged the pause, which can come before the
+  download's own call has settled in the page: the transfer was still listed as running, so a
+  `resumeFileTransfer` straight after it answered `false`, and the call's request was still in
+  flight. The pause now answers once that call has settled (the transfer is `paused`, its
+  `paused` event sent), and answers `false` when a cancel landed first.
+- **`denext doctor` explains a `@denext` dependency-age exemption.** A `deno.json` that exempts
+  `jsr:@denext/*` (or another `@denext` entry) from Deno's minimum dependency age still fails the
+  non-critical `dependency age` check, since the hold is what keeps a compromised release out while
+  it is fresh; the message now says so and links the guide. A harness that deliberately builds
+  against just-published `@denext` releases sets `DENEXT_ALLOW_DENEXT_AGE_EXEMPTION=1`, and the
+  check passes, still naming the entries. The migration beds set it, so their one-day hold with
+  `@denext` exempt no longer reports a failure.
+- **A copy of denext reached by path finds its docs corpus and native templates.** An import map
+  that points at a copy of the published `@denext/denext` by path (a `vendor/jsr.io/…` tree, say),
+  and JSR's npm compatibility layer (`node_modules/@jsr/denext__denext`), load denext's modules from
+  `file:` URLs, which the MCP docs tools (`denext_search_docs`, `denext_read_docs`) and
+  `denext mobile add`'s native templates took for a denext checkout: they imported
+  `packages/docs-corpus/…` by a relative path that such a copy does not have, and failed. (A `"vendor": true` install keeps
+  `https://jsr.io/…` module URLs and was not affected.) A module now reads the sibling package by
+  path only when it runs from a real checkout (not under `vendor/jsr.io/` or `node_modules/`, and
+  the file is there), and imports `@denext/docs-corpus` otherwise, as from JSR.
+- **A copy of denext reached by path is no longer taken for a checkout elsewhere either.** Three
+  more places read a `file:` framework URL as "a denext checkout", which a copy of the published
+  package under `vendor/jsr.io/…` (mapped by path) or JSR's npm compatibility layer
+  (`node_modules/`) is too. `denext build --compile` read the framework's repository `deno.json`
+  for its import map, which a copy does not carry; the CLI re-ran itself with a framework+app
+  config merged from that same missing file for a project with `npm:` imports; and `denext ui`
+  started its verb children without the project's `--config`, so a child discovered the config
+  above the copy (a workspace root rather than the member). All three now ask the same location
+  check the docs corpus uses, and treat a copy as the published package.
+
 ## [4.10.5] - 2026-10-31
 
 ### Added
@@ -20199,7 +20335,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.5...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.0...development
+[4.11.0]: https://jsr.io/@denext/denext@4.11.0
 [4.10.5]: https://jsr.io/@denext/denext@4.10.5
 [4.10.4]: https://jsr.io/@denext/denext@4.10.4
 [4.10.3]: https://jsr.io/@denext/denext@4.10.3

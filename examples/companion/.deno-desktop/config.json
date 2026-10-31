@@ -1,0 +1,52 @@
+{
+  "desktop": {
+    "app": {
+      "identifier": "dev.denext.loopy",
+      "name": "Loopy",
+      "activationPolicy": "accessory"
+    },
+    "window": {
+      "width": 260,
+      "height": 300,
+      "title": "Loopy",
+      "resizable": false,
+      "frameless": true,
+      "transparent": true,
+      "focusable": false,
+      "alwaysOnTop": "status",
+      "visibleOnAllWorkspaces": true,
+      "skipTaskbar": true
+    },
+    "backdrop": "none",
+    "tray": {
+      "icon": "/tray.png",
+      "tooltip": "Loopy",
+      "menu": [
+        {
+          "id": "show",
+          "label": "Show Loopy"
+        },
+        {
+          "id": "hide",
+          "label": "Hide Loopy"
+        },
+        {
+          "separator": true
+        },
+        {
+          "role": "quit"
+        }
+      ]
+    },
+    "extraPermissions": {
+      "write": [
+        "$APPDATA"
+      ]
+    },
+    "installers": {
+      "macos": [],
+      "linux": [],
+      "windows": []
+    }
+  }
+}

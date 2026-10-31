@@ -2437,6 +2437,116 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
   },
 };`}
       </Code>
+      <h3 id="desktop-window-launch">How the app starts and ends</h3>
+      <p>
+        <code>desktop.window.show: false</code>{" "}
+        starts the app with no visible window and no flash: written to{" "}
+        <code>.deno-desktop/app.json</code>{" "}
+        (<code>initialWindow.showOnFirstLoad</code>), so the runtime never reveals the window it
+        starts with; its page still loads, and <code>showWindow()</code> reveals it.{" "}
+        <code>frameless</code>, <code>transparent</code> and <code>focusable: false</code>{" "}
+        are creation-time settings and go the same way. The app quits when its last window closes;
+        {" "}
+        <code>desktop.app.keepAlive: true</code>{" "}
+        keeps it running with none (on by default when it has a{" "}
+        <a href="#desktop-backend-tray">backend tray</a>), and a page&apos;s{" "}
+        <code>window.close()</code>{" "}
+        then closes its own window instead of quitting. On macOS a click on the Dock icon with no
+        window showing shows the main window again (<code>onDockReopen</code> in{" "}
+        <code>denext/desktop/app</code> hears it).
+      </p>
+      <h3 id="desktop-overlay-windows">Overlay windows</h3>
+      <p>
+        A desktop companion, a HUD or a floating palette is a window with no chrome that never takes
+        the focus from the app the user is typing in, stays on top and lets clicks through where it
+        draws nothing:
+      </p>
+      <Code lang="ts">
+        {`export default {
+  desktop: {
+    // No Dock icon from the first frame (macOS); give the app a tray to come back through.
+    app: { activationPolicy: "accessory" },
+    window: {
+      width: 260, height: 300,
+      frameless: true,              // no title bar or chrome
+      transparent: true,            // macOS, Linux (WebKitGTK), Windows (WebView2); not CEF
+      focusable: false,             // a non-activating panel: never steals the focus
+      alwaysOnTop: "status",        // true ("floating") | "status" | "pop-up-menu" | "screen-saver"
+      visibleOnAllWorkspaces: true, // every Space / virtual desktop
+      skipTaskbar: true,            // Windows, Linux
+      opacity: 1,
+    },
+  },
+};`}
+      </Code>
+      <p>
+        At runtime the page has the same controls for its own window:{" "}
+        <code>setAlwaysOnTop(true, level)</code>, <code>setWindowOpacity</code>,{" "}
+        <code>setIgnoreMouseEvents(ignore, {"{ forward }"})</code>{" "}
+        (Electron&apos;s click-through; without <code>forward</code>{" "}
+        it is refused unless the app has a tray, since the window could never be clicked again),
+        {" "}
+        <code>setHitRegion(rects)</code>{" "}
+        (only these rectangles, in page pixels, catch clicks: pass your character&apos;s{" "}
+        <code>getBoundingClientRect()</code>), <code>setVisibleOnAllWorkspaces</code> and{" "}
+        <code>setSkipTaskbar</code>, and <code>onWindowFocus</code> /{" "}
+        <code>onWindowBlur</code>. Each is reported by <code>windowCapabilities()</code>{" "}
+        (<code>transparent</code>, <code>nonActivating</code>, <code>opacity</code>,{" "}
+        <code>clickThrough</code>, <code>clickThroughForward</code>, <code>hitRegion</code>,{" "}
+        <code>visibleOnAllWorkspaces</code>, <code>skipTaskbar</code>,{" "}
+        <code>alwaysOnTopLevels</code>, <code>focusEvents</code>, <code>visibleOnFullScreen</code>,
+        {" "}
+        <code>layerShell</code>,{" "}
+        <code>activationPolicy</code>). Click-through, hit regions, every-workspace visibility (with
+        {" "}
+        <code>visibleOnFullScreen</code>, over other apps&apos; full-screen windows on macOS at a
+        {" "}
+        <code>"status"</code> level or above), the taskbar setter and levels above{" "}
+        <code>"floating"</code>{" "}
+        need runtime 3.0.0-denext.6, which denext pins; an older runtime reports them{" "}
+        <code>false</code> and rejects <code>unsupported</code>, with no change to the app (a{" "}
+        <code>focusable: false</code>{" "}
+        window already joins every Space on macOS and stays off the taskbar elsewhere).{" "}
+        <code>openWindow({"{ overlay: true }"})</code>{" "}
+        makes a desktop overlay surface on a Wayland compositor with wlr-layer-shell (wlroots
+        compositors, KDE Plasma, COSMIC): above every window, on every workspace, out of the task
+        list (<code>layerShell</code>); elsewhere it is an ordinary window. The Linux packages
+        recommend gtk-layer-shell for it. <a href="/docs/examples">examples/companion</a> is one.
+      </p>
+      <h3 id="desktop-multi-window">More windows</h3>
+      <p>
+        <code>openWindow</code> opens another window of the app on one of its pages (Electron&apos;s
+        {" "}
+        <code>new BrowserWindow()</code>, Tauri&apos;s{" "}
+        <code>WebviewWindow</code>): a settings window, a document, an overlay. The URL is a path of
+        the app, never another site. The new window&apos;s page has the app&apos;s desktop
+        capabilities (or the <code>capabilities</code>{" "}
+        subset you give it, least privilege: every window shares the app origin, so this is not
+        isolation), and its own <code>denext/desktop/window</code>{" "}
+        calls act on itself. At most 8 are open at once besides the main window and the tray panel.
+      </p>
+      <Code lang="ts">
+        {`import { getWindows, openWindow, windowHandle } from "denext/desktop/window";
+
+const settings = await openWindow({
+  url: "/settings", title: "Settings", width: 520, height: 420,
+  capabilities: ["secureStore"], // optional: only these (plus its own window)
+});
+settings.onClosed(() => console.log("closed"));
+await settings.setBounds({ x: 100, y: 100 });
+
+await windowHandle("main").show(); // the window the app started with
+console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, …]`}
+      </Code>
+      <p>
+        From <code>desktop.ts</code>, <code>runDesktop()</code> resolves with{" "}
+        <code>windows.open(…)</code>, <code>windows.get(id)</code> and{" "}
+        <code>windows.list()</code>. Each window learns its id through a binding the runtime gives
+        only the app&apos;s own documents in that window; a page that cannot say (a runtime without
+        bindings) acts as the main window. A reload releases only what that window&apos;s page held
+        (its tray icons, its close guard, its drops); keep-awake holds and global shortcuts are
+        released when the main window&apos;s page reloads.
+      </p>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
       <p>
         <code>onFileDrop</code>{" "}
@@ -2745,7 +2855,92 @@ await bounce({ critical: true }); // until the app is focused`}
           home-screen quick actions set the Dock icon&apos;s menu on macOS (Windows and Linux have
           none, and the call does nothing there).
         </li>
+        <li>
+          <code>setDockVisible(false)</code>{" "}
+          hides the app&apos;s Dock icon (an accessory app: a menu-bar app or a companion), and{" "}
+          <code>desktop.app.dock: false</code>{" "}
+          does it at launch. On Windows and Linux there is no app-level icon (the call answers{" "}
+          <code>false</code>).
+        </li>
+        <li>
+          <code>setActivationPolicy("regular" | "accessory" | "prohibited")</code> and{" "}
+          <code>getActivationPolicy()</code> drive the macOS activation policy (Electron&apos;s{" "}
+          <code>app.setActivationPolicy</code>): a tray app can be <code>"accessory"</code>{" "}
+          (no Dock icon, no menu bar) and switch to <code>"regular"</code>{" "}
+          only while it has a full window open, which also brings it to the front.{" "}
+          <code>desktop.app.activationPolicy</code> (or <code>dock: false</code>, which means{" "}
+          <code>"accessory"</code>) is the policy the app starts in: denext writes it to the
+          packaged app&apos;s <code>laufey-launch.json</code> (<code>LAUFEY_ACTIVATION_POLICY</code>
+          {" "}
+          for <code>denext desktop run</code> /{" "}
+          <code>dev</code>), so no Dock icon flashes at launch. Both need runtime 3.0.0-denext.6
+          (<code>activationPolicy</code> in{" "}
+          <code>appCapabilities()</code>); on an older runtime the policy falls back to showing or
+          hiding the Dock icon once the backend starts.
+        </li>
       </ul>
+      <h3 id="desktop-backend-tray">A tray owned by the backend, and its panel</h3>
+      <p>
+        A tray-first app (a menu-bar app) wants its icon before any page loads and never removed by
+        a reload. <code>desktop.tray</code> makes it in{" "}
+        <code>runDesktop</code>, with an icon from the export, a tooltip, a menu and, optionally, a
+        panel at the icon: the runtime&apos;s{" "}
+        <code>Tray.attachPanel</code>, a frameless window that never activates the app, toggled by a
+        click on the icon and hidden when it loses the focus. denext places it under a menu-bar icon
+        or above a bottom taskbar icon, inside the display&apos;s work area (Linux reports no icon
+        position, so it opens where it last was).
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    app: { dock: false },        // keepAlive is on with a tray
+    window: { show: false },     // no window at launch
+    tray: {
+      icon: "/tray.png",         // public/tray.png
+      tooltip: "Hangar",
+      menu: [{ id: "open", label: "Open Hangar" }, { separator: true }, { role: "quit" }],
+      panel: { url: "/panel", width: 360, height: 480 },
+    },
+  },
+};
+
+// desktop.ts: the backend hears the clicks first
+const app = await runDesktop({ ...resolved, tray: { onMenuItem: (id) => { /* … */ } } });
+app.tray?.update({ tooltip: "2 VMs running" });
+
+// any page
+import { getTray, toggleTrayPanel } from "denext/desktop/app";
+const tray = await getTray(); // the same tray in every window; null without one
+tray?.onClick((e) => e === "doubleClick" && openWindow({ url: "/" }));
+tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Control-click: the menu
+tray?.on("mouseenter", () => void refreshTooltip()); // hover (macOS, Windows)`}
+      </Code>
+      <p>
+        From runtime 3.0.0-denext.6 every tray event carries the runtime&apos;s detail (
+        <code>button</code>, <code>modifiers</code>, <code>x</code> / <code>y</code>,{" "}
+        <code>double</code>; <code>null</code> on an older runtime): <code>onClick</code>{" "}
+        hears the primary button, a right click is <code>contextmenu</code>, a middle click{" "}
+        <code>auxclick</code>, and hover is <code>mouseenter</code> / <code>mouseleave</code>{" "}
+        (macOS, Windows), through <code>tray.on(type, handler)</code> in a page or the handle&apos;s
+        {" "}
+        <code>on</code> (and <code>runDesktop({"{ tray: { onContextMenu } }"})</code>) in{" "}
+        <code>desktop.ts</code>. A right click opens the tray&apos;s menu by itself;{" "}
+        <code>popUpMenu()</code>{" "}
+        opens it from another gesture, a Control-click say (not on Linux, where the tray host opens
+        it). <code>appCapabilities()</code> says what this OS delivers (<code>trayRightClick</code>,
+        {" "}
+        <code>trayMiddleClick</code>, <code>trayHover</code>, <code>trayModifiers</code>,{" "}
+        <code>trayPosition</code>, <code>trayPopUpMenu</code>), from the runtime&apos;s{" "}
+        <code>Deno.Tray.capabilities()</code>. The panel toggles on a plain left click only.
+      </p>
+      <p>
+        Its clicks reach the backend&apos;s handlers and every window&apos;s page;{" "}
+        <code>showTrayPanel</code>, <code>hideTrayPanel</code> and <code>toggleTrayPanel</code>{" "}
+        drive the panel. A page cannot destroy it. Where the session has no tray host the app gets
+        no icon, its main window is shown instead, and it is no longer kept alive by the tray.{" "}
+        <a href="/docs/examples">examples/hangar</a> is a tray-first app built this way.
+      </p>
       <h3 id="desktop-user-activity">Handoff and Spotlight</h3>
       <p>
         On macOS, under runtime 2.9.7-denext.20, <code>setUserActivity</code>{" "}

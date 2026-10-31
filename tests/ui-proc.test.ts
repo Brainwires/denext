@@ -4,7 +4,7 @@
 // the same moment, holds them) is read until it exits, not until they close.
 
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import { cliConfigArgs, cliInvocation, runDeno, taskkillPath } from "../src/ui/proc.ts";
 import { parseJsonDocument } from "../src/ui/child-json.ts";
 import { exited, spawnsOf } from "./helpers/spawns.ts";
@@ -180,6 +180,13 @@ Deno.test("cliConfigArgs: a remote CLI child is told the project's config; a che
     assertEquals(cliConfigArgs(url, root), [], "no config, nothing to pass");
     assertEquals(cliConfigArgs(url, undefined), []);
     assertEquals(cliConfigArgs("file:///checkout/cli.ts", app), [], "a checkout finds its own");
+    // A published copy reached by path has no config of its own: the child would discover the
+    // one above the copy (a workspace root rather than the member), so it is told the project's.
+    const config = ["--config", join(app, "deno.json")];
+    const vendored = toFileUrl(join(root, "vendor/jsr.io/@denext/denext/4.0.0/cli.ts")).href;
+    const npm = toFileUrl(join(root, "node_modules/@jsr/denext__denext/cli.js")).href;
+    assertEquals(cliConfigArgs(vendored, app), config, "a vendored copy is told");
+    assertEquals(cliConfigArgs(npm, app), config, "an npm-compat copy is told");
   } finally {
     await Deno.remove(root, { recursive: true });
   }

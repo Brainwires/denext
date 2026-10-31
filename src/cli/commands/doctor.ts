@@ -352,15 +352,39 @@ export async function platformFilesCheck(
 }
 
 /**
+ * The environment variable that marks a `@denext` dependency-age exemption as deliberate (a
+ * test harness that pins `@denext/*` releases published minutes ago, as the migration beds do):
+ * `"1"` turns {@linkcode depAgeExemptionCheck}'s failure into a pass that still names the entries.
+ */
+const DEP_AGE_EXEMPTION_ALLOWED_ENV = "DENEXT_ALLOW_DENEXT_AGE_EXEMPTION";
+
+/**
  * The dependency-age exemption check: a `deno.json` whose `minimumDependencyAge.exclude` lists a
  * `@denext` entry lets a just-published `@denext` release in before Deno's hold has passed.
  * `"jsr:@denext/*"` is what `create` / `migrate` wrote before 4.5.2 (`denext upgrade` removes
  * it); any other (`"jsr:@denext/denext"`, …) denext never writes, so it is the user's to remove.
- * Null without one.
+ * A failure for an app (not critical: the exit code is unchanged); a pass, still naming the
+ * entries, when {@linkcode DEP_AGE_EXEMPTION_ALLOWED_ENV} is `"1"`. Null without one.
+ *
+ * @param dir The project directory (its `deno.json`).
+ * @param env Reads the environment (default: the process's).
  */
-export async function depAgeExemptionCheck(dir: string): Promise<Check | null> {
+export async function depAgeExemptionCheck(
+  dir: string,
+  env: (name: string) => string | undefined = safeEnv,
+): Promise<Check | null> {
   const entries = denextExemptions((await readDenoJson(dir))?.minimumDependencyAge);
   if (!entries.length) return null;
+  const listed = entries.map((e) => `"${e}"`).join(", ");
+  if (env(DEP_AGE_EXEMPTION_ALLOWED_ENV) === "1") {
+    return {
+      name: "dependency age",
+      ok: true,
+      detail: `deno.json exempts ${listed} from Deno's minimum dependency age; allowed by ` +
+        `${DEP_AGE_EXEMPTION_ALLOWED_ENV}=1 (a harness that tests just-published @denext releases)`,
+      critical: false,
+    };
+  }
   const others = entries.filter((e) => e !== DENEXT_EXCLUDE);
   const fixes = [
     ...entries.includes(DENEXT_EXCLUDE)
@@ -376,12 +400,12 @@ export async function depAgeExemptionCheck(dir: string): Promise<Check | null> {
   return {
     name: "dependency age",
     ok: false,
-    detail:
-      `deno.json exempts ${
-        entries.map((e) => `"${e}"`).join(", ")
-      } from Deno's minimum dependency age, so a just-published @denext release resolves before ` +
-      `the hold has passed; fix: ${fixes.join("; ")} (keep an entry only if you publish denext ` +
-      "yourself)",
+    detail: `deno.json exempts ${listed} from Deno's minimum dependency age, so a just-published ` +
+      "@denext release resolves before the hold has passed — the hold is what keeps a " +
+      "compromised release out while it is fresh, and denext's own packages wait like every " +
+      `other dependency; fix: ${fixes.join("; ")}. Keep an entry only if you publish denext ` +
+      `yourself, or in a harness that tests its own fresh releases (${DEP_AGE_EXEMPTION_ALLOWED_ENV}=1 ` +
+      "marks it deliberate): https://denext.dev/docs/toolchain#supply-chain-hold",
     critical: false,
   };
 }

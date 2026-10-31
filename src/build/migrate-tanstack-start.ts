@@ -7,7 +7,7 @@
 // import or a top-level declaration); every other option is reported with the reason.
 
 import { join } from "@std/path";
-import CATALOG from "../plugin/catalog.json" with { type: "json" };
+import { pluginCatalog } from "../plugin/catalog.ts";
 import { anyExists } from "./migrate-fs.ts";
 import { mfs } from "./migrate-io.ts";
 import {
@@ -52,7 +52,7 @@ export interface TanstackStartMigrateInfo {
 
 /** The option keys `tanstackStart()` takes, from the first-party plugin catalog. */
 function pluginOptionKeys(): Set<string> {
-  const entry = CATALOG.plugins.find((p) => p.name === "@denext/tanstack-start");
+  const entry = pluginCatalog().plugins.find((p) => p.name === "@denext/tanstack-start");
   return new Set((entry as { configKeys?: string[] } | undefined)?.configKeys ?? []);
 }
 

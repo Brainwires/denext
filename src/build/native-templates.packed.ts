@@ -4,6 +4,7 @@
 // The pack ships in @denext/docs-corpus (packages/docs-corpus/native-templates.ts), out of the
 // 20 MiB @denext/denext package; this module loads it and lays its records out.
 
+import { checkoutFile } from "./checkout-file.ts";
 import { packedRecords } from "./packed-text.ts";
 
 /**
@@ -11,10 +12,12 @@ import { packedRecords } from "./packed-text.ts";
  * version (every release publishes it first). From a checkout — the repository, a checkout an app
  * links by path, a `deno compile` binary built from one — the same commit's file, read by path:
  * the docs-corpus release with that commit's pack may not exist yet, or be younger than Deno's
- * minimum dependency age.
+ * minimum dependency age. A vendored copy (`"vendor": true`) is `file:` too but no checkout: it
+ * imports the package, as published.
  */
-const pack: { NATIVE_TEMPLATES_BROTLI_BASE64: string } = import.meta.url.startsWith("file:")
-  ? await import(new URL("../../packages/docs-corpus/native-templates.ts", import.meta.url).href)
+const local = checkoutFile("../../packages/docs-corpus/native-templates.ts", import.meta.url);
+const pack: { NATIVE_TEMPLATES_BROTLI_BASE64: string } = local
+  ? await import(local)
   : await import("@denext/docs-corpus/native-templates");
 
 /** Every native template record, by source module and export name. */

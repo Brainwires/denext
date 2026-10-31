@@ -102,6 +102,49 @@ Deno.test("discovery gives up on its budget when a plugin setup hangs", async ()
   });
 });
 
+Deno.test("a budget give-up waits out the file probe in flight and starts no other", async () => {
+  // A slow `Deno.stat` (a loaded Windows Arm64 runner) used to outlive the give-up and finish
+  // inside the NEXT test, which Deno's op sanitizer reports as a leak. Hold the first probe open
+  // and fire the budget by hand, so the order is forced rather than timed.
+  await withProject(commandsConfig("seed"), async (dir) => {
+    const held = Promise.withResolvers<Deno.FileInfo>();
+    let statCalls = 0;
+    let fireBudget: (() => void) | undefined;
+    const realStat = Deno.stat;
+    const realSetTimeout = globalThis.setTimeout;
+    Deno.stat = (() => {
+      statCalls++;
+      return held.promise;
+    }) as typeof Deno.stat;
+    let pending: Promise<unknown>;
+    try {
+      // The budget timer is created synchronously inside the call; capture it there.
+      globalThis.setTimeout = ((callback: () => void) => {
+        fireBudget = callback;
+        return -1;
+      }) as typeof setTimeout;
+      try {
+        pending = loadPluginCommands(buildRegistry(), dir, { timeoutMs: 50 });
+      } finally {
+        globalThis.setTimeout = realSetTimeout;
+      }
+      assert(fireBudget, "the budget timer was armed");
+      assertEquals(statCalls, 1, "resolution is blocked on its first probe");
+      let settled = false;
+      pending.then(() => settled = true, () => settled = true);
+      fireBudget();
+      // Drain every queued microtask (one macrotask turn): the result must still wait.
+      await new Promise((resolve) => realSetTimeout(resolve, 0));
+      assertEquals(settled, false, "the give-up waits for the probe in flight");
+      held.reject(new Deno.errors.NotFound("held"));
+      assertEquals(await pending, { loaded: 0, timedOut: true });
+      assertEquals(statCalls, 1, "no probe starts after the give-up");
+    } finally {
+      Deno.stat = realStat;
+    }
+  });
+});
+
 Deno.test("a config that throws degrades to an error result, not a throw", async () => {
   await withProject(`throw new Error("boom");\n`, async (dir) => {
     const reg = buildRegistry();

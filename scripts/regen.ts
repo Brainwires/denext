@@ -91,7 +91,7 @@ export const STEPS: readonly RegenStep[] = [
   {
     name: "deno task gen:plugin-catalog",
     script: ["scripts/gen-plugin-catalog.ts"],
-    outputs: ["src/plugin/catalog.json"],
+    outputs: ["src/plugin/catalog.json", "src/plugin/catalog.packed.ts"],
     phase: 1,
   },
   {

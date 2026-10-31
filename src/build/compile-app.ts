@@ -38,6 +38,7 @@ import {
   readFrameworkJson,
 } from "./bundle.ts";
 import { relocatableImportMap } from "./desktop-import-map.ts";
+import { runsFromCheckout } from "./checkout-file.ts";
 import { denoExecutable } from "./deno-executable.ts";
 import { readConfig, readImportsAbsolute } from "./module-config.ts";
 import { supplyChainConfig } from "./workspace-imports.ts";
@@ -481,6 +482,21 @@ export function entrySource(
 }
 
 /**
+ * The framework's import map a compile carries: a checkout's (its modules import their
+ * dependencies bare, resolved through its deno.json), none for a published copy — from JSR, or
+ * reached by path under `vendor/jsr.io/` or `node_modules/` — whose imports are fully qualified
+ * and which carries no repository deno.json to read.
+ *
+ * @param root The framework root URL.
+ * @returns The absolutized import map, or `{}`.
+ */
+export async function compileFrameworkImports(
+  root: string = frameworkRootUrl(),
+): Promise<Record<string, string>> {
+  return runsFromCheckout(root) ? await frameworkImports() : {};
+}
+
+/**
  * The deno config the compile resolves with: the app's import map (plus the framework's, for a
  * local checkout, and the build's CSS import map, so the original modules' stylesheet imports
  * resolve to their shims), every local target made relative to the written config so the binary
@@ -499,13 +515,12 @@ async function writeCompileConfig(
     standaloneSpecifier(entryUrl),
   );
   await carryNpmrc(paths.projectDir, dir);
-  const local = frameworkRootUrl().startsWith("file:");
   const css = await readConfig(join(paths.outDir, "css-config.json"));
   const cssRedirects = Object.fromEntries(
     Object.entries(css.imports ?? {}).filter(([k]) => k.endsWith(".css") || k.endsWith(".scss")),
   );
   const imports = {
-    ...(local ? await frameworkImports() : {}),
+    ...await compileFrameworkImports(),
     ...await readImportsAbsolute(paths.configPath),
     ...cssRedirects,
   };

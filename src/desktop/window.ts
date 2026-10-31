@@ -11,6 +11,15 @@
  * guarded close and file drag and drop need denext's pinned Deno Desktop runtime — elsewhere such a
  * call rejects `unsupported`. Ask {@linkcode windowCapabilities} what this OS and backend can do.
  *
+ * Every call acts on the window of the page that makes it. {@linkcode openWindow} opens more of
+ * the app's windows (each on a page of the app) and returns a {@linkcode DesktopWindowHandle} that
+ * acts on that one by id; {@linkcode onWindowFocus} / {@linkcode onWindowBlur} follow the focus.
+ * Overlay windows (a desktop companion, a HUD) use {@linkcode setWindowOpacity},
+ * {@linkcode setIgnoreMouseEvents}, {@linkcode setHitRegion},
+ * {@linkcode setVisibleOnAllWorkspaces} and {@linkcode setSkipTaskbar}; the last three need
+ * runtime 3.0.0-denext.6 or later (reported in {@linkcode windowCapabilities}; an older runtime
+ * rejects them `unsupported`).
+ *
  * Coordinates and sizes are the runtime's: CSS pixels for sizes, and screen positions in points on
  * macOS and Linux and in physical pixels on Windows' WebView2 backend.
  *
@@ -151,6 +160,43 @@ export interface WindowCapabilities {
    * 2.9.7-denext.10.
    */
   readonly cookieEncryption: "os" | "basic" | "unknown" | null;
+  /** {@linkcode setIgnoreMouseEvents} works. */
+  readonly clickThrough: boolean;
+  /** `setIgnoreMouseEvents(true, { forward: true })` still reports pointer moves to the page. */
+  readonly clickThroughForward: boolean;
+  /** {@linkcode setHitRegion} works. */
+  readonly hitRegion: boolean;
+  /** {@linkcode setVisibleOnAllWorkspaces} works. */
+  readonly visibleOnAllWorkspaces: boolean;
+  /** {@linkcode setSkipTaskbar} works. */
+  readonly skipTaskbar: boolean;
+  /** {@linkcode setWindowOpacity} works. */
+  readonly opacity: boolean;
+  /** {@linkcode setAlwaysOnTop} honours a level above `"floating"`. */
+  readonly alwaysOnTopLevels: boolean;
+  /**
+   * A `transparent` window shows the desktop where the page is transparent (macOS and Linux with
+   * the system WebView; not WebView2 or CEF).
+   */
+  readonly transparent: boolean;
+  /** `focusable: false` windows never take the focus (every OS). */
+  readonly nonActivating: boolean;
+  /**
+   * `setVisibleOnAllWorkspaces` also shows the window over other apps' full-screen windows (macOS,
+   * at a `"status"` level or above; runtime 3.0.0-denext.6).
+   */
+  readonly visibleOnFullScreen: boolean;
+  /**
+   * An `overlay: true` window ({@linkcode openWindow}) is a wlr-layer-shell surface (wlroots
+   * compositors, KDE Plasma and COSMIC on Wayland; runtime 3.0.0-denext.6).
+   */
+  readonly layerShell: boolean;
+  /**
+   * `setActivationPolicy` in `denext/desktop/app` works (macOS; runtime 3.0.0-denext.6).
+   */
+  readonly activationPolicy: boolean;
+  /** {@linkcode onWindowFocus} / {@linkcode onWindowBlur} fire. */
+  readonly focusEvents: boolean;
   /** Any other key the runtime reports. */
   readonly [key: string]: boolean | string | null;
 }
@@ -441,14 +487,119 @@ export async function setWindowResizable(resizable: boolean): Promise<void> {
   await act("setResizable", { resizable });
 }
 
+/** How far above other windows an always-on-top window floats (Electron's level names). */
+export type WindowLevel = "floating" | "status" | "pop-up-menu" | "screen-saver";
+
 /**
  * Keep the window above other windows.
  *
  * @param alwaysOnTop Whether it floats above the others.
+ * @param level How high (default `"floating"`): `"status"` and above also cover the macOS menu bar
+ *   and full-screen apps, where the runtime has levels (`alwaysOnTopLevels` in
+ *   {@linkcode windowCapabilities}); elsewhere it floats at `"floating"`.
  * @returns Once set.
  */
-export async function setAlwaysOnTop(alwaysOnTop: boolean): Promise<void> {
-  await act("setAlwaysOnTop", { alwaysOnTop });
+export async function setAlwaysOnTop(alwaysOnTop: boolean, level?: WindowLevel): Promise<void> {
+  await act("setAlwaysOnTop", { alwaysOnTop, ...(level !== undefined ? { level } : {}) });
+}
+
+/**
+ * Fade the whole window, page and chrome alike (CSS `opacity` for the window).
+ *
+ * @param opacity From `0` (invisible) to `1` (opaque).
+ * @returns Once set.
+ */
+export async function setWindowOpacity(opacity: number): Promise<void> {
+  await act("setOpacity", { opacity });
+}
+
+/**
+ * Let clicks go through the window to what is under it (Electron's `setIgnoreMouseEvents`). With
+ * `forward`, pointer moves still reach the page where the runtime can (`clickThroughForward`), so
+ * it can turn clicks back on over its own content. Without `forward` the window can never be
+ * clicked again, so that is refused (`validation`) unless the app has a tray icon to come back
+ * through. Needs a runtime with it (`clickThrough` in {@linkcode windowCapabilities}).
+ *
+ * @param ignore `true` to let clicks through, `false` to catch them again.
+ * @param options `forward`: keep reporting pointer moves.
+ * @returns Once set.
+ */
+export async function setIgnoreMouseEvents(
+  ignore: boolean,
+  options: { readonly forward?: boolean } = {},
+): Promise<void> {
+  await act("setIgnoreMouseEvents", { ignore, forward: options.forward === true });
+}
+
+/**
+ * Catch clicks only inside these rectangles (page CSS pixels, as `getBoundingClientRect()` gives
+ * them); everywhere else they go through to what is under the window. `null` catches them on the
+ * whole window again. For a character on a transparent window: pass its element's rectangle, and
+ * again whenever it moves or resizes. Needs a runtime with it (`hitRegion` in
+ * {@linkcode windowCapabilities}).
+ *
+ * @param rects The click-catching rectangles (at most 64), or `null`.
+ * @returns Once set.
+ */
+export async function setHitRegion(rects: readonly WindowBounds[] | null): Promise<void> {
+  await act("setHitRegion", {
+    rects: rects === null
+      ? null
+      : rects.map(({ x, y, width, height }) => ({ x, y, width, height })),
+  });
+}
+
+/**
+ * Show the window on every Space / virtual desktop (Electron's `setVisibleOnAllWorkspaces`), and
+ * with `visibleOnFullScreen` over full-screen apps too (macOS). Needs a runtime with it
+ * (`visibleOnAllWorkspaces` in {@linkcode windowCapabilities}); on macOS a `focusable: false`
+ * window already joins every Space.
+ *
+ * @param visible Whether it shows on every workspace.
+ * @param options `visibleOnFullScreen`: over full-screen apps too.
+ * @returns Once set.
+ */
+export async function setVisibleOnAllWorkspaces(
+  visible: boolean,
+  options: { readonly visibleOnFullScreen?: boolean } = {},
+): Promise<void> {
+  await act("setVisibleOnAllWorkspaces", {
+    visible,
+    visibleOnFullScreen: options.visibleOnFullScreen === true,
+  });
+}
+
+/**
+ * Keep the window off the taskbar (Windows, Linux; macOS has no per-window entry: see
+ * `setDockVisible` in `denext/desktop/app`). Needs a runtime with it (`skipTaskbar` in
+ * {@linkcode windowCapabilities}); a `focusable: false` window is off it on every runtime.
+ *
+ * @param skip `true` to leave the taskbar.
+ * @returns Once set.
+ */
+export async function setSkipTaskbar(skip: boolean): Promise<void> {
+  await act("setSkipTaskbar", { skip });
+}
+
+/**
+ * Call `handler` when the window gains the keyboard focus.
+ *
+ * @param handler Called on each focus.
+ * @returns A function that unsubscribes.
+ */
+export function onWindowFocus(handler: () => void): () => void {
+  return subscribeDesktopEvent(CAP, "focus", () => handler());
+}
+
+/**
+ * Call `handler` when the window loses the keyboard focus (the user clicked another window or
+ * app): where a panel hides itself.
+ *
+ * @param handler Called on each blur.
+ * @returns A function that unsubscribes.
+ */
+export function onWindowBlur(handler: () => void): () => void {
+  return subscribeDesktopEvent(CAP, "blur", () => handler());
 }
 
 /**
@@ -631,8 +782,8 @@ export function onCloseRequested(handler: CloseRequestHandler): () => void {
 }
 
 /**
- * Close the window now, without asking the {@linkcode onCloseRequested} handlers (the app quits:
- * a denext desktop app has one window).
+ * Close the window now, without asking the {@linkcode onCloseRequested} handlers. The app quits
+ * once its last window is gone, unless it is kept alive (`desktop.app.keepAlive`, a tray).
  *
  * @returns Once the close was requested.
  */
@@ -943,4 +1094,186 @@ async function runDoubleClick(action: TitleBarDoubleClick): Promise<void> {
   if (action !== "maximize") return;
   const state = await getWindowState();
   await (state.maximized ? unmaximizeWindow() : maximizeWindow());
+}
+
+// --- the app's other windows (cap "windows") -------------------------------------------------
+
+/** The options of a window to open ({@linkcode openWindow}). */
+export interface OpenWindowOptions {
+  /** The page it shows: a path of the app (`"/settings"`, `"/vm?id=1"`), never another site. */
+  readonly url: string;
+  /** The title. */
+  readonly title?: string;
+  /** Width in CSS pixels. */
+  readonly width?: number;
+  /** Height in CSS pixels. */
+  readonly height?: number;
+  /** Screen x of the top-left corner (see the module docs for the units). */
+  readonly x?: number;
+  /** Screen y. */
+  readonly y?: number;
+  /** Whether the user can resize it (default `true`). */
+  readonly resizable?: boolean;
+  /** No title bar or chrome: give the page a drag region ({@linkcode makeWindowDraggable}). */
+  readonly frameless?: boolean;
+  /**
+   * A transparent background: where the page is transparent the desktop shows (macOS and Linux
+   * with the system WebView, `transparent` in {@linkcode windowCapabilities}).
+   */
+  readonly transparent?: boolean;
+  /**
+   * `false`: a non-activating panel (Electron's `focusable: false`) that never takes the focus
+   * from the app the user is in, floats above normal windows and stays off the taskbar.
+   */
+  readonly focusable?: boolean;
+  /** Float above other windows: `true` (`"floating"`) or a level. */
+  readonly alwaysOnTop?: boolean | WindowLevel;
+  /** The window's opacity, 0–1. */
+  readonly opacity?: number;
+  /** Off the taskbar (where the runtime can, {@linkcode setSkipTaskbar}). */
+  readonly skipTaskbar?: boolean;
+  /** On every Space / virtual desktop (where the runtime can). */
+  readonly visibleOnAllWorkspaces?: boolean;
+  /**
+   * A desktop overlay surface (runtime 3.0.0-denext.6): on a Wayland compositor with
+   * wlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) a layer above every window, on every
+   * workspace and out of the task list, placed with `setBounds` (`layerShell` in
+   * {@linkcode windowCapabilities}); an ordinary window elsewhere.
+   */
+  readonly overlay?: boolean;
+  /**
+   * Show it once created (default `true`). With `false` it opens hidden (its page loads), to be
+   * shown with the handle's `show()`; a runtime before 3.0.0-denext.6 may flash it first.
+   */
+  readonly show?: boolean;
+  /**
+   * The desktop capabilities its pages may call (default: all the app has; `window` always). Least
+   * privilege for a page that needs little — not isolation: every window shares the app's origin.
+   */
+  readonly capabilities?: readonly string[];
+}
+
+/** One of the app's windows ({@linkcode getWindows}). */
+export interface DesktopWindowInfo {
+  /** Its id. */
+  readonly id: string;
+  /** `"main"` (the window the app started with), `"panel"` (the tray panel) or `"window"`. */
+  readonly kind: "main" | "panel" | "window";
+  /** Whether it is showing. */
+  readonly visible: boolean;
+}
+
+/** One of the app's windows, by id ({@linkcode openWindow}, {@linkcode windowHandle}). */
+export interface DesktopWindowHandle {
+  /** Its id: `"main"`, `"panel"`, or what {@linkcode openWindow} gave it. */
+  readonly id: string;
+  /** Show it. */
+  show(): Promise<void>;
+  /** Hide it. */
+  hide(): Promise<void>;
+  /** Bring it to the front and focus it. */
+  focus(): Promise<void>;
+  /** Close it for good (no close guard is asked). */
+  close(): Promise<void>;
+  /** Load another page of the app in it. */
+  navigate(url: string): Promise<void>;
+  /** Move and / or resize it; missing fields keep their value. */
+  setBounds(bounds: Partial<WindowBounds>): Promise<void>;
+  /** Its frame, or `null` where the runtime cannot say. */
+  getBounds(): Promise<WindowBounds | null>;
+  /** Call `handler` once it closed. Returns the unsubscribe. */
+  onClosed(handler: () => void): () => void;
+  /** Call `handler` when it gains the focus. Returns the unsubscribe. */
+  onFocus(handler: () => void): () => void;
+  /** Call `handler` when it loses the focus. Returns the unsubscribe. */
+  onBlur(handler: () => void): () => void;
+}
+
+/** The capability that opens the app's windows and acts on them by id. */
+const WINDOWS = "windows";
+
+/** Subscribe to a `windows` event for window `id`. */
+function onWindowsEvent(event: string, id: string, handler: () => void): () => void {
+  return subscribeDesktopEvent(WINDOWS, event, (data) => {
+    if ((data as { id?: unknown } | null)?.id === id) handler();
+  });
+}
+
+/**
+ * The handle of one of the app's windows by id (`"main"`, `"panel"`, or an id
+ * {@linkcode openWindow} or {@linkcode getWindows} gave). Nothing is checked until a call: a closed
+ * window's calls reject `not_found`.
+ *
+ * @param id The window's id.
+ * @returns Its handle.
+ */
+export function windowHandle(id: string): DesktopWindowHandle {
+  const call = async (method: string, args: Record<string, unknown> = {}) => {
+    await desktopRpc(WINDOWS, method, { id, ...args });
+  };
+  return {
+    id,
+    show: () => call("show"),
+    hide: () => call("hide"),
+    focus: () => call("focus"),
+    close: () => call("close"),
+    navigate: (url) => call("navigate", { url }),
+    setBounds: (bounds) => call("setBounds", { ...bounds }),
+    getBounds: async () => {
+      const b = await desktopRpc<WindowBounds | null>(WINDOWS, "getBounds", { id });
+      return b && typeof b.x === "number" ? b : null;
+    },
+    onClosed: (handler) => onWindowsEvent("closed", id, handler),
+    onFocus: (handler) => onWindowsEvent("focus", id, handler),
+    onBlur: (handler) => onWindowsEvent("blur", id, handler),
+  };
+}
+
+/**
+ * Open another window of the app on one of its pages (Electron's `new BrowserWindow()` +
+ * `loadURL`, Tauri's `WebviewWindow`): a settings window, a document, a frameless overlay. Its page
+ * is a page of the same app, with the same desktop capabilities (or the `capabilities` subset), and
+ * its `denext/desktop/window` calls act on itself. The app stays up while any window is open. At
+ * most 8 windows at once besides the main one and the tray panel.
+ *
+ * @param options The page (`url`, a path of the app) and the window's settings.
+ * @returns The new window's handle. Rejects `validation` for a URL that is not a path of the app,
+ * `unsupported` outside denext's Deno Desktop runtime (a browser: `unavailable`).
+ * @example
+ * ```ts
+ * import { openWindow } from "denext/desktop/window";
+ *
+ * const settings = await openWindow({ url: "/settings", width: 520, height: 420, title: "Settings" });
+ * settings.onClosed(() => console.log("settings closed"));
+ * ```
+ */
+export async function openWindow(options: OpenWindowOptions): Promise<DesktopWindowHandle> {
+  const out = await desktopRpc<{ id?: unknown }>(WINDOWS, "open", { ...options });
+  return windowHandle(String(out?.id ?? ""));
+}
+
+/**
+ * The app's open windows.
+ *
+ * @returns Each window's id, kind and visibility.
+ */
+export async function getWindows(): Promise<DesktopWindowInfo[]> {
+  const raw = await desktopRpc<unknown>(WINDOWS, "list", {});
+  return (Array.isArray(raw) ? raw : []).flatMap((w) => {
+    const o = (w ?? {}) as Record<string, unknown>;
+    if (typeof o.id !== "string") return [];
+    const kind = o.kind === "main" || o.kind === "panel" ? o.kind : "window";
+    return [{ id: o.id, kind, visible: o.visible !== false }];
+  });
+}
+
+/**
+ * The id of the window this page is in (`"main"` for the window the app started with, and where
+ * the runtime cannot tell windows apart).
+ *
+ * @returns The id.
+ */
+export async function currentWindowId(): Promise<string> {
+  const out = await desktopRpc<{ id?: unknown }>(WINDOWS, "current", {});
+  return typeof out?.id === "string" ? out.id : "main";
 }
