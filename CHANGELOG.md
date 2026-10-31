@@ -149,6 +149,12 @@ and this project adheres to
 
 ### Fixed
 
+- **The migration beds keep a dependency-age hold on npm.** They ran every command with
+  `DENEXT_MIN_DEP_AGE=0`, so a bed's build could resolve an npm release published minutes before
+  and fail on a tarball the registry did not serve yet (`tslib` 2.9.1). The migrated app's
+  `deno.json` now carries `minimumDependencyAge: { age: "P1D", exclude: ["jsr:@denext/*"] }`: a
+  day's hold on everything but the `@denext` packages a release has just published, which the
+  checkout under test pins.
 - **A paused desktop download that is cancelled rejects once its partial file is gone.** In a
   Deno Desktop window, `cancelFileTransfer` on a paused `downloadToFile` rejected its promise
   with `CANCELLED` straight away, while the runtime was still dropping the kept partial file and

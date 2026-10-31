@@ -17,6 +17,7 @@ import { assert, assertEquals } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import type { Page } from "@astral/astral";
 import { killTree, launchBrowser, pollFor, startCliServer } from "../e2e/harness.ts";
+import { BED_ENV, holdBedDependencies } from "./_dep-age.ts";
 
 /** One route to render-assert after the migrated app is built and served. */
 interface BedRoute {
@@ -205,7 +206,7 @@ function denext(args: string[], cwd: string, timeoutMs: number) {
     ["run", "-A", "--node-modules-dir=none", CLI, ...args],
     cwd,
     timeoutMs,
-    { DENEXT_MIN_DEP_AGE: "0" },
+    BED_ENV,
   );
 }
 
@@ -250,9 +251,7 @@ async function runCommands(
     const timed: TimedCommand = Array.isArray(entry) ? { cmd: entry } : entry;
     const [cmd, ...args] = timed.cmd;
     const [bin, argv] = commandLine(cmd, args);
-    const r = await run(bin, argv, app, timed.timeoutMs ?? INSTALL_TIMEOUT_MS, {
-      DENEXT_MIN_DEP_AGE: "0",
-    });
+    const r = await run(bin, argv, app, timed.timeoutMs ?? INSTALL_TIMEOUT_MS, BED_ENV);
     if (r.ok || (timed.expect !== undefined && r.out.includes(timed.expect))) continue;
     if (NETWORK_FAILURE.test(r.out)) {
       console.warn(
@@ -340,6 +339,9 @@ export async function runBed(t: Deno.TestContext, bed: Bed): Promise<void> {
       if (bed.start) assertStartPermissions(app, bed.start);
       if (bed.files) await assertMigratedFiles(app, bed.files);
     });
+    // Every later step resolves under a one-day hold, `jsr:@denext/*` excluded (_dep-age.ts):
+    // never `DENEXT_MIN_DEP_AGE=0`, which let a minutes-old npm release reach the build.
+    await holdBedDependencies(app);
 
     if (bed.afterMigrate && !(await runCommands(bed, bed.afterMigrate, app))) return;
     await bed.afterMigrateEdit?.(app);
