@@ -11,6 +11,7 @@ import {
   runDesktopDev,
 } from "../src/build/desktop-dev.ts";
 import { devChildEnv, REEXEC_GUARD_ENV, waitForShutdownSignal } from "../src/cli/dev-attach.ts";
+import { readDesktopAppFile } from "../src/build/desktop-dev-file.ts";
 
 // ---- the target: loopback-only unless --lan (invariant 3) ------------------------------------
 
@@ -186,4 +187,44 @@ Deno.test("devChildEnv: the dev server child drops the CSS / module re-exec guar
   assertEquals(env.DENEXT_DEV_TOKEN, "ab".repeat(32));
   assertEquals(parent.DENEXT_CSS_ACTIVE, "1", "the parent's environment is not changed");
   assertEquals(devChildEnv({ A: "1" }), { A: "1" });
+});
+
+// ---- files read by app path (the tray's icon) in a build with no export ----------------------
+
+Deno.test("readDesktopAppFile: desktop dev reads a file the export lacks from the dev server", async () => {
+  // Live test on Windows 11 Arm64: `denext desktop dev` of an app with `desktop.tray.icon:
+  // "/tray.png"` failed at launch ("the tray icon /tray.png is not in the export"): a dev build
+  // has no export, the icon is the dev server's.
+  const noExport = () => Promise.resolve(null);
+  const asked: { url: string; token: string | null }[] = [];
+  const devFetch = ((input: URL, init?: RequestInit) => {
+    const url = String(input);
+    asked.push({ url, token: new Headers(init?.headers).get("x-denext-dev-token") });
+    return Promise.resolve(
+      url.endsWith("/tray.png")
+        ? new Response(new Uint8Array([1, 2, 3]))
+        : new Response("missing", { status: 404 }),
+    );
+  }) as typeof fetch;
+  const dev = { url: "http://localhost:3000/?x=1", headers: { "x-denext-dev-token": "t" } };
+  assertEquals(
+    await readDesktopAppFile(noExport, "/tray.png", { ...dev, fetch: devFetch }),
+    new Uint8Array([1, 2, 3]),
+  );
+  assertEquals(asked, [{ url: "http://localhost:3000/tray.png", token: "t" }]);
+  assertEquals(await readDesktopAppFile(noExport, "/nope.png", { ...dev, fetch: devFetch }), null);
+  // A dev server that is down: missing, not a throw.
+  const down = (() => Promise.reject(new TypeError("connection refused"))) as typeof fetch;
+  assertEquals(await readDesktopAppFile(noExport, "/tray.png", { ...dev, fetch: down }), null);
+});
+
+Deno.test("readDesktopAppFile: the export wins, and a built app never asks a dev server", async () => {
+  let fetched = 0;
+  const devFetch = (() => (fetched++, Promise.resolve(new Response("dev")))) as typeof fetch;
+  const exported = (path: string) =>
+    Promise.resolve(path === "/tray.png" ? new Uint8Array([7]) : null);
+  const dev = { url: "http://localhost:3000", headers: {}, fetch: devFetch };
+  assertEquals(await readDesktopAppFile(exported, "/tray.png", dev), new Uint8Array([7]));
+  assertEquals(await readDesktopAppFile(exported, "/other.png"), null);
+  assertEquals(fetched, 0);
 });

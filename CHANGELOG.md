@@ -17,6 +17,13 @@ and this project adheres to
   into the docs-corpus pack; the fallow init texts are packed. Help output, completions,
   `denext commands`, did-you-mean and every generated file are unchanged.
 
+### Fixed
+
+- **`denext desktop dev` starts an app whose `desktop.tray.icon` is a path** (`"/tray.png"`): a dev
+  build has no export, so the tray read its icon from nowhere and failed at launch ("the tray icon
+  /tray.png is not in the export", an unhandled rejection). A file the export lacks now comes from
+  the dev server the window proxies (with its token headers); a built app reads the export only.
+
 ## [4.11.1] - 2026-10-31
 
 ### Added
