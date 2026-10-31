@@ -10,6 +10,17 @@ and this project adheres to
 
 ### Added
 
+- **Deno Desktop runtime 3.0.0-denext.8 bindings, ready for the pin** (gated on
+  `FIRST_EXEC_ARGV_RUNTIME` / `FIRST_DESKTOP_CACHE_TOKEN_RUNTIME`; nothing changes until denext pins
+  that runtime). Under `deno run desktop.ts`, a sidecar's `childCommand()` / `spawnSelf()` child is
+  `deno run …process.execArgv <entry>`: the app's own Deno flags (scoped grants, `--unstable-*`,
+  `--config`, `--node-modules-dir`, …) instead of the unscoped permissions rebuilt from
+  `Deno.permissions`. A packaged app with `desktop.app.identifier` bakes a project-file program
+  sidecar (`run: { exec: "./bin/…" }`) as
+  `--allow-run=$DENO_DESKTOP_CACHE/sidecars/<name>/<file>` and the matching `--allow-write` (scoped
+  to that folder when nothing else writes) instead of an unscoped `--allow-run`: the runtime expands
+  the token at launch to the app's cache folder (`desktopAppDirs(identifier).cache`), where denext
+  copies the program.
 - **`channel.discard(key)`** drops this instance's publishes of a key that its Live hub has not
   sent to a subscriber yet (the 16 ms coalescing window, or still in the transport); later
   publishes go out as usual. For a key whose next subscriber must not get what was published for

@@ -5,17 +5,21 @@
 // `desktop add sidecar` config edit and the config validation.
 
 import { assert, assertEquals, assertMatch, assertThrows } from "@std/assert";
-import { join, toFileUrl } from "@std/path";
+import { join, normalize, toFileUrl } from "@std/path";
 import {
   bundleDesktopSidecar,
   bundleDesktopSidecars,
   isNativePackage,
 } from "../src/build/desktop-sidecar-bundle.ts";
 import {
+  DESKTOP_CACHE_TOKEN,
   desktopBuildFlags,
   desktopSidecarIncludeArgs,
+  sidecarCacheProgram,
   sidecarPermissionSet,
 } from "../src/build/desktop-capabilities.ts";
+import { desktopCacheTokenRuntime } from "../src/build/desktop-launch-policy.ts";
+import { desktopAppDirs } from "../src/desktop/app-dirs.ts";
 import { addDesktopSidecar } from "../src/build/desktop-sidecar-add.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
@@ -256,6 +260,93 @@ Deno.test("desktopBuildFlags: sidecar permissions are baked like extraPermission
   assert(embedded.includes("--allow-run"), "a program copied out of the app runs unscoped");
   assert(embedded.includes("--allow-write"));
   assertEquals(sidecarPermissionSet([]), {});
+});
+
+Deno.test("desktopBuildFlags: a copied program runs scoped to its cache copy on a runtime that expands the token", () => {
+  const config = (identifier?: string, more: Record<string, unknown> = {}) => ({
+    desktop: {
+      ...(identifier !== undefined ? { app: { identifier } } : {}),
+      sidecars: [{ name: "server", run: { exec: "./bin/server" } }, {
+        name: "git",
+        run: { exec: "git" },
+      }],
+      ...more,
+    },
+  });
+  // The runtime expands the token from the baked identifier: the run and the write are scoped.
+  assertEquals(desktopBuildFlags(config("com.example.app"), "linux", { cacheScope: true }), [
+    "--allow-net=127.0.0.1,localhost",
+    "--allow-read",
+    "--allow-env",
+    `--allow-write=${DESKTOP_CACHE_TOKEN}/sidecars/server`,
+    `--allow-run=${DESKTOP_CACHE_TOKEN}/sidecars/server/server,git`,
+  ]);
+  // No identifier (the fallback id is not in the binary: the runtime would drop the entry), or a
+  // runtime without the token: today's unscoped grants.
+  for (
+    const flags of [
+      desktopBuildFlags(config(), "linux", { cacheScope: true }),
+      desktopBuildFlags(config(" "), "linux", { cacheScope: true }),
+      desktopBuildFlags(config("com.example.app"), "linux", { cacheScope: false }),
+    ]
+  ) {
+    assert(flags.includes("--allow-run"), flags.join(" "));
+    assert(flags.includes("--allow-write"), flags.join(" "));
+  }
+  // The pinned runtime decides by default.
+  assertEquals(
+    desktopBuildFlags(config("com.example.app"), "linux").includes("--allow-run"),
+    !desktopCacheTokenRuntime(),
+  );
+  // Another write (a log file) keeps the broad --allow-write; the run stays scoped.
+  const logged = desktopBuildFlags(
+    config("com.example.app", { extraPermissions: { write: ["/tmp/x"] } }),
+    "darwin",
+    { cacheScope: true },
+  );
+  assert(logged.includes("--allow-write"), logged.join(" "));
+  assert(logged.includes(`--allow-run=${DESKTOP_CACHE_TOKEN}/sidecars/server/server,git`));
+  // A capability that writes, or the UI overlay, also keeps it broad.
+  for (
+    const more of [{ capabilities: { fs: true } }, {
+      update: { ui: { feedUrl: "https://u.example.com/f", publicKey: "k" } },
+    }]
+  ) {
+    const flags = desktopBuildFlags(config("com.example.app", more), "linux", { cacheScope: true });
+    assert(flags.includes("--allow-write"), flags.join(" "));
+  }
+  // A program name that cannot be one list value keeps the unscoped grant.
+  const odd = sidecarPermissionSet(
+    [{ name: "server", run: { exec: "./bin/a,b" } } as SidecarDefinition],
+    "linux",
+    true,
+  );
+  assertEquals(odd, { run: ["*"], write: ["$CACHE"] });
+});
+
+Deno.test("sidecarCacheProgram: the runtime's expansion is where the packaged app copies the program", () => {
+  assertEquals(sidecarCacheProgram("server", "./bin\\server.exe"), {
+    folder: `${DESKTOP_CACHE_TOKEN}/sidecars/server`,
+    program: `${DESKTOP_CACHE_TOKEN}/sidecars/server/server.exe`,
+  });
+  assertEquals(sidecarCacheProgram("server", "./bin/"), undefined);
+  assertEquals(sidecarCacheProgram("server", "./bin/.."), undefined);
+  assertEquals(sidecarCacheProgram("a,b", "./bin/x"), undefined);
+  // `resolveSidecarProgram` copies to <desktopAppDirs(id).cache>/sidecars/<name>/<file>, the folder
+  // the runtime expands the token to (`desktop_app_cache_dir_per_os`).
+  const id = "com.example.app";
+  const cache = desktopAppDirs(id).cache;
+  const copy = sidecarCacheProgram("server", "./bin/server");
+  assert(copy);
+  assertEquals(
+    normalize(copy.program.replace(DESKTOP_CACHE_TOKEN, cache)),
+    join(cache, "sidecars", "server", "server"),
+  );
+  assert(
+    normalize(cache).endsWith(
+      Deno.build.os === "windows" ? join(id, "Cache") : join(id, "denext"),
+    ),
+  );
 });
 
 Deno.test("addDesktopSidecar: appends to desktop.sidecars, asks for ffi when node_modules is native", async () => {
