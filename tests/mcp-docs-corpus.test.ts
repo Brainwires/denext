@@ -308,6 +308,7 @@ Deno.test("docs corpus: a checkout outside its workspace reads its own corpus, n
       await Deno.copyFile(new URL(file, root), to);
     };
     await copy("src/mcp/rag/corpus.ts");
+    await copy("src/build/checkout-file.ts");
     await copy("packages/docs-corpus/mod.ts");
     const imports = JSON.parse(await Deno.readTextFile(new URL("deno.json", root))).imports;
     await Deno.writeTextFile(
@@ -336,6 +337,21 @@ Deno.test("docs corpus: a checkout outside its workspace reads its own corpus, n
     const decoder = new TextDecoder();
     assert(out.success, decoder.decode(out.stderr));
     assertEquals(JSON.parse(decoder.decode(out.stdout)), { desktop: true, guide: true });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("docs corpus: a vendored @denext/denext reads the docs-corpus package, not a checkout path", async () => {
+  // `"vendor": true` puts @denext/denext under vendor/jsr.io/: `file:`, but with no
+  // packages/docs-corpus beside it. The import goes through the import map (here, the
+  // workspace's `@denext/docs-corpus`), as from JSR.
+  const dir = await Deno.makeTempDir({ prefix: "denext_corpus_vendor_" });
+  try {
+    const module = join(dir, "vendor", "jsr.io", "@denext", "denext", "9.9.9", "src", "mcp", "rag");
+    await Deno.mkdir(module, { recursive: true });
+    const vendored = await corpusModule(toFileUrl(join(module, "corpus.ts")).href);
+    assert(vendored.CORPUS_BROTLI_BASE64.length > 0);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

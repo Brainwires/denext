@@ -34,6 +34,13 @@ and this project adheres to
 
 ### Fixed
 
+- **A vendored denext finds its docs corpus and native templates.** With `"vendor": true`, Deno
+  copies `@denext/denext` under `vendor/jsr.io/`, so its modules load from `file:` URLs, which the
+  MCP docs tools (`denext_search_docs`, `denext_read_docs`) and `denext mobile add`'s native
+  templates took for a denext checkout: they imported `packages/docs-corpus/…` by a relative path
+  that a vendored copy does not have, and failed. A module now reads the sibling package by path
+  only when it runs from a real checkout (not under `vendor/jsr.io/` or `node_modules/`, and the
+  file is there), and imports `@denext/docs-corpus` otherwise, as from JSR.
 - **Tailwind builds run on macOS 27 on Apple Silicon.** The pinned Tailwind v4.3.0 standalone
   binary for `macos-arm64` was killed at launch (exit 137, `Tailwind compile failed (137)`): it is
   a Bun-compiled executable whose ad-hoc code signature carries a wrong hash for the last page
