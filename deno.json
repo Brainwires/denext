@@ -558,6 +558,7 @@
       "src/ts/program-api.ts",
       "src/desktop/config-types.ts",
       "denext.config.schema.json",
+      "src/plugin/catalog.json",
       "SECURITY.md",
       "fallow-plugin-vitest.toml",
       ".gitattributes"

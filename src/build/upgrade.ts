@@ -30,7 +30,7 @@
 // Versions come from JSR (`meta.json`, then `<version>/deno.json` per candidate) through the
 // hardened client in `src/ui/jsr.ts`; tests inject the lookups.
 
-import CATALOG from "../plugin/catalog.json" with { type: "json" };
+import { pluginCatalog } from "../plugin/catalog.ts";
 import { fetchJsrConfig, fetchJsrVersions, type JsrRequestOptions } from "../ui/jsr.ts";
 import { type DepAgeRule, heldUntil, type HeldVersion, holdHead, holdMessage } from "./dep-age.ts";
 
@@ -228,7 +228,7 @@ function candidates(versions: readonly string[], floor: string, allowPre: boolea
 
 /** The catalog's range for one exact version (`undefined` when the catalog doesn't know it). */
 function catalogRange(name: string, version: string): string | null | undefined {
-  const entry = (CATALOG.plugins as { name: string; version: string; denext?: string }[])
+  const entry = pluginCatalog().plugins
     .find((p) => p.name === name && p.version === version);
   return entry ? entry.denext ?? null : undefined;
 }

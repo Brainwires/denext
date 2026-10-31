@@ -325,6 +325,7 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
       "denext.config.schema.json",
       "src/build/native-templates/ota.ts",
       "src/compat/next/font/google-families.ts",
+      "src/plugin/catalog.json",
     ]
   ) assert(!files.has(file), `${file} is published again`);
   for (
@@ -337,6 +338,7 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
       "src/cli/command-meta.packed.ts",
       "src/ui/form/config-schema.packed.ts",
       "src/compat/next/font/google-families.packed.ts",
+      "src/plugin/catalog.packed.ts",
     ]
   ) assert(files.has(file), `${file} is not published`);
 });
