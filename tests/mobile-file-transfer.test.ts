@@ -1025,12 +1025,68 @@ Deno.test("trackedDownload: a cancel while its engine's pause is settling cancel
     done.catch(() => {});
     await settle();
     // The engine answered the pause; its run has not yet stopped when the cancel comes.
-    assertEquals(await pauseFileTransfer("t1"), true);
+    const pausing = pauseFileTransfer("t1");
+    await settle();
     assertEquals(await cancelFileTransfer("t1"), true);
     stopRun({ code: "paused" });
     assertEquals((await assertRejects(() => done, FileTransferError)).code, "CANCELLED");
+    // The pause answers once the run has settled: it was cancelled instead.
+    assertEquals(await pausing, false);
     assertEquals((await fileTransfers())[0].state, "cancelled");
     assertEquals(discarded, ["t1"]);
+  });
+});
+
+Deno.test("trackedDownload: a pause answers once the run it stopped has settled, so a resume follows at once", async () => {
+  await withOpfs(async () => {
+    let stopRun: (err: unknown) => void = () => {};
+    let finish: (out: { path: string }) => void = () => {};
+    const runs: boolean[] = [];
+    const engine = {
+      run: ({ resume }: { resume: boolean }) => {
+        runs.push(resume);
+        return new Promise<{ path: string }>((resolve, reject) => {
+          stopRun = reject;
+          finish = resolve;
+        });
+      },
+      error: (err: unknown) => err,
+      absent: () => false,
+      // The engine answers before its run's rejection reaches the page (a separate request).
+      pause: () => {
+        setTimeout(() => stopRun({ code: "paused" }), 0);
+        return Promise.resolve(true);
+      },
+      paused: (err: unknown) =>
+        (err as { code?: string })?.code === "paused"
+          ? { bytes: 5, total: 10, resumable: true }
+          : undefined,
+      discard: () => Promise.resolve(),
+    };
+    const spec = {
+      id: "t2",
+      url: "https://x.test/t",
+      directory: "data",
+      path: "t.bin",
+      options: {},
+    };
+    const done = trackedDownload(spec, engine);
+    await settle();
+    assertEquals(await pauseFileTransfer("t2"), true);
+    // Paused already: no wait for the event, and the resume starts the next run straight away.
+    const [listed] = (await fileTransfers()).filter((t) => t.id === "t2");
+    assertEquals([listed.state, listed.bytes, listed.resumable], ["paused", 5, true]);
+    assertEquals(await resumeFileTransfer("t2"), true);
+    assertEquals(runs, [false, true]);
+    finish({ path: "/d/t.bin" });
+    assertEquals(await done, { path: "/d/t.bin" });
+    // An engine that did not pause (the run had finished): false, without waiting on a run.
+    const idle = { ...engine, pause: () => Promise.resolve(false) };
+    const again = trackedDownload({ ...spec, id: "t3" }, idle);
+    await settle();
+    assertEquals(await pauseFileTransfer("t3"), false);
+    finish({ path: "/d/t.bin" });
+    await again;
   });
 });
 
