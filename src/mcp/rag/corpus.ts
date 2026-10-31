@@ -8,6 +8,7 @@
 // ({@linkcode corpusModule}).
 
 import { decodeBase64 } from "@std/encoding/base64";
+import { checkoutFile } from "../../build/checkout-file.ts";
 
 /** One docs page (or root guide) in the corpus. */
 export interface DocPage {
@@ -87,16 +88,16 @@ export async function decodeCorpus(brotliBase64: string): Promise<unknown> {
  * links by path or CI runs from another directory, a `deno compile` binary built from one — the
  * same commit's file, read by path: the docs-corpus release with that commit's corpus may not
  * exist yet, or be younger than Deno's minimum dependency age (the 24 h after a release), and
- * resolving it through the caller's import map would fail the docs search.
+ * resolving it through the caller's import map would fail the docs search. A vendored copy
+ * (`"vendor": true`) is `file:` too but no checkout: it imports the package, as published.
  *
  * @param base The URL this module is loaded from (production: `import.meta.url`).
  */
 export function corpusModule(
   base: string = import.meta.url,
 ): Promise<{ CORPUS_BROTLI_BASE64: string }> {
-  return base.startsWith("file:")
-    ? import(new URL("../../../packages/docs-corpus/mod.ts", base).href)
-    : import("@denext/docs-corpus");
+  const local = checkoutFile("../../../packages/docs-corpus/mod.ts", base);
+  return local ? import(local) : import("@denext/docs-corpus");
 }
 
 /** Load (once) and index the shipped docs corpus. */

@@ -74,6 +74,7 @@ Deno.test("packed native templates: a checkout outside its workspace reads its o
       await Deno.copyFile(new URL(file, root), to);
     };
     await copy("src/build/native-templates.packed.ts");
+    await copy("src/build/checkout-file.ts");
     await copy("src/build/packed-text.ts");
     await copy("packages/docs-corpus/native-templates.ts");
     const imports = JSON.parse(await Deno.readTextFile(new URL("deno.json", root))).imports;
@@ -91,6 +92,51 @@ Deno.test("packed native templates: a checkout outside its workspace reads its o
     await Deno.writeTextFile(
       join(dir, "probe.ts"),
       'import { NATIVE_TEMPLATES } from "./src/build/native-templates.packed.ts";\n' +
+        "console.log(JSON.stringify(Object.keys(NATIVE_TEMPLATES.ota.OTA_IOS_FILES)));\n",
+    );
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", "--no-lock", "--config", join(dir, "deno.json"), join(dir, "probe.ts")],
+      cwd: dir,
+      stdout: "piped",
+      stderr: "piped",
+      env: { NO_COLOR: "1" },
+    }).output();
+    const decoder = new TextDecoder();
+    assert(out.success, decoder.decode(out.stderr));
+    assertEquals(JSON.parse(decoder.decode(out.stdout)), Object.keys(otaSource.OTA_IOS_FILES));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("packed native templates: a vendored @denext/denext reads the docs-corpus package, not a checkout path", async () => {
+  // `"vendor": true` copies @denext/denext to vendor/jsr.io/@denext/denext/<version>/: a `file:`
+  // module, but no checkout, so there is no packages/docs-corpus beside it. The layout module must
+  // import `@denext/docs-corpus/native-templates` (vendored beside it, mapped here to the
+  // workspace's package) instead of a path that is not there.
+  const root = new URL("../", import.meta.url);
+  const dir = await Deno.makeTempDir({ prefix: "denext_native_pack_vendor_" });
+  try {
+    const pkg = join(dir, "vendor", "jsr.io", "@denext", "denext", "9.9.9");
+    for (const file of ["native-templates.packed.ts", "checkout-file.ts", "packed-text.ts"]) {
+      await Deno.mkdir(join(pkg, "src", "build"), { recursive: true });
+      await Deno.copyFile(new URL(`src/build/${file}`, root), join(pkg, "src", "build", file));
+    }
+    const imports = JSON.parse(await Deno.readTextFile(new URL("deno.json", root))).imports;
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        imports: {
+          "@std/encoding": imports["@std/encoding"],
+          "@std/encoding/": `${imports["@std/encoding"].replace(/^jsr:/, "jsr:/")}/`,
+          "@denext/docs-corpus/native-templates":
+            new URL("packages/docs-corpus/native-templates.ts", root).href,
+        },
+      }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "probe.ts"),
+      `import { NATIVE_TEMPLATES } from "./vendor/jsr.io/@denext/denext/9.9.9/src/build/native-templates.packed.ts";\n` +
         "console.log(JSON.stringify(Object.keys(NATIVE_TEMPLATES.ota.OTA_IOS_FILES)));\n",
     );
     const out = await new Deno.Command(Deno.execPath(), {

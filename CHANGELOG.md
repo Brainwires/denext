@@ -124,6 +124,24 @@ and this project adheres to
   against just-published `@denext` releases sets `DENEXT_ALLOW_DENEXT_AGE_EXEMPTION=1`, and the
   check passes, still naming the entries. The migration beds set it, so their one-day hold with
   `@denext` exempt no longer reports a failure.
+- **A copy of denext reached by path finds its docs corpus and native templates.** An import map
+  that points at a copy of the published `@denext/denext` by path (a `vendor/jsr.io/…` tree, say),
+  and JSR's npm compatibility layer (`node_modules/@jsr/denext__denext`), load denext's modules from
+  `file:` URLs, which the MCP docs tools (`denext_search_docs`, `denext_read_docs`) and
+  `denext mobile add`'s native templates took for a denext checkout: they imported
+  `packages/docs-corpus/…` by a relative path that such a copy does not have, and failed. (A `"vendor": true` install keeps
+  `https://jsr.io/…` module URLs and was not affected.) A module now reads the sibling package by
+  path only when it runs from a real checkout (not under `vendor/jsr.io/` or `node_modules/`, and
+  the file is there), and imports `@denext/docs-corpus` otherwise, as from JSR.
+- **A copy of denext reached by path is no longer taken for a checkout elsewhere either.** Three
+  more places read a `file:` framework URL as "a denext checkout", which a copy of the published
+  package under `vendor/jsr.io/…` (mapped by path) or JSR's npm compatibility layer
+  (`node_modules/`) is too. `denext build --compile` read the framework's repository `deno.json`
+  for its import map, which a copy does not carry; the CLI re-ran itself with a framework+app
+  config merged from that same missing file for a project with `npm:` imports; and `denext ui`
+  started its verb children without the project's `--config`, so a child discovered the config
+  above the copy (a workspace root rather than the member). All three now ask the same location
+  check the docs corpus uses, and treat a copy as the published package.
 
 ## [4.10.5] - 2026-10-31
 

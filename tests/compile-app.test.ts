@@ -12,6 +12,7 @@ import { join, toFileUrl } from "@std/path";
 import {
   compileApp,
   compileBuildFlags,
+  compileFrameworkImports,
   denortBinary,
   neverEmbedded,
   relativeCssRedirects,
@@ -443,4 +444,21 @@ Deno.test({
     assert((await argvFor(2)).includes("--unstable-net"));
     assertEquals((await argvFor(1)).includes("--unstable-net"), false);
   },
+});
+
+Deno.test("compileFrameworkImports: a checkout's import map; none for a published, vendored or npm-compat copy", async () => {
+  // This checkout: its bare imports, absolutized against its own deno.json.
+  const own = await compileFrameworkImports();
+  assertEquals(own["denext"], new URL("../mod.ts", import.meta.url).href);
+  // A copy carries no repository deno.json (none is read) and imports fully qualified specifiers.
+  for (
+    const root of [
+      "https://jsr.io/@denext/denext/9.9.9/",
+      "file:///app/vendor/jsr.io/@denext/denext/9.9.9/",
+      "file:///C:/app/vendor/jsr.io/@denext/denext/9.9.9/",
+      "file:///app/node_modules/@jsr/denext__denext/",
+    ]
+  ) {
+    assertEquals(await compileFrameworkImports(root), {}, root);
+  }
 });
