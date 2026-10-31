@@ -144,9 +144,15 @@ function processRows(text: string): { rows: ProcessRow[]; notes: string[] } {
  *
  * @param pid The root of the tree.
  * @param timeoutMs How long the listing may take.
+ * @param expectCommand What the root's command line must contain; another process holding the
+ *   recycled id then reads as gone ({@linkcode renderTree}).
  * @returns The listing, or why there is none.
  */
-export async function processTree(pid: number, timeoutMs = TREE_DEADLINE_MS): Promise<string> {
+export async function processTree(
+  pid: number,
+  timeoutMs = TREE_DEADLINE_MS,
+  expectCommand?: string,
+): Promise<string> {
   const [program, args] = processListCommand(pid);
   let lister: Deno.ChildProcess;
   try {
@@ -172,7 +178,22 @@ export async function processTree(pid: number, timeoutMs = TREE_DEADLINE_MS): Pr
   // Exited: read what is in the pipe, but not past a short grace (see the module comment).
   await within(read.done, 5_000);
   await read.cancel();
-  const { rows, notes } = processRows(out.text);
+  return renderTree(out.text, pid, expectCommand);
+}
+
+/**
+ * {@linkcode processTree}'s rendering of a process listing. A row for `pid` whose command line
+ * lacks `expectCommand` is another process that was handed the id after `pid` exited (ids are
+ * recycled, and a loaded host starts processes constantly): it is not `pid`, nor are its children
+ * `pid`'s descendants, so the tree reads as gone.
+ *
+ * @param text The process list's output.
+ * @param pid The root of the tree.
+ * @param expectCommand What the root's command line must contain to be the same process.
+ * @returns The listing, or that `pid` and its descendants are gone.
+ */
+export function renderTree(text: string, pid: number, expectCommand?: string): string {
+  const { rows, notes } = processRows(text);
   const lines: string[] = [...notes];
   const walk = (at: number, depth: number) => {
     if (depth > 32) return; // a pid reused as its own ancestor
@@ -182,9 +203,12 @@ export async function processTree(pid: number, timeoutMs = TREE_DEADLINE_MS): Pr
       walk(row.pid, depth + 1);
     }
   };
-  const root = rows.find((r) => r.pid === pid);
-  if (root) lines.push(`${pid}  ${root.line}`);
-  walk(pid, root ? 1 : 0);
+  const found = rows.find((r) => r.pid === pid);
+  const root = found && (!expectCommand || found.line.includes(expectCommand)) ? found : undefined;
+  if (root) {
+    lines.push(`${pid}  ${root.line}`);
+    walk(pid, 1);
+  } else if (!found) walk(pid, 0); // Win32_Process refused: parents unknown, no root row
   return lines.length > notes.length
     ? lines.join("\n")
     : [...notes, `(pid ${pid} and its descendants are gone)`].join("\n");
@@ -293,7 +317,7 @@ export async function runBounded(
     return result(done, false, !drained);
   }
   // What the tree was doing, before it is killed: the process that never finished, by name.
-  tree = await processTree(child.pid);
+  tree = await processTree(child.pid, undefined, cmd);
   await killProcessTree(child.pid);
   // A grandchild the kill could not reach may still hold the pipes: stop reading, don't wait.
   await Promise.all(reads.map((r) => r.cancel()));

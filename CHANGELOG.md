@@ -8,6 +8,25 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.4] - 2026-10-31
+
+### Fixed
+
+- **An empty `APPDATA` (or `HOME`, `XDG_DATA_HOME`, ...) no longer puts a desktop app's data in a
+  relative folder.** The per-user folder lookup (the `fs` / `sqlite` roots, the updater's data
+  dir) treated an empty or whitespace-only variable as set, so Windows resolved the data root to
+  `<id>`; such a value now counts as unset and falls back (`~\AppData\Roaming`,
+  `~/.local/share`), as the runtime's `$DENO_DESKTOP_DATA` does. The lookup also no longer tries a
+  lowercase spelling the runtime does not read (the updater's proxy variables still do).
+- **`desktop.update.hosts` entries are checked like every other baked permission list.** The
+  config validator and the package scripts' flag derivation refuse an entry that is not one host
+  (`"cdn.example.net,0.0.0.0"` would have baked two, a URL or an empty string is no host) and a
+  value that is not an array of strings, instead of folding it into the binary's network grant.
+- **A Windows desktop package signs every file the full-app update check treats as a program.**
+  The packaging step picked the files to Authenticode-sign with a narrower PE test than the
+  runtime's update check (it skipped a header offset under 64 bytes or past 64 MiB), so such a
+  file shipped unsigned and every update of the app was refused. Both now use the same rule.
+
 ## [4.11.3] - 2026-10-31
 
 ### Added
@@ -20475,7 +20494,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.3...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.4...development
+[4.11.4]: https://jsr.io/@denext/denext@4.11.4
 [4.11.3]: https://jsr.io/@denext/denext@4.11.3
 [4.11.2]: https://jsr.io/@denext/denext@4.11.2
 [4.11.1]: https://jsr.io/@denext/denext@4.11.1
