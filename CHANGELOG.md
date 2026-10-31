@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.4] - 2026-10-31
+
 ### Fixed
 
 - **An empty `APPDATA` (or `HOME`, `XDG_DATA_HOME`, ...) no longer puts a desktop app's data in a
@@ -20492,7 +20494,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.3...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.4...development
+[4.11.4]: https://jsr.io/@denext/denext@4.11.4
 [4.11.3]: https://jsr.io/@denext/denext@4.11.3
 [4.11.2]: https://jsr.io/@denext/denext@4.11.2
 [4.11.1]: https://jsr.io/@denext/denext@4.11.1

@@ -8,7 +8,7 @@
     "./client": "./client.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^4.11.3",
+    "@denext/denext": "jsr:@denext/denext@^4.11.4",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "denext": {
