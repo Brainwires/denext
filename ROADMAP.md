@@ -137,9 +137,6 @@ Not blocking 5.0; each item says why.
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
   _Why 5.x: docs; the docs have SSR and desktop numbers only._
 - **Capabilities:** a notification service extension and badges. _Why 5.x: a new capability._
-- **Android transfer record names** come from a hash of the id (a collision overwrites a record,
-  but the page chooses every id: no boundary is crossed). _Why 5.x: no boundary is crossed; fold it
-  into the next transfer change._
 - **A device check of the OTA isa-swap runtime.** _Why 5.x: needs a device._
 
 ## Backend (`@denext/backend`)

@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **Android file transfers keep each transfer's request headers apart.** The Android half of
+  `downloadToFile()` / `uploadFile()` (`denext mobile add file-transfer`) named the file that holds
+  a live transfer's request headers by the id's 32-bit hash code and length, so two ids sharing
+  them (`"Aa"` and `"BB"`) shared one file: the later transfer's headers (an `Authorization`,
+  say) replaced the earlier one's, and a resume after a restart sent them to the earlier
+  transfer's URL. The file is now named by the SHA-256 of the whole id and holds the id, checked
+  on every read. The first launch of the new template moves the old files to their new names; one
+  that two saved transfers or none could have written is deleted, so neither gets the other's
+  headers (that transfer resumes without them). Re-run `denext mobile add file-transfer` and ship
+  a new binary (template generation 6).
+
 ## [4.10.4] - 2026-10-31
 
 ### Added
