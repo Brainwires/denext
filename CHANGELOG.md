@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.1] - 2026-10-31
+
 ### Added
 
 - **Deno Desktop runtime 3.0.0-denext.8 bindings, ready for the pin** (gated on
@@ -20412,7 +20414,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.0...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.1...development
+[4.11.1]: https://jsr.io/@denext/denext@4.11.1
 [4.11.0]: https://jsr.io/@denext/denext@4.11.0
 [4.10.5]: https://jsr.io/@denext/denext@4.10.5
 [4.10.4]: https://jsr.io/@denext/denext@4.10.4
