@@ -15,8 +15,8 @@ import {
   VNodeMarkdown,
 } from "../scripts/lib/docs-corpus.ts";
 import { CORPUS_OUT, corpusInputs } from "../scripts/gen-docs-corpus.ts";
-import { toFileUrl } from "@std/path";
-import { decodeCorpus } from "../src/mcp/rag/corpus.ts";
+import { dirname, join, toFileUrl } from "@std/path";
+import { corpusModule, decodeCorpus, loadCorpus } from "../src/mcp/rag/corpus.ts";
 import { READ_PAGE_MAX, readDocs } from "../src/mcp/rag/read.ts";
 import { runTool, TOOL_GROUPS } from "../src/mcp/tools.ts";
 import { dispatch } from "../src/mcp/server.ts";
@@ -289,4 +289,62 @@ Deno.test("resources: denext://docs lists pages; denext://docs/<slug> reads one"
     params: { uri: "denext://docs/nope" },
   });
   assertEquals(bad?.error?.code, -32602);
+});
+
+// ── a checkout's corpus ──
+
+Deno.test("docs corpus: a checkout outside its workspace reads its own corpus, never a docs-corpus release", async () => {
+  // CI running the checkout's CLI from another directory, or an app that links a denext checkout
+  // by path, resolves `@denext/docs-corpus` through its own import map: a JSR release that, for
+  // the 24 h after it is published, Deno's minimum dependency age refuses (and that, for an
+  // unreleased commit, lacks that commit's corpus). corpus.ts must read the checkout's file
+  // instead. Here the corpus maps to a version that does not exist, so any read through it fails.
+  const root = new URL("../", import.meta.url);
+  const dir = await Deno.makeTempDir({ prefix: "denext_corpus_checkout_" });
+  try {
+    const copy = async (file: string) => {
+      const to = join(dir, ...file.split("/"));
+      await Deno.mkdir(dirname(to), { recursive: true });
+      await Deno.copyFile(new URL(file, root), to);
+    };
+    await copy("src/mcp/rag/corpus.ts");
+    await copy("packages/docs-corpus/mod.ts");
+    const imports = JSON.parse(await Deno.readTextFile(new URL("deno.json", root))).imports;
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        imports: {
+          "@std/encoding": imports["@std/encoding"],
+          "@std/encoding/": `${imports["@std/encoding"].replace(/^jsr:/, "jsr:/")}/`,
+          "@denext/docs-corpus": "jsr:@denext/docs-corpus@0.0.0-unpublished.0",
+        },
+      }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "probe.ts"),
+      'import { loadCorpus } from "./src/mcp/rag/corpus.ts";\n' +
+        "const corpus = await loadCorpus();\n" +
+        "console.log(JSON.stringify({ desktop: corpus.pageBySlug.has('desktop'), guide: corpus.guide.length > 0 }));\n",
+    );
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", "--no-lock", "--config", join(dir, "deno.json"), join(dir, "probe.ts")],
+      cwd: dir,
+      stdout: "piped",
+      stderr: "piped",
+      env: { NO_COLOR: "1" },
+    }).output();
+    const decoder = new TextDecoder();
+    assert(out.success, decoder.decode(out.stderr));
+    assertEquals(JSON.parse(decoder.decode(out.stdout)), { desktop: true, guide: true });
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("docs corpus: published, the corpus is the @denext/docs-corpus import", async () => {
+  // A JSR module's URL is not `file:`: the import goes through the import map (here, the
+  // workspace's `@denext/docs-corpus`).
+  const published = await corpusModule("https://jsr.io/@denext/denext/9.9.9/src/mcp/rag/corpus.ts");
+  assert(published.CORPUS_BROTLI_BASE64.length > 0);
+  assert((await loadCorpus()).pages.length > 0);
 });
