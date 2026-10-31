@@ -663,6 +663,21 @@ Deno.test("window: size limits, resizability and always-on-top reach the window,
   assertEquals(win.calls.length, 10, "nothing more reached the window");
 });
 
+Deno.test("window: setAlwaysOnTop with a level reaches the runtime's level op past a native setAlwaysOnTop", async () => {
+  const { win, call } = setup();
+  const levels: number[] = [];
+  Object.defineProperty(win, Symbol.for("Deno_privateDesktopWindowLevel"), {
+    value: (code: number) => void levels.push(code),
+  });
+  await call("setAlwaysOnTop", { alwaysOnTop: true, level: "status" });
+  await call("setAlwaysOnTop", { alwaysOnTop: true, level: "pop-up-menu" });
+  await call("setAlwaysOnTop", { alwaysOnTop: true, level: "screen-saver" });
+  await call("setAlwaysOnTop", { alwaysOnTop: true, level: "floating" });
+  await call("setAlwaysOnTop", { alwaysOnTop: false, level: "status" });
+  assertEquals(levels, [2, 3, 4]);
+  assertEquals(win.calls.filter(([m]) => m === "setAlwaysOnTop").length, 5);
+});
+
 Deno.test("window: a window without bounds APIs reports null bounds; a throwing report is ignored", async () => {
   const bare = new EventTarget();
   const ctl = createWindowController({

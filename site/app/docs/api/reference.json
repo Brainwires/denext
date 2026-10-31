@@ -4301,7 +4301,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.11.2",
+          "signature": "VERSION: 4.11.3",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -22991,8 +22991,8 @@
           "slug": "writeLaufeyLaunchConfig",
           "kind": "function",
           "signature": "writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string, options?: LaufeyLaunchWriteOptions): Promise<string | null>",
-          "doc": "Write the packaged app's laufey-launch.json (packagedLaunchConfig) from the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes. On macOS call it BEFORE code-signing: both files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.",
-          "docFull": "Write the packaged app's `laufey-launch.json` ({@linkcode packagedLaunchConfig}) from the\nproject's `denext.config.ts` (resolved beside `entryUrl`'s directory, like\n`desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's\n`NSUserActivityTypes`. On macOS call it BEFORE code-signing: both files live inside the sealed\nbundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.",
+          "doc": "Write the packaged app's laufey-launch.json (packagedLaunchConfig) from the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes, and marks an \"accessory\" app LSUIElement (no Dock tile at launch; withActivationPolicy). On macOS call it BEFORE code-signing: both files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.",
+          "docFull": "Write the packaged app's `laufey-launch.json` ({@linkcode packagedLaunchConfig}) from the\nproject's `denext.config.ts` (resolved beside `entryUrl`'s directory, like\n`desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's\n`NSUserActivityTypes`, and marks an `\"accessory\"` app `LSUIElement` (no Dock tile at launch;\n{@linkcode withActivationPolicy}). On macOS call it BEFORE code-signing: both files live inside the sealed\nbundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.",
           "params": [
             {
               "name": "entryUrl",
@@ -25101,8 +25101,8 @@
           "slug": "getTray",
           "kind": "function",
           "signature": "getTray(): Promise<AppTray | null>",
-          "doc": "The tray icon the app's backend owns (desktop.tray in denext.config.ts, or runDesktop({ tray })): every window's page gets the same one, and a page load never removes it (its destroy rejects validation). Clicks reach every window.",
-          "docFull": "The tray icon the app's backend owns (`desktop.tray` in `denext.config.ts`, or `runDesktop({\ntray })`): every window's page gets the same one, and a page load never removes it (its\n`destroy` rejects `validation`). Clicks reach every window.",
+          "doc": "The tray icon the app's backend owns (desktop.tray in denext.config.ts, or runDesktop({ tray })): every window's page gets the same one, and a page load never removes it (its destroy rejects validation). Clicks reach every window's page — while that page runs: a window that does not show may have its page suspended (WKWebView on macOS) until it shows again, so the clicks a tray-first app must always answer (its menu items, a double click) go in desktop.ts instead (app.tray.onMenuItem, runDesktop({ tray: { onMenuItem } })).",
+          "docFull": "The tray icon the app's backend owns (`desktop.tray` in `denext.config.ts`, or `runDesktop({\ntray })`): every window's page gets the same one, and a page load never removes it (its\n`destroy` rejects `validation`). Clicks reach every window's page — while that page runs: a\nwindow that does not show may have its page suspended (WKWebView on macOS) until it shows again,\nso the clicks a tray-first app must always answer (its menu items, a double click) go in\n`desktop.ts` instead (`app.tray.onMenuItem`, `runDesktop({ tray: { onMenuItem } })`).",
           "params": [],
           "returns": "The tray, or null when the app has none (or the session has no tray host).",
           "examples": [

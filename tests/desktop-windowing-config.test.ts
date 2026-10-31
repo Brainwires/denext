@@ -189,6 +189,48 @@ Deno.test("overlay settings: level, opacity, taskbar and workspaces go to the wi
   assertEquals(plain.calls, ["setAlwaysOnTop[true]", "setAlwaysOnTop[false]"]);
 });
 
+/**
+ * A `Deno.BrowserWindow` as macOS's runtime 3.0.0-denext.6 left it: the prototype's
+ * `setAlwaysOnTop` is the native op (it drops the level: floating), and the level is set only
+ * through the private `Deno_privateDesktopWindowLevel` op.
+ */
+class NativeLevelWindow {
+  level = 0;
+  onTop = false;
+  setAlwaysOnTop(flag: boolean) {
+    this.onTop = flag;
+    this.level = flag ? 1 : 0;
+  }
+  [Symbol.for("Deno_privateDesktopWindowLevel")](code: number) {
+    this.level = code;
+  }
+}
+
+Deno.test("overlay settings: a level above floating reaches the runtime's level op when setAlwaysOnTop is native", () => {
+  const levels: Record<string, number> = { status: 2, "pop-up-menu": 3, "screen-saver": 4 };
+  for (const [name, code] of Object.entries(levels)) {
+    const win = new NativeLevelWindow();
+    applyWindowOverlaySettings(win, { alwaysOnTop: name as "status" });
+    assertEquals([win.onTop, win.level], [true, code], name);
+  }
+  const floating = new NativeLevelWindow();
+  applyWindowOverlaySettings(floating, { alwaysOnTop: "floating" });
+  assertEquals(floating.level, 1);
+  // A runtime without the op keeps setAlwaysOnTop's own answer; a throwing op is a warning.
+  const plain = recordingWindow(["setAlwaysOnTop"]);
+  applyWindowOverlaySettings(plain.win, { alwaysOnTop: "status" });
+  assertEquals(plain.calls, ['setAlwaysOnTop[true,"status"]']);
+  const warnings: string[] = [];
+  const broken = new NativeLevelWindow();
+  Object.defineProperty(broken, Symbol.for("Deno_privateDesktopWindowLevel"), {
+    value: () => {
+      throw new Error("no level");
+    },
+  });
+  applyWindowOverlaySettings(broken, { alwaysOnTop: "status" }, (m) => void warnings.push(m));
+  assertEquals(warnings, ["desktop.window.alwaysOnTop could not be applied: no level"]);
+});
+
 Deno.test("overlay settings: a setter no runtime has yet warns by its name, not the pinned runtime", () => {
   const warnings: string[] = [];
   applyDesktopWindowSettings({}, { skipTaskbar: true, opacity: 1 }, (m) => void warnings.push(m));

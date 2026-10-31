@@ -5,37 +5,36 @@
 // (`lib/deno-host.ts`). Errors reach the page as a code and a message without absolute paths.
 
 import { defineDesktopExtension, DesktopCapError } from "denext/desktop";
-import { join } from "@std/path/posix";
 import { denoHost } from "../lib/deno-host.ts";
-import {
-  createHangar,
-  defaultSettings,
-  type Hangar,
-  HangarError,
-  parseSettings,
-} from "../lib/hangar.ts";
+import type { HangarWindows } from "../lib/tray-driver.ts";
+import { createHangar, type Hangar, HangarError, parseSettings } from "../lib/hangar.ts";
+import { loadSettings, saveSettings } from "../lib/settings-file.ts";
 
-/** The settings file, in the app's data folder. */
-const SETTINGS_FILE = "hangar-settings.json";
+const host = denoHost();
 
 let instance: Promise<Hangar> | undefined;
 
-/** The backend, created once with the saved settings. */
+/** The backend, created once with the settings saved in `appSupportDir`. */
 function hangar(appSupportDir: string): Promise<Hangar> {
-  instance ??= (async () => {
-    const host = denoHost();
-    const base = defaultSettings(host.home, host.os);
-    let saved: unknown = {};
-    try {
-      saved = JSON.parse(await Deno.readTextFile(join(appSupportDir, SETTINGS_FILE)));
-    } catch { /* first launch, or an unreadable file: the defaults */ }
-    let settings = base;
-    try {
-      settings = parseSettings(saved, base);
-    } catch { /* a hand-edited bad value: the defaults */ }
-    return createHangar(host, settings);
-  })();
+  instance ??= loadSettings(host, appSupportDir).then((settings) => createHangar(host, settings));
   return instance;
+}
+
+/**
+ * The backend for desktop.ts (the tray driver), the same instance the pages reach. `appSupportDir`
+ * is the app's data folder, the one the bridge hands the methods: `resolveDesktopCapabilities`'s
+ * `appSupportDir`. Whichever asks first creates the backend, so desktop.ts must pass it too, or the
+ * saved settings would be read from the working directory.
+ */
+export function hangarBackend(appSupportDir: string): Promise<Hangar> {
+  return hangar(appSupportDir);
+}
+
+let windows: HangarWindows | undefined;
+
+/** Hand the methods desktop.ts's window manager (`open` opens every full window through it). */
+export function setHangarWindows(manager: HangarWindows): void {
+  windows = manager;
 }
 
 /** The page's arguments as an object (the bridge passes JSON). */
@@ -137,16 +136,25 @@ export default defineDesktopExtension({
       120_000,
     ),
     openTerminal: method((a, h) => h.openTerminal(str(a.id, "id"))),
+    // A page in a full window of its own (`"/"`: the library, the main window), through the window
+    // manager desktop.ts owns, so the panel's buttons and the tray's menu share one window per page.
+    open: {
+      handler: (raw: unknown) => {
+        const path = str(args(raw).path, "path");
+        if (!/^\/(?![/\\])/.test(path)) {
+          throw new DesktopCapError("validation", 'path must be a path of the app, like "/images"');
+        }
+        if (!windows) throw new DesktopCapError("unavailable", "no window manager in this launch");
+        windows.openFull(path);
+        return null;
+      },
+    },
     getSettings: method((_a, h) => Promise.resolve(h.settings())),
     setSettings: {
       handler: (raw: unknown, ctx: { appSupportDir: string }) =>
         call(ctx.appSupportDir, async (h) => {
           const next = parseSettings(raw, h.settings());
-          await Deno.mkdir(ctx.appSupportDir, { recursive: true });
-          await Deno.writeTextFile(
-            join(ctx.appSupportDir, SETTINGS_FILE),
-            JSON.stringify(next, null, 2) + "\n",
-          );
+          await saveSettings(host, ctx.appSupportDir, next);
           h.setSettings(next);
           return next;
         }),
