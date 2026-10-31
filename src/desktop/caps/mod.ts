@@ -31,7 +31,13 @@ import { shellCapability, type ShellCapabilityConfig } from "./shell.ts";
 import { keepAwakeCapability } from "./keep-awake.ts";
 import { secureStoreCapability } from "./secure-store.ts";
 import { PickedPaths } from "../picked-paths.ts";
-import { type DesktopWindowSettings, resolveDesktopWindowSettings } from "../window-config.ts";
+import {
+  type DesktopAppSettings,
+  type DesktopWindowSettings,
+  resolveDesktopAppSettings,
+  resolveDesktopWindowSettings,
+} from "../window-config.ts";
+import { type DesktopTraySettings, resolveDesktopTraySettings } from "../tray-config.ts";
 import { dialogsCapability } from "./dialogs.ts";
 import { passkeysCapability } from "./passkeys.ts";
 import { clipboardCapability } from "./clipboard.ts";
@@ -92,6 +98,10 @@ export interface ResolvedDesktop {
    * `desktop.minSize`, `desktop.maxSize`) `runDesktop` applies to the window it adopts.
    */
   readonly window: DesktopWindowSettings;
+  /** `desktop.app`'s launch settings (`keepAlive`, `dock`) `runDesktop` applies. */
+  readonly app: DesktopAppSettings;
+  /** `desktop.tray`: the backend-owned tray `runDesktop` creates, when the config sets one. */
+  readonly configTray?: DesktopTraySettings;
   /** The app's own folders (data, cache, documents): files there may be dragged out of the window. */
   readonly appDirs: DesktopAppDirs;
   /**
@@ -262,12 +272,15 @@ function desktopLaunchBase(
     (desktop as { update?: { ui?: unknown } } | undefined)?.update?.ui,
     explicitId,
   );
+  const tray = resolveDesktopTraySettings(desktop);
   return {
     appSupportDir: dirs.data,
     authSessionEnabled,
     deepLinks,
     pickedPaths,
     window: resolveDesktopWindowSettings(desktop),
+    app: resolveDesktopAppSettings(desktop),
+    ...(tray ? { configTray: tray } : {}),
     appDirs: dirs,
     autoConfirmAppUpdate:
       (desktop as { update?: { autoConfirm?: unknown } } | undefined)?.update?.autoConfirm !==

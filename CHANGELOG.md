@@ -8,6 +8,66 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Tray-first and overlay desktop apps, and several windows** (`denext/desktop/window`,
+  `denext/desktop/app`, `denext.config.ts`'s `desktop`). `desktop.window.show: false` starts the app
+  with no visible window and no flash, and `frameless`, `transparent` and `focusable: false` (a
+  non-activating panel) make the first window an overlay; all four are written to
+  `.deno-desktop/app.json`'s `initialWindow`, which every supported runtime reads.
+  `desktop.window.alwaysOnTop` (a boolean or a level), `opacity`, `skipTaskbar` and
+  `visibleOnAllWorkspaces` are applied at launch. `desktop.app.keepAlive` keeps the app running with
+  no window (on by default with a tray; a page's `window.close()` then closes its own window), and
+  `desktop.app.dock: false` / `setDockVisible()` hide the macOS Dock icon; a Dock click with no
+  window showing shows the main window (`onDockReopen`). `desktop.tray` (or `runDesktop({ tray })`)
+  is a tray icon the backend owns: made before any page loads, kept across reloads, its clicks
+  handed to `desktop.ts`'s handlers (`DesktopRuntime.tray`) and every page (`getTray()`), with an
+  optional panel at the icon (the runtime's `Tray.attachPanel`, toggled by a click, hidden on blur,
+  placed inside the work area so it opens above a bottom taskbar; `showTrayPanel` /
+  `hideTrayPanel` / `toggleTrayPanel`). `openWindow()` opens another window of the app on one of
+  its pages and returns a handle (`show`, `hide`, `focus`, `close`, `navigate`, `setBounds`,
+  `getBounds`, `onClosed`, `onFocus`, `onBlur`), with an optional capability subset; `getWindows`,
+  `windowHandle` and `currentWindowId` find them, and `DesktopRuntime.windows` opens them from the
+  backend. Each window's page drives its own window: the bridge tells windows apart by a per-window
+  token the runtime hands only that window's documents, and a reload releases only that window's
+  tray icons, close guard and drops. `onWindowFocus` / `onWindowBlur`, `setWindowOpacity`,
+  `setAlwaysOnTop(flag, level)` and, where the runtime has them (none yet; `windowCapabilities()`
+  turns each on), `setIgnoreMouseEvents(ignore, { forward })`, `setHitRegion(rects)`,
+  `setVisibleOnAllWorkspaces` and `setSkipTaskbar`. `windowCapabilities()` adds `transparent`,
+  `nonActivating`, `opacity`, `clickThrough`, `clickThroughForward`, `hitRegion`,
+  `visibleOnAllWorkspaces`, `skipTaskbar`, `alwaysOnTopLevels` and `focusEvents`;
+  `appCapabilities()` adds `dockVisibility`, `backendTray` and `trayPanel`. A capability's
+  `onPageLoad` gets the window's id, and `perWindow: true` has it called for every window.
+- **`speak()` / `stopSpeaking()` in `denext/mobile`**: the Capacitor text-to-speech plugin in the
+  shell, else the Web Speech API (WKWebView, WebView2, CEF on macOS and Windows), else the desktop
+  runtime's OS speech through the new `textToSpeech` capability once the runtime has
+  `Deno.desktop.speech` (for WebKitGTK on Linux).
+- **examples/companion and examples/hangar use them.** Loopy is a transparent, frameless overlay
+  that never takes the focus, on top on every Space, with no Dock or taskbar entry and a tray to
+  show, hide and quit it; it lets clicks through outside itself where the runtime can. Hangar
+  starts with no window and no Dock icon, owns its tray in the backend, shows a real panel at the
+  icon, and opens each page in a window of its own, staying alive with every window closed.
+- **Hangar, a tray-first desktop example** (`examples/hangar`): an app that lives in the tray /
+  menu bar and manages QEMU disk images and running VMs. It adopts existing VM folders that start
+  with a `start.sh` and creates its own from a `hangar.json`; starts VMs headless or windowed,
+  shuts them down over QMP (`system_powerdown`, then `quit` after a timeout) and force stops one by
+  its exact pid; shows QMP status, RAM and CPU per VM against a RAM budget; and lists, creates,
+  grows, converts and snapshots images with `qemu-img`. Destructive actions take a typed confirm
+  that the backend checks again, and every action stays inside a library VM's folder. The backend
+  is a `defineDesktopExtension` over a fake-able host, tested without QEMU; the README lists what
+  the example approximates today (a window hidden at launch, the page-owned tray, the main window
+  resized at the tray icon as the panel).
+- **examples/companion: Loopy, a desktop companion** — an original paper-clip character (a teal
+  Gem-style double-oval clip, drawn in hand-written SVG and animated with CSS and Web Animations)
+  that sits in a small always-on-top Deno Desktop window in the bottom-right corner of the primary
+  display, talks in speech bubbles with optional buttons, and reacts to other programs: a
+  token-protected loopback inbox (`POST /api/loopy/say`, token generated on the first run and kept
+  owner-only in the app's data folder) takes messages from scripts, and `scripts/loopy-say.ts` posts
+  them (`--wait` returns the pressed button). A sample `Notification` / `Stop` hook pair makes Loopy
+  pop up when a Claude Code session needs approval or finishes. The window chrome is
+  feature-detected through `windowCapabilities()`, and in a browser (`denext dev`) Loopy renders in
+  the page with demo buttons for every move.
+
 ## [4.10.4] - 2026-10-31
 
 ### Added

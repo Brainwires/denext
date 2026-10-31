@@ -48,6 +48,7 @@ export const SERIAL_TESTS: readonly string[] = [
   "tests/desktop-security.test.ts",
   "tests/desktop-sidecar-child.test.ts",
   "tests/desktop-updater.test.ts",
+  "tests/desktop-windowing-run.test.ts",
   "tests/desktop-windows-cef-trust.test.ts",
   "tests/devtools-meta.test.ts",
   "tests/devtools-route-meta.test.ts",

@@ -1362,6 +1362,9 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     passkeysReason: null,
     bounce: false,
     dockMenu: false,
+    dockVisibility: false,
+    backendTray: false,
+    trayPanel: false,
   });
   assertEquals(await codeOf(call(cap, "setBadge", { text: "1" })), "unsupported");
   assertEquals(await codeOf(call(cap, "bounce", null)), "unsupported");

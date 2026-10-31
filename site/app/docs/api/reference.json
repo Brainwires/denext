@@ -7492,6 +7492,54 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopTrayConfig",
+          "slug": "DesktopTrayConfig",
+          "kind": "interface",
+          "signature": "interface DesktopTrayConfig",
+          "doc": "The backend-owned tray icon (DesktopConfig.tray).",
+          "docFull": "The backend-owned tray icon ({@link DesktopConfig.tray}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTrayMenuEntry",
+          "slug": "DesktopTrayMenuEntry",
+          "kind": "interface",
+          "signature": "interface DesktopTrayMenuEntry",
+          "doc": "One entry of a tray submenu (DesktopTrayMenuItem.submenu).",
+          "docFull": "One entry of a tray submenu ({@link DesktopTrayMenuItem.submenu}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTrayMenuItem",
+          "slug": "DesktopTrayMenuItem",
+          "kind": "interface",
+          "signature": "interface DesktopTrayMenuItem",
+          "doc": "One entry of a DesktopTrayConfig menu: an action (id + label), a separator (separator: true), a standard item (role) or a submenu (label + submenu, one level).",
+          "docFull": "One entry of a {@link DesktopTrayConfig} menu: an action (`id` + `label`), a separator\n(`separator: true`), a standard item (`role`) or a submenu (`label` + `submenu`, one level).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTrayPanelConfig",
+          "slug": "DesktopTrayPanelConfig",
+          "kind": "interface",
+          "signature": "interface DesktopTrayPanelConfig",
+          "doc": "The tray panel (DesktopTrayConfig.panel).",
+          "docFull": "The tray panel ({@link DesktopTrayConfig.panel}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopUiUpdateConfig",
           "slug": "DesktopUiUpdateConfig",
           "kind": "interface",
@@ -7522,6 +7570,18 @@
           "signature": "interface DesktopWindowConfig",
           "doc": "The initial window (DesktopConfig.window), applied when the runtime adopts it.",
           "docFull": "The initial window ({@link DesktopConfig.window}), applied when the runtime adopts it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowLevel",
+          "slug": "DesktopWindowLevel",
+          "kind": "typeAlias",
+          "signature": "type DesktopWindowLevel = floating | status | pop-up-menu | screen-saver",
+          "doc": "How far above other windows an always-on-top window floats (Electron's level names).",
+          "docFull": "How far above other windows an always-on-top window floats (Electron's level names).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -20866,7 +20926,7 @@
           "name": "createDesktopHandler",
           "slug": "createDesktopHandler",
           "kind": "function",
-          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string | DesktopUiFiles, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: () => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>",
+          "signature": "createDesktopHandler(options: RunDesktopOptions, outDir: string | DesktopUiFiles, proxy: ProxyModule | undefined, token?: string, onBooted?: () => void | Promise<void>, devProxy?: DesktopProxyFn, devInjectToken?: boolean, bridge?: DesktopBridge, onQuit?: (windowToken: string | null) => void, trust?: DesktopTrust, preload?: string, preloadKey?: string, wsUrl?: string, windowBindings?: boolean): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response>",
           "doc": "The desktop request handler: the onRequest escape hatch, the token-gated local endpoints, then — when devProxy is set (denext desktop dev only) — the reverse proxy to denext dev for EVERYTHING else; otherwise the backend proxy, the export's static assets (no-store), the index.html shell for navigations, else 404. Exported for tests; runDesktop wires it to Deno.serve.",
           "docFull": "The desktop request handler: the `onRequest` escape hatch, the token-gated local endpoints,\nthen — when `devProxy` is set (`denext desktop dev` only) — the reverse proxy to `denext dev`\nfor EVERYTHING else; otherwise the backend proxy, the export's static assets (`no-store`), the\n`index.html` shell for navigations, else 404. Exported for tests; {@linkcode runDesktop} wires\nit to `Deno.serve`.\n\nRequest order is load-bearing: the token-gated `/_denext/desktop/*` endpoints ({@link\nhandleLocalEndpoint}) run BEFORE the dev proxy, so they are always served LOCALLY and never\nforwarded to the dev server, even in live-reload mode.",
           "params": [],
@@ -21050,6 +21110,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopAppSettings",
+          "slug": "DesktopAppSettings",
+          "kind": "interface",
+          "signature": "interface DesktopAppSettings",
+          "doc": "The app-level settings of desktop.app that runDesktop applies at launch.",
+          "docFull": "The app-level settings of `desktop.app` that `runDesktop` applies at launch.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopAppSyncReport",
           "slug": "DesktopAppSyncReport",
           "kind": "interface",
@@ -21058,6 +21130,27 @@
           "docFull": "What {@linkcode syncDesktopAppConfig} did.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopAppUrl",
+          "slug": "desktopAppUrl",
+          "kind": "function",
+          "signature": "desktopAppUrl(trust: DesktopTrust, addr: unknown): (path: string) => string",
+          "doc": "The URL a window loads for an app path (/settings): under the app origin in the memory world (the pinned runtime), else at the loopback address the server listens on.",
+          "docFull": "The URL a window loads for an app path (`/settings`): under the app origin in the memory world\n(the pinned runtime), else at the loopback address the server listens on.",
+          "params": [
+            {
+              "name": "trust",
+              "doc": "The desktop world."
+            },
+            {
+              "name": "addr",
+              "doc": "The server's address (Deno.serve's addr)."
+            }
+          ],
+          "returns": "The resolver.",
           "examples": [],
           "denextOnly": true
         },
@@ -21498,6 +21591,18 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopOpenWindowOptions",
+          "slug": "DesktopOpenWindowOptions",
+          "kind": "interface",
+          "signature": "interface DesktopOpenWindowOptions",
+          "doc": "The options of a window desktop.ts or a page opens (openWindow in denext/desktop/window).",
+          "docFull": "The options of a window `desktop.ts` or a page opens (`openWindow` in `denext/desktop/window`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "desktopOptionalInstaller",
           "slug": "desktopOptionalInstaller",
           "kind": "function",
@@ -21923,6 +22028,90 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopTrayHandle",
+          "slug": "DesktopTrayHandle",
+          "kind": "interface",
+          "signature": "interface DesktopTrayHandle",
+          "doc": "The backend tray, as DesktopRuntime.tray hands it to desktop.ts.",
+          "docFull": "The backend tray, as `DesktopRuntime.tray` hands it to `desktop.ts`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTrayIcon",
+          "slug": "DesktopTrayIcon",
+          "kind": "typeAlias",
+          "signature": "type DesktopTrayIcon = Uint8Array | string",
+          "doc": "A tray icon image: PNG bytes, or a PNG path in the export (\"/tray.png\").",
+          "docFull": "A tray icon image: PNG bytes, or a PNG path in the export (`\"/tray.png\"`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTrayOptions",
+          "slug": "DesktopTrayOptions",
+          "kind": "interface",
+          "signature": "interface DesktopTrayOptions",
+          "doc": "The backend tray's settings in runDesktop({ tray }), laid over desktop.tray.",
+          "docFull": "The backend tray's settings in `runDesktop({ tray })`, laid over `desktop.tray`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTrayPanelHandle",
+          "slug": "DesktopTrayPanelHandle",
+          "kind": "interface",
+          "signature": "interface DesktopTrayPanelHandle",
+          "doc": "The tray panel as the backend drives it.",
+          "docFull": "The tray panel as the backend drives it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTrayPanelSettings",
+          "slug": "DesktopTrayPanelSettings",
+          "kind": "interface",
+          "signature": "interface DesktopTrayPanelSettings",
+          "doc": "The panel at the tray icon, resolved (desktop.tray.panel).",
+          "docFull": "The panel at the tray icon, resolved (`desktop.tray.panel`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTraySettings",
+          "slug": "DesktopTraySettings",
+          "kind": "interface",
+          "signature": "interface DesktopTraySettings",
+          "doc": "The backend-owned tray, resolved (desktop.tray).",
+          "docFull": "The backend-owned tray, resolved (`desktop.tray`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTrayUpdate",
+          "slug": "DesktopTrayUpdate",
+          "kind": "interface",
+          "signature": "interface DesktopTrayUpdate",
+          "doc": "What update changes on the backend tray (null removes the tooltip / menu / dark icon).",
+          "docFull": "What `update` changes on the backend tray (`null` removes the tooltip / menu / dark icon).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopTrust",
           "slug": "DesktopTrust",
           "kind": "typeAlias",
@@ -21993,6 +22182,30 @@
             }
           ],
           "returns": "The reason, or undefined.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowRef",
+          "slug": "DesktopWindowRef",
+          "kind": "interface",
+          "signature": "interface DesktopWindowRef",
+          "doc": "One of the app's windows, as desktop.ts drives it (DesktopRuntime.windows).",
+          "docFull": "One of the app's windows, as `desktop.ts` drives it (`DesktopRuntime.windows`).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWindows",
+          "slug": "DesktopWindows",
+          "kind": "interface",
+          "signature": "interface DesktopWindows",
+          "doc": "The app's windows, as desktop.ts drives them (DesktopRuntime.windows).",
+          "docFull": "The app's windows, as `desktop.ts` drives them (`DesktopRuntime.windows`).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -22091,8 +22304,8 @@
           "slug": "installWindowCloseHandler",
           "kind": "function",
           "signature": "installWindowCloseHandler(BrowserWindow?: unknown, exit?: (code: number) => void, intercept?: (event: Event) => boolean): unknown",
-          "doc": "Closing the window (macOS red light / Cmd-W) quits the app. Deno.serve is a permanently-live task, so deno desktop won't auto-exit on close; adopt the initial window and exit on its close. Guarded so a non-desktop run is a no-op. Returns the adopted window (handed to capabilities as ctx.window), or undefined outside the desktop runtime.",
-          "docFull": "Closing the window (macOS red light / Cmd-W) quits the app. `Deno.serve` is a\npermanently-live task, so deno desktop won't auto-exit on close; adopt the initial\nwindow and exit on its `close`. Guarded so a non-desktop run is a no-op. Returns the adopted\nwindow (handed to capabilities as `ctx.window`), or `undefined` outside the desktop runtime.",
+          "doc": "Adopt the window the app started with, and act on its close (macOS red light / Cmd-W): by default that ends the process (Deno.serve is a permanently-live task, so deno desktop won't auto-exit on close); runDesktop passes an exit that quits only once the app's last window is gone and the app is not kept alive. Guarded so a non-desktop run is a no-op. Returns the adopted window (handed to capabilities as ctx.window), or undefined outside the desktop runtime.",
+          "docFull": "Adopt the window the app started with, and act on its `close` (macOS red light / Cmd-W): by\ndefault that ends the process (`Deno.serve` is a permanently-live task, so deno desktop won't\nauto-exit on close); `runDesktop` passes an `exit` that quits only once the app's last window is\ngone and the app is not kept alive. Guarded so a non-desktop run is a no-op. Returns the adopted\nwindow (handed to capabilities as `ctx.window`), or `undefined` outside the desktop runtime.",
           "params": [
             {
               "name": "BrowserWindow",
@@ -23653,10 +23866,22 @@
           "slug": "closeWindow",
           "kind": "function",
           "signature": "closeWindow(): Promise<void>",
-          "doc": "Close the window now, without asking the onCloseRequested handlers (the app quits: a denext desktop app has one window).",
-          "docFull": "Close the window now, without asking the {@linkcode onCloseRequested} handlers (the app quits:\na denext desktop app has one window).",
+          "doc": "Close the window now, without asking the onCloseRequested handlers. The app quits once its last window is gone, unless it is kept alive (desktop.app.keepAlive, a tray).",
+          "docFull": "Close the window now, without asking the {@linkcode onCloseRequested} handlers. The app quits\nonce its last window is gone, unless it is kept alive (`desktop.app.keepAlive`, a tray).",
           "params": [],
           "returns": "Once the close was requested.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "currentWindowId",
+          "slug": "currentWindowId",
+          "kind": "function",
+          "signature": "currentWindowId(): Promise<string>",
+          "doc": "The id of the window this page is in (\"main\" for the window the app started with, and where the runtime cannot tell windows apart).",
+          "docFull": "The id of the window this page is in (`\"main\"` for the window the app started with, and where\nthe runtime cannot tell windows apart).",
+          "params": [],
+          "returns": "The id.",
           "examples": [],
           "denextOnly": true
         },
@@ -23679,6 +23904,30 @@
           "signature": "type DesktopErrorCode = unavailable | forbidden | validation | timeout | too_large | bridge_error | parenthesized",
           "doc": "Why a desktop call failed:",
           "docFull": "Why a desktop call failed:\n\n- `unavailable`: not inside a Deno Desktop window, or the capability / method is not enabled\n  in `desktop.capabilities` (the runtime's allowlist), or no runtime answered.\n- `forbidden`: the runtime's gate refused the request (token, origin or content type).\n- `validation`: the arguments did not match the method's input schema.\n- `timeout`: no answer in time.\n- `too_large`: the request body is over {@linkcode MAX_RPC_BODY_BYTES}.\n- `bridge_error`: the runtime answered without the bridge envelope.\n\nA capability may fail with its own codes too (`not_found`, `cancelled`, …).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowHandle",
+          "slug": "DesktopWindowHandle",
+          "kind": "interface",
+          "signature": "interface DesktopWindowHandle",
+          "doc": "One of the app's windows, by id (openWindow, windowHandle).",
+          "docFull": "One of the app's windows, by id ({@linkcode openWindow}, {@linkcode windowHandle}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopWindowInfo",
+          "slug": "DesktopWindowInfo",
+          "kind": "interface",
+          "signature": "interface DesktopWindowInfo",
+          "doc": "One of the app's windows (getWindows).",
+          "docFull": "One of the app's windows ({@linkcode getWindows}).",
           "params": [],
           "returns": "",
           "examples": [],
@@ -23780,6 +24029,18 @@
           "examples": [
             "```ts\nimport { getTitleBarPreferences, onTitleBarPreferencesChange } from \"denext/desktop/window\";\n\nconst place = (p: { side: \"left\" | \"right\" }) => document.body.dataset.buttons = p.side;\nplace(await getTitleBarPreferences());\nonTitleBarPreferencesChange(place);\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "getWindows",
+          "slug": "getWindows",
+          "kind": "function",
+          "signature": "getWindows(): Promise<DesktopWindowInfo[]>",
+          "doc": "The app's open windows.",
+          "docFull": "The app's open windows.",
+          "params": [],
+          "returns": "Each window's id, kind and visibility.",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -23937,6 +24198,40 @@
           "denextOnly": true
         },
         {
+          "name": "onWindowBlur",
+          "slug": "onWindowBlur",
+          "kind": "function",
+          "signature": "onWindowBlur(handler: () => void): () => void",
+          "doc": "Call handler when the window loses the keyboard focus (the user clicked another window or app): where a panel hides itself.",
+          "docFull": "Call `handler` when the window loses the keyboard focus (the user clicked another window or\napp): where a panel hides itself.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called on each blur."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "onWindowFocus",
+          "slug": "onWindowFocus",
+          "kind": "function",
+          "signature": "onWindowFocus(handler: () => void): () => void",
+          "doc": "Call handler when the window gains the keyboard focus.",
+          "docFull": "Call `handler` when the window gains the keyboard focus.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called on each focus."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "onWindowStateChange",
           "slug": "onWindowStateChange",
           "kind": "function",
@@ -23950,6 +24245,37 @@
             }
           ],
           "returns": "A function that unsubscribes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "openWindow",
+          "slug": "openWindow",
+          "kind": "function",
+          "signature": "openWindow(options: OpenWindowOptions): Promise<DesktopWindowHandle>",
+          "doc": "Open another window of the app on one of its pages (Electron's new BrowserWindow() + loadURL, Tauri's WebviewWindow): a settings window, a document, a frameless overlay. Its page is a page of the same app, with the same desktop capabilities (or the capabilities subset), and its denext/desktop/window calls act on itself. The app stays up while any window is open. At most 8 windows at once besides the main one and the tray panel.",
+          "docFull": "Open another window of the app on one of its pages (Electron's `new BrowserWindow()` +\n`loadURL`, Tauri's `WebviewWindow`): a settings window, a document, a frameless overlay. Its page\nis a page of the same app, with the same desktop capabilities (or the `capabilities` subset), and\nits `denext/desktop/window` calls act on itself. The app stays up while any window is open. At\nmost 8 windows at once besides the main one and the tray panel.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The page (url, a path of the app) and the window's settings."
+            }
+          ],
+          "returns": "The new window's handle. Rejects validation for a URL that is not a path of the app, unsupported outside denext's Deno Desktop runtime (a browser: unavailable).",
+          "examples": [
+            "```ts\nimport { openWindow } from \"denext/desktop/window\";\n\nconst settings = await openWindow({ url: \"/settings\", width: 520, height: 420, title: \"Settings\" });\nsettings.onClosed(() => console.log(\"settings closed\"));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "OpenWindowOptions",
+          "slug": "OpenWindowOptions",
+          "kind": "interface",
+          "signature": "interface OpenWindowOptions",
+          "doc": "The options of a window to open (openWindow).",
+          "docFull": "The options of a window to open ({@linkcode openWindow}).",
+          "params": [],
+          "returns": "",
           "examples": [],
           "denextOnly": true
         },
@@ -23981,13 +24307,17 @@
           "name": "setAlwaysOnTop",
           "slug": "setAlwaysOnTop",
           "kind": "function",
-          "signature": "setAlwaysOnTop(alwaysOnTop: boolean): Promise<void>",
+          "signature": "setAlwaysOnTop(alwaysOnTop: boolean, level?: WindowLevel): Promise<void>",
           "doc": "Keep the window above other windows.",
           "docFull": "Keep the window above other windows.",
           "params": [
             {
               "name": "alwaysOnTop",
               "doc": "Whether it floats above the others."
+            },
+            {
+              "name": "level",
+              "doc": "How high (default \"floating\"): \"status\" and above also cover the macOS menu bar and full-screen apps, where the runtime has levels (alwaysOnTopLevels in windowCapabilities); elsewhere it floats at \"floating\"."
             }
           ],
           "returns": "Once set.",
@@ -24008,6 +24338,44 @@
             }
           ],
           "returns": "Once requested.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setHitRegion",
+          "slug": "setHitRegion",
+          "kind": "function",
+          "signature": "setHitRegion(rects: typeOperator | null): Promise<void>",
+          "doc": "Catch clicks only inside these rectangles (page CSS pixels, as getBoundingClientRect() gives them); everywhere else they go through to what is under the window. null catches them on the whole window again. For a character on a transparent window: pass its element's rectangle, and again whenever it moves or resizes. Needs a runtime with it (hitRegion in windowCapabilities).",
+          "docFull": "Catch clicks only inside these rectangles (page CSS pixels, as `getBoundingClientRect()` gives\nthem); everywhere else they go through to what is under the window. `null` catches them on the\nwhole window again. For a character on a transparent window: pass its element's rectangle, and\nagain whenever it moves or resizes. Needs a runtime with it (`hitRegion` in\n{@linkcode windowCapabilities}).",
+          "params": [
+            {
+              "name": "rects",
+              "doc": "The click-catching rectangles (at most 64), or null."
+            }
+          ],
+          "returns": "Once set.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setIgnoreMouseEvents",
+          "slug": "setIgnoreMouseEvents",
+          "kind": "function",
+          "signature": "setIgnoreMouseEvents(ignore: boolean, options?: object): Promise<void>",
+          "doc": "Let clicks go through the window to what is under it (Electron's setIgnoreMouseEvents). With forward, pointer moves still reach the page where the runtime can (clickThroughForward), so it can turn clicks back on over its own content. Without forward the window can never be clicked again, so that is refused (validation) unless the app has a tray icon to come back through. Needs a runtime with it (clickThrough in windowCapabilities).",
+          "docFull": "Let clicks go through the window to what is under it (Electron's `setIgnoreMouseEvents`). With\n`forward`, pointer moves still reach the page where the runtime can (`clickThroughForward`), so\nit can turn clicks back on over its own content. Without `forward` the window can never be\nclicked again, so that is refused (`validation`) unless the app has a tray icon to come back\nthrough. Needs a runtime with it (`clickThrough` in {@linkcode windowCapabilities}).",
+          "params": [
+            {
+              "name": "ignore",
+              "doc": "true to let clicks through, false to catch them again."
+            },
+            {
+              "name": "options",
+              "doc": "forward: keep reporting pointer moves."
+            }
+          ],
+          "returns": "Once set.",
           "examples": [],
           "denextOnly": true
         },
@@ -24054,6 +24422,23 @@
           "denextOnly": true
         },
         {
+          "name": "setSkipTaskbar",
+          "slug": "setSkipTaskbar",
+          "kind": "function",
+          "signature": "setSkipTaskbar(skip: boolean): Promise<void>",
+          "doc": "Keep the window off the taskbar (Windows, Linux; macOS has no per-window entry: see setDockVisible in denext/desktop/app). Needs a runtime with it (skipTaskbar in windowCapabilities); a focusable: false window is off it on every runtime.",
+          "docFull": "Keep the window off the taskbar (Windows, Linux; macOS has no per-window entry: see\n`setDockVisible` in `denext/desktop/app`). Needs a runtime with it (`skipTaskbar` in\n{@linkcode windowCapabilities}); a `focusable: false` window is off it on every runtime.",
+          "params": [
+            {
+              "name": "skip",
+              "doc": "true to leave the taskbar."
+            }
+          ],
+          "returns": "Once set.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "setTitleBarStyle",
           "slug": "setTitleBarStyle",
           "kind": "function",
@@ -24067,6 +24452,27 @@
             }
           ],
           "returns": "Whether this OS / backend applied it.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setVisibleOnAllWorkspaces",
+          "slug": "setVisibleOnAllWorkspaces",
+          "kind": "function",
+          "signature": "setVisibleOnAllWorkspaces(visible: boolean, options?: object): Promise<void>",
+          "doc": "Show the window on every Space / virtual desktop (Electron's setVisibleOnAllWorkspaces), and with visibleOnFullScreen over full-screen apps too (macOS). Needs a runtime with it (visibleOnAllWorkspaces in windowCapabilities); on macOS a focusable: false window already joins every Space.",
+          "docFull": "Show the window on every Space / virtual desktop (Electron's `setVisibleOnAllWorkspaces`), and\nwith `visibleOnFullScreen` over full-screen apps too (macOS). Needs a runtime with it\n(`visibleOnAllWorkspaces` in {@linkcode windowCapabilities}); on macOS a `focusable: false`\nwindow already joins every Space.",
+          "params": [
+            {
+              "name": "visible",
+              "doc": "Whether it shows on every workspace."
+            },
+            {
+              "name": "options",
+              "doc": "visibleOnFullScreen: over full-screen apps too."
+            }
+          ],
+          "returns": "Once set.",
           "examples": [],
           "denextOnly": true
         },
@@ -24122,6 +24528,23 @@
             }
           ],
           "returns": "Whether applied.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "setWindowOpacity",
+          "slug": "setWindowOpacity",
+          "kind": "function",
+          "signature": "setWindowOpacity(opacity: number): Promise<void>",
+          "doc": "Fade the whole window, page and chrome alike (CSS opacity for the window).",
+          "docFull": "Fade the whole window, page and chrome alike (CSS `opacity` for the window).",
+          "params": [
+            {
+              "name": "opacity",
+              "doc": "From 0 (invisible) to 1 (opaque)."
+            }
+          ],
+          "returns": "Once set.",
           "examples": [],
           "denextOnly": true
         },
@@ -24376,6 +24799,35 @@
           "denextOnly": true
         },
         {
+          "name": "windowHandle",
+          "slug": "windowHandle",
+          "kind": "function",
+          "signature": "windowHandle(id: string): DesktopWindowHandle",
+          "doc": "The handle of one of the app's windows by id (\"main\", \"panel\", or an id openWindow or getWindows gave). Nothing is checked until a call: a closed window's calls reject not_found.",
+          "docFull": "The handle of one of the app's windows by id (`\"main\"`, `\"panel\"`, or an id\n{@linkcode openWindow} or {@linkcode getWindows} gave). Nothing is checked until a call: a closed\nwindow's calls reject `not_found`.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The window's id."
+            }
+          ],
+          "returns": "Its handle.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "WindowLevel",
+          "slug": "WindowLevel",
+          "kind": "typeAlias",
+          "signature": "type WindowLevel = floating | status | pop-up-menu | screen-saver",
+          "doc": "How far above other windows an always-on-top window floats (Electron's level names).",
+          "docFull": "How far above other windows an always-on-top window floats (Electron's level names).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "WindowScreen",
           "slug": "WindowScreen",
           "kind": "interface",
@@ -24621,6 +25073,32 @@
           "denextOnly": true
         },
         {
+          "name": "getTray",
+          "slug": "getTray",
+          "kind": "function",
+          "signature": "getTray(): Promise<AppTray | null>",
+          "doc": "The tray icon the app's backend owns (desktop.tray in denext.config.ts, or runDesktop({ tray })): every window's page gets the same one, and a page load never removes it (its destroy rejects validation). Clicks reach every window.",
+          "docFull": "The tray icon the app's backend owns (`desktop.tray` in `denext.config.ts`, or `runDesktop({\ntray })`): every window's page gets the same one, and a page load never removes it (its\n`destroy` rejects `validation`). Clicks reach every window.",
+          "params": [],
+          "returns": "The tray, or null when the app has none (or the session has no tray host).",
+          "examples": [
+            "```ts\nimport { getTray } from \"denext/desktop/app\";\nimport { openWindow } from \"denext/desktop/window\";\n\nconst tray = await getTray();\ntray?.onClick((e) => e === \"doubleClick\" && openWindow({ url: \"/\" }));\nawait tray?.update({ tooltip: \"3 VMs running\" });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "hideTrayPanel",
+          "slug": "hideTrayPanel",
+          "kind": "function",
+          "signature": "hideTrayPanel(): Promise<boolean>",
+          "doc": "Hide the backend tray's panel.",
+          "docFull": "Hide the backend tray's panel.",
+          "params": [],
+          "returns": "Whether it is showing (false). Rejects unsupported when the tray has no panel.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "isDesktopBridgeError",
           "slug": "isDesktopBridgeError",
           "kind": "function",
@@ -24689,6 +25167,23 @@
             {
               "name": "handler",
               "doc": "Called with the item's id."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "onDockReopen",
+          "slug": "onDockReopen",
+          "kind": "function",
+          "signature": "onDockReopen(handler: (event: object) => void): () => void",
+          "doc": "Call handler when the user clicks the app's macOS Dock icon (Electron's activate). With no window showing, the main window is shown again first; hasVisibleWindows says whether one was.",
+          "docFull": "Call `handler` when the user clicks the app's macOS Dock icon (Electron's `activate`). With no\nwindow showing, the main window is shown again first; `hasVisibleWindows` says whether one was.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called with { hasVisibleWindows }."
             }
           ],
           "returns": "A function that unsubscribes.",
@@ -24806,6 +25301,23 @@
           "denextOnly": true
         },
         {
+          "name": "setDockVisible",
+          "slug": "setDockVisible",
+          "kind": "function",
+          "signature": "setDockVisible(visible: boolean): Promise<boolean>",
+          "doc": "Show or hide the app's icon in the macOS Dock (the activation policy: hidden, the app is an accessory with no Dock icon or menu bar, as a menu-bar app or a desktop companion). Give the app a tray icon first so the user can reach it. desktop.app.dock: false hides it at launch.",
+          "docFull": "Show or hide the app's icon in the macOS Dock (the activation policy: hidden, the app is an\naccessory with no Dock icon or menu bar, as a menu-bar app or a desktop companion). Give the app\na tray icon first so the user can reach it. `desktop.app.dock: false` hides it at launch.",
+          "params": [
+            {
+              "name": "visible",
+              "doc": "Whether the Dock shows the icon."
+            }
+          ],
+          "returns": "Whether it applied: false on Windows and Linux, which have no app-level icon.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "setLaunchAtLogin",
           "slug": "setLaunchAtLogin",
           "kind": "function",
@@ -24864,6 +25376,30 @@
           "docFull": "What global shortcuts can do here ({@linkcode shortcutCapabilities}).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "showTrayPanel",
+          "slug": "showTrayPanel",
+          "kind": "function",
+          "signature": "showTrayPanel(): Promise<boolean>",
+          "doc": "Show the backend tray's panel (desktop.tray.panel) at the tray icon, as a click on the icon does.",
+          "docFull": "Show the backend tray's panel (`desktop.tray.panel`) at the tray icon, as a click on the icon\ndoes.",
+          "params": [],
+          "returns": "Whether it is showing. Rejects unsupported when the app's tray has no panel.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "toggleTrayPanel",
+          "slug": "toggleTrayPanel",
+          "kind": "function",
+          "signature": "toggleTrayPanel(): Promise<boolean>",
+          "doc": "Show the backend tray's panel when hidden, hide it when shown.",
+          "docFull": "Show the backend tray's panel when hidden, hide it when shown.",
+          "params": [],
+          "returns": "Whether it is showing after. Rejects unsupported when the tray has no panel.",
           "examples": [],
           "denextOnly": true
         },
@@ -30400,6 +30936,41 @@
           "denextOnly": true
         },
         {
+          "name": "speak",
+          "slug": "speak",
+          "kind": "function",
+          "signature": "speak(text: string, options?: SpeakOptions): Promise<void>",
+          "doc": "Say text aloud, after anything already being spoken.",
+          "docFull": "Say `text` aloud, after anything already being spoken.",
+          "params": [
+            {
+              "name": "text",
+              "doc": "What to say."
+            },
+            {
+              "name": "options",
+              "doc": "The language, voice, rate, pitch and volume."
+            }
+          ],
+          "returns": "A promise that settles once it has been said (or stopped). It rejects unavailable where there is no speech engine.",
+          "examples": [
+            "```ts\nimport { speak } from \"denext/mobile\";\n\nawait speak(\"Your build finished\", { lang: \"en-US\", rate: 1.1 });\n```"
+          ],
+          "denextOnly": true
+        },
+        {
+          "name": "SpeakOptions",
+          "slug": "SpeakOptions",
+          "kind": "interface",
+          "signature": "interface SpeakOptions",
+          "doc": "How to speak.",
+          "docFull": "How to speak.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "SqliteBackend",
           "slug": "SqliteBackend",
           "kind": "typeAlias",
@@ -30612,6 +31183,18 @@
           "examples": [
             "```ts\nimport { stopBackgroundLocation } from \"denext/mobile\";\n\nawait stopBackgroundLocation(); // on sign-out\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "stopSpeaking",
+          "slug": "stopSpeaking",
+          "kind": "function",
+          "signature": "stopSpeaking(): Promise<void>",
+          "doc": "Stop speaking, and drop what is queued.",
+          "docFull": "Stop speaking, and drop what is queued.",
+          "params": [],
+          "returns": "A promise that settles once stopped.",
+          "examples": [],
           "denextOnly": true
         },
         {

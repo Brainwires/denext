@@ -39,6 +39,7 @@ import { parsePlist, type PlistNode, renderPlist } from "./plist-value.ts";
 import { parseOtaPublicKey } from "./ota-signing.ts";
 import { isOtaManifest, OTA_MANIFEST_PATH } from "../mobile/ota-manifest.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
+import { desktopInitialWindow, resolveDesktopWindowSettings } from "../desktop/window-config.ts";
 import {
   desktopPasskeyRpIds,
   PASSKEY_RP_IDS_FIX,
@@ -513,9 +514,11 @@ async function writeJsonEdit(
  * the origin + identifier (when an origin is set), the deep-link schemes (the runtime's list for
  * launch arguments, `openurl` and scheme registration), `singleInstance` (the intent; the lock
  * itself is `laufey-launch.json`'s) and `allowedNavigationOrigins` (the navigation guard's extra
- * origins, only when configured: a runtime before 2.9.7-denext.18 refuses the key). The
- * identifier rides along whenever it is valid, since the runtime needs it to register schemes on
- * Linux and next to `singleInstance`.
+ * origins, only when configured: a runtime before 2.9.7-denext.18 refuses the key) and
+ * `initialWindow` (the window the runtime starts with, only when `desktop.window` hides it at
+ * launch or makes it frameless, transparent or non-activating; every supported runtime reads it).
+ * The identifier rides along whenever it is valid, since the runtime needs it to register schemes
+ * on Linux and next to `singleInstance`.
  */
 function appJsonBody(
   config: unknown,
@@ -529,6 +532,9 @@ function appJsonBody(
     singleInstance: typeof app?.singleInstance === "boolean" ? app.singleInstance : undefined,
     update: updatePublicKey ? { publicKey: updatePublicKey } : undefined,
     allowedNavigationOrigins: nonEmpty(desktopNavigationOrigins(config)),
+    initialWindow: desktopInitialWindow(
+      resolveDesktopWindowSettings((config as { desktop?: unknown } | undefined)?.desktop),
+    ),
   });
   if (Object.keys(wanted).length === 0) return null;
   const identifier = validAppIdentifier(identity?.identifier ?? app?.identifier);
@@ -540,6 +546,7 @@ function appJsonBody(
     singleInstance: identifier ? wanted.singleInstance : undefined,
     update: wanted.update,
     allowedNavigationOrigins: wanted.allowedNavigationOrigins,
+    initialWindow: wanted.initialWindow,
   });
 }
 

@@ -51,12 +51,24 @@ import { createLaunchRouter, desktopAppApi } from "../desktop/launch-events.ts";
 import { createSchemeAuthSessions } from "../desktop/scheme-auth-session.ts";
 import type { PickedPaths } from "../desktop/picked-paths.ts";
 import type { DesktopAppDirs } from "../desktop/app-dirs.ts";
-import { createWindowController, type WindowController } from "../desktop/caps/window.ts";
-import { createAppController } from "../desktop/caps/app.ts";
+import type { DesktopAppSettings, DesktopWindowSettings } from "../desktop/window-config.ts";
 import {
-  applyDesktopWindowSettings,
-  type DesktopWindowSettings,
-} from "../desktop/window-config.ts";
+  type DesktopOpenWindowOptions,
+  type DesktopWindowRef,
+  type DesktopWindows,
+  type DesktopWindowsSetup,
+  noDesktopWindows,
+  setUpDesktopWindows,
+} from "../desktop/app-windows.ts";
+import type {
+  DesktopTrayHandle,
+  DesktopTrayIcon,
+  DesktopTrayOptions,
+  DesktopTrayPanelHandle,
+  DesktopTrayUpdate,
+} from "../desktop/backend-tray.ts";
+import type { DesktopTraySettings } from "../desktop/tray-config.ts";
+import { createSpeechCapability } from "../desktop/caps/speech.ts";
 import { mergeSidecars, SIDECAR_CHILD_ENV, type SidecarDefinition } from "../desktop/sidecar.ts";
 import type { SidecarHandle } from "../desktop/sidecar-supervisor.ts";
 import type { SidecarHost } from "../desktop/sidecar-host.ts";
@@ -66,7 +78,22 @@ export type { PickedPaths, PickedTarget, PickMode } from "../desktop/picked-path
 /** The app's own folders (re-exported so {@linkcode RunDesktopOptions} is documentable). */
 export type { DesktopAppDirs } from "../desktop/app-dirs.ts";
 /** The initial-window settings `runDesktop` applies (`desktop.window`, `desktop.titleBar`, …). */
-export type { DesktopWindowSettings, DesktopWindowSize } from "../desktop/window-config.ts";
+export type {
+  DesktopAppSettings,
+  DesktopWindowSettings,
+  DesktopWindowSize,
+} from "../desktop/window-config.ts";
+export type {
+  DesktopOpenWindowOptions,
+  DesktopTrayHandle,
+  DesktopTrayIcon,
+  DesktopTrayOptions,
+  DesktopTrayPanelHandle,
+  DesktopTrayUpdate,
+  DesktopWindowRef,
+  DesktopWindows,
+};
+export type { DesktopTrayPanelSettings, DesktopTraySettings } from "../desktop/tray-config.ts";
 
 /** The gated capability bridge {@linkcode createDesktopHandler} dispatches to (re-exported so the
  * handler's signature has no private type). */
@@ -536,6 +563,21 @@ export interface RunDesktopOptions {
    */
   window?: DesktopWindowSettings;
   /**
+   * `desktop.app`'s launch settings (from {@link resolveDesktopCapabilities}): `keepAlive` (the
+   * app stays up with no window; default on with a tray) and `dock` (`false`: no macOS Dock icon).
+   */
+  app?: DesktopAppSettings;
+  /** `desktop.tray` from the config (from {@link resolveDesktopCapabilities}); {@link tray} is laid over it. */
+  configTray?: DesktopTraySettings;
+  /**
+   * The tray icon the backend owns: created before the first page needs it, kept across page
+   * reloads, reachable from every window (`getTray()` in `denext/desktop/app`) and from
+   * {@linkcode DesktopRuntime.tray}. Its keys replace `desktop.tray`'s; the handlers run in the
+   * backend, before the pages hear of a click. Setting a tray keeps the app alive with no window
+   * unless `desktop.app.keepAlive` is `false`.
+   */
+  tray?: DesktopTrayOptions;
+  /**
    * The app's own folders (from {@link resolveDesktopCapabilities}): besides picked handles, the
    * only files the page may drag out of the window (`startFileDrag` in `denext/desktop/window`).
    */
@@ -569,6 +611,21 @@ export interface RunDesktopOptions {
 export interface DesktopRuntime {
   /** The adopted initial `Deno.BrowserWindow`, or `undefined` outside the desktop runtime. */
   readonly window: unknown;
+  /**
+   * The app's windows: open one on a page of the app (`windows.open({ url: "/settings" })`), find
+   * one by id, list them. Pages open and drive them with `openWindow` in `denext/desktop/window`.
+   */
+  readonly windows: DesktopWindows;
+  /**
+   * The backend tray (`desktop.tray` / `runDesktop({ tray })`), or `undefined` when the app has none
+   * or the session has no tray host (the window was shown instead).
+   */
+  readonly tray?: DesktopTrayHandle;
+  /**
+   * Show or hide the app's macOS Dock icon (the activation policy; on Windows and Linux the main
+   * window's taskbar entry, where the runtime can). Returns whether it applied.
+   */
+  setDockVisible(visible: boolean): boolean;
   /** The desktop world the gates enforce. */
   readonly trust: DesktopTrust;
   /**
@@ -655,16 +712,20 @@ const BOOT_BEACON_JS = ';(function(){function b(){try{fetch("/_denext/desktop/bo
   'if(document.readyState==="complete")b();else addEventListener("load",b)})()';
 
 /**
- * Override `window.close()` so a page-initiated close quits the app. The WebView does not forward
- * `window.close()` to the native window, so it would otherwise be a no-op; this POSTs the per-launch
- * token to {@link QUIT_PATH} (fire-and-forget), which exits the process — the same outcome as the
- * native window-close handler for this single-window shell. Token-gated so only the real top-level
- * page (which receives the token) can trigger it; a subframe / cross-origin page cannot.
+ * Override `window.close()` so a page-initiated close closes its window. The WebView does not
+ * forward `window.close()` to the native window, so it would otherwise be a no-op; this POSTs the
+ * per-launch token (and the window's own token, when the runtime gave it one) to {@link QUIT_PATH}
+ * (fire-and-forget), which closes that window — and quits the app once its last window is gone,
+ * unless it is kept alive. Token-gated so only the real top-level page (which receives the token)
+ * can trigger it; a subframe / cross-origin page cannot.
  */
 const QUIT_OVERRIDE_JS = ";(function(){var c=window.close;window.close=function(){try{" +
-  'fetch("/_denext/desktop/quit",{method:"POST",headers:{"x-denext-desktop-token":' +
-  'globalThis.__denext.token}})["catch"](function(){})}catch(e){}' +
-  "try{return c.call(window)}catch(e){}}})()";
+  'var h={"x-denext-desktop-token":globalThis.__denext.token},' +
+  "b=globalThis.bindings&&globalThis.bindings.__denextWindow;" +
+  'Promise.resolve(b?b():null)["catch"](function(){return null}).then(function(w){' +
+  'if(typeof w==="string"&&w)h["x-denext-desktop-window"]=w;' +
+  'return fetch("/_denext/desktop/quit",{method:"POST",headers:h})})["catch"](function(){})' +
+  "}catch(e){}try{return c.call(window)}catch(e){}}})()";
 
 /**
  * What the injected `globalThis.__denext` carries besides the desktop marker and the token (see
@@ -684,6 +745,11 @@ export interface DesktopPageGlobals {
    * it in the memory world when the capability is enabled.
    */
   readonly notifications?: boolean;
+  /**
+   * The runtime gave the app's windows a window binding (`__denextWindow`): the page's bridge
+   * client asks it for its window's token. Only with the desktop token.
+   */
+  readonly windows?: boolean;
 }
 
 /**
@@ -697,6 +763,7 @@ function desktopGlobals(token: string | null, page: DesktopPageGlobals): Record<
     token,
     os: Deno.build.os,
     ...(page.wsUrl ? { wsUrl: page.wsUrl } : {}),
+    ...(page.windows ? { windows: true } : {}),
   };
 }
 
@@ -830,9 +897,10 @@ export function resolveOutDir(options: RunDesktopOptions): string {
 }
 
 /**
- * Closing the window (macOS red light / Cmd-W) quits the app. `Deno.serve` is a
- * permanently-live task, so deno desktop won't auto-exit on close; adopt the initial
- * window and exit on its `close`. Guarded so a non-desktop run is a no-op. Returns the adopted
+ * Adopt the window the app started with, and act on its `close` (macOS red light / Cmd-W): by
+ * default that ends the process (`Deno.serve` is a permanently-live task, so deno desktop won't
+ * auto-exit on close); `runDesktop` passes an `exit` that quits only once the app's last window is
+ * gone and the app is not kept alive. Guarded so a non-desktop run is a no-op. Returns the adopted
  * window (handed to capabilities as `ctx.window`), or `undefined` outside the desktop runtime.
  *
  * @param BrowserWindow The runtime's window constructor (`Deno.BrowserWindow`); a parameter so a
@@ -875,7 +943,7 @@ async function handleLocalEndpoint(
   authSessionEnabled: boolean,
   access: DesktopRequestAccess,
   onBooted?: () => void | Promise<void>,
-  onQuit?: () => void,
+  onQuit?: (windowToken: string | null) => void,
 ): Promise<Response | null> {
   if (url.pathname === AUTH_SESSION_PATH) {
     // Default-deny: without the `auth-session` capability the endpoint answers `unavailable` and
@@ -891,11 +959,12 @@ async function handleLocalEndpoint(
     return new Response(null, { status: 204 });
   }
   if (url.pathname === QUIT_PATH) {
-    // The page called `window.close()` (see QUIT_OVERRIDE_JS); quit the single-window app, as native
-    // close. queueMicrotask lets the 204 flush before the process goes away.
+    // The page called `window.close()` (see QUIT_OVERRIDE_JS): close its window, as native close
+    // (the app quits after its last window). queueMicrotask lets the 204 flush first.
     const reject = requireTokenedPost(request, token, access);
     if (reject) return reject;
-    queueMicrotask(() => onQuit?.());
+    const windowToken = request.headers.get("x-denext-desktop-window");
+    queueMicrotask(() => onQuit?.(windowToken));
     return new Response(null, { status: 204 });
   }
   return null;
@@ -1011,17 +1080,21 @@ export function createDesktopHandler(
   devProxy?: DesktopProxyFn,
   devInjectToken = false,
   bridge?: DesktopBridge,
-  onQuit?: () => void,
+  onQuit?: (windowToken: string | null) => void,
   trust: DesktopTrust = LOOPBACK_TRUST,
   preload?: string,
   preloadKey?: string,
   wsUrl?: string,
+  windowBindings = false,
 ): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response> {
   // `desktop.preload` runs only in the memory world (the pinned runtime at its stable origin), and
   // only where the token goes (a top-level document over the memory transport): never into an
   // iframe, and never into a loopback-world page.
   const memoryPreload = trust.kind === "memory" ? preload : undefined;
-  const page = desktopPageGlobals(options, trust, wsUrl);
+  const page = {
+    ...desktopPageGlobals(options, trust, wsUrl),
+    ...(windowBindings ? { windows: true } : {}),
+  };
   const files = typeof outDir === "string" ? bundledUiFiles(outDir) : outDir;
   const serveShell = desktopShellServer({
     files,
@@ -1048,8 +1121,10 @@ export function createDesktopHandler(
     const injectToken = shouldInjectDesktopToken(request, url, trust, info);
     // A top-level NAVIGATION (a reload or a new page) ends the previous page: release what it
     // held through the bridge (keep-awake holds…). Only a real browser navigation counts.
+    // With several windows the navigation is not attributed here: each page's first bridge request
+    // says which window reloaded.
     if (bridge && injectToken && request.method === "GET" && isPageNavigation(request)) {
-      await bridge.pageLoaded();
+      await bridge.navigationStarted();
     }
     // Live-reload mode (`denext desktop dev` only): reverse-proxy EVERYTHING else to `denext dev`.
     if (serveDev) return await serveDev(request, url, injectToken);
@@ -1067,7 +1142,7 @@ function localDesktopStage(ctx: {
   token: string;
   onBooted: (() => void | Promise<void>) | undefined;
   bridge: DesktopBridge | undefined;
-  onQuit: (() => void) | undefined;
+  onQuit: ((windowToken: string | null) => void) | undefined;
   trust: DesktopTrust;
 }): (request: Request, url: URL, info?: DesktopServeInfo) => Promise<Response | null> {
   // Unpacked once: the per-request path reads closure locals, as it did inline.
@@ -1294,6 +1369,37 @@ function reportDesktopWorld(decision: DesktopTrustDecision, publishedWsUrl: stri
   if (skew) console.error(`desktop: ${skew}`);
 }
 
+/**
+ * The URL a window loads for an app path (`/settings`): under the app origin in the memory world
+ * (the pinned runtime), else at the loopback address the server listens on.
+ *
+ * @param trust The desktop world.
+ * @param addr The server's address (`Deno.serve`'s `addr`).
+ * @returns The resolver.
+ */
+export function desktopAppUrl(trust: DesktopTrust, addr: unknown): (path: string) => string {
+  const a = addr as { hostname?: unknown; port?: unknown } | null | undefined;
+  const base = trust.kind === "memory"
+    ? trust.origin
+    : `http://127.0.0.1:${typeof a?.port === "number" ? a.port : 8000}`;
+  return (path) => new URL(path, base).href;
+}
+
+/** A file of the export by its path (`/tray.png`), or `null` when the export has none. */
+async function readExportFile(files: DesktopUiFiles, path: string): Promise<Uint8Array | null> {
+  const pathname = new URL(path, "http://export.invalid").pathname;
+  const res = await files.asset(
+    pathname,
+    undefined,
+    new Request(`http://export.invalid${pathname}`),
+  );
+  if (res?.status !== 200) {
+    await res?.body?.cancel();
+    return null;
+  }
+  return new Uint8Array(await res.arrayBuffer());
+}
+
 /** Whether `request` is a browser's top-level navigation (`Sec-Fetch-Mode: navigate`, document). */
 function isPageNavigation(request: Request): boolean {
   return request.headers.get("sec-fetch-mode") === "navigate" &&
@@ -1340,15 +1446,17 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   const devInjectToken = devDecision.proxy && devDecision.injectToken;
   // Imported lazily so proxy-less apps never pull in the proxy module (and its `npm:ws`).
   const proxy = (options.proxy || devUrl) ? await import("./dev-proxy.ts") : undefined;
-  // The window controller (the `window` capability) is created once the bridge exists; the close
-  // listener consults it so a page-guarded close keeps the app running.
-  const windowRef: { ctl?: WindowController } = {};
+  // The app's windows (the registry over the adopted window, the `window` / `windows` / `app`
+  // capabilities, keepAlive and the Dock): set up once the window is adopted; the close listener
+  // consults it so a page-guarded close keeps the app running, and a close quits only after the
+  // app's last window unless it is kept alive.
+  const windowsRef: { setup?: DesktopWindowsSetup } = {};
+  const exit = Deno.exit;
   const appWindow = installWindowCloseHandler(
     undefined,
-    undefined,
-    (event) => windowRef.ctl?.interceptClose(event) ?? false,
+    () => windowsRef.setup ? windowsRef.setup.mainClosed() : exit(0),
+    (event) => windowsRef.setup?.interceptMainClose(event) ?? false,
   );
-  applyDesktopWindowSettings(appWindow, options.window);
   // Which desktop world this is, decided ONCE from what the runtime published: the pinned runtime's
   // in-process memory transport at a stable origin, or the stock runtime's loopback port.
   const trustDecision = resolveDesktopTrust(
@@ -1395,45 +1503,57 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // RPC answers `unavailable`), plus the app-event capabilities of denext's pinned runtime (deep
   // links, opened files, custom-scheme auth sessions). `dev` (live-reload mode) lets an unexpected
   // handler error include its message; a packaged build stays generic.
-  const emitToPage = (cap: string, event: string, data: unknown) => bridge.emit(cap, event, data);
+  // Events can fire before the bridge exists (a window registered first): they are dropped then.
+  const bridgeRef: { bridge?: DesktopBridge } = {};
+  const emitToPage = (cap: string, event: string, data: unknown, target?: string) =>
+    bridgeRef.bridge?.emit(cap, event, data, target);
   const appEvents = desktopAppEvents(options, emitToPage, preloadKey);
   // The sidecars (`desktop.sidecars` + `runDesktop({ sidecars })`): ports and secrets are settled
   // now, so `spa.proxy` can point at the proxied one; they start once the server is up.
   const sidecarHost = await createSidecars(options, emitToPage);
   const backendProxy = sidecarProxy(options, proxy, sidecarHost);
-  // The page's control over its own window (state, size, displays, chrome, a guarded close, quit,
-  // files dragged in and out): registered whenever a window was adopted.
-  const windowCtl = appWindow === undefined ? undefined : createWindowController({
+  // Each page's control over its own window (state, size, displays, chrome, a guarded close, quit,
+  // files dragged in and out, overlay settings), the `windows` capability that opens more, and the
+  // app's own chrome (application menu, tray icons, dock): registered whenever a window was adopted.
+  const windows = setUpDesktopWindows({
     window: appWindow,
+    BrowserWindow: (Deno as unknown as { BrowserWindow?: unknown }).BrowserWindow,
     api: desktopAppApi(),
     emit: emitToPage,
+    ...(options.window ? { windowSettings: options.window } : {}),
+    ...(options.app ? { appSettings: options.app } : {}),
+    wantsTray: options.tray !== undefined || options.configTray !== undefined,
+    exit,
     ...(options.pickedPaths ? { picked: options.pickedPaths } : {}),
     ...(options.appDirs ? { dirs: options.appDirs } : {}),
   });
-  // The app's own chrome (application menu, tray icons, dock badge / menu): no permission needed,
-  // registered with the window.
-  const appCtl = appWindow === undefined
-    ? undefined
-    : createAppController({ window: appWindow, api: desktopAppApi(), emit: emitToPage });
+  windowsRef.setup = windows;
+  const registry = windows.registry;
   const bridge = createDesktopBridge(
     [
       ...(options.capabilities ?? []),
       ...appEvents.capabilities,
-      ...(windowCtl ? [windowCtl.capability] : []),
-      ...(appCtl ? [appCtl.capability] : []),
+      ...windows.capabilities,
+      ...(appWindow !== undefined ? [createSpeechCapability(desktopAppApi)] : []),
       ...(sidecarHost ? [sidecarHost.capability] : []),
     ],
     {
       appSupportDir: options.appSupportDir,
-      getWindow: () => appWindow,
+      getWindow: (id) => registry?.get(id)?.window ?? appWindow,
+      ...(registry
+        ? {
+          resolveWindow: (t: string) => registry.resolveToken(t),
+          allowed: (id: string, cap: string) => registry.allowed(id, cap),
+          windowCount: () => registry.count(),
+        }
+        : {}),
       dev: devDecision.proxy,
       trust,
     },
   );
-  windowRef.ctl = windowCtl;
+  bridgeRef.bridge = bridge;
   appEvents.install();
-  windowCtl?.install();
-  appCtl?.install();
+  windows.install();
   const handle = createDesktopHandler(
     backendProxy.options,
     uiFiles,
@@ -1443,17 +1563,19 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     devProxy,
     devInjectToken,
     bridge,
-    () => Deno.exit(0), // a page-initiated window.close() quits, like the native window close
+    // A page-initiated window.close() closes its window, like the native close.
+    (windowToken) => windows.closeFromPage(windowToken),
     trust,
     await loadDesktopPreload(uiFiles, devDecision.proxy),
     preloadKey,
     // The relay the page's WebSockets dial (Live, `desktopWebSocketUrl`), per-launch token included:
     // published by the pinned runtime next to the app origin.
     resolveDesktopWsUrl(Deno.env.get(DESKTOP_WS_URL_ENV)),
+    registry?.bound() === true,
   );
   // Under the pinned runtime `DENO_SERVE_ADDRESS=memory:…` overrides this port/hostname, so the
   // server listens on the in-process memory transport; under the stock runtime it is loopback.
-  Deno.serve({
+  const server = Deno.serve({
     port,
     hostname: "127.0.0.1",
     onError: (e) => {
@@ -1461,9 +1583,21 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
       return new Response("desktop error", { status: 502 });
     },
   }, (req, info) => handle(req, new URL(req.url), info as DesktopServeInfo));
+  // The URL a new window (or the tray panel) loads for an app path: the app origin, or the
+  // loopback address the server listens on.
+  windows.setAppUrl(desktopAppUrl(trust, server.addr));
+  const tray = await windows.startTray({
+    ...(options.tray ? { options: options.tray } : {}),
+    ...(options.configTray ? { settings: options.configTray } : {}),
+    appUrl: desktopAppUrl(trust, server.addr),
+    readFile: (path) => readExportFile(uiFiles, path),
+  });
   startSidecars(sidecarHost);
   return {
     window: appWindow,
+    windows: windows.windows,
+    ...(tray ? { tray } : {}),
+    setDockVisible: (visible) => windows.setDockVisible(visible),
     trust,
     emit: (cap, event, data) => bridge.emit(cap, event, data),
     sidecar: (name) => {
@@ -1497,6 +1631,7 @@ async function runAsSidecarChild(options: RunDesktopOptions): Promise<DesktopRun
   });
   return {
     window: undefined,
+    ...noDesktopWindows(),
     trust: resolveDesktopTrust(undefined, options.appOrigin).trust,
     emit: () => {},
     sidecar: (name) => {

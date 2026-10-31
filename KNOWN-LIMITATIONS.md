@@ -666,7 +666,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   of an app's notifications, so `deliveredNotifications()` there lists only what denext posted
   during this run and has not removed (a notification the user dismissed is still listed, one from
   an earlier run is not); on every OS `threadId` does not group them in the OS. [Details](https://denext.dev/docs/desktop#desktop-notifications).
-- **Linux sessions differ:** with no tray host `createTray` rejects `unsupported`; with a locked
+- **Linux sessions differ:** with no tray host `createTray` rejects `unsupported` (and the backend
+  tray of `desktop.tray` is not made: the main window is shown instead); with a locked
   keyring no one can unlock, CEF stores cookies obfuscated, not OS-protected
   (`cookieEncryption: "basic"`). `denext desktop doctor --linux` lists what is missing
   ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
@@ -697,6 +698,25 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   spellchecker, unchanged.
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):
   navigations and subresources arrive whole. Stream through `fetch` / `EventSource`, or use CEF.
+- **Overlay and tray-first windows wait on the runtime for part of what they ask for.**
+  Click-through (`setIgnoreMouseEvents`), hit regions (`setHitRegion`), every-workspace visibility
+  over full-screen apps (`setVisibleOnAllWorkspaces`), the taskbar setter (`setSkipTaskbar`) and
+  always-on-top levels above `"floating"` are capability-detected: no Deno Desktop runtime has them
+  yet, so `windowCapabilities()` reports them `false` and the calls reject `unsupported` until one
+  does. A transparent window is opaque on WebView2 and CEF. `desktop.app.dock: false` hides the
+  macOS Dock icon from the runtime once the app starts, so it shows for a moment at launch (laufey
+  sets the regular activation policy before the app runs), and an app with no Dock icon may need
+  `setDockVisible(true)` for a full window to come to the front. A window `openWindow` makes
+  hidden (`show: false`), and the tray panel, may flash once (the runtime creates windows visible,
+  then hides them). WKWebView may run no animation frames in a non-activating window that has
+  never been focused. Tray clicks carry no button, modifier or position, and on Linux
+  (AppIndicator) a click opens the menu and the panel opens where it last was. Text to speech on
+  Linux (WebKitGTK has no Web Speech) waits on `Deno.desktop.speech` ([details](https://denext.dev/docs/desktop#desktop-overlay-windows)).
+- **Several windows share one origin.** `openWindow({ capabilities })` limits what a window's page
+  may call, least privilege rather than isolation: every window has the app's origin, storage and
+  launch token. With several windows open a reload releases that window's tray icons, close guard
+  and drops; keep-awake holds and global shortcuts are released only by the main window's reload.
+  A runtime without window bindings treats every page as the main window's.
 - **Window and menu features differ per OS and backend** (title-bar styles and the Dock menu are
   macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held; a badge is a
   window-title prefix on Windows, and on Linux too unless a dock reads launcher badges). Ask

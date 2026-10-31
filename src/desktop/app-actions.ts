@@ -14,7 +14,8 @@ import { pullQueue } from "./pull.ts";
 export type AppActionEvent =
   | { readonly source: "menu" | "dock"; readonly id: string }
   | { readonly source: "tray"; readonly tray: string; readonly event: "click" | "doubleClick" }
-  | { readonly source: "trayMenu"; readonly tray: string; readonly id: string };
+  | { readonly source: "trayMenu"; readonly tray: string; readonly id: string }
+  | { readonly source: "dockReopen"; readonly hasVisibleWindows: boolean };
 
 /** One queued click, checked. */
 function parse(raw: unknown): AppActionEvent | undefined {
@@ -33,6 +34,8 @@ function parse(raw: unknown): AppActionEvent | undefined {
       };
     case "trayMenu":
       return tray === undefined || id === undefined ? undefined : { source: "trayMenu", tray, id };
+    case "dockReopen":
+      return { source: "dockReopen", hasVisibleWindows: a.hasVisibleWindows === true };
     default:
       return undefined;
   }
