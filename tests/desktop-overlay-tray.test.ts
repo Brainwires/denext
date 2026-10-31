@@ -402,6 +402,51 @@ Deno.test("backend tray: click handlers hear the primary button with detail; on(
   assertEquals(tray.popped, 1);
 });
 
+Deno.test("backend tray: on macOS a plain left click opens a panel-less tray's menu, unless a click handler takes it", async () => {
+  const start = (os: string, options?: { onClick?: () => void }) => {
+    const { ctl } = appCtl();
+    return startBackendTray({
+      app: ctl,
+      appUrl: (p) => p,
+      readFile: () => Promise.resolve(new Uint8Array([1])),
+      screens: () => [],
+      warn: () => {},
+      os,
+      settings: { icon: "/tray.png", menu: [{ id: "q", label: "Quit" }] },
+      ...(options ? { options } : {}),
+    });
+  };
+  const mac = await start("darwin");
+  assert(mac && !("reason" in mac));
+  const tray = NewTray.made[0];
+  tray.dispatchEvent(mouse("click"));
+  assertEquals(tray.popped, 1, "a plain left click opens the menu");
+  // Not a right click (the OS opens it), a modifier click, or a double click's second click.
+  tray.dispatchEvent(mouse("click", { button: "right" }));
+  tray.dispatchEvent(mouse("click", {}, { ctrl: true }));
+  tray.dispatchEvent(mouse("click", {}, { meta: true }));
+  tray.dispatchEvent(mouse("click", { double: true }));
+  tray.dispatchEvent(new Event("click")); // an older runtime: no detail, no popUpMenu
+  assertEquals(tray.popped, 1);
+  // A backend click handler takes the left click; unsubscribing gives it back (twice is a no-op).
+  const off = mac.onClick(() => {});
+  tray.dispatchEvent(mouse("click"));
+  assertEquals(tray.popped, 1);
+  off();
+  off();
+  tray.dispatchEvent(mouse("click"));
+  assertEquals(tray.popped, 2);
+  // runDesktop({ tray: { onClick } }) too.
+  const heard: string[] = [];
+  await start("darwin", { onClick: () => void heard.push("click") });
+  NewTray.made[0].dispatchEvent(mouse("click"));
+  assertEquals([NewTray.made[0].popped, heard], [0, ["click"]]);
+  // Windows and Linux keep the left click to the app (as Electron does).
+  await start("windows");
+  NewTray.made[0].dispatchEvent(mouse("click"));
+  assertEquals(NewTray.made[0].popped, 0);
+});
+
 Deno.test("backend tray: popUpMenu is false on a runtime without it", async () => {
   const { ctl } = appCtl(OldTray);
   const handle = await startBackendTray({

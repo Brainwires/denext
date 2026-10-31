@@ -2954,7 +2954,11 @@ tray?.on("mouseenter", () => void refreshTooltip()); // hover (macOS, Windows)`}
         {" "}
         <code>trayMiddleClick</code>, <code>trayHover</code>, <code>trayModifiers</code>,{" "}
         <code>trayPosition</code>, <code>trayPopUpMenu</code>), from the runtime&apos;s{" "}
-        <code>Deno.Tray.capabilities()</code>. The panel toggles on a plain left click only.
+        <code>Deno.Tray.capabilities()</code>. The panel toggles on a plain left click only. On
+        macOS a tray with a menu and no panel opens its menu on a plain left click as well, as an
+        Electron tray does; a click handler in <code>desktop.ts</code> (
+        <code>runDesktop({"{ tray: { onClick } }"})</code> or the handle&apos;s{" "}
+        <code>onClick</code>) takes the left click instead.
       </p>
       <p>
         Its clicks reach the backend&apos;s handlers and every window&apos;s page;{" "}

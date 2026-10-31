@@ -48,7 +48,9 @@ export interface DesktopTrayOptions {
   readonly panel?: { url: string; width?: number; height?: number; hideOnBlur?: boolean };
   /**
    * Called on a click on the icon with the primary button (before the pages hear of it), with the
-   * runtime's detail (runtime `3.0.0-denext.6`+; else `null`).
+   * runtime's detail (runtime `3.0.0-denext.6`+; else `null`). On macOS a tray with a menu and no
+   * panel opens its menu on a plain left click, as Electron's does; a handler here (or one added
+   * with the handle's `onClick`) takes the left click instead.
    */
   readonly onClick?: (detail: TrayMouseDetail | null) => void;
   /** Called on a double click. */
@@ -98,7 +100,10 @@ export interface DesktopTrayHandle {
   update(options: DesktopTrayUpdate): void;
   /** Where the icon is, or `null` where the OS cannot say (Linux). */
   getBounds(): { x: number; y: number; width: number; height: number } | null;
-  /** Call `handler` on each primary-button click, with its detail. Returns the unsubscribe. */
+  /**
+   * Call `handler` on each primary-button click, with its detail. Returns the unsubscribe. While a
+   * handler is subscribed, a plain left click no longer opens a panel-less tray's menu (macOS).
+   */
   onClick(handler: (detail: TrayMouseDetail | null) => void): () => void;
   /** Call `handler` on each double click. Returns the unsubscribe. */
   onDoubleClick(handler: (detail: TrayMouseDetail | null) => void): () => void;
@@ -145,6 +150,8 @@ export interface BackendTrayContext {
   readonly panelOverlay?: boolean;
   /** Where warnings go. */
   readonly warn: (message: string) => void;
+  /** The running OS (default `Deno.build.os`). */
+  readonly os?: string;
 }
 
 /** The runtime's `Tray.attachPanel`, as this module calls it. */
@@ -215,6 +222,24 @@ function listenMouse(
   });
 }
 
+/** How many primary-click handlers the backend has on the tray (`onClick`). */
+interface ClickHandlers {
+  count: number;
+}
+
+/**
+ * Whether a click is the plain primary click that opens the menu of a macOS tray with no panel
+ * and no backend click handler, as an Electron status item with a menu does: the left button, no
+ * modifier (a Control-click opens the menu by itself) and not the second click of a double click.
+ */
+function opensMenu(detail: TrayMouseDetail | null, clicks: ClickHandlers): boolean {
+  if (clicks.count > 0 || detail === null || detail.button !== "left" || detail.double) {
+    return false;
+  }
+  const m = detail.modifiers;
+  return !m.ctrl && !m.alt && !m.shift && !m.meta;
+}
+
 /** The panel at the icon (registered as the window `"panel"`), or `undefined` when unavailable. */
 function attachPanel(
   ctx: BackendTrayContext,
@@ -266,6 +291,7 @@ function panelSettings(raw: unknown): DesktopTrayPanelSettings | undefined {
 function trayHandle(
   backend: BackendTray,
   panel: DesktopTrayPanelHandle | undefined,
+  clicks: ClickHandlers,
 ): DesktopTrayHandle {
   const tray = backend.tray;
   return {
@@ -281,7 +307,16 @@ function trayHandle(
       });
     },
     getBounds: () => tray.getBounds?.() ?? null,
-    onClick: (handler) => listenMouse(tray, "click", handler),
+    onClick: (handler) => {
+      clicks.count++;
+      const off = listenMouse(tray, "click", handler);
+      let on = true;
+      return () => {
+        if (on) clicks.count--;
+        on = false;
+        off();
+      };
+    },
     onDoubleClick: (handler) => listenMouse(tray, "dblclick", handler),
     on: (type, handler) => listenMouse(tray, type, handler),
     popUpMenu: () => typeof tray.popUpMenu === "function" && tray.popUpMenu() === true,
@@ -314,7 +349,15 @@ export async function startBackendTray(
   }
   const panelConfig = panelSettings(merged.panel);
   const panel = panelConfig ? attachPanel(ctx, made, panelConfig) : undefined;
-  const handle = trayHandle(made, panel);
+  const clicks: ClickHandlers = { count: 0 };
+  const handle = trayHandle(made, panel, clicks);
+  if (!panel && (ctx.os ?? Deno.build.os) === "darwin") {
+    // macOS: a status item with a menu opens it on a plain left click too (Electron's tray); a
+    // panel or a backend `onClick` handler takes the left click instead.
+    listenMouse(made.tray, "click", (detail) => {
+      if (opensMenu(detail, clicks)) handle.popUpMenu();
+    });
+  }
   const o = ctx.options;
   if (o?.onClick) handle.onClick(o.onClick);
   if (o?.onDoubleClick) handle.onDoubleClick(o.onDoubleClick);
