@@ -10,6 +10,16 @@ import type { Instance, VmDefinition } from "./types.ts";
 /** The `ps` arguments whose output {@linkcode parsePs} reads (every process, full command lines). */
 export const PS_ARGS = ["-axww", "-o", "pid=,ppid=,rss=,%cpu=,args="] as const;
 
+/**
+ * The `ps` program that lists the host's processes, or `null` where there is none: Windows has no
+ * `/bin/ps` (spawning it fails on every overview poll), so Hangar lists no running QEMU there.
+ *
+ * @param os `Deno.build.os`.
+ */
+export function psProgram(os: string): string | null {
+  return os === "windows" ? null : "/bin/ps";
+}
+
 /** Parse `ps -o pid=,ppid=,rss=,%cpu=,args=` output. */
 export function parsePs(output: string): ProcessInfo[] {
   const out: ProcessInfo[] = [];
