@@ -3,6 +3,11 @@
     "app": {
       "identifier": "dev.denext.loopy",
       "name": "Loopy",
+      "icons": {
+        "macos": "./icons/macos.png",
+        "linux": "./icons/linux.png",
+        "windows": "./icons/windows.ico"
+      },
       "activationPolicy": "accessory"
     },
     "window": {
