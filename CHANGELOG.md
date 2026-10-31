@@ -149,6 +149,15 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext mcp`'s docs search works from a checkout in the day after a release.** Run from a
+  checkout of the denext repository outside its workspace (CI running the checkout's CLI from
+  another directory, an app that links a checkout by path), `denext_search_docs`,
+  `denext_read_docs` and the `denext://guide` / `denext://docs` resources loaded the corpus as
+  `@denext/docs-corpus` at denext's exact version through the caller's import map, which Deno's
+  minimum dependency age refuses for a day after it is published (and which, for an unreleased
+  commit, holds another commit's corpus). A checkout now reads its own
+  `packages/docs-corpus/mod.ts`, as it already did for the packed native templates; a published
+  denext still imports the exact `@denext/docs-corpus` release.
 - **A paused desktop download that is cancelled rejects once its partial file is gone.** In a
   Deno Desktop window, `cancelFileTransfer` on a paused `downloadToFile` rejected its promise
   with `CANCELLED` straight away, while the runtime was still dropping the kept partial file and
