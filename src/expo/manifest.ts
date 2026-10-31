@@ -5,7 +5,7 @@
  *
  * React Native mode (`reactNative` in `denext.config.ts`) aliases every package listed here
  * to its shim; a package not listed resolves normally. `scripts/parity` checks each shim's
- * exports against the pinned package's types. Pure data, decoded on import from a
+ * exports against the pinned package's types. Pure data, decoded on first read from a
  * Brotli-packed copy (`node:zlib`; tooling metadata, server-side only).
  *
  * @example

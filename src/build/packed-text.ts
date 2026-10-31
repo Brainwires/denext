@@ -31,6 +31,49 @@ export function unpackText(brotliBase64: string): string {
   return new TextDecoder().decode(brotliDecompressSync(decodeBase64(brotliBase64)));
 }
 
+/**
+ * A packed JSON document (scripts/gen-packed-texts.ts), decoded on the first call and kept.
+ *
+ * Generated modules whose values are data tables read them through this (and
+ * {@linkcode packedObject}) rather than decoding when imported: a module graph that only imports
+ * them (the config validator's, and through it the packaged desktop app's) then never runs
+ * `node:zlib`'s Brotli. In a Linux WebKitGTK window that call can bind to the system
+ * `libbrotlidec` the web view loads and never return, so an eager decode kept the app from
+ * starting (tests/desktop-runtime-graph.test.ts).
+ *
+ * @param brotliBase64 The packed document.
+ * @returns The decoder: the document's values by name.
+ */
+export function lazyPack(brotliBase64: string): () => Readonly<Record<string, unknown>> {
+  let values: Readonly<Record<string, unknown>> | undefined;
+  return () => values ??= JSON.parse(unpackText(brotliBase64));
+}
+
+/**
+ * An object value of a pack whose keys are known up front (written beside the pack by its
+ * generator): each key is an enumerable getter, and the first read of any of them decodes the
+ * pack. `Object.keys`, `in` and `Object.hasOwn` decode nothing.
+ *
+ * @param pack The pack's decoder ({@linkcode lazyPack}).
+ * @param name The value's name in the pack.
+ * @param keys The value's own keys, in order.
+ * @returns The object.
+ */
+export function packedObject<T>(
+  pack: () => Readonly<Record<string, unknown>>,
+  name: string,
+  keys: readonly string[],
+): T {
+  const out: Record<string, unknown> = {};
+  for (const key of keys) {
+    Object.defineProperty(out, key, {
+      enumerable: true,
+      get: () => (pack()[name] as Record<string, unknown>)[key],
+    });
+  }
+  return out as T;
+}
+
 /** Decode a pack (written by scripts/lib/pack-texts.ts): Brotli, then base64, then JSON. */
 function unpackTexts(
   brotliBase64: string,
