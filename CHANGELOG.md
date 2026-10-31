@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tailwind builds run on macOS 27 on Apple Silicon.** The pinned Tailwind v4.3.0 standalone
+  binary for `macos-arm64` was killed at launch (exit 137, `Tailwind compile failed (137)`): it is
+  a Bun-compiled executable whose ad-hoc code signature carries a wrong hash for the last page
+  before the signature, and macOS 27 maps that page at launch, so the kernel's page check sends
+  SIGKILL (later Tailwind releases carry the same defect and run only because that page is never
+  touched). After the download passes its SHA-256 pin, denext now recomputes the page hashes of
+  the binary's ad-hoc signature before caching it, the change `codesign --force --sign -` would
+  make, done in place so the result is pinned as well; a binary an older denext cached is
+  verified against the release pin and repaired on its next use, with no new download.
+
 ## [4.10.4] - 2026-10-31
 
 ### Added
