@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.10.5] - 2026-10-31
+
 ### Added
 
 - **Crash reports from denext's side.** Runtime `3.0.0-denext.5` sends opt-in crash reports
@@ -43,14 +45,12 @@ and this project adheres to
   the binary's ad-hoc signature before caching it, the change `codesign --force --sign -` would
   make, done in place so the result is pinned as well; a binary an older denext cached is
   verified against the release pin and repaired on its next use, with no new download.
-
 - **The migration beds keep a dependency-age hold on npm.** They ran every command with
   `DENEXT_MIN_DEP_AGE=0`, so a bed's build could resolve an npm release published minutes before
   and fail on a tarball the registry did not serve yet (`tslib` 2.9.1). The migrated app's
   `deno.json` now carries `minimumDependencyAge: { age: "P1D", exclude: ["jsr:@denext/*"] }`: a
   day's hold on everything but the `@denext` packages a release has just published, which the
   checkout under test pins.
-
 - **`denext mcp`'s docs search works from a checkout in the day after a release.** Run from a
   checkout of the denext repository outside its workspace (CI running the checkout's CLI from
   another directory, an app that links a checkout by path), `denext_search_docs`,
@@ -60,7 +60,6 @@ and this project adheres to
   commit, holds another commit's corpus). A checkout now reads its own
   `packages/docs-corpus/mod.ts`, as it already did for the packed native templates; a published
   denext still imports the exact `@denext/docs-corpus` release.
-
 - **`denext/testing` renders SVG and MathML.** Its in-memory DOM had no `createElementNS`, so
   `render()` of a component that renders SVG threw before mounting. Elements now carry a namespace:
   `<svg>` and `<math>` subtrees are created in the SVG and MathML namespaces (a `<foreignObject>`'s
@@ -70,7 +69,6 @@ and this project adheres to
   `hasAttributeNS` and `removeAttributeNS` work as in a browser). Markup assigned to `innerHTML`
   is parsed into the same namespaces, an SVG element closing with `/>`. Events fire on SVG
   elements like any other.
-
 - **TanStack Router route splitting works on a project reached through a Windows 8.3 short path.**
   With `spa.tanstackRouter: { autoCodeSplitting: true }`, a project opened as
   `C:\Users\LONGNA~1\…` (a short-name `TEMP`, or a working directory a tool handed over in that
@@ -78,7 +76,6 @@ and this project adheres to
   reached through, while the route generator keys its routes by the real, long path, so no route
   file matched. Every module is now compared, and handed to the splitter, by its real path (8.3
   names expanded, symlinks resolved), on both sides.
-
 - **The API reference carries no terminal colour codes.** `deno doc --json` writes ANSI colour codes
   into a template-literal type's text even with its output piped, and ten signatures in the API
   reference (`ContactType`, `CalendarFormatType`, …), `llms-full.txt` and the docs corpus carried
@@ -20202,7 +20199,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.4...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.5...development
+[4.10.5]: https://jsr.io/@denext/denext@4.10.5
 [4.10.4]: https://jsr.io/@denext/denext@4.10.4
 [4.10.3]: https://jsr.io/@denext/denext@4.10.3
 [4.10.2]: https://jsr.io/@denext/denext@4.10.2
