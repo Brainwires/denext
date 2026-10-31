@@ -682,6 +682,7 @@
     "DesktopLinuxConfig:interface",
     "DesktopMacosConfig:interface",
     "DesktopPasskeysConfig:interface",
+    "DesktopPermissionsConfig:interface",
     "DesktopShellConfig:interface",
     "DesktopSidecarConfig:interface",
     "DesktopSidecarLoginShellEnvConfig:interface",

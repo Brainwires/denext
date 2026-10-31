@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`desktop.permissions: "strict"`: a packaged desktop app's read and environment grants scoped**
+  (opt-in; takes effect with Deno Desktop runtime 3.0.0-denext.8, once denext pins it, in an app
+  with `desktop.app.identifier`; the default is unchanged, and an older runtime bakes it with a
+  notice). `--allow-read` covers the app's data and cache folders, the capabilities' folders and
+  `desktop.extraPermissions.read` (unscoped again for a picked path: `dialogs`, `$DOCUMENTS`);
+  `--allow-env` covers the variables denext's desktop runtime reads plus
+  `desktop.permissions.env` (`{ mode: "strict", env: [...] }`) and `desktop.extraPermissions.env`.
+  A program sidecar (`run.exec`) or `loginShellEnv` hands its child the whole environment, so the
+  config validator and the package scripts refuse strict mode with either.
+
 ### Changed
 
 - **A packaged desktop app's writes to its own folders are scoped to those folders** (takes effect

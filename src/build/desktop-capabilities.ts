@@ -24,6 +24,12 @@ import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
 import { permissionListError } from "../desktop/permission-entries.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
+import { DESKTOP_RUNTIME_ENV } from "./desktop-runtime-env.ts";
+import {
+  desktopPermissionsMode,
+  desktopPermissionsProblem,
+  strictPermissionsSidecarError,
+} from "../desktop/permissions-mode.ts";
 
 /** The operating systems a Deno Desktop app ships for (`Deno.build.os` spelling). */
 export type DesktopOs = "darwin" | "windows" | "linux";
@@ -500,6 +506,8 @@ interface DesktopFlagConfig {
     readonly app?: { readonly deepLinks?: unknown; readonly identifier?: unknown };
     /** Sidecars: their own `permissions`, and what running them takes. */
     readonly sidecars?: unknown;
+    /** `"strict"` scopes the baked read and environment grants. */
+    readonly permissions?: unknown;
   };
   readonly spa?: {
     readonly proxy?: { readonly target?: unknown; readonly allowNonLoopback?: unknown };
@@ -871,6 +879,53 @@ function mergePermissionSets(
 }
 
 /**
+ * Whether `desktop.permissions` asks for strict mode, refusing a value the package scripts must
+ * not guess about: an invalid one, or strict with a sidecar that needs the whole environment.
+ */
+function strictRequested(cfg: DesktopFlagConfig): boolean {
+  const problem = desktopPermissionsProblem(cfg.desktop?.permissions);
+  if (problem) throw new Error(`denext: desktop.${problem[0]} ${problem[1]}`);
+  if (!desktopPermissionsMode(cfg.desktop?.permissions).strict) return false;
+  const conflict = strictPermissionsSidecarError(cfg.desktop?.sidecars);
+  if (conflict) throw new Error(`denext: desktop.permissions ${conflict}`);
+  return true;
+}
+
+/**
+ * Strict mode's `--allow-read`: the app's data and cache folders (the embedded files are granted
+ * by the runtime), what the capabilities and the `fs` folders read, and `extraPermissions.read`;
+ * unscoped when one of them has no token (a picked path under `dialogs`, `$DOCUMENTS`).
+ */
+function strictReadFlag(
+  capFlags: readonly string[],
+  extra: DesktopPermissionSet,
+  cfg: DesktopFlagConfig,
+): string {
+  const scoped = scopedValues([
+    DESKTOP_DATA_TOKEN,
+    DESKTOP_CACHE_TOKEN,
+    ...capFlags.filter((f) => kindOfFlag(f) === "--allow-read").flatMap(valuesOfFlag),
+    ...fsConfigFolders(cfg, "read"),
+    ...(extra.read ?? []),
+  ]);
+  return scoped ? `--allow-read=${scoped.join(",")}` : "--allow-read";
+}
+
+/**
+ * Strict mode's `--allow-env`: the variables denext's desktop runtime reads
+ * ({@linkcode DESKTOP_RUNTIME_ENV}), `desktop.permissions.env` and `extraPermissions.env` (a
+ * sidecar's included); unscoped when one of them is `"*"`.
+ */
+function strictEnvFlag(extra: DesktopPermissionSet, cfg: DesktopFlagConfig): string {
+  const names = new Set([
+    ...DESKTOP_RUNTIME_ENV,
+    ...desktopPermissionsMode(cfg.desktop?.permissions).env,
+    ...(extra.env ?? []),
+  ]);
+  return names.has("*") ? "--allow-env" : `--allow-env=${[...names].sort().join(",")}`;
+}
+
+/**
  * The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the
  * least-privilege replacement for `-A` in the package scripts — derived from the WHOLE project
  * config, not just `desktop.capabilities` (deriving from capabilities alone would starve the
@@ -896,6 +951,9 @@ function mergePermissionSets(
  * - `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's
  *   feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED
  *   in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.
+ * - with `desktop.permissions: "strict"` on such a runtime (and `desktop.app.identifier`),
+ *   `--allow-read` scoped to the app's folders and the declared reads, and `--allow-env` to
+ *   {@linkcode DESKTOP_RUNTIME_ENV} and the declared variables.
  * A capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`
  * (only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`
  * grant, never `*` baked in.
@@ -936,6 +994,7 @@ export function desktopBuildFlags(
   ]);
 
   const { run, ffi, sys } = bakeableSets(capFlags, extra);
+  const strict = strictRequested(cfg) && folderScope(cfg, options);
   // Deep links: the pinned runtime lets the app claim a declared scheme back from another handler
   // (`registerScheme({ force: true })`, `claimDeepLinkScheme` on a user action) only with an
   // unscoped --allow-sys.
@@ -957,8 +1016,8 @@ export function desktopBuildFlags(
     ...(options.netSplit
       ? netSplitFlags([...connect], [...listen])
       : listFlag("net", new Set([...connect, ...listen]))),
-    "--allow-read",
-    "--allow-env",
+    strict ? strictReadFlag(capFlags, extra, cfg) : "--allow-read",
+    strict ? strictEnvFlag(extra, cfg) : "--allow-env",
     ...writeFlags(capFlags, extra, cfg, folderScope(cfg, options)),
     ...listFlag("sys", sys),
     ...listFlag("run", run),
@@ -989,7 +1048,29 @@ export async function desktopPackageFlags(
 ): Promise<string[]> {
   // No config (or one that exports none) → the baseline; a config that fails to load fails.
   const config = await loadConfigBeside(entryUrl);
-  return desktopBuildFlags(config, os, { netSplit: netSplit ?? await desktopNetSplitFor() });
+  const flags = desktopBuildFlags(config, os, { netSplit: netSplit ?? await desktopNetSplitFor() });
+  const notice = strictPermissionsNotice(config);
+  if (notice) console.warn(notice);
+  return flags;
+}
+
+/**
+ * The line a package script prints when `desktop.permissions: "strict"` cannot be baked (the
+ * runtime does not expand the folder tokens, or `desktop.app.identifier` is unset), so the
+ * default grants are, else `null`.
+ *
+ * @param config The project config.
+ * @param options The runtime's abilities (default: the pinned runtime's).
+ * @returns The notice, or `null`.
+ */
+export function strictPermissionsNotice(
+  config: unknown,
+  options: DesktopBuildFlagOptions = {},
+): string | null {
+  const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
+  if (!strictRequested(cfg) || folderScope(cfg, options)) return null;
+  return 'denext: desktop.permissions "strict" needs Deno Desktop runtime 3.0.0-denext.8 or ' +
+    "later and desktop.app.identifier; baking the default (unscoped) --allow-read and --allow-env.";
 }
 
 /** The `desktop.capabilities.extensions` module paths from a config object (each a project-relative

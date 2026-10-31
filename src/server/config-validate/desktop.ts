@@ -12,6 +12,11 @@ import {
 } from "../../desktop/app-origin.ts";
 import { desktopDenoFlagError } from "../../desktop/deno-flags.ts";
 import { permissionListError } from "../../desktop/permission-entries.ts";
+import {
+  desktopPermissionsMode,
+  desktopPermissionsProblem,
+  strictPermissionsSidecarError,
+} from "../../desktop/permissions-mode.ts";
 import { desktopTrayProblem } from "../../desktop/tray-config.ts";
 import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
@@ -48,6 +53,27 @@ function validateExtraPermissions(extra: unknown, fail: Fail): void {
     isStringList,
     fail,
   );
+}
+
+/**
+ * `desktop.permissions`: `"default"`, `"strict"` or `{ mode, env? }`; strict needs
+ * `desktop.app.identifier` (the runtime names the app's folders after it) and no sidecar that
+ * hands a child the whole environment.
+ */
+function validateDesktopPermissions(desktop: Record<string, unknown>, fail: Fail): void {
+  const problem = desktopPermissionsProblem(desktop.permissions);
+  if (problem) fail(`desktop.${problem[0]}`, problem[1]);
+  if (!desktopPermissionsMode(desktop.permissions).strict) return;
+  const identifier = (desktop.app as { identifier?: unknown } | undefined)?.identifier;
+  if (typeof identifier !== "string" || identifier.trim() === "") {
+    fail(
+      "desktop.permissions",
+      '"strict" needs desktop.app.identifier: the runtime expands $DENO_DESKTOP_DATA and ' +
+        "$DENO_DESKTOP_CACHE to the app's folders named after it",
+    );
+  }
+  const conflict = strictPermissionsSidecarError(desktop.sidecars);
+  if (conflict) fail("desktop.permissions", conflict);
 }
 
 /** `desktop.app.origin`: the runtime's origin rules, and the identifier it then requires. */
@@ -436,6 +462,7 @@ export function validateDesktop(
   validateDesktopWindows((desktop as { windows?: unknown }).windows, fail);
   validateDenoFlags((desktop as { denoFlags?: unknown }).denoFlags, fail);
   validateDesktopSidecars((desktop as { sidecars?: unknown }).sidecars, spaProxy, fail);
+  validateDesktopPermissions(desktop as Record<string, unknown>, fail);
   const caps = (desktop as { capabilities?: unknown }).capabilities;
   if (caps === undefined) return;
   if (typeof caps !== "object" || caps === null || Array.isArray(caps)) {

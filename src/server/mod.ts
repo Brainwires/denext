@@ -314,6 +314,7 @@ export {
   type DesktopLinuxConfig,
   type DesktopMacosConfig,
   type DesktopPasskeysConfig,
+  type DesktopPermissionsConfig,
   type DesktopShellConfig,
   type DesktopSidecarConfig,
   type DesktopSidecarLoginShellEnvConfig,

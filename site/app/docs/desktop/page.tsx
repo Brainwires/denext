@@ -3956,6 +3956,55 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         <code>desktop.extraPermissions.write</code>.
       </p>
 
+      <h3 id="desktop-strict-permissions">Strict permissions</h3>
+      <p>
+        By default the binary can read any file and every environment variable (
+        <code>--allow-read</code>, <code>--allow-env</code>
+        ). <code>desktop.permissions: &quot;strict&quot;</code>{" "}
+        narrows both, from Deno Desktop runtime 3.0.0-denext.8 in an app with{" "}
+        <code>desktop.app.identifier</code> (an older runtime bakes the default, and{" "}
+        <code>denext desktop package</code> says so):
+      </p>
+      <ul>
+        <li>
+          <code>--allow-read</code> covers the app&apos;s data and cache folders (
+          <code>$DENO_DESKTOP_DATA</code>, <code>$DENO_DESKTOP_CACHE</code>
+          ), the folders the capabilities read and{" "}
+          <code>desktop.extraPermissions.read</code>. The embedded files are always readable. A
+          capability that reads a path picked at run time (<code>dialogs</code>,{" "}
+          <code>$DOCUMENTS</code> in <code>fs</code>) keeps it unscoped, and so does a{" "}
+          <code>&quot;*&quot;</code> entry; a file the OS opens with the app needs one of them.
+        </li>
+        <li>
+          <code>--allow-env</code>{" "}
+          covers the variables denext&apos;s desktop runtime reads (its own settings,{" "}
+          <code>HOME</code>, <code>APPDATA</code>, <code>XDG_*</code>, the proxy variables,{" "}
+          <code>PORT</code>, …) plus the ones the app declares in{" "}
+          <code>desktop.permissions.env</code> or <code>desktop.extraPermissions.env</code>
+          . Every variable the app&apos;s own code reads, its <code>NEXT_PUBLIC_*</code>{" "}
+          ones and a module sidecar&apos;s included, must be declared: an undeclared read throws
+          {" "}
+          <code>NotCapable</code>.
+        </li>
+        <li>
+          A program sidecar (<code>run.exec</code>) and <code>loginShellEnv</code>{" "}
+          start a child with the app&apos;s whole environment, which a scoped{" "}
+          <code>--allow-env</code>{" "}
+          cannot read, so a config with either is refused in strict mode. A module sidecar&apos;s
+          {" "}
+          <code>spawnSelf()</code> copies the whole environment too; pass it an <code>env</code>
+          {" "}
+          of its own.
+        </li>
+      </ul>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  app: { identifier: "com.example.notes" },
+  permissions: { mode: "strict", env: ["NOTES_API_URL"] }, // or permissions: "strict"
+},`}
+      </Code>
+
       <h2 id="desktop-react-native">React Native on desktop</h2>
       <p>
         A <a href="/docs/react-native">React Native / Expo app</a> (<code>reactNative: true</code>,

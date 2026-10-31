@@ -1221,6 +1221,19 @@ export interface DesktopConfig {
    */
   extraPermissions?: DesktopExtraPermissions;
   /**
+   * How narrow the packaged binary's baked read and environment grants are. `"default"` (or unset):
+   * `--allow-read` and `--allow-env` unscoped, as before. `"strict"` (needs Deno Desktop runtime
+   * 3.0.0-denext.8 and `desktop.app.identifier`; an older runtime keeps the default):
+   * `--allow-read` scoped to the app's data and cache folders (`$DENO_DESKTOP_DATA`,
+   * `$DENO_DESKTOP_CACHE`; the embedded files are always readable) plus
+   * {@link DesktopExtraPermissions.read} and what the capabilities read, and `--allow-env` scoped to
+   * the variables denext's desktop runtime reads plus {@link DesktopPermissionsConfig.env} and
+   * {@link DesktopExtraPermissions.env}. A capability that reads a path picked at run time
+   * (`dialogs`) keeps `--allow-read` unscoped. Refused with a program sidecar (`run.exec`) or
+   * `loginShellEnv`, which hand the child the whole environment.
+   */
+  permissions?: "default" | "strict" | DesktopPermissionsConfig;
+  /**
    * Full-app self-update (`checkForAppUpdate` … from `denext/desktop/updater`): the whole signed
    * app is replaced by a newer signed build. Needs denext's pinned Deno Desktop runtime.
    */
@@ -1871,6 +1884,19 @@ export interface CompilePermissions {
   netListen?: string[];
 }
 
+/** {@link DesktopConfig.permissions} as an object: the mode, and the app's own variables. */
+export interface DesktopPermissionsConfig {
+  /** `"strict"` scopes the baked read and environment grants (see {@link DesktopConfig.permissions}). */
+  mode: "default" | "strict";
+  /**
+   * The environment variables the app's own code reads (`DATABASE_URL`, `NEXT_PUBLIC_*` names, …),
+   * added to the strict `--allow-env` allow-list. One name per entry.
+   *
+   * @itemPattern "^[A-Za-z_][A-Za-z0-9_]*$"
+   */
+  env?: string[];
+}
+
 /**
  * Extra `--allow-*` for the desktop packaging scripts (see {@link DesktopConfig.extraPermissions}).
  * Each field is a list of Deno permission values, unioned into the derived flags.
@@ -1878,7 +1904,12 @@ export interface CompilePermissions {
 export interface DesktopExtraPermissions {
   /** `--allow-read` paths (usually unnecessary — the baseline is already broad read). */
   read?: string[];
-  /** `--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be scoped). */
+  /**
+   * `--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be
+   * scoped) — except under Deno Desktop runtime 3.0.0-denext.8 in an app with
+   * `desktop.app.identifier`, where `$APPDATA/…`, `$CACHE/…` and absolute paths are baked as
+   * written (the folders as `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE`).
+   */
   write?: string[];
   /**
    * `--allow-net` hosts, e.g. the updater's feed host. Under denext's pinned runtime (3.0.0-rc.2 or
