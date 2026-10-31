@@ -22,10 +22,10 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
-        "npm:@capacitor/android@8.5.2",
+        "npm:@capacitor/android@8.6.0",
         "npm:@capacitor/app@^8.1.1",
-        "npm:@capacitor/cli@8.5.2",
-        "npm:@capacitor/core@8.5.2",
+        "npm:@capacitor/cli@8.6.0",
+        "npm:@capacitor/core@8.6.0",
         "npm:@legendapp/list@3.4.0",
         "npm:@tanstack/react-virtual@3.14.13",
         "npm:react-dom@19.2.3",

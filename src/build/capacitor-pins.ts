@@ -21,7 +21,7 @@ export const YARN_NO_SCRIPTS_ENV: Readonly<Record<string, string>> = {
  * project's minimum dependency age. Bump it only to a version that has cleared Deno's default
  * hold (two days).
  */
-export const CAPACITOR_VERSION = "8.5.2";
+export const CAPACITOR_VERSION = "8.6.0";
 
 /**
  * The Capacitor build outputs and copied web assets a project ignores. Capacitor 8 builds iOS

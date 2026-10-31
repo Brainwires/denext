@@ -112,7 +112,7 @@ document.getElementById("root")!.textContent = [channel, http, ws, key].join();
   };
 }
 
-const CAP = "8.5.2";
+const CAP = "8.6.0";
 
 Deno.test("migrate --enable-capacitor: a T3-shaped Vite SPA gets a Capacitor target", async () => {
   await withTree(t3Like(), async (root) => {
@@ -284,7 +284,7 @@ Deno.test("migrate CLI --enable-capacitor: the runner passes a step's env to the
 
 Deno.test("migrate --enable-capacitor: --app-id, --platform, and packages already installed", async () => {
   await withTree(
-    t3Like({ devDependencies: { "@capacitor/cli": "8.5.2", "@capacitor/core": "8.5.2" } }),
+    t3Like({ devDependencies: { "@capacitor/cli": "8.6.0", "@capacitor/core": "8.6.0" } }),
     async (root) => {
       const dir = join(root, "apps/web");
       await Deno.mkdir(join(dir, "android"));
@@ -792,7 +792,7 @@ Deno.test("capacitor.config.ts type-checks against @capacitor/cli", async () => 
     await Deno.copyFile(join(dir, "capacitor.config.ts"), join(probe, "capacitor.config.ts"));
     await Deno.writeTextFile(
       join(probe, "deno.json"),
-      JSON.stringify({ imports: { "@capacitor/cli": "npm:@capacitor/cli@8.5.2" } }),
+      JSON.stringify({ imports: { "@capacitor/cli": "npm:@capacitor/cli@8.6.0" } }),
     );
     // Not `--cached-only`: an uncached @capacitor/cli is fetched into the Deno cache, so a
     // fresh CI runner checks the config instead of skipping it.
@@ -805,7 +805,7 @@ Deno.test("capacitor.config.ts type-checks against @capacitor/cli", async () => 
         .test(err);
     if (unavailable && !Deno.env.get("CI")) {
       // Offline outside CI only; under CI an unreachable package fails the test below.
-      console.log("  (skipped: @capacitor/cli@8.5.2 could not be fetched)");
+      console.log("  (skipped: @capacitor/cli@8.6.0 could not be fetched)");
       return;
     }
     assertEquals(code, 0, err);

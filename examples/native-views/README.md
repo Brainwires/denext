@@ -26,8 +26,8 @@ denext task android      # android/app/build/outputs/apk/debug/app-debug.apk
 ## How it was made
 
 ```sh
-npm install --save-exact @capacitor/core@8.5.2 @capacitor/ios@8.5.2 @capacitor/android@8.5.2
-npm install --save-exact -D @capacitor/cli@8.5.2
+npm install --save-exact @capacitor/core@8.6.0 @capacitor/ios@8.6.0 @capacitor/android@8.6.0
+npm install --save-exact -D @capacitor/cli@8.6.0
 denext task export && npx cap add ios && npx cap add android
 deno run -A --node-modules-dir=none ../../cli.ts mobile add native-map
 ```
