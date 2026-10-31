@@ -1055,6 +1055,11 @@ function gate(...starts: number[]): Map<number, PromiseWithResolvers<boolean>> {
 
 const tick = (ms = 10) => new Promise((r) => setTimeout(r, ms));
 
+/** Wait until the mount with `start` reached its `authorize`. */
+async function reached(start: number): Promise<void> {
+  while (!authorized.includes(start)) await tick(1);
+}
+
 /** Mount `test-gated` with `start` under view id `vid`; `done` settles when the mount does. */
 async function gatedMount(
   hub: Any,
@@ -1074,6 +1079,7 @@ Deno.test("live views: one connection's mounts are placed in arrival order, the 
   const c = conn("ok");
   const first = (await gatedMount(hub, c, 1, "v1")).done;
   const second = (await gatedMount(hub, c, 2, "v2")).done;
+  await reached(1);
   await tick();
   assertEquals(authorized, [1], "the second mount waits behind the first");
   g.get(1)!.resolve(true);
@@ -1094,6 +1100,7 @@ Deno.test("live views: one connection's mounts are placed in arrival order, the 
     (await gatedMount(many.hub, d, 3, "c")).done,
   ];
   g2.get(2)!.resolve(true);
+  await reached(1);
   await tick();
   assertEquals(d.views.size, 0, "nothing overtakes the held first mount");
   g2.get(1)!.resolve(true);
@@ -1109,6 +1116,7 @@ Deno.test("live views: an unmount or a close cancels the mounts still waiting or
   const c = conn("ok");
   const running = (await gatedMount(hub, c, 1, "v1")).done;
   const waiting = (await gatedMount(hub, c, 2, "v2")).done;
+  await reached(1);
   await tick();
   hub.unmount(c, "v2"); // still queued: never runs
   hub.unmount(c, "v1"); // at authorize: placed nothing once it settles
@@ -1126,6 +1134,7 @@ Deno.test("live views: an unmount or a close cancels the mounts still waiting or
   const d = conn("ok");
   const a = (await gatedMount(hub, d, 1, "v1")).done;
   const b = (await gatedMount(hub, d, 2, "v2")).done;
+  await reached(1);
   await tick();
   d.closed = true;
   hub.drop(d);
@@ -1142,6 +1151,7 @@ Deno.test("live views: a slow authorize delays only its own connection's later m
   const slow = conn("ok");
   const other = conn("ok");
   const held = (await gatedMount(hub, slow, 1, "v1")).done;
+  await reached(1);
   await tick();
   // Another connection mounts at once while the first is held.
   await mounted(hub, other, 2, "v1");

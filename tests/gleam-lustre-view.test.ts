@@ -736,6 +736,7 @@ Deno.test("Lustre hub: mounts on one connection are queued, cancelled by an unmo
   const c = conn();
   const first = hub.mount(c, await mountFrame(id, { start: 1 }, "l1"));
   const second = hub.mount(c, await mountFrame(id, { start: 2 }, "l2"));
+  while (!authorized.includes(1)) await tick(1);
   await tick();
   assertEquals(authorized, [1], "the second mount waits behind the first");
   // Another connection is not held up by it.
@@ -755,6 +756,7 @@ Deno.test("Lustre hub: mounts on one connection are queued, cancelled by an unmo
   const running = hub.mount(d, await mountFrame(id, { start: 1 }, "l1"));
   const waiting = hub.mount(d, await mountFrame(id, { start: 2 }, "l2"));
   const closing = hub.mount(d, await mountFrame(id, { start: 4 }, "l3"));
+  while (!authorized.includes(1)) await tick(1);
   await tick();
   hub.unmount(d, "l1");
   hub.unmount(d, "l2");
