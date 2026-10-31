@@ -42,9 +42,44 @@ export interface ProjectPaths {
   config: DenextConfig | null;
 }
 
-async function exists(path: string): Promise<boolean> {
+/**
+ * The file probes (`Deno.stat`) of one {@linkcode resolveProject} run, made cancellable. Once
+ * {@linkcode ProbeScope.abort} is called no new probe starts — the run rejects with the abort
+ * reason at its next one — and {@linkcode ProbeScope.settled} resolves once the probes already
+ * started have finished. A caller that gives up on a run (a time budget) aborts and awaits
+ * `settled()`, so it never returns with a `Deno.stat` still in flight. The user code a run reaches
+ * (the config module's import) is not covered: it cannot be cancelled, and starts no probe.
+ */
+export class ProbeScope {
+  #controller = new AbortController();
+  #inFlight = new Set<Promise<unknown>>();
+
+  /** Start `stat` unless the scope was aborted (then throw its reason); track it until it settles. */
+  stat(path: string): Promise<Deno.FileInfo> {
+    this.#controller.signal.throwIfAborted();
+    const pending = Deno.stat(path);
+    this.#inFlight.add(pending);
+    const done = () => this.#inFlight.delete(pending);
+    pending.then(done, done);
+    return pending;
+  }
+
+  /** Refuse every later probe of this scope. */
+  abort(): void {
+    this.#controller.abort(new DOMException("project resolution was abandoned", "AbortError"));
+  }
+
+  /** Resolve once no probe of this scope is in flight (settled ones' errors are ignored). */
+  async settled(): Promise<void> {
+    while (this.#inFlight.size > 0) await Promise.allSettled([...this.#inFlight]);
+  }
+}
+
+async function exists(path: string, probes?: ProbeScope): Promise<boolean> {
+  // Outside the try: an aborted scope ends the run, it does not read as "missing".
+  const pending = probes ? probes.stat(path) : Deno.stat(path);
   try {
-    await Deno.stat(path);
+    await pending;
     return true;
   } catch {
     return false;
@@ -52,10 +87,10 @@ async function exists(path: string): Promise<boolean> {
 }
 
 /** The first of `names` that exists under `dir` (absolute path), or null. */
-async function firstOf(dir: string, names: string[]): Promise<string | null> {
+async function firstOf(dir: string, names: string[], probes?: ProbeScope): Promise<string | null> {
   for (const name of names) {
     const p = join(dir, name);
-    if (await exists(p)) return p;
+    if (await exists(p, probes)) return p;
   }
   return null;
 }
@@ -73,12 +108,16 @@ const MIDDLEWARE_EXTENSIONS = ["ts", "tsx", "mts", "js", "jsx", "mjs"];
  * pick: only one can run, and the one left out may be the app's auth gate. (Next raises the same
  * error for a middleware file beside a proxy file.)
  */
-async function resolveMiddlewarePath(projectDir: string, srcBase: string): Promise<string | null> {
+async function resolveMiddlewarePath(
+  projectDir: string,
+  srcBase: string,
+  probes?: ProbeScope,
+): Promise<string | null> {
   const found: string[] = [];
   for (const name of ["middleware", "proxy"]) {
     for (const ext of MIDDLEWARE_EXTENSIONS) {
       const p = join(srcBase, `${name}.${ext}`);
-      if (await exists(p)) found.push(p);
+      if (await exists(p, probes)) found.push(p);
     }
   }
   if (found.length > 1) {
@@ -93,12 +132,19 @@ async function resolveMiddlewarePath(projectDir: string, srcBase: string): Promi
   return found[0] ?? null;
 }
 
-export async function resolveProject(projectDir: string): Promise<ProjectPaths> {
+/**
+ * Resolve the project at `projectDir`: its layout, root modules and `denext.config`.
+ * `probes` makes its file probes cancellable (see {@linkcode ProbeScope}).
+ */
+export async function resolveProject(
+  projectDir: string,
+  probes?: ProbeScope,
+): Promise<ProjectPaths> {
   // Optional `src/` layout (Next.js parity): when `src/app` exists, the app,
   // middleware, and instrumentation live under `src/` — while `public/`,
   // `deno.json`/`denext.config`, and `.denext` stay at the project root. `src/app`
   // wins if a top-level `app/` also exists.
-  const srcBase = (await exists(join(projectDir, "src", "app")))
+  const srcBase = (await exists(join(projectDir, "src", "app"), probes))
     ? join(projectDir, "src")
     : projectDir;
 
@@ -109,18 +155,24 @@ export async function resolveProject(projectDir: string): Promise<ProjectPaths> 
   // Fall back to the framework's own deno.json when the project has none. frameworkFileUrl
   // handles both a local checkout (file://) and a remote (JSR) framework — `join` would
   // corrupt a URL.
-  const configPath = (await exists(projectConfig)) ? projectConfig : frameworkFileUrl("deno.json");
+  const configPath = (await exists(projectConfig, probes))
+    ? projectConfig
+    : frameworkFileUrl("deno.json");
 
-  const middlewarePath = await resolveMiddlewarePath(projectDir, srcBase);
+  const middlewarePath = await resolveMiddlewarePath(projectDir, srcBase, probes);
 
-  const instrumentationPath = await firstOf(srcBase, ["instrumentation.ts", "instrumentation.js"]);
+  const instrumentationPath = await firstOf(
+    srcBase,
+    ["instrumentation.ts", "instrumentation.js"],
+    probes,
+  );
   const instrumentationClientPath = await firstOf(srcBase, [
     "instrumentation-client.ts",
     "instrumentation-client.tsx",
     "instrumentation-client.js",
-  ]);
+  ], probes);
 
-  const config = await loadDenextConfig(projectDir);
+  const config = await loadDenextConfig(projectDir, probes);
   // Seed the feature-flag map for SERVER rendering and unbundled runs: the client bundle folds
   // `feature("KEY")` calls to literals, but the server evaluates the original source, so its
   // `feature()` reads this seeded map (see denext/feature). resolveProject runs in the build,
@@ -232,10 +284,13 @@ export async function dirExists(path: string): Promise<boolean> {
 }
 
 /** Load `denext.config.{ts,mts,js,mjs}` (named exports, a default object, or a factory). */
-async function loadDenextConfig(projectDir: string): Promise<DenextConfig | null> {
+async function loadDenextConfig(
+  projectDir: string,
+  probes?: ProbeScope,
+): Promise<DenextConfig | null> {
   for (const name of CONFIG_FILES) {
     const p = join(projectDir, name);
-    if (await exists(p)) return await importConfigFile(p, name);
+    if (await exists(p, probes)) return await importConfigFile(p, name);
   }
   return null;
 }
