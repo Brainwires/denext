@@ -1647,7 +1647,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.10.3` — The denext framework version.
+- `VERSION: 4.10.4` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -3856,7 +3856,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class DriverAdapterError` — The error an adapter throws so Prisma reports a typed database error instead of a generic one. Prisma recognizes it by name and cause (no instanceof), so this class needs no import from Prisma.
 - `type ErrorConstraint = object | object | object` — A constraint a database error names (fields, an index, or a foreign key).
 - `type IsolationLevel = READ UNCOMMITTED | READ COMMITTED | REPEATABLE READ | SNAPSHOT | SERIALIZABLE` — The transaction isolation levels Prisma may ask for.
-- `type MappedError = object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object` — A database error in the form Prisma turns into its own P20xx errors. Each kind is one Prisma knows; postgres / sqlite carry an error it has no dedicated kind for.
+- `type MappedError = object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object` — A database error in the form Prisma turns into its own P20xx errors. Each kind is one Prisma knows; postgres / sqlite carry an error it has no dedicated kind for.
 - `postgresConnection(url: string, schemaOption: string | undefined): object` — A Postgres URL with Prisma's own parameters read into Deno.SQL options and removed, as PrismaDenoSql does before it connects. schema becomes the search_path, connection_limit the pool's max, connect_timeout (or pool_timeout) the connectionTimeout, and pgbouncer=true turns prepared statements off; Prisma-only parameters a server would refuse (socket_timeout, statement_cache_size, sslaccept, …) are dropped. Use it to open a Deno.SQL client of your own from a Prisma DATABASE_URL.
 - `class PrismaDenoSql` — The Prisma driver adapter factory over Deno.SQL, for Postgres and SQLite. Pass it to new PrismaClient({ adapter }).
 - `interface PrismaDenoSqlOptions` — Options of PrismaDenoSql.

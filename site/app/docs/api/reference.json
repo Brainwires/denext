@@ -4301,7 +4301,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.10.3",
+          "signature": "VERSION: 4.10.4",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -29613,7 +29613,7 @@
           "kind": "function",
           "signature": "resumeFileTransfer(id: string): Promise<boolean>",
           "doc": "Continue a paused download from its bytes so far (a range request where the server allows one, else from the start).",
-          "docFull": "Continue a paused download from its bytes so far (a range request where the server allows one,\nelse from the start).\n\nIn the iOS / Android shell with the `DenextTransfer` plugin (`denext mobile add file-transfer`)\nit also retries a failed transfer: a download from its bytes so far when it is `resumable`,\nelse anew, and an upload from the start. On the web and in a Deno Desktop window only a paused\ndownload resumes: a failed transfer resolves `false` (start it again with `downloadToFile`; on\nDeno Desktop the same URL to the same file continues from the partial file the runtime kept).",
+          "docFull": "Continue a paused download from its bytes so far (a range request where the server allows one,\nelse from the start).\n\nIn the iOS / Android shell with the `DenextTransfer` plugin (`denext mobile add file-transfer`)\nit also retries a failed transfer: a download from its bytes so far when it is `resumable`,\nelse anew, and an upload from the start. On the web and in a Deno Desktop window only a paused\ndownload resumes: a failed transfer resolves `false` (start it again with `downloadToFile`; on\nDeno Desktop the same URL to the same file continues from the partial file the runtime kept).\nAfter a restart, a Deno Desktop download started with a credential header (`Authorization`,\n`Cookie`, an API key) is refused here, since the runtime never writes one to disk: start it again\nwith `downloadToFile` and its headers (the same id, URL and file), which continues from its\npartial file.",
           "params": [
             {
               "name": "id",
@@ -34311,7 +34311,7 @@
           "name": "MappedError",
           "slug": "MappedError",
           "kind": "typeAlias",
-          "signature": "type MappedError = object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object",
+          "signature": "type MappedError = object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object",
           "doc": "A database error in the form Prisma turns into its own P20xx errors. Each kind is one Prisma knows; postgres / sqlite carry an error it has no dedicated kind for.",
           "docFull": "A database error in the form Prisma turns into its own `P20xx` errors. Each `kind` is one\nPrisma knows; `postgres` / `sqlite` carry an error it has no dedicated kind for.",
           "params": [],

@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.10.4] - 2026-10-31
+
 ### Added
 
 - **Revoked runtimes roll back.** A released Deno toolchain or Deno Desktop runtime that turns out
@@ -107,7 +109,6 @@ and this project adheres to
   panic (`DENEXT_CRASH_REPORT_APP` names the app, `DENEXT_CRASH_REPORT_SELFTEST=1` checks the
   pipeline); a packaged desktop app's panic report uses the same schema. The
   [runtime reference](https://denext.dev/docs/runtime-reference) lists them.
-
 - **Runtime 3.0.0-denext.3: denext pins it** (was `3.0.0-denext.2`; the toolchain, the Deno
   Desktop runtime and CI's Linux toolchain zip move together; both pins name `3.0.0-denext.2` as
   their `rollback`). It moves to V8 15.2.124.45 and adds runtime APIs: the `HTMLRewriter` global
@@ -214,7 +215,6 @@ and this project adheres to
   runtime's `tickInfo`, `immediateInfo` and `timerInfo` arrays was freed while V8 still referenced
   it (read when a snapshot was made, and reachable until the isolate was disposed); it now belongs
   to its V8 backing store ([GHSA-mvh6-5whv-26gw](https://github.com/Brainwires/deno/security/advisories/GHSA-mvh6-5whv-26gw)).
-
 - **Runtime 3.0.0-denext.3 carries V8 15.2.124.45**, with the fixes for two V8 bugs exploited in
   the wild (CVE-2026-85046, a type confusion, and CVE-2026-87491, an out-of-bounds write) that the
   pinned `3.0.0-denext.2`'s V8 15.2.124.1 lacks. A sloppy-import hint no longer reveals whether a
@@ -20124,7 +20124,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.3...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.4...development
+[4.10.4]: https://jsr.io/@denext/denext@4.10.4
 [4.10.3]: https://jsr.io/@denext/denext@4.10.3
 [4.10.2]: https://jsr.io/@denext/denext@4.10.2
 [4.10.1]: https://jsr.io/@denext/denext@4.10.1

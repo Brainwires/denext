@@ -10,7 +10,7 @@
     "./clients": "./clients/mod.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^4.10.3",
+    "@denext/denext": "jsr:@denext/denext@^4.10.4",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "denext": {
