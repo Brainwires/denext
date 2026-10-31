@@ -313,6 +313,28 @@ Deno.test("registry: open maps focusable false to noActivate, levels, hidden sta
   ]);
 });
 
+Deno.test("registry: open passes backgroundThrottling to the runtime at creation", () => {
+  const { reg } = registry();
+  reg.open({ url: "/worker", backgroundThrottling: false, show: false });
+  assertEquals(FakeWin.made.at(-1)!.options, { backgroundThrottling: false, show: false });
+  reg.open({ url: "/w", backgroundThrottling: true });
+  assertEquals(FakeWin.made.at(-1)!.options, { backgroundThrottling: true });
+  // Unset: the runtime's default (throttled, never frozen), so no key.
+  reg.open({ url: "/w" });
+  assertEquals(FakeWin.made.at(-1)!.options, {});
+  assertEquals(
+    openWindowSettings({ url: "/", backgroundThrottling: false }).backgroundThrottling,
+    false,
+  );
+  let code = "";
+  try {
+    reg.open({ url: "/x", backgroundThrottling: "no" });
+  } catch (err) {
+    code = String((err as { code?: unknown }).code);
+  }
+  assertEquals(code, "validation");
+});
+
 Deno.test("registry: open refuses other origins, bad options and a ninth window", () => {
   const { reg } = registry();
   for (

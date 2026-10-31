@@ -1150,6 +1150,16 @@ export interface OpenWindowOptions {
    */
   readonly overlay?: boolean;
   /**
+   * What its page does while the window is not on screen (hidden, minimized or covered), like
+   * Electron's `webPreferences.backgroundThrottling`. `true` (the default): it keeps running with
+   * its timers slowed (about once a second on macOS); its events, messages and sockets are still
+   * handled. `false`: its timers keep their rate, for a hidden window that does the app's
+   * background work. Creation time only; runtime 3.0.0-denext.8 (an older one ignores it, and on
+   * macOS froze a page created hidden about a second after it loaded). The system WebView on
+   * Windows and Linux and the CEF backend throttle a hidden page without freezing it either way.
+   */
+  readonly backgroundThrottling?: boolean;
+  /**
    * Show it once created (default `true`). With `false` it opens hidden (its page loads), to be
    * shown with the handle's `show()`; a runtime before 3.0.0-denext.6 may flash it first.
    */

@@ -111,6 +111,12 @@ export interface DesktopOpenWindowOptions {
   readonly skipTaskbar?: boolean;
   /** On every Space / virtual desktop (where the runtime can). */
   readonly visibleOnAllWorkspaces?: boolean;
+  /**
+   * `false`: its page keeps its timers' rate while the window is not on screen (Electron's
+   * `backgroundThrottling`; default `true`, throttled, never frozen). Creation time only; runtime
+   * 3.0.0-denext.8 (an older one ignores it).
+   */
+  readonly backgroundThrottling?: boolean;
   /** Show it once created (default `true`). */
   readonly show?: boolean;
   /** The capabilities its pages may call (default: all; `window` always). */

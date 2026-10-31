@@ -2569,6 +2569,18 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, â€
         (its tray icons, its close guard, its drops); keep-awake holds and global shortcuts are
         released when the main window&apos;s page reloads.
       </p>
+      <p id="desktop-background-throttling">
+        A window&apos;s page keeps running while the window is hidden, minimized or covered, with
+        its timers slowed to about once a second (Electron&apos;s default). For a hidden window that
+        does the app&apos;s background work, <code>backgroundThrottling: false</code> (in{" "}
+        <code>openWindow</code> or{" "}
+        <code>windows.open</code>, at creation only) keeps its timers at their rate. Both need Deno
+        Desktop runtime 3.0.0-denext.8: before it, on macOS, the system WebView froze a page created
+        hidden about a second after it loaded (no timers, events or sockets until the window
+        showed), and an older runtime ignores the option. The Windows and Linux system WebViews and
+        the CEF backend throttle a hidden page without freezing it either way. The main window is
+        the one the runtime starts with, which is always throttled.
+      </p>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
       <p>
         <code>onFileDrop</code>{" "}
@@ -2968,10 +2980,13 @@ tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Cont
       <p>
         Its clicks reach the backend&apos;s handlers and every window&apos;s page;{" "}
         <code>showTrayPanel</code>, <code>hideTrayPanel</code> and <code>toggleTrayPanel</code>{" "}
-        drive the panel. A page hears them only while it runs, though: a window that does not show
-        may have its page suspended until it shows again (WKWebView does that on macOS), so a menu
-        item handled by a hidden main window&apos;s page does nothing there. Answer the menu items
-        and the double click in{" "}
+        drive the panel. A page hears them only while it runs, though: before Deno Desktop runtime
+        3.0.0-denext.8 a window that does not show may have its page suspended until it shows again
+        (WKWebView does that on macOS), so a menu item handled by a hidden main window&apos;s page
+        does nothing there. From 3.0.0-denext.8 a hidden page is only throttled (
+        <a href="#desktop-background-throttling">background throttling</a>) and keeps handling
+        events, so a tray app can rely on its hidden pages again; on an older runtime, or to act
+        with no page at all, answer the menu items and the double click in{" "}
         <code>desktop.ts</code>, in the app&apos;s process: the handle&apos;s{" "}
         <code>onMenuItem</code> / <code>onDoubleClick</code>, with <code>app.windows</code>{" "}
         to open and show windows (each ref has <code>visible</code>, <code>getBounds()</code> and

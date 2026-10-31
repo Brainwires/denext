@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Added
 
+- **`openWindow({ backgroundThrottling })`** (and `windows.open` in `desktop.ts`), Electron's
+  `webPreferences.backgroundThrottling`, passed to `Deno.BrowserWindow` at creation (takes effect
+  with Deno Desktop runtime 3.0.0-denext.8; an older one ignores it). `true` (the default) keeps a
+  hidden window's page running with its timers slowed; `false` keeps them at their rate, for a
+  hidden window that does background work. With that runtime a hidden page on macOS is throttled
+  instead of frozen, so a tray app's hidden pages handle menu items and events again.
 - **A compiled app's `job` and `db` run past the server's `start.limits`** (takes effect with
   denext's Deno 3.0.0-denext.8, once denext pins it). The main module `denext build --compile`
   generates calls `Deno.disarmResourceLimits()` before it dispatches `./app job <name>` or

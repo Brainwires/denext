@@ -205,6 +205,7 @@ export interface OpenWindowSettings {
   readonly opacity?: number;
   readonly skipTaskbar?: boolean;
   readonly visibleOnAllWorkspaces?: boolean;
+  readonly backgroundThrottling?: boolean;
   readonly show: boolean;
   readonly capabilities: ReadonlySet<string> | null;
 }
@@ -266,6 +267,7 @@ const OPEN_FLAGS = [
   "focusable",
   "skipTaskbar",
   "visibleOnAllWorkspaces",
+  "backgroundThrottling",
 ] as const;
 
 /** The boolean options that are set, checked. */
@@ -306,6 +308,9 @@ function creationOptions(o: OpenWindowSettings): Record<string, unknown> {
     // also set right after creation, where the runtime has `setSkipTaskbar`).
     ...pick("overlay"),
     ...pick("skipTaskbar"),
+    // Creation-time from runtime 3.0.0-denext.8: `false` keeps the page's timers at their rate
+    // while the window is not on screen (an older runtime ignores it).
+    ...pick("backgroundThrottling"),
     ...(o.focusable === false ? { noActivate: true } : {}),
     ...(o.alwaysOnTop !== undefined ? { alwaysOnTop: o.alwaysOnTop !== false } : {}),
     // Honoured once the runtime can create a window hidden; it is hidden right after otherwise.
