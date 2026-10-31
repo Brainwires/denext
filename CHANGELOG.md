@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.3] - 2026-10-31
+
 ### Added
 
 - **`DesktopRuntime.windows` refs report `visible`, `getBounds()` and `onClosed(handler)`**, so
@@ -20473,7 +20475,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.2...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.3...development
+[4.11.3]: https://jsr.io/@denext/denext@4.11.3
 [4.11.2]: https://jsr.io/@denext/denext@4.11.2
 [4.11.1]: https://jsr.io/@denext/denext@4.11.1
 [4.11.0]: https://jsr.io/@denext/denext@4.11.0
