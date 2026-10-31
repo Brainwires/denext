@@ -1,10 +1,12 @@
 // Loopy on screen: the companion reducer (lib/companion-state.ts), the desktop event stream other
-// programs' messages arrive on, and the window chrome (lib/window-setup.ts). In a browser
-// (`denext dev`) the same component renders in the page with a row of demo buttons.
+// programs' messages arrive on, the window chrome (lib/window-setup.ts) and, when turned on, its
+// bubbles read aloud with the OS's voice (lib/speech.ts). In a browser (`denext dev`) the same
+// component renders in the page with a row of demo buttons.
 "use client";
 import { useEffect, useReducer, useRef, useState } from "denext";
 import type { Dispatch, RefObject } from "denext";
 import { onDesktopEvent } from "denext/desktop/client";
+import { speak, stopSpeaking } from "denext/mobile";
 import { Loopy } from "../components/Loopy.tsx";
 import { SpeechBubble } from "../components/SpeechBubble.tsx";
 import {
@@ -15,6 +17,7 @@ import {
 import { type LoopyModel, nextTimer } from "../lib/loopy-machine.ts";
 import { type LoopyMessage, parseSayRequest, type SayRequest } from "../lib/messages.ts";
 import { dragWindowBy, quit, setupWindow } from "../lib/window-setup.ts";
+import { readAloudOn, saveReadAloud, spokenText } from "../lib/speech.ts";
 
 /** Where the page answers a message's buttons (desktop.ts routes it to the inbox). */
 const REPLY_PATH = "/_loopy/reply";
@@ -119,6 +122,34 @@ function useTimedMoves(loopy: LoopyModel, dispatch: Dispatch<CompanionEvent>): v
   }, [loopy]);
 }
 
+/** The page's storage, where the read-aloud toggle is kept (none during SSR). */
+function pageStorage(): Storage | undefined {
+  try {
+    return typeof localStorage === "undefined" ? undefined : localStorage;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read each bubble aloud while `on` (the OS's voice; see lib/speech.ts), and stop when it closes.
+ * Returns the toggle's state and its setter.
+ */
+function useReadAloud(message: LoopyMessage | undefined): [boolean, (on: boolean) => void] {
+  const [on, setOn] = useState(false);
+  useEffect(() => setOn(readAloudOn(pageStorage())), []);
+  useEffect(() => {
+    if (!on || !message) return;
+    void speak(spokenText(message)).catch(() => {}); // no engine here: the bubble alone
+    return () => void stopSpeaking();
+  }, [on, message?.id]);
+  const toggle = (next: boolean) => {
+    saveReadAloud(pageStorage(), next);
+    setOn(next);
+  };
+  return [on, toggle];
+}
+
 /** The speech bubble for the message on screen, if any. */
 function BubbleSlot(
   { message, onFinish, slotRef }: {
@@ -141,11 +172,27 @@ function BubbleSlot(
   );
 }
 
-/** Fold up / Call Loopy, and Quit on desktop. */
+/** The read-aloud toggle. */
+function VoiceToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      title="Read Loopy's messages aloud"
+      onClick={() => onChange(!on)}
+    >
+      {on ? "Voice on" : "Voice off"}
+    </button>
+  );
+}
+
+/** Fold up / Call Loopy, the read-aloud toggle, and Quit on desktop. */
 function Controls(
-  { shown, desktop, onFold, onCall, navRef }: {
+  { shown, desktop, readAloud, onReadAloud, onFold, onCall, navRef }: {
     shown: boolean;
     desktop: boolean;
+    readAloud: boolean;
+    onReadAloud: (on: boolean) => void;
     onFold: () => void;
     onCall: () => void;
     navRef: RefObject<HTMLElement>;
@@ -156,6 +203,7 @@ function Controls(
       <button type="button" onClick={shown ? onFold : onCall}>
         {shown ? "Fold up" : "Call Loopy"}
       </button>
+      <VoiceToggle on={readAloud} onChange={onReadAloud} />
       {desktop && <button type="button" onClick={() => void quit()}>Quit</button>}
     </nav>
   );
@@ -184,6 +232,7 @@ export function Companion() {
   const desktop = useDesktop(dispatch, stageRef, [stageRef, slotRef, navRef]);
   useTimedMoves(model.loopy, dispatch);
   const current = model.queue[0];
+  const [readAloud, setReadAloud] = useReadAloud(current);
   const shown = model.loopy.state !== "hidden";
   const enqueue = (message: LoopyMessage) => dispatch({ type: "enqueue", message });
 
@@ -212,6 +261,8 @@ export function Companion() {
       <Controls
         shown={shown}
         desktop={desktop}
+        readAloud={readAloud}
+        onReadAloud={setReadAloud}
         onFold={foldUp}
         onCall={() => dispatch({ type: "show" })}
         navRef={navRef}

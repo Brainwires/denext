@@ -55,8 +55,13 @@ under Loopy instead.
 - `app/companion.tsx` — the client component: runs the reducer and the timers, listens for the
   inbox's messages (`onDesktopEvent("loopy", "say", …)`) and sets up the window.
 - `denext.config.ts` — the overlay window (`desktop.window`: `frameless`, `transparent`,
-  `focusable: false`, `alwaysOnTop`, `visibleOnAllWorkspaces`, `skipTaskbar`), no Dock icon
-  (`desktop.app.dock: false`) and the tray (`desktop.tray`, handled in `desktop.ts`).
+  `focusable: false`, `alwaysOnTop: "status"`, `visibleOnAllWorkspaces`, `skipTaskbar`), no Dock
+  icon from the first frame (`desktop.app.activationPolicy: "accessory"`) and the tray
+  (`desktop.tray`, handled in `desktop.ts`).
+- `lib/speech.ts` — **Voice on** reads each bubble aloud (its text, then its buttons as the choices)
+  with `speak()` from `denext/mobile`: the window's Web Speech where it has one, else the OS engine
+  through the desktop runtime (`Deno.desktop.speech`; speech-dispatcher on Linux). Off until turned
+  on; the toggle is kept in `localStorage`.
 - `lib/window-setup.ts` + `lib/click-through.ts` — `denext/desktop/window`: `windowCapabilities()`
   first; a transparent background where the window is transparent; clicks through everywhere but
   Loopy, its bubble and its buttons (`setHitRegion` over their rectangles, else
@@ -95,19 +100,17 @@ path at launch. The inbox refuses a request that names a non-loopback host (403)
 `Origin` header — every browser cross-origin POST does, so no web page can reach it (403) — or lacks
 the token (401); a body over 16 KiB is a 413.
 
-## Today vs. later
+## Where it works
 
-Works today, on denext's pinned Deno Desktop runtime: the transparent, frameless overlay on macOS
-and Linux (Windows and the CEF backend paint it opaque); never taking the focus; always on top and
-on every Space (macOS joins every Space through the non-activating panel); no taskbar entry on
-Windows and Linux; no Dock icon on macOS (it shows for a moment at launch); the tray; placement;
-every animation; the inbox and `--wait` replies; the Claude Code hooks.
-
-Waits on the runtime (`windowCapabilities()` turns each on when it lands, with no change here):
-clicks passing through everywhere but Loopy (`hitRegion`, or `clickThrough` +
-`clickThroughForward`); over full-screen apps; and WKWebView's animation frames in a panel that has
-never been focused (a WebKit / laufey issue: Loopy's CSS animations may pause until it is clicked
-once).
+On denext's pinned Deno Desktop runtime (3.0.0-denext.6): the transparent, frameless overlay on
+macOS, Linux and Windows' WebView2 (the CEF backend paints it opaque); never taking the focus;
+clicks passing through everywhere but Loopy, its bubble and its buttons (`setHitRegion`); always on
+top at the `"status"` level and on every Space, over full-screen apps too (macOS; Windows and Linux
+have one floating level); no taskbar entry on Windows and Linux; no Dock icon on macOS from the
+first frame; the tray; placement; every animation; reading aloud; the inbox and `--wait` replies;
+the Claude Code hooks. Each window feature is checked with `windowCapabilities()` first, so on an
+older runtime Loopy still runs, catching every click in its window and showing a Dock icon for a
+moment at launch.
 
 ## Tests
 

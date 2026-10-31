@@ -3,7 +3,7 @@
     "app": {
       "identifier": "dev.denext.loopy",
       "name": "Loopy",
-      "dock": false
+      "activationPolicy": "accessory"
     },
     "window": {
       "width": 260,
@@ -13,7 +13,7 @@
       "frameless": true,
       "transparent": true,
       "focusable": false,
-      "alwaysOnTop": true,
+      "alwaysOnTop": "status",
       "visibleOnAllWorkspaces": true,
       "skipTaskbar": true
     },

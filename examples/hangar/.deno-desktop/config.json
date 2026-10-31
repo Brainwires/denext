@@ -11,7 +11,7 @@
       "origin": "hangar://app",
       "singleInstance": true,
       "keepAlive": true,
-      "dock": false
+      "activationPolicy": "accessory"
     },
     "window": {
       "width": 900,

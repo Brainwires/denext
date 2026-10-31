@@ -1,8 +1,10 @@
 "use client";
 // The tray icon's menu and tooltip, and the main window's close-to-tray. The tray itself is the
 // backend's (`desktop.tray` in denext.config.ts): it exists before any page loads and survives
-// reloads, and a left click toggles the panel natively. Only the MAIN window's page (hidden at
-// launch, but loaded) drives it, so the panel and the full windows don't each update it.
+// reloads, a left click toggles the panel natively, and a right click opens the menu (desktop.ts).
+// Only the MAIN window's page (hidden at launch, but loaded) drives it, so the panel and the full
+// windows don't each update it. The tooltip follows the instances every few seconds and again as
+// soon as the pointer is over the icon (`mouseenter`, macOS and Windows).
 
 import { useEffect } from "denext";
 import { type AppMenuItem, type AppTray, getTray } from "denext/desktop/app";
@@ -70,6 +72,7 @@ export function TrayShell() {
       offs.push(tray.onClick((event) => {
         if (event === "doubleClick") void openFull("/");
       }));
+      offs.push(tray.on("mouseenter", () => void refresh()));
       offs.push(tray.onMenuItem(onMenu));
       await refresh();
     })().catch((err) => console.error("hangar: tray:", err));

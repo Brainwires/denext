@@ -4,8 +4,9 @@ import { PANEL_SIZE, trayMenu } from "./lib/tray.ts";
 // Hangar: a tray-first desktop app over QEMU VMs. The backend is the `hangar` desktop extension
 // (desktop/hangar.ts), which runs in the app's Deno process; the pages are the UI. It starts with
 // no window and no Dock icon: the tray icon (owned by the backend, made before any page loads) is
-// the way in. A left click toggles the panel at the icon, a double click or the menu opens the
-// library (the main window, hidden at launch) or a page in a window of its own.
+// the way in. A left click toggles the panel at the icon, a right click opens the menu, a double
+// click or the menu opens the library (the main window, hidden at launch) or a page in a window of
+// its own.
 export default {
   desktop: {
     // Every installer off: an example, packaged by hand (`deno task desktop:package`).
@@ -19,8 +20,10 @@ export default {
       singleInstance: true,
       // Keep running with every window closed (the tray sets this too; said here for clarity).
       keepAlive: true,
-      // A menu-bar app: no Dock icon (window-mode.ts shows one while a full window is open).
-      dock: false,
+      // A menu-bar app: the accessory activation policy, so no Dock icon or menu bar from the first
+      // frame (runtime 3.0.0-denext.6). window-mode.ts switches to "regular" while a full window is
+      // open, and back.
+      activationPolicy: "accessory",
     },
     // The main window: the library. Hidden at launch; its page still loads and drives the tray's
     // menu and tooltip (app/tray-shell.tsx).

@@ -27,7 +27,8 @@
     "denext/client": "../../src/client/mod.ts",
     "denext/desktop": "../../src/build/desktop.ts",
     "denext/desktop/client": "../../src/desktop/client.ts",
-    "denext/desktop/window": "../../src/desktop/window.ts"
+    "denext/desktop/window": "../../src/desktop/window.ts",
+    "denext/mobile": "../../src/mobile/mod.ts"
   },
   "fmt": {
     "lineWidth": 100,

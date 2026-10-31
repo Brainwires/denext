@@ -30,6 +30,12 @@ import {
 import { cornerPosition, primaryScreen } from "../examples/companion/lib/placement.ts";
 import { clickThroughPlan, hitRects, insideAny } from "../examples/companion/lib/click-through.ts";
 import {
+  readAloudOn,
+  saveReadAloud,
+  SPEECH_KEY,
+  spokenText,
+} from "../examples/companion/lib/speech.ts";
+import {
   type CompanionModel,
   companionReducer,
   INITIAL_COMPANION,
@@ -782,4 +788,47 @@ Deno.test("loopy inbox server: listens on loopback, records itself, and moves of
     await first.shutdown();
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+// ---------------------------------------------------------------- reading bubbles aloud
+
+Deno.test("loopy speech: off until turned on, kept in storage; a refused storage is off", () => {
+  const map = new Map<string, string>();
+  const storage = {
+    getItem: (k: string) => map.get(k) ?? null,
+    setItem: (k: string, v: string) => void map.set(k, v),
+  };
+  assertEquals(readAloudOn(storage), false);
+  saveReadAloud(storage, true);
+  assertEquals(map.get(SPEECH_KEY), "on");
+  assertEquals(readAloudOn(storage), true);
+  saveReadAloud(storage, false);
+  assertEquals(readAloudOn(storage), false);
+  assertEquals(readAloudOn(undefined), false);
+  const refusing = {
+    getItem: (): string | null => {
+      throw new Error("denied");
+    },
+    setItem: () => {
+      throw new Error("denied");
+    },
+  };
+  assertEquals(readAloudOn(refusing), false);
+  saveReadAloud(refusing, true); // does not throw
+  saveReadAloud(undefined, true);
+});
+
+Deno.test("loopy speech: a bubble is read as its text, then its buttons as the choices", () => {
+  assertEquals(spokenText({ text: "Tests passed", actions: [] }), "Tests passed");
+  assertEquals(
+    spokenText({ text: "Deploy?", actions: [{ id: "y", label: "Deploy" }] }),
+    "Deploy? Deploy.",
+  );
+  assertEquals(
+    spokenText({
+      text: "Shall I?",
+      actions: [{ id: "a", label: "Yes" }, { id: "b", label: "Later" }, { id: "c", label: "No" }],
+    }),
+    "Shall I? Yes, Later, or No.",
+  );
 });

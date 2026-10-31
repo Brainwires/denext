@@ -67,20 +67,27 @@ Everything below comes from denext's desktop windowing (`denext.config.ts`, `des
 
 - **Windowless start.** `desktop.window.show: false`: the main window (the library) starts hidden,
   with no flash; its page still loads and drives the tray's menu and tooltip.
-- **No Dock icon.** `desktop.app.dock: false` (macOS); `app/window-mode.ts` turns the icon on while
-  a full window is open, so it comes to the front and Cmd-Tab reaches it, and off again after.
+- **No Dock icon.** `desktop.app.activationPolicy: "accessory"` (macOS): no Dock icon or menu bar
+  from the first frame. `app/window-mode.ts` switches to `setActivationPolicy("regular")` while a
+  full window is open, so it comes to the front and Cmd-Tab reaches it, and back to `"accessory"`
+  after.
 - **A backend tray.** `desktop.tray` is created by `runDesktop` before any page loads and survives
   reloads; pages reach it with `getTray()` (`denext/desktop/app`).
 - **A real panel.** `desktop.tray.panel` is the runtime's `Tray.attachPanel`: a frameless window
-  that never takes the focus, toggled by a left click, hidden when it loses the focus, and placed by
-  denext under a menu-bar icon or above a bottom taskbar, inside the display's work area.
+  that never takes the focus, toggled by a plain left click, hidden when it loses the focus, and
+  placed by denext under a menu-bar icon or above a bottom taskbar, inside the display's work area.
+- **The tray's clicks.** A right click opens the menu (the OS does); a Control-click opens it too
+  (`popUpMenu()` in `desktop.ts`, for a one-button mouse); a double click opens the library; the
+  tooltip is refreshed as soon as the pointer is over the icon (`tray.on("mouseenter")` in
+  `app/tray-shell.tsx`, macOS and Windows), and every few seconds.
 - **Several windows.** "Images", "New VM", "Settings" and a VM's details each open in a window of
   their own (`openWindow` in `denext/desktop/window`); "Open Hangar" shows the main window.
 - **Keep alive.** `desktop.app.keepAlive`: closing every window leaves Hangar in the tray; closing
   the main window hides it (`onCloseRequested`), so its page keeps the tray current. "Quit" quits.
 
-What still depends on the desktop runtime: on macOS the Dock icon shows for a moment at launch until
-the runtime reads the setting before its first frame; the tray's clicks carry no button, modifier or
-position; on Linux the AppIndicator tray has no left click and no position (the panel opens where it
-last was; the menu has "Show panel"), and stock GNOME needs the AppIndicator extension (without a
-tray host the main window is shown instead).
+What depends on the OS: hover and `popUpMenu()` are macOS and Windows only; on Linux a session
+with a StatusNotifierWatcher gets the clicks, one with only AppIndicator has no left click and no
+icon position (the panel opens where it last was; the menu has "Show panel"), and stock GNOME needs
+the AppIndicator extension (without a tray host the main window is shown instead). On a runtime
+before 3.0.0-denext.6 the Dock icon shows for a moment at launch and the tray's clicks carry no
+detail.
