@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **The `@denext/denext` package is 0.19 MiB smaller (19.75 → 19.55 MiB against JSR's 20 MiB
+  cap).** The CLI verbs' help text ships once, Brotli-packed, instead of also as plain text in each
+  command module; the templates only generation commands read (fastlane, widget / Live Activity /
+  native-module sources, the composed `MainActivity`, the scaffolded desktop packaging scripts) move
+  into the docs-corpus pack; the fallow init texts are packed. Help output, completions,
+  `denext commands`, did-you-mean and every generated file are unchanged.
+
 ## [4.11.1] - 2026-10-31
 
 ### Added
