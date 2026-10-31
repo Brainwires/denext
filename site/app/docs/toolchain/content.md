@@ -674,6 +674,11 @@ they are out, add it back to the project's `deno.json`, knowing it lets any just
 "minimumDependencyAge": { "exclude": ["jsr:@denext/*"] }
 ```
 
+`denext doctor` keeps reporting such an entry as a failed (non-critical) `dependency age` check.
+Where it is deliberate (a project that publishes denext, or a test harness that builds against
+`@denext/*` releases published minutes ago, as denext's migration beds do), run doctor with
+`DENEXT_ALLOW_DENEXT_AGE_EXEMPTION=1`: the check then passes and still names the exempt entries.
+
 ## Supply chain: lifecycle-script jail
 
 An approved dependency's lifecycle script (`preinstall`, `install`, `postinstall`, approved with

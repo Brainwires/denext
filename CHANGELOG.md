@@ -34,6 +34,13 @@ and this project adheres to
 
 ### Fixed
 
+- **`denext doctor` explains a `@denext` dependency-age exemption.** A `deno.json` that exempts
+  `jsr:@denext/*` (or another `@denext` entry) from Deno's minimum dependency age still fails the
+  non-critical `dependency age` check, since the hold is what keeps a compromised release out while
+  it is fresh; the message now says so and links the guide. A harness that deliberately builds
+  against just-published `@denext` releases sets `DENEXT_ALLOW_DENEXT_AGE_EXEMPTION=1`, and the
+  check passes, still naming the entries. The migration beds set it, so their one-day hold with
+  `@denext` exempt no longer reports a failure.
 - **Tailwind builds run on macOS 27 on Apple Silicon.** The pinned Tailwind v4.3.0 standalone
   binary for `macos-arm64` was killed at launch (exit 137, `Tailwind compile failed (137)`): it is
   a Bun-compiled executable whose ad-hoc code signature carries a wrong hash for the last page
