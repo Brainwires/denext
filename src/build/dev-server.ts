@@ -29,7 +29,7 @@ import { devSessionToken, withDevTokenGate, withDevTokenParam } from "./dev-serv
 import { installServerOwnerStack } from "../server/owner-stack.ts";
 
 export type { DevServerOptions } from "./dev-server/state.ts";
-export { DEV_RELOAD_SCRIPT } from "./dev-server/reload-script.ts";
+export { DEV_RELOAD_SCRIPT } from "./dev-server/dev-scripts.packed.ts";
 export { devOriginAllowed, editorCommand } from "./dev-server/dev-endpoints.ts";
 
 /** Serve the dev app, publishing the address on listen and cleaning up on stop. */

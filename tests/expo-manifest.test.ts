@@ -54,7 +54,9 @@ Deno.test("expo manifest: every src/expo module has an entry, an export and a ru
   const exports = JSON.parse(await Deno.readTextFile(new URL("../deno.json", import.meta.url)))
     .exports as Record<string, string>;
   for await (const entry of Deno.readDir(EXPO_DIR)) {
-    if (!entry.isFile || !entry.name.endsWith(".ts") || entry.name === "manifest.ts") continue;
+    if (!entry.isFile || !entry.name.endsWith(".ts")) continue;
+    // The manifest itself: its public module, the hand-written data and the packed copy.
+    if (/^manifest(?:-data(?:\.packed)?)?\.ts$/.test(entry.name)) continue;
     assert(modules.has(`./${entry.name}`), `src/expo/${entry.name} has no manifest entry`);
   }
   const runtime = runtimeEntryPoints("file:///fw/");
