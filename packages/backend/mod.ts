@@ -346,6 +346,7 @@ function setupRealtime(
     options,
     () => db.service(),
     (key, frame) => channel.publish(key, frame),
+    (key) => channel.discard(key),
   );
   installRealtime(engine);
   ctx.addTeardown(() => engine.stop());

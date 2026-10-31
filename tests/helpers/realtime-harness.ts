@@ -5,7 +5,7 @@
 // tests.
 
 import { type ChannelConn, createChannelHub } from "../../src/server/live-channels.ts";
-import { watchChannelTransport } from "../../src/runtime/channel.ts";
+import { type ChannelEvent, watchChannelTransport } from "../../src/runtime/channel.ts";
 import { createRequestContext, runWithContext } from "../../src/server/request-context.ts";
 import {
   limitAddrOf,
@@ -88,6 +88,11 @@ export interface Harness {
    * flight while frames arrive, as on a loaded server.
    */
   holdAuth(): () => void;
+  /**
+   * Hold the transport's events from the hub until the returned release is called: frames handed
+   * to the Live hub that its flush has not fanned out yet. `held()` counts them.
+   */
+  holdDelivery(): { held(): number; release(): void };
 }
 
 let peers = 0;
@@ -123,7 +128,8 @@ export function realtimeHarness(): Harness {
     armRecover: () => {},
   });
   const { current, stop } = watchChannelTransport(() => {});
-  const unsubscribe = current.subscribe((ev) => hub.deliver(ev));
+  let queued: ChannelEvent[] | null = null;
+  const unsubscribe = current.subscribe((ev) => queued ? queued.push(ev) : hub.deliver(ev));
   return {
     conn(cookie = "", ip, upgrade = {}) {
       const handshake = new Request(`${ORIGIN}/_denext/live`, { headers: upgrade.headers });
@@ -159,6 +165,16 @@ export function realtimeHarness(): Harness {
       return () => {
         authHeld = Promise.resolve();
         resolve();
+      };
+    },
+    holdDelivery() {
+      const events: ChannelEvent[] = queued = [];
+      return {
+        held: () => events.length,
+        release() {
+          queued = null;
+          for (const ev of events) hub.deliver(ev);
+        },
       };
     },
     dispose() {
