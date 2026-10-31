@@ -26,7 +26,13 @@ import {
   type DesktopTrayOptions,
   startBackendTray,
 } from "./backend-tray.ts";
-import type { DesktopTraySettings, PlacementScreen } from "./tray-config.ts";
+import {
+  type DesktopTraySettings,
+  panelPlacementScreens,
+  type PlacementScreen,
+} from "./tray-config.ts";
+import { platformFacts } from "./caps/platform.ts";
+import { supportsInitialOverlay } from "../build/deno-version.ts";
 import {
   createWindowRegistry,
   type RegisteredWindow,
@@ -140,6 +146,12 @@ export interface DesktopWindowsOptions {
   readonly os?: string;
   /** Where warnings go. */
   readonly warn?: (message: string) => void;
+  /**
+   * The Deno Desktop runtime's version (default `Deno.version.deno`): from `3.0.0-denext.7` the
+   * main window with `desktop.window.overlay` and the tray panel are layer-shell overlays where
+   * the compositor has layer-shell, so they report `setPosition` on Wayland.
+   */
+  readonly runtimeVersion?: string;
 }
 
 /** What {@linkcode setUpDesktopWindows} returns. */
@@ -313,10 +325,11 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
     keepAlive: () => keepAliveOf(st),
     onClosed: (id) => st.app?.windowClosed(id),
     ...(o.exit ? { exit: o.exit } : {}),
-    controller: (window, id, closed) =>
+    controller: (window, id, closed, overlay) =>
       createWindowController({
         window,
         api: o.api,
+        overlay,
         emit: (cap, event, data) => o.emit(cap, event, data, id),
         closed,
         wayBack: () => st.app?.hasTray() === true,
@@ -324,7 +337,9 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
         ...(o.dirs ? { dirs: o.dirs } : {}),
       }),
   });
-  st.registry.adopt(win, "main");
+  st.registry.adopt(win, "main", "main", {
+    overlay: o.windowSettings?.overlay === true && overlayRuntime(st),
+  });
   st.app = createAppController({
     window: win,
     api: o.api,
@@ -382,13 +397,17 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     },
     startTray: async (ctx) => {
       if (!st.app) return undefined;
-      const making = startBackendTray({
-        ...ctx,
-        app: st.app,
-        ...(st.registry ? { registry: st.registry } : {}),
-        screens: () => screensOf(options.api),
-        warn: st.warn,
-      });
+      const app = st.app;
+      const making = panelScreens(options.api).then((screens) =>
+        startBackendTray({
+          ...ctx,
+          app,
+          ...(st.registry ? { registry: st.registry } : {}),
+          screens,
+          panelOverlay: overlayRuntime(st),
+          warn: st.warn,
+        })
+      );
       st.app.backendTrayPending(making);
       const made = await making;
       if (made !== undefined && !("reason" in made)) return made;
@@ -405,6 +424,29 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
       st.appUrl = appUrl;
     },
   };
+}
+
+/** Whether the runtime makes overlay main windows and tray panels (`3.0.0-denext.7`+). */
+function overlayRuntime(st: SetupState): boolean {
+  return supportsInitialOverlay(st.options.runtimeVersion ?? Deno.version.deno);
+}
+
+/**
+ * The displays for the tray panel's placement: on Linux Wayland, where GDK reports each whole
+ * display as its work area, kept clear of the panels the session can't report — unless the
+ * runtime anchors a layer surface to its nearest edges (`layerShellEdgeAnchor`), where the
+ * compositor's own exclusive zones keep it clear.
+ */
+async function panelScreens(
+  api: DesktopAppApi | undefined,
+): Promise<() => readonly PlacementScreen[]> {
+  const facts = await platformFacts(api);
+  let edgeAnchored = false;
+  try {
+    edgeAnchored = api?.windowCapabilities?.()?.layerShellEdgeAnchor === true;
+  } catch { /* an older runtime: none */ }
+  const guess = facts.sessionType === "wayland" && !edgeAnchored;
+  return () => panelPlacementScreens(screensOf(api), guess);
 }
 
 /** The displays, for the tray panel's placement (none without the pinned runtime). */

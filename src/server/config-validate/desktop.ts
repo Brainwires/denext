@@ -220,7 +220,7 @@ function validateDesktopSize(v: unknown, field: string, fail: Fail): void {
 
 /**
  * `desktop.window`: optional width/height (≥ 1), title, and the flags (resizable, show, frameless,
- * transparent, focusable, skipTaskbar, visibleOnAllWorkspaces), alwaysOnTop, opacity.
+ * transparent, focusable, skipTaskbar, visibleOnAllWorkspaces, overlay), alwaysOnTop, opacity.
  */
 function validateDesktopWindow(win: unknown, fail: Fail): void {
   if (win === undefined) return;

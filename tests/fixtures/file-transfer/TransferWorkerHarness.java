@@ -152,6 +152,13 @@ public final class TransferWorkerHarness {
         return call.resolved != null && call.resolved.optBoolean("forgotten");
     }
 
+    /** The authorization header record {@code id} carries, or "". */
+    static String headerOf(String id) {
+        JSONObject record = store.record(id);
+        JSONObject headers = record == null ? null : record.optJSONObject("headers");
+        return headers == null ? "" : headers.optString("authorization");
+    }
+
     static String state(String id) {
         JSONObject record = store.record(id);
         return record == null ? "(none)" : record.optString("state");
@@ -214,10 +221,50 @@ public final class TransferWorkerHarness {
                 return new File(root, "no-backup");
             }
         };
+        // Headers files a release before template 6 wrote, named by the id's hash code and length:
+        // "Aa" and "BB" share one ("840-2.json"), "solo" has its own, "gone" has no record.
+        File headersDir = new File(new File(root, "no-backup"), "denext_transfer_headers");
+        headersDir.mkdirs();
+        for (String id : new String[] {"Aa", "BB", "solo"}) {
+            prefs.values.put(id, "{\"id\":\"" + id + "\",\"kind\":\"download\",\"url\":\"https://example.test/"
+                + id + "\",\"directory\":\"DATA\",\"path\":\"" + id + ".bin\",\"state\":\"paused\","
+                + "\"bytes\":0,\"resumable\":true}");
+        }
+        Files.write(new File(headersDir, Integer.toHexString("BB".hashCode()) + "-2.json").toPath(),
+            "{\"authorization\":\"Bearer BB\"}".getBytes(StandardCharsets.UTF_8));
+        Files.write(new File(headersDir, Integer.toHexString("solo".hashCode()) + "-4.json").toPath(),
+            "{\"authorization\":\"Bearer solo\"}".getBytes(StandardCharsets.UTF_8));
+        Files.write(new File(headersDir, Integer.toHexString("gone".hashCode()) + "-4.json").toPath(),
+            "{\"authorization\":\"Bearer gone\"}".getBytes(StandardCharsets.UTF_8));
+        check("the colliding ids share a legacy name", "Aa".hashCode() == "BB".hashCode(), "no collision");
+
         plugin = new DenextTransferPlugin();
         plugin.context = context;
         plugin.load();
         store = DenextTransferStore.get(context);
+
+        // The migration: the one record a legacy file names keeps its headers; a file two records
+        // (or none) name is deleted, never handed to either; no legacy name is left.
+        check("a migrated legacy headers file stays its record's",
+            headerOf("solo").equals("Bearer solo"), headerOf("solo"));
+        check("a legacy headers file two ids share goes to neither",
+            headerOf("Aa").isEmpty() && headerOf("BB").isEmpty(), headerOf("Aa") + " / " + headerOf("BB"));
+        String[] left = headersDir.list((dir, name) -> name.contains("-"));
+        check("no legacy headers file is left", left != null && left.length == 0,
+            left == null ? "unlisted" : String.join(",", left));
+
+        // Two live ids with the same hash code and length keep their own headers.
+        for (String id : new String[] {"Aa", "BB"}) {
+            JSONObject record = store.record(id);
+            record.put("headers", new JSONObject().put("authorization", "Bearer " + id));
+            store.put(record);
+        }
+        check("ids with one hash code keep their own headers",
+            headerOf("Aa").equals("Bearer Aa") && headerOf("BB").equals("Bearer BB"),
+            headerOf("Aa") + " / " + headerOf("BB"));
+        store.remove("Aa");
+        check("removing one leaves the other's headers", headerOf("BB").equals("Bearer BB"), headerOf("BB"));
+        for (String id : new String[] {"BB", "solo"}) store.remove(id);
 
         // A download that finishes: the file is there and the record says done.
         File plain = dataFile("plain.bin");

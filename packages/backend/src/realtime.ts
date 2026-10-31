@@ -369,6 +369,8 @@ export class RealtimeEngine {
   #listener: SqlListener | null = null;
   #migrated: Promise<void> | null = null;
   #publish: (key: string, frame: TableChangesFrame) => Promise<void>;
+  /** Drops the frames of a key not yet fanned out by the Live hub (a regranted reconnect). */
+  #discard: (key: string) => void;
   #stopped = false;
   #warned = false;
   /** The reserved connection that holds (or tries for) the owner lock; `null` until needed. */
@@ -399,15 +401,18 @@ export class RealtimeEngine {
    * @param options The realtime options.
    * @param client The connecting role's client (throws when Postgres is unavailable).
    * @param publish Publishes a frame on the realtime channel.
+   * @param discard Drops a key's published frames the Live hub has not fanned out yet.
    */
   constructor(
     options: RealtimeOptions,
     client: () => SqlClient,
     publish: (key: string, frame: TableChangesFrame) => Promise<void>,
+    discard: (key: string) => void = () => {},
   ) {
     this.config = resolveRealtime(options);
     this.#client = client;
     this.#publish = publish;
+    this.#discard = discard;
     const replay = this.config.replay;
     this.#journal = replay
       ? new ChangeJournal(replay.retentionSeconds * 1000, replay.maxChangesPerTable)
@@ -1294,7 +1299,10 @@ export class RealtimeEngine {
     // for it was read under the old ones, so it is dropped and the return is a resync.
     // The keys it tracked were seen under the old grant too: none of them may yield a delete
     // (with an `old: "full"` row image) to the new one, so they go now and are re-seeded under it.
+    // So do the frames already handed to the Live hub before the drop (its coalescing window):
+    // fanned out after this reconnect, they would reach it.
     if (audience.everActive && !audience.active && grantOf(scope) !== grantOf(audience.scope)) {
+      this.#discard(audience.key);
       audience.queue.length = 0;
       audience.tracked = new Set();
       audience.regranted = true;
@@ -2217,12 +2225,13 @@ function subscriberAddress(): string | undefined {
  */
 export function createRealtimeChannel(): {
   publish(key: string, frame: TableChangesFrame): Promise<void>;
+  discard(key: string): void;
 } {
   const engine = (): RealtimeEngine | undefined => {
     const slot = (globalThis as Holder)[SLOT];
     return slot && !("error" in slot) ? slot : undefined;
   };
-  return createChannel<TableChangesFrame>({
+  const channel = createChannel<TableChangesFrame>({
     id: REALTIME_CHANNEL_ID,
     key: (key) => decodeSubscriptionKey(key) !== null,
     authorize: (ctx, key) => {
@@ -2243,6 +2252,12 @@ export function createRealtimeChannel(): {
       if (current) current.deactivate(key, reason);
     },
   });
+  // A denext before `Channel.discard` has none: its hub's window stays open (no worse than before).
+  const { discard } = channel as { discard?: (key: string) => void };
+  return {
+    publish: (key, frame) => channel.publish(key, frame),
+    discard: (key) => discard?.call(channel, key),
+  };
 }
 
 /**

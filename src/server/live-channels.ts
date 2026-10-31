@@ -18,6 +18,7 @@
 import { liveDevtoolsEnabled, recordChannelPush } from "./live-devtools.ts";
 import {
   type ChannelEvent,
+  channelEventDiscarded,
   type ChannelIdleReason,
   channelInstanceId,
   channelLog,
@@ -389,7 +390,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
 
   const fanOut = (ev: ChannelEvent): void => {
     const subs = index.get(ev.channelId)?.get(ev.key);
-    if (!subs || subs.size === 0) return;
+    if (!subs || subs.size === 0 || channelEventDiscarded(ev)) return;
     // The frame is assembled by interpolation for speed; the transport is trusted by design,
     // but a malformed event (a non-numeric seq, a non-JSON payload) must not corrupt it.
     if (!Number.isFinite(ev.seq) || !isJsonText(ev.encoded)) return;

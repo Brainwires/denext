@@ -18,6 +18,7 @@ import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
 import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
 import { desktopNetSplitFor } from "./desktop-runtime.ts";
+import { desktopCacheTokenRuntime } from "./desktop-launch-policy.ts";
 import { netSplitFlags } from "./net-permissions.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
@@ -461,6 +462,13 @@ export interface DesktopBuildFlagOptions {
    * `--allow-net-listen` instead of `--allow-net`. Default `false` (the stock runtime's flags).
    */
   readonly netSplit?: boolean;
+  /**
+   * The runtime expands `$DENO_DESKTOP_CACHE` in a baked permission (denext's pinned Deno Desktop
+   * runtime, 3.0.0-denext.8 or later; see `desktopCacheTokenRuntime`): a program sidecar copied
+   * into the app's cache folder gets `--allow-run` over that copy alone, when
+   * `desktop.app.identifier` names the folder. Default: `desktopCacheTokenRuntime()`.
+   */
+  readonly cacheScope?: boolean;
 }
 
 /** The relevant slice of `denext.config.ts` for flag derivation. */
@@ -479,7 +487,7 @@ interface DesktopFlagConfig {
       readonly ui?: unknown;
     };
     /** Deep-link schemes: claiming one back (`registerScheme({ force })`) needs `--allow-sys`. */
-    readonly app?: { readonly deepLinks?: unknown };
+    readonly app?: { readonly deepLinks?: unknown; readonly identifier?: unknown };
     /** Sidecars: their own `permissions`, and what running them takes. */
     readonly sidecars?: unknown;
   };
@@ -546,6 +554,24 @@ function bakesWrite(
   return capFlags.some((f) => kindOfFlag(f) === "--allow-write") ||
     (extra.write?.length ?? 0) > 0 || cfg.desktop?.update?.ui !== undefined;
 }
+
+/**
+ * The `--allow-write` to bake: none, the broad one ({@linkcode bakesWrite}), or, when the only
+ * writes are program sidecars' folders in the app's cache (`$DENO_DESKTOP_CACHE/…`, baked only for
+ * a runtime that expands it), those folders.
+ */
+function writeFlags(
+  capFlags: readonly string[],
+  extra: DesktopPermissionSet,
+  cfg: DesktopFlagConfig,
+): string[] {
+  if (!bakesWrite(capFlags, extra, cfg)) return [];
+  const write = extra.write ?? [];
+  const scoped = cfg.desktop?.update?.ui === undefined &&
+    !capFlags.some((f) => kindOfFlag(f) === "--allow-write") &&
+    write.every((v) => v.startsWith(`${DESKTOP_CACHE_TOKEN}/`));
+  return scoped ? [`--allow-write=${[...write].sort().join(",")}`] : ["--allow-write"];
+}
 /** A flag's values; an unscoped flag (no `=`) is `["*"]`, the whole kind. */
 function valuesOfFlag(flag: string): string[] {
   const eq = flag.indexOf("=");
@@ -584,23 +610,57 @@ function isProjectProgram(exec: string): boolean {
 }
 
 /**
+ * The token denext's Deno Desktop runtime (from 3.0.0-denext.8) expands at launch, at the start of
+ * a baked `--allow-read` / `--allow-write` / `--allow-run` value, to the app's cache folder:
+ * `desktopAppDirs(<desktop.app.identifier>).cache` (Brainwires/deno DENEXT.md item 189).
+ */
+export const DESKTOP_CACHE_TOKEN = "$DENO_DESKTOP_CACHE";
+
+/**
+ * Where a packaged app copies a project-file program sidecar (`resolveSidecarProgram`:
+ * `<cache>/sidecars/<name>/<file>`), as a baked value: its folder and the program, or `undefined`
+ * when the name or the file name cannot be one value of a permission list.
+ *
+ * @param name The sidecar's name.
+ * @param exec Its project-relative program path.
+ * @returns The folder (for `--allow-write`) and the program (for `--allow-run`).
+ */
+export function sidecarCacheProgram(
+  name: string,
+  exec: string,
+): { folder: string; program: string } | undefined {
+  // The copy is named after the resolved file (`new URL(exec, base)` reads `\` as `/`).
+  const file = exec.split(/[\\/]/).at(-1) ?? "";
+  const safe = (part: string) =>
+    part !== "" && part !== "." && part !== ".." && !/[,\\/]/.test(part);
+  if (!safe(name) || !safe(file)) return undefined;
+  const folder = `${DESKTOP_CACHE_TOKEN}/sidecars/${name}`;
+  return { folder, program: `${folder}/${file}` };
+}
+
+/**
  * What the sidecars need baked in, as one permission set: each one's own `permissions`; a program
- * (`run.exec`) its `--allow-run` (unscoped for one of the project's files: the packaged app runs
- * it from a copy in the app's cache folder, which also needs `--allow-write`); a log file
+ * (`run.exec`) its `--allow-run` (for one of the project's files the packaged app runs it from a
+ * copy in the app's cache folder, which also needs `--allow-write`: unscoped, or with `cacheScope`
+ * the copy alone, `$DENO_DESKTOP_CACHE/sidecars/<name>/<file>`, and its folder); a log file
  * `--allow-write`; `loginShellEnv` (on macOS and Linux) the shells it may run
  * ({@linkcode LOGIN_SHELL_PATHS}).
  *
  * @param sidecars The sidecars.
  * @param os The target OS (without it, no login shells).
+ * @param cacheScope Bake a copied program's grants as {@linkcode DESKTOP_CACHE_TOKEN} paths: only
+ *   for a runtime that expands the token, in an app with `desktop.app.identifier` (the runtime
+ *   expands it from the identifier baked into the binary, and drops an entry it cannot expand).
  * @returns The permissions, merged like `desktop.extraPermissions`.
  */
 export function sidecarPermissionSet(
   sidecars: readonly SidecarDefinition[],
   os?: DesktopOs,
+  cacheScope = false,
 ): DesktopPermissionSet {
   const out: Record<string, Set<string>> = {};
   for (const d of sidecars) {
-    const needs = sidecarNeeds(d);
+    const needs = sidecarNeeds(d, cacheScope);
     const loginShell = d.loginShellEnv !== undefined && d.loginShellEnv !== false;
     if (loginShell && (os === "darwin" || os === "linux")) {
       needs.push(["run", LOGIN_SHELL_PATHS[os]]);
@@ -635,23 +695,48 @@ function checkedPermissions(field: string, value: unknown): DesktopPermissionSet
 }
 
 /** One sidecar's needs as `[kind, values]`: its `permissions`, its program, its log file. */
-function sidecarNeeds(d: SidecarDefinition): Array<[string, readonly string[]]> {
+function sidecarNeeds(
+  d: SidecarDefinition,
+  cacheScope: boolean,
+): Array<[string, readonly string[]]> {
   const permissions = checkedPermissions(`desktop.sidecars "${d.name}" permissions`, d.permissions);
   const needs = Object.entries(permissions).filter(
     (e): e is [string, readonly string[]] => Array.isArray(e[1]),
   );
   const exec = (d.run as { exec?: unknown } | undefined)?.exec;
-  if (typeof exec === "string") {
-    const embedded = isProjectProgram(exec);
-    needs.push(["run", [embedded ? "*" : exec]]);
-    if (embedded) needs.push(["write", ["$CACHE"]]);
-  }
+  if (typeof exec === "string") needs.push(...programNeeds(d.name, exec, cacheScope));
   if (d.logs === "file" || d.logs === "both") needs.push(["write", ["$APPDATA"]]);
   // A Node backend's packages are unpacked into the cache folder (sidecar-modules.ts).
   if ((d.run as { nodeModules?: unknown } | undefined)?.nodeModules !== undefined) {
     needs.push(["write", ["$CACHE"]]);
   }
   return needs;
+}
+
+/** A program sidecar's `run` (and, for a copy in the cache folder, `write`) needs. */
+function programNeeds(
+  name: string,
+  exec: string,
+  cacheScope: boolean,
+): Array<[string, readonly string[]]> {
+  if (!isProjectProgram(exec)) return [["run", [exec]]];
+  const copy = cacheScope ? sidecarCacheProgram(name, exec) : undefined;
+  return copy ? [["run", [copy.program]], ["write", [copy.folder]]] : [["run", ["*"]], [
+    "write",
+    ["$CACHE"],
+  ]];
+}
+
+/**
+ * Whether a copied program sidecar's grants are baked as {@linkcode DESKTOP_CACHE_TOKEN} paths: the
+ * runtime expands the token (`options.cacheScope`, by default the pinned runtime's), and
+ * `desktop.app.identifier` is set (the runtime keys the folder by the identifier baked into the
+ * binary; without one it would drop the entry).
+ */
+function sidecarCacheScope(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): boolean {
+  const identifier = cfg.desktop?.app?.identifier;
+  return (options.cacheScope ?? desktopCacheTokenRuntime()) &&
+    typeof identifier === "string" && identifier.trim() !== "";
 }
 
 /** The kinds a permission set merges: the flag kinds plus the two network directions. */
@@ -711,7 +796,7 @@ export function desktopBuildFlags(
   // `desktop.extraPermissions` and what the sidecars need, baked the same way.
   const extra = mergePermissionSets(
     checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
-    sidecarPermissionSet(configSidecars(cfg), os),
+    sidecarPermissionSet(configSidecars(cfg), os, sidecarCacheScope(cfg, options)),
   );
   const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
 
@@ -738,7 +823,6 @@ export function desktopBuildFlags(
   if (Array.isArray(cfg.desktop?.app?.deepLinks) && cfg.desktop.app.deepLinks.length > 0) {
     sys.add("*");
   }
-  const needsWrite = bakesWrite(capFlags, extra, cfg);
   // `"*"` grants the whole kind (an unscoped `--allow-ffi`): a Node-API addon extracted from the
   // compiled app's virtual file system has no path that can be named at package time.
   const listFlag = (kind: string, set: Set<string>): string[] =>
@@ -756,7 +840,7 @@ export function desktopBuildFlags(
       : listFlag("net", new Set([...connect, ...listen]))),
     "--allow-read",
     "--allow-env",
-    ...(needsWrite ? ["--allow-write"] : []),
+    ...writeFlags(capFlags, extra, cfg),
     ...listFlag("sys", sys),
     ...listFlag("run", run),
     ...listFlag("ffi", ffi),

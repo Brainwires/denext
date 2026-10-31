@@ -1652,7 +1652,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.11.0` — The denext framework version.
+- `VERSION: 4.11.1` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -3149,7 +3149,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `setWindowBounds(bounds: Partial<WindowBounds>): Promise<void>` — Move and / or resize the frame; missing fields keep their value. To reopen a window where the user left it, save normalBounds (and maximized / fullscreen) from getWindowState, then restore them here on the next launch.
 - `setWindowButtonPosition(position: object | null): Promise<boolean>` — Move the macOS traffic lights (the close button's top-left corner, in points from the window's top-left); null puts them back.
 - `setWindowOpacity(opacity: number): Promise<void>` — Fade the whole window, page and chrome alike (CSS opacity for the window).
-- `setWindowPosition(x: number, y: number): Promise<void>` — Move the window's frame (see the module docs for the units).
+- `setWindowPosition(x: number, y: number): Promise<void>` — Move the window's frame (see the module docs for the units). On Wayland only a layer-shell overlay window moves (setPosition in windowCapabilities): its position is its offset from the top-left corner of its display's area outside the panels that reserve space, as layer-shell margins; GDK reports the whole display as the work area there, so keep a margin from the edges a panel may be on.
 - `setWindowResizable(resizable: boolean): Promise<void>` — Allow or forbid resizing by the user.
 - `setWindowSize(width: number, height: number): Promise<void>` — Resize the window's page area.
 - `setWindowTitle(title: string): Promise<void>` — Set the native window title.

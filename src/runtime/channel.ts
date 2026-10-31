@@ -154,6 +154,14 @@ export interface Channel<T> {
   publish(key: string, payload: T): Promise<void>;
   /** End every subscription to `key` (or one peer's); the client sees `denied`. Cluster-wide. */
   revoke(key: string, opts?: { peerId?: string }): void;
+  /**
+   * Drop this instance's publishes of `key` that its Live hub has not yet sent to a subscriber:
+   * those inside the hub's coalescing window, or still in the transport. Later publishes are
+   * delivered as usual. For a key whose next subscriber must not get what was published for an
+   * earlier one (a subscription re-authorized under other claims); publishes from other
+   * instances, and frames already held for a connected subscriber, are not reached.
+   */
+  discard(key: string): void;
   /** Phantom — carries the payload type for `useChannel`. */
   readonly __channel?: { payload: T };
 }
@@ -291,9 +299,16 @@ const shared = /* @__PURE__ */ processShared("channels", () => ({
   memoryLog: null as ChannelLog | null,
   /** Warned that the replay log failed (once per process). */
   warnedLog: false,
+  /** Per (channel, key): this instance's publishes up to this `seq` are discarded. */
+  fences: new Map<string, number>() as Map<string, number> | undefined,
 }));
 /** Cap on remembered (channel, key) sequence counters (each is one short string + number). */
 const MAX_SEQ_KEYS = 10_000;
+
+/** The discard fences (`shared.fences`; set here when an older copy of this module made it). */
+function fences(): Map<string, number> {
+  return shared.fences ??= new Map();
+}
 
 /** Deliver one event to one subscriber; a throwing consumer is logged, never propagated. */
 function deliverTo(fn: (ev: ChannelEvent) => void, ev: ChannelEvent): void {
@@ -342,6 +357,7 @@ export function createChannel<T>(config: ChannelConfig<T>): Channel<T> {
     denextChannelId: internals.id,
     publish: (key, payload) => publish(internals, config.schema, key, payload),
     revoke: (key, opts) => revoke(internals, key, opts?.peerId),
+    discard: (key) => discard(internals, key),
   };
   if (config.publisher) superviseKeys(internals, channel, config);
   Object.defineProperty(channel, CHANNEL_BRAND, { value: internals });
@@ -394,7 +410,7 @@ function browserStub<T>(id: string): Channel<T> {
   const notHere = (): never => {
     throw new Error("createChannel: publish/revoke run on the server only");
   };
-  return { denextChannelId: id, publish: notHere, revoke: notHere };
+  return { denextChannelId: id, publish: notHere, revoke: notHere, discard: notHere };
 }
 
 function keyMatcher(key: ChannelConfig<unknown>["key"]): (k: string) => boolean {
@@ -517,12 +533,24 @@ export function channelAuthTtlMs(id: string): number {
 export function resetChannels(): void {
   shared.channels.clear();
   shared.seqs.clear();
+  fences().clear();
   shared.warnedUnknown.clear();
   shared.payloadCap = 16 * 1024;
   shared.authTtlSeconds = 300;
   shared.memoryLog = inMemoryChannelLog();
   shared.warnedLog = false;
   setChannelTransport(inMemoryChannelTransport());
+}
+
+/** The next `seq` of a (channel, key) on this instance, recorded. */
+function nextSeq(seqKey: string): number {
+  // Past a discard fence even when the key's counter was evicted meanwhile.
+  const seq = Math.max(shared.seqs.get(seqKey) ?? 0, fences().get(seqKey) ?? 0) + 1;
+  // Bounded: a hot key keeps its counter (re-inserted at the tail); the oldest cold key goes.
+  shared.seqs.delete(seqKey);
+  if (shared.seqs.size >= MAX_SEQ_KEYS) shared.seqs.delete(shared.seqs.keys().next().value!);
+  shared.seqs.set(seqKey, seq);
+  return seq;
 }
 
 async function publish<T>(
@@ -543,12 +571,7 @@ async function publish<T>(
   if (new TextEncoder().encode(encoded).byteLength > shared.payloadCap) {
     throw new RangeError(`channel.publish: payload exceeds ${shared.payloadCap} bytes`);
   }
-  const seqKey = `${ch.id}\0${key}`;
-  const seq = (shared.seqs.get(seqKey) ?? 0) + 1;
-  // Bounded: a hot key keeps its counter (re-inserted at the tail); the oldest cold key goes.
-  shared.seqs.delete(seqKey);
-  if (shared.seqs.size >= MAX_SEQ_KEYS) shared.seqs.delete(shared.seqs.keys().next().value!);
-  shared.seqs.set(seqKey, seq);
+  const seq = nextSeq(`${ch.id}\0${key}`);
   const ev: ChannelEvent = {
     kind: "publish",
     channelId: ch.id,
@@ -590,6 +613,31 @@ async function validate<T>(schema: StandardSchemaV1<T>, payload: T): Promise<T> 
     throw new ActionValidationError("Invalid channel payload", fieldErrorsFrom(result.issues));
   }
   return result.value;
+}
+
+/** Fence `key` at this instance's latest publish ({@linkcode Channel.discard}). */
+function discard(ch: ChannelInternals, key: string): void {
+  if (!ch.id) return;
+  const seqKey = `${ch.id}\0${key}`;
+  const seq = shared.seqs.get(seqKey);
+  if (seq === undefined) return; // nothing published here (or long ago): nothing in flight
+  const all = fences();
+  all.delete(seqKey);
+  if (all.size >= MAX_SEQ_KEYS) all.delete(all.keys().next().value!);
+  all.set(seqKey, seq);
+}
+
+/**
+ * Whether `ev` is one of this instance's publishes a {@linkcode Channel.discard} dropped: the Live
+ * hub sends it to no one.
+ *
+ * @param ev The event.
+ * @returns `true` to drop it.
+ */
+export function channelEventDiscarded(ev: ChannelEvent): boolean {
+  if (ev.kind !== "publish" || ev.instance !== shared.instance) return false;
+  const fence = fences().get(`${ev.channelId}\0${ev.key}`);
+  return fence !== undefined && ev.seq <= fence;
 }
 
 function revoke(ch: ChannelInternals, key: string, peerId?: string): void {

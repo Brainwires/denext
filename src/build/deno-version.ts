@@ -253,6 +253,66 @@ export function supportsOverlayTray(version: string): boolean {
   return compareDenoVersions(version, FIRST_OVERLAY_TRAY_RUNTIME) >= 0;
 }
 
+/**
+ * The first Deno Desktop runtime that reads `initialWindow.overlay` and `name` in
+ * `.deno-desktop/app.json` (Brainwires/deno `fix/wayland-overlay-panel`): the window the app starts
+ * with can be a Wayland layer-shell overlay (`desktop.window.overlay`), and an untitled window is
+ * titled with the app's name (`desktop.app.name`) rather than the bundle's file name. An older
+ * runtime refuses either key (its app.json has no unknown keys), so the packager writes them only
+ * from here on.
+ */
+export const FIRST_INITIAL_OVERLAY_RUNTIME = "3.0.0-denext.7";
+
+/**
+ * Whether the Deno Desktop runtime `version` reads `initialWindow.overlay` and `name` in
+ * `.deno-desktop/app.json` (from {@linkcode FIRST_INITIAL_OVERLAY_RUNTIME}). A version that does
+ * not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether the packager may write the keys.
+ */
+export function supportsInitialOverlay(version: string): boolean {
+  return compareDenoVersions(version, FIRST_INITIAL_OVERLAY_RUNTIME) >= 0;
+}
+
+/**
+ * The first release of denext's Deno whose `process.execArgv` holds the run's Deno flags under
+ * `deno run` / `deno serve` (`[]` in a compiled program and under `deno test`), so a child started
+ * as `deno run ...process.execArgv <script>` gets the parent's scoped grants, unstable features and
+ * config (Brainwires/deno DENEXT.md item 188).
+ */
+export const FIRST_EXEC_ARGV_RUNTIME = "3.0.0-denext.8";
+
+/**
+ * Whether denext's Deno of `version` fills `process.execArgv` with the run's Deno flags (from
+ * {@linkcode FIRST_EXEC_ARGV_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A version of denext's Deno (`Deno.build.denext`).
+ * @returns Whether a child can be started from `process.execArgv`.
+ */
+export function supportsExecArgv(version: string): boolean {
+  return compareDenoVersions(version, FIRST_EXEC_ARGV_RUNTIME) >= 0;
+}
+
+/**
+ * The first Deno Desktop runtime that expands `$DENO_DESKTOP_CACHE` at the start of a baked
+ * `--allow-read` / `--allow-write` / `--allow-run` value (and the matching `--deny-*`) to the
+ * app's cache folder, `desktopAppDirs(<desktop.app.identifier>).cache` (Brainwires/deno DENEXT.md
+ * item 189). An allow entry it cannot expand is dropped, never widened.
+ */
+export const FIRST_DESKTOP_CACHE_TOKEN_RUNTIME = "3.0.0-denext.8";
+
+/**
+ * Whether the Deno Desktop runtime `version` expands `$DENO_DESKTOP_CACHE` in baked permissions
+ * (from {@linkcode FIRST_DESKTOP_CACHE_TOKEN_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether a program sidecar's grant may be scoped to its copy in the cache folder.
+ */
+export function supportsDesktopCacheToken(version: string): boolean {
+  return compareDenoVersions(version, FIRST_DESKTOP_CACHE_TOKEN_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

@@ -250,6 +250,54 @@ Deno.test("icon source: a sibling app.config.ts with a literal icon path is reso
   }
 });
 
+Deno.test("icon source: a folder beside the app that its workspace does not list is not a sibling app", async () => {
+  // denext's own repo: the root is a Deno workspace of packages/*, and examples/* sit beside each
+  // other without being members. examples/hangar must not take examples/expo-app's icon.
+  const dir = await tree({
+    "deno.json": JSON.stringify({ workspace: ["./packages/a"] }),
+    "packages/a/deno.json": "{}",
+    "examples/expo-app/app.json": JSON.stringify({ expo: { name: "E", icon: "./icon.png" } }),
+    "examples/expo-app/icon.png": await png(1024),
+    "examples/hangar/deno.json": "{}",
+    "examples/hangar/public/tray.png": await png(64),
+  });
+  try {
+    const search = await resolveIconSource(join(dir, "examples/hangar"));
+    assertEquals(search.source?.kind === "expo", false, JSON.stringify(search.source));
+    assertEquals(search.source?.icon === join(dir, "examples/expo-app/icon.png"), false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("icon source: only the workspace's members are sibling apps (globs, exclusions)", async () => {
+  const files = async (members: string[]) =>
+    await tree({
+      "package.json": JSON.stringify({ private: true, workspaces: members }),
+      "apps/mobile/app.json": JSON.stringify({ expo: { name: "M", icon: "./icon.png" } }),
+      "apps/mobile/icon.png": await png(1024),
+      "apps/web/package.json": "{}",
+    });
+  for (
+    const [members, sibling] of [
+      [["apps/*"], true],
+      [["./apps/web", "./apps/mobile/"], true],
+      [["apps/**"], true],
+      [["apps/*", "!apps/mobile"], false],
+      [["apps/web"], false],
+      [["packages/*"], false], // apps/web itself is no member: no siblings at all
+    ] as const
+  ) {
+    const dir = await files([...members]);
+    try {
+      const search = await resolveIconSource(join(dir, "apps/web"));
+      assertEquals(search.source?.kind === "expo", sibling, JSON.stringify(members));
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});
+
 Deno.test("icon source: a computed app.config.ts icon falls through to the web icons, with a note", async () => {
   const dir = await monorepo(COMPUTED_CONFIG);
   try {

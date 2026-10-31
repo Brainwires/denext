@@ -91,8 +91,16 @@ export interface WindowRegistryOptions {
   readonly appUrl: (path: string) => string;
   /** Push an event to the pages (every window's, or `target`'s). */
   readonly emit: (cap: string, event: string, data: unknown, target?: string) => void;
-  /** Make the `window` capability controller of a window (its `closed` hook is the registry's). */
-  readonly controller: (window: RegistryWindow, id: string, closed: () => void) => WindowController;
+  /**
+   * Make the `window` capability controller of a window (its `closed` hook is the registry's);
+   * `overlay` when it was created as a layer-shell overlay.
+   */
+  readonly controller: (
+    window: RegistryWindow,
+    id: string,
+    closed: () => void,
+    overlay: boolean,
+  ) => WindowController;
   /** Whether the app stays up with no window (`desktop.app.keepAlive`, a tray). */
   readonly keepAlive: () => boolean;
   /** A window closed for good (the `app` capability drops its page's trays). */
@@ -107,9 +115,15 @@ export interface WindowRegistryOptions {
 export interface WindowRegistry {
   /**
    * Register a window the app already has (the adopted main window, the tray panel): bind its
-   * token, make its controller, follow its focus and close.
+   * token, make its controller, follow its focus and close. `overlay`: it was created as a
+   * layer-shell overlay (default not).
    */
-  adopt(window: RegistryWindow, kind: WindowKind, id?: string): RegisteredWindow;
+  adopt(
+    window: RegistryWindow,
+    kind: WindowKind,
+    id?: string,
+    options?: { readonly overlay?: boolean },
+  ): RegisteredWindow;
   /** Open a new window from page / backend options (checked); `unsupported` without a runtime. */
   open(options: unknown): RegisteredWindow;
   /** A window by id. */
@@ -326,12 +340,13 @@ function register(
   kind: WindowKind,
   id: string,
   capabilities: ReadonlySet<string> | null,
+  overlay = false,
 ): RegisteredWindow {
   if (st.windows.has(id)) throw new Error(`desktop: a window "${id}" is registered already`);
   const token = (st.options.newToken ?? (() => crypto.randomUUID()))();
   const bound = bindToken(window, token);
   if (bound) st.anyBound = true;
-  const controller = st.options.controller(window, id, () => closed(st, id));
+  const controller = st.options.controller(window, id, () => closed(st, id), overlay);
   const entry: RegisteredWindow = { id, kind, window, token, controller, capabilities, bound };
   st.windows.set(id, entry);
   st.tokens.set(token, id);
@@ -392,7 +407,14 @@ function open(st: RegistryState, args: unknown): RegisteredWindow {
   const window = new Ctor(creationOptions(settings));
   const id = `window-${st.nextId++}`;
   // A window that closes by itself (the user) leaves the registry like a closed one.
-  const entry = register(st, window, "window", id, settings.capabilities);
+  const entry = register(
+    st,
+    window,
+    "window",
+    id,
+    settings.capabilities,
+    settings.overlay === true,
+  );
   window.addEventListener("close", (event) => {
     if (entry.controller.interceptClose(event)) return;
     closed(st, id);
@@ -564,7 +586,8 @@ export function createWindowRegistry(options: WindowRegistryOptions): WindowRegi
     methods: windowsMethods(st),
   };
   return {
-    adopt: (window, kind, id = kind) => register(st, window, kind, id, null),
+    adopt: (window, kind, id = kind, options) =>
+      register(st, window, kind, id, null, options?.overlay === true),
     open: (args) => open(st, args),
     get: (id) => st.windows.get(id),
     resolveToken: (token) => st.tokens.get(token),

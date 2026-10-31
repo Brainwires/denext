@@ -2475,6 +2475,7 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
       visibleOnAllWorkspaces: true, // every Space / virtual desktop
       skipTaskbar: true,            // Windows, Linux
       opacity: 1,
+      overlay: true,                // Linux Wayland: a layer-shell surface (runtime 3.0.0-denext.7)
     },
   },
 };`}
@@ -2512,6 +2513,27 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
         compositors, KDE Plasma, COSMIC): above every window, on every workspace, out of the task
         list (<code>layerShell</code>); elsewhere it is an ordinary window. The Linux packages
         recommend gtk-layer-shell for it. <a href="/docs/examples">examples/companion</a> is one.
+      </p>
+      <p>
+        On Wayland that is the only way a window stays on top, joins every workspace, keeps off the
+        taskbar or never takes the focus: the compositor ignores an ordinary window&apos;s requests
+        for them (KWin and Mutter focus a <code>focusable: false</code> window as it maps, so{" "}
+        <code>nonActivating</code> is reported only with <code>layerShell</code>).{" "}
+        <code>desktop.window.overlay: true</code>{" "}
+        makes the main window one from its first frame (written to{" "}
+        <code>.deno-desktop/app.json</code>; runtime 3.0.0-denext.7, left out with a warning on an
+        older one), and a tray panel is one wherever <code>layerShell</code>{" "}
+        is, opening at the click. GNOME has no layer-shell: there the window is an ordinary one the
+        compositor places.
+      </p>
+      <p>
+        A layer surface can be placed: <code>windowCapabilities().setPosition</code>{" "}
+        is true for an overlay window where <code>layerShell</code> is, and{" "}
+        <code>setWindowPosition(x, y)</code>{" "}
+        sets its offset from the top-left of the display&apos;s area outside the panels (the layer
+        surface&apos;s margins). GDK reports the whole display as the work area on Wayland, so keep
+        clear of the edges a taskbar may be on: a tray panel opened at a click keeps 64 px from each
+        edge of a display whose work area is the whole display.
       </p>
       <h3 id="desktop-multi-window">More windows</h3>
       <p>
@@ -3201,7 +3223,16 @@ export default defineDesktopExtension({
         <li>
           <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}
           <code>PATH</code>, or a file of the project (<code>"./bin/server"</code>), which is
-          embedded and run from a copy in the app&apos;s cache folder. It gets the sidecar&apos;s
+          embedded and run from a copy in the app&apos;s cache folder (
+          <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
+          <code>--allow-run</code> and a broad{" "}
+          <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
+          machine. From Deno Desktop runtime 3.0.0-denext.8 (once denext pins it), an app with{" "}
+          <code>desktop.app.identifier</code> is baked{" "}
+          <code>--allow-run=$DENO_DESKTOP_CACHE/sidecars/&lt;name&gt;/&lt;file&gt;</code>{" "}
+          instead, and the matching <code>--allow-write</code>{" "}
+          (scoped to that folder when nothing else writes): the runtime expands the token at launch
+          to the app&apos;s cache folder, keyed by the identifier. It gets the sidecar&apos;s
           variables, and one JSON line on stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
           as the app runs, so a program that exits on end-of-file never outlives it.
@@ -3340,7 +3371,10 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
           and in a packaged app on macOS, Windows and Linux; under <code>deno run desktop.ts</code>
           {" "}
           the child is <code>deno run</code>{" "}
-          with the permissions the app holds unscoped. An unmodified{" "}
+          with the app&apos;s own Deno flags (<code>process.execArgv</code>: scoped grants,{" "}
+          <code>--unstable-*</code>,{" "}
+          <code>--config</code>, …) on denext&apos;s Deno from 3.0.0-denext.8, or the permissions
+          the app holds unscoped on an older one. An unmodified{" "}
           <code>spawn(process.execPath, …)</code>{" "}
           without an IPC channel starts a second copy of the app instead: use{" "}
           <code>spawnSelf</code>.
@@ -3500,9 +3534,11 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           cache and no network the build stops and says so.
         </li>
         <li>
-          <strong>Provenance, optionally.</strong> <code>--attest-runtime</code> also runs{" "}
+          <strong>Provenance.</strong> A fresh download is also checked with{" "}
           <code>gh attestation verify</code>{" "}
-          on a fresh download (it needs the GitHub CLI; the SHA-256 pin is enforced either way).
+          whenever the GitHub CLI is signed in, and the build says so when it is not (the SHA-256
+          pin is enforced either way). <code>--attest-runtime</code> makes the check required;{" "}
+          <code>DENEXT_DESKTOP_RUNTIME_ATTEST=0</code> turns it off.
         </li>
         <li>
           <strong>Targets.</strong>{" "}

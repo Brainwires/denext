@@ -345,7 +345,11 @@ const { data: event } = useChannel(orderEvents, \`user:\${userId}\`);`}
           lazily on traffic once <code>live.limits.channelAuthTtlSeconds</code> (300) has passed;
           {" "}
           <code>channel.revoke(key)</code>{" "}
-          ends access immediately, cluster-wide. An unknown channel id is <code>denied</code>.
+          ends access immediately, cluster-wide. An unknown channel id is <code>denied</code>.{" "}
+          <code>channel.discard(key)</code>{" "}
+          drops this instance&apos;s publishes of a key its hub has not sent yet (the 16 ms burst
+          window), for a key whose next subscriber must not get what was published for an earlier
+          one.
         </li>
         <li>
           <strong>Delivery.</strong>{" "}

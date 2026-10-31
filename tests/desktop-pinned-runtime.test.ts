@@ -16,11 +16,13 @@ import {
   crossHostBackendRename,
   denoCacheDir,
   denoVersionMismatchMessage,
+  desktopRuntimeAttestMode,
   desktopRuntimeDir,
   DesktopRuntimeDownloadError,
   type DesktopRuntimePin,
   desktopRuntimeTarget,
   ensureDesktopRuntime,
+  ghSignedIn,
   projectDesktopBackend,
   renameRetrying,
   resolveDesktopRuntimeEnv,
@@ -515,6 +517,105 @@ Deno.test("ensureDesktopRuntime attest: runs gh on the archive; a cached unattes
   }
 });
 
+Deno.test("desktopRuntimeAttestMode: unset is auto, 1 / 0 force it on / off", () => {
+  assertEquals(desktopRuntimeAttestMode(undefined), "auto");
+  assertEquals(desktopRuntimeAttestMode(""), "auto");
+  assertEquals(desktopRuntimeAttestMode("1"), true);
+  assertEquals(desktopRuntimeAttestMode(" TRUE "), true);
+  assertEquals(desktopRuntimeAttestMode("0"), false);
+  assertEquals(desktopRuntimeAttestMode("false"), false);
+});
+
+Deno.test("ghSignedIn: gh auth status's exit code; a missing gh is signed out", async () => {
+  const seen: string[][] = [];
+  const ok = await ghSignedIn((
+    cmd,
+    args,
+  ) => (seen.push([cmd, ...args]), Promise.resolve({ code: 0, text: "" })));
+  assert(ok);
+  assertEquals(seen, [["gh", "auth", "status", "--hostname", "github.com"]]);
+  assertEquals(await ghSignedIn(() => Promise.resolve({ code: 1, text: "not logged in" })), false);
+  assertEquals(await ghSignedIn(() => Promise.reject(new Deno.errors.NotFound("gh"))), false);
+});
+
+/** A `gh auth status` stub: signed in or not; any other capture is a test error. */
+function ghAuth(signedIn: boolean, calls: string[][] = []) {
+  return (cmd: string, args: string[]) => {
+    calls.push([cmd, ...args]);
+    if (cmd !== "gh" || args[0] !== "auth") throw new Error(`unexpected ${cmd} ${args.join(" ")}`);
+    return Promise.resolve({ code: signedIn ? 0 : 1, text: "" });
+  };
+}
+
+Deno.test("resolveDesktopRuntimeEnv: with DENEXT_DESKTOP_RUNTIME_ATTEST unset, a signed-in gh attests the download", async () => {
+  const f = await fixture(await fixtureArchive());
+  const project = await Deno.makeTempDir();
+  try {
+    const runs: string[][] = [];
+    const r = await resolveDesktopRuntimeEnv({
+      projectDir: project,
+      target: TARGET,
+      hostOs: "linux",
+      pin: f.pin,
+      cacheRoot: f.cacheRoot,
+      env: (k) => ({} as Record<string, string>)[k],
+      denoVersion: () => Promise.resolve("9.9.9"),
+      capture: ghAuth(true),
+      run: (cmd, args) => (runs.push([cmd, ...args]), Promise.resolve(0)),
+      log: quiet,
+    });
+    assertEquals(r.mode, "pinned");
+    assertEquals(runs.length, 1);
+    assertEquals(runs[0].slice(0, 3), ["gh", "attestation", "verify"]);
+    const dir = desktopRuntimeDir(f.cacheRoot, f.pin, TARGET, "webview");
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, RUNTIME_MARKER))).attested, true);
+  } finally {
+    await f.close();
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+Deno.test("ensureDesktopRuntime attest auto: a failed check refuses; a signed-out gh is reported, not fatal", async () => {
+  const failing = await fixture(await fixtureArchive());
+  try {
+    const err = await assertRejects(
+      () =>
+        ensure(failing, { attest: "auto", capture: ghAuth(true), run: () => Promise.resolve(1) }),
+      Error,
+    );
+    assertStringIncludes(err.message, "provenance check failed");
+    assertEquals(await tree(join(failing.cacheRoot, failing.pin.version)), []);
+  } finally {
+    await failing.close();
+  }
+  const f = await fixture(await fixtureArchive());
+  try {
+    const lines: string[] = [];
+    const calls: string[][] = [];
+    const rt = await ensure(f, {
+      attest: "auto",
+      capture: ghAuth(false, calls),
+      run: () => Promise.reject(new Error("gh attestation must not run")),
+      log: (l) => lines.push(l),
+    });
+    assertEquals(rt.cached, false);
+    assertEquals(calls.length, 1);
+    assert(lines.some((l) => l.includes("build provenance was not checked")), lines.join("\n"));
+    const marker = JSON.parse(await Deno.readTextFile(join(rt.dir, RUNTIME_MARKER)));
+    assertEquals(marker.attested, false);
+    // A cached, unattested tree is kept under auto (no re-download, no gh), unlike under `true`.
+    const again = await ensure(f, {
+      attest: "auto",
+      fetch: offline,
+      capture: () => Promise.reject(new Error("no probe for a cached tree")),
+    });
+    assertEquals(again.cached, true);
+    assertEquals(f.hits(), 1);
+  } finally {
+    await f.close();
+  }
+});
+
 Deno.test("ensureDesktopRuntime re-signs laufey's Mach-Os once at install, then the cache verifies", async () => {
   const app = "laufey/webview/build/laufey_webview.app/Contents";
   const macho = new Uint8Array([0xcf, 0xfa, 0xed, 0xfe, 1, 2, 3, 4]);
@@ -723,8 +824,10 @@ Deno.test({
 // ---------------------------------------------------------------------------------------------
 // resolveDesktopRuntimeEnv: the version gate and the overrides.
 
+/** The env reader, with no provenance check: the fixture archives carry no attestation. */
 function envOf(vars: Record<string, string>) {
-  return (k: string) => vars[k];
+  const all: Record<string, string> = { DENEXT_DESKTOP_RUNTIME_ATTEST: "0", ...vars };
+  return (k: string) => all[k];
 }
 
 Deno.test("resolveDesktopRuntimeEnv: the pinned runtime's env for a matching deno", async () => {

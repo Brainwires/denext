@@ -14,6 +14,7 @@ import {
   runtimeAuthorizesSelfFork,
   type SidecarChildBase,
   sidecarChildBase,
+  type SidecarChildBaseOptions,
   sidecarChildHelpersUrl,
   sidecarChildLaunch,
   type SidecarChildLaunchInput,
@@ -25,6 +26,7 @@ import {
   sidecarModuleUrl,
 } from "../src/desktop/sidecar.ts";
 import { workerSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
+import { FIRST_EXEC_ARGV_RUNTIME, supportsExecArgv } from "../src/build/deno-version.ts";
 import type { SidecarLaunchContext } from "../src/desktop/sidecar-supervisor.ts";
 
 const SIDECARS: SidecarDefinition[] = [
@@ -98,6 +100,44 @@ Deno.test("sidecarChildBase: the Deno CLI gets the app's unscoped permissions; n
   );
   const none = sidecarChildBase({ name: "server", execPath: "/deno", standalone: false });
   assert("error" in none && /importMetaUrl/.test(none.error), JSON.stringify(none));
+});
+
+Deno.test("sidecarChildBase: the Deno CLI passes its execArgv from denext's Deno 3.0.0-denext.8", () => {
+  const execArgv = ["--allow-read=/p", "--unstable-kv", "--config=/p/deno.json"];
+  const args = (options: Partial<SidecarChildBaseOptions>) => {
+    const base = sidecarChildBase({
+      name: "server",
+      execPath: "/deno",
+      entryPath: "/p/desktop.ts",
+      standalone: false,
+      permissionFlags: ["--allow-read"],
+      ...options,
+    });
+    return "args" in base ? base.args : base.error;
+  };
+  assertEquals(args({ execArgv, denextVersion: "3.0.0-denext.8" }), [
+    "run",
+    ...execArgv,
+    "/p/desktop.ts",
+  ]);
+  // An older runtime, stock Deno (no marker) or an empty list: the unscoped grants.
+  for (
+    const options of [
+      { execArgv, denextVersion: "3.0.0-denext.7" },
+      { execArgv },
+      { execArgv: [], denextVersion: "3.0.0-denext.8" },
+    ]
+  ) {
+    assertEquals(args(options), ["run", "--allow-read", "/p/desktop.ts"]);
+  }
+  // A compiled app's flags are baked, whatever its execArgv.
+  assertEquals(args({ standalone: true, execArgv, denextVersion: "3.0.0-denext.8" }), [
+    "run",
+    "/p/desktop.ts",
+  ]);
+  assertEquals(FIRST_EXEC_ARGV_RUNTIME, "3.0.0-denext.8");
+  assertEquals(supportsExecArgv("3.0.0-denext.8"), true);
+  assertEquals(supportsExecArgv("3.0.0-denext.7"), false);
 });
 
 Deno.test("sidecarChildBase: only a compiled app's runtime can authorize its self-forks", () => {

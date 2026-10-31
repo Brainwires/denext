@@ -7,7 +7,8 @@
 //   `data-loopy-hit`, not the rows they sit in): a hit region where the
 //   runtime has one (`setHitRegion`), else click-through with pointer forwarding toggled over
 //   them (`setIgnoreMouseEvents(true, { forward: true })`), else the whole window catches clicks;
-// - moves the window to the bottom-right corner of the primary display (not on Wayland);
+// - moves the window to the bottom-right corner of the primary display (on Wayland only as a
+//   layer-shell overlay, kept clear of the panels: lib/placement.ts);
 // - makes Loopy the drag handle.
 //
 // Each step is feature-detected through `windowCapabilities()` and skipped where the OS or runtime
@@ -26,7 +27,7 @@ import {
   windowCapabilities,
 } from "denext/desktop/window";
 import { clickThroughPlan, HIT_SELECTOR, hitRects, insideAny } from "./click-through.ts";
-import { cornerPosition, primaryScreen, WINDOW_SIZE } from "./placement.ts";
+import { cornerOnScreen, primaryScreen, WINDOW_SIZE } from "./placement.ts";
 
 /** What {@linkcode setupWindow} found and did. */
 export interface WindowSetup {
@@ -115,14 +116,20 @@ function startClickThrough(caps: Caps, root: Element | null, applied: string[]) 
   return plan === "region" ? followRegion(root) : followPointer(root);
 }
 
-/** Move the window to the bottom-right corner of the primary display (not on Wayland). */
+/**
+ * Move the window to the bottom-right corner of the primary display. On Wayland only a layer-shell
+ * overlay moves (`setPosition` is reported for one where the runtime has `layerShell`).
+ */
 async function placeInCorner(caps: Caps, applied: string[]): Promise<void> {
   if (!caps.screens || !caps.setPosition) return;
   await attempt(applied, "corner", async () => {
     const screen = primaryScreen(await getScreens());
     if (!screen) throw new Error("no display");
     const bounds = (await getWindowState()).bounds ?? WINDOW_SIZE;
-    const { x, y } = cornerPosition(screen.workArea, bounds);
+    const { x, y } = cornerOnScreen(screen, bounds, {
+      wayland: caps.sessionType === "wayland",
+      edgeAnchored: caps.layerShellEdgeAnchor === true,
+    });
     await setWindowPosition(x, y);
   });
 }

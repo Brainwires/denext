@@ -55,9 +55,10 @@ under Loopy instead.
 - `app/companion.tsx` — the client component: runs the reducer and the timers, listens for the
   inbox's messages (`onDesktopEvent("loopy", "say", …)`) and sets up the window.
 - `denext.config.ts` — the overlay window (`desktop.window`: `frameless`, `transparent`,
-  `focusable: false`, `alwaysOnTop: "status"`, `visibleOnAllWorkspaces`, `skipTaskbar`), no Dock
-  icon from the first frame (`desktop.app.activationPolicy: "accessory"`) and the tray
-  (`desktop.tray`, handled in `desktop.ts`).
+  `focusable: false`, `alwaysOnTop: "status"`, `visibleOnAllWorkspaces`, `skipTaskbar`, and
+  `overlay` for a layer-shell surface on Linux Wayland), no Dock icon from the first frame
+  (`desktop.app.activationPolicy: "accessory"`) and the tray (`desktop.tray`, handled in
+  `desktop.ts`).
 - `lib/speech.ts` — **Voice on** reads each bubble aloud (its text, then its buttons as the choices)
   with `speak()` from `denext/mobile`: the window's Web Speech where it has one, else the OS engine
   through the desktop runtime (`Deno.desktop.speech`; speech-dispatcher on Linux). Off until turned
@@ -65,10 +66,11 @@ under Loopy instead.
 - `lib/window-setup.ts` + `lib/click-through.ts` — `denext/desktop/window`: `windowCapabilities()`
   first; a transparent background where the window is transparent; clicks through everywhere but
   Loopy, its bubble and its buttons (`setHitRegion` over their rectangles, else
-  `setIgnoreMouseEvents(true, { forward: true })` toggled over them, else nothing); where windows
-  can be placed (not Wayland), the bottom-right corner of the primary display's work area
-  (`getScreens()`); `makeWindowDraggable` on Loopy. Each step is skipped where it's unsupported, and
-  off desktop all of them are.
+  `setIgnoreMouseEvents(true, { forward: true })` toggled over them, else nothing); where the window
+  can be placed (`setPosition`: not on Wayland, except as a layer-shell overlay), the bottom-right
+  corner of the primary display's work area (`getScreens()`, `lib/placement.ts`);
+  `makeWindowDraggable` on Loopy. Each step is skipped where it's unsupported, and off desktop all
+  of them are.
 - `desktop.ts` + `inbox/` — after `runDesktop`, a second `Deno.serve` on `127.0.0.1` (port 47833,
   `LOOPY_PORT`, or a free one when it's taken) serves `POST /api/loopy/say` and pushes each message
   to the page with the runtime's `emit`. A button press comes back on the window's own origin
@@ -103,14 +105,30 @@ the token (401); a body over 16 KiB is a 413.
 ## Where it works
 
 On denext's pinned Deno Desktop runtime (3.0.0-denext.6): the transparent, frameless overlay on
-macOS, Linux and Windows' WebView2 (the CEF backend paints it opaque); never taking the focus;
-clicks passing through everywhere but Loopy, its bubble and its buttons (`setHitRegion`); always on
-top at the `"status"` level and on every Space, over full-screen apps too (macOS; Windows and Linux
-have one floating level); no taskbar entry on Windows and Linux; no Dock icon on macOS from the
-first frame; the tray; placement; every animation; reading aloud; the inbox and `--wait` replies;
-the Claude Code hooks. Each window feature is checked with `windowCapabilities()` first, so on an
-older runtime Loopy still runs, catching every click in its window and showing a Dock icon for a
-moment at launch.
+macOS, Linux and Windows' WebView2 (the CEF backend paints it opaque); clicks passing through
+everywhere but Loopy, its bubble and its buttons (`setHitRegion`); no Dock icon on macOS from the
+first frame; the tray; every animation; reading aloud; the inbox and `--wait` replies; the Claude
+Code hooks. On macOS, Windows and Linux X11 it also never takes the focus, stays on top (at the
+`"status"` level and on every Space, over full-screen apps too, on macOS; Windows and Linux have one
+floating level), stays off the taskbar (Windows, Linux) and sits in the bottom-right corner.
+
+Linux on Wayland is narrower, because a Wayland window can't ask to be placed, kept on top, shown on
+every workspace, left off the taskbar or kept from taking the focus:
+
+- **KDE Plasma and wlroots compositors** (Sway, Hyprland, …), with `libgtk-layer-shell0` installed
+  (Kubuntu does not install it by default) and runtime 3.0.0-denext.7 or later: `overlay: true`
+  makes Loopy a layer-shell surface, so it is on top, on every workspace, off the task manager and
+  never focused. A layer surface can be placed (`windowCapabilities().setPosition` says so for it),
+  so Loopy goes to the bottom-right corner. GDK reports the whole display as the work area on
+  Wayland, so Loopy keeps 64 px clear of every edge (`WAYLAND_PANEL_INSET` in `lib/placement.ts`),
+  room for a taskbar it can't see, and counts its position from the display's top-left (a layer
+  surface's margins). Before 3.0.0-denext.7 Loopy is an ordinary window there, opens where KWin puts
+  it with a title bar around it, and at 800 × 600 on every Linux desktop.
+- **GNOME** (Mutter has no layer-shell): an ordinary window, where Mutter puts it, focused when it
+  opens, under the windows you raise, on one workspace and in the dock.
+
+Each window feature is checked with `windowCapabilities()` first, so on an older runtime Loopy still
+runs, catching every click in its window and showing a Dock icon for a moment at launch.
 
 ## Tests
 

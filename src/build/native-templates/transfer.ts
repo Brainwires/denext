@@ -1460,6 +1460,7 @@ final class DenextTransferStore {
     private DenextTransferStore(Context context) {
         this.context = context.getApplicationContext();
         this.prefs = this.context.getSharedPreferences("denext_transfers", Context.MODE_PRIVATE);
+        migrateLegacyHeaders();
     }
 
     static synchronized DenextTransferStore get(Context context) {
@@ -1496,13 +1497,88 @@ final class DenextTransferStore {
         return new File(folder(directory), path);
     }
 
+    /** The folder of the live records' request headers: the no-backup folder, never backed up. */
+    private File headersDir() {
+        return new File(context.getNoBackupFilesDir(), "denext_transfer_headers");
+    }
+
     /**
-     * Where a live record's request headers (an Authorization, say) are kept: the app's
-     * no-backup folder, never the backed-up preferences.
+     * Where a live record's request headers (an Authorization, say) are kept: a file named by the
+     * SHA-256 of the whole id, holding the id beside the headers so a read checks it is the
+     * record's own.
      */
     private File headersFile(String id) {
-        File dir = new File(context.getNoBackupFilesDir(), "denext_transfer_headers");
-        return new File(dir, Integer.toHexString(id.hashCode()) + "-" + id.length() + ".json");
+        try {
+            byte[] digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(id.getBytes("UTF-8"));
+            StringBuilder hex = new StringBuilder(digest.length * 2);
+            for (byte b : digest) hex.append(String.format("%02x", b & 0xff));
+            return new File(headersDir(), hex + ".json");
+        } catch (java.security.NoSuchAlgorithmException | java.io.UnsupportedEncodingException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    /** The name a release before template 6 gave an id's headers file (its hash code, its length). */
+    private static String legacyHeadersName(String id) {
+        return Integer.toHexString(id.hashCode()) + "-" + id.length() + ".json";
+    }
+
+    private static byte[] readAll(File file) throws java.io.IOException {
+        byte[] bytes = new byte[(int) file.length()];
+        try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+            int at = 0;
+            while (at < bytes.length) {
+                int n = in.read(bytes, at, bytes.length - at);
+                if (n < 0) break;
+                at += n;
+            }
+        }
+        return bytes;
+    }
+
+    private void writeHeaders(String id, JSONObject headers) {
+        File file = headersFile(id);
+        file.getParentFile().mkdirs();
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+            JSONObject saved = new JSONObject();
+            saved.put("id", id);
+            saved.put("headers", headers);
+            out.write(saved.toString().getBytes("UTF-8"));
+        } catch (java.io.IOException | JSONException e) {
+            // Unwritten: the transfer runs on without them after a restart.
+        }
+    }
+
+    /**
+     * Move the headers files of a release before template 6 (named by the id's 32-bit hash code,
+     * which two ids can share) to their SHA-256 names. A legacy file only one saved record maps to
+     * is that record's and moves; one no record or several records map to cannot be attributed
+     * and is deleted, so no transfer is sent another one's headers.
+     */
+    private void migrateLegacyHeaders() {
+        String[] names = headersDir().list();
+        if (names == null) return;
+        Map<String, List<String>> owners = new java.util.HashMap<>();
+        for (String id : prefs.getAll().keySet()) {
+            String name = legacyHeadersName(id);
+            List<String> ids = owners.get(name);
+            if (ids == null) owners.put(name, ids = new ArrayList<>());
+            ids.add(id);
+        }
+        for (String name : names) {
+            if (!name.matches("[0-9a-f]{1,8}-[0-9]+\\\\.json")) continue;
+            File legacy = new File(headersDir(), name);
+            List<String> ids = owners.get(name);
+            if (ids != null && ids.size() == 1 && !headersFile(ids.get(0)).exists()) {
+                try {
+                    writeHeaders(ids.get(0), new JSONObject(new String(readAll(legacy), "UTF-8")));
+                } catch (JSONException | java.io.IOException e) {
+                    // Unreadable: the transfer runs on without them.
+                }
+            }
+            legacy.delete();
+        }
     }
 
     /** Whether a record is over for good (nothing can resume it): its request headers go. */
@@ -1519,16 +1595,11 @@ final class DenextTransferStore {
             JSONObject record = new JSONObject(text);
             File file = headersFile(id);
             if (!finished(record) && file.isFile()) {
-                byte[] bytes = new byte[(int) file.length()];
-                try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
-                    int at = 0;
-                    while (at < bytes.length) {
-                        int n = in.read(bytes, at, bytes.length - at);
-                        if (n < 0) break;
-                        at += n;
-                    }
+                JSONObject saved = new JSONObject(new String(readAll(file), "UTF-8"));
+                JSONObject headers = saved.optJSONObject("headers");
+                if (id.equals(saved.optString("id", null)) && headers != null) {
+                    record.put("headers", headers);
                 }
-                record.put("headers", new JSONObject(new String(bytes, "UTF-8")));
             }
             return record;
         } catch (JSONException | java.io.IOException e) {
@@ -1557,12 +1628,7 @@ final class DenextTransferStore {
         JSONObject headers = record.optJSONObject("headers");
         File file = headersFile(id);
         if (headers != null && !finished(record)) {
-            file.getParentFile().mkdirs();
-            try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
-                out.write(headers.toString().getBytes("UTF-8"));
-            } catch (java.io.IOException e) {
-                // Unwritten: the transfer runs on without them after a restart.
-            }
+            writeHeaders(id, headers);
         } else if (finished(record)) {
             file.delete();
         }

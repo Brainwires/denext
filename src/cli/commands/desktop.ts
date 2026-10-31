@@ -215,8 +215,9 @@ export const desktopCommand: CommandSpec = {
     {
       name: "attest-runtime",
       type: "boolean",
-      help: "run | dev | package: also check a downloaded runtime's build provenance with " +
-        "`gh attestation verify` (DENEXT_DESKTOP_RUNTIME_ATTEST=1; needs gh)",
+      help: "run | dev | package: require the build provenance check of a downloaded runtime " +
+        "(`gh attestation verify`, run by default whenever gh is signed in; " +
+        "DENEXT_DESKTOP_RUNTIME_ATTEST=1, =0 turns it off)",
     },
     ...DESKTOP_ADD_FLAGS,
     ...PUBLISH_UPDATE_FLAGS,

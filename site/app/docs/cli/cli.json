@@ -667,7 +667,7 @@
         {
           "name": "attest-runtime",
           "type": "boolean",
-          "description": "run | dev | package: also check a downloaded runtime's build provenance with `gh attestation verify` (DENEXT_DESKTOP_RUNTIME_ATTEST=1; needs gh)"
+          "description": "run | dev | package: require the build provenance check of a downloaded runtime (`gh attestation verify`, run by default whenever gh is signed in; DENEXT_DESKTOP_RUNTIME_ATTEST=1, =0 turns it off)"
         },
         {
           "name": "list",

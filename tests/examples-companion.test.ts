@@ -27,7 +27,12 @@ import {
   readingTimeMs,
   SayError,
 } from "../examples/companion/lib/messages.ts";
-import { cornerPosition, primaryScreen } from "../examples/companion/lib/placement.ts";
+import {
+  cornerOnScreen,
+  cornerPosition,
+  primaryScreen,
+  WAYLAND_PANEL_INSET,
+} from "../examples/companion/lib/placement.ts";
 import {
   clickThroughPlan,
   HIT_ATTRIBUTE,
@@ -267,11 +272,53 @@ Deno.test("loopy placement: the bottom-right corner of the primary display's wor
       y: 20,
     },
   );
-  const a = { workArea: work, isPrimary: false };
-  const b = { workArea: left, isPrimary: true };
+  const a = { bounds: work, workArea: work, isPrimary: false };
+  const b = { bounds: left, workArea: left, isPrimary: true };
   assertEquals(primaryScreen([a, b]), b);
   assertEquals(primaryScreen([a]), a);
   assertEquals(primaryScreen([]), undefined);
+});
+
+Deno.test("loopy placement: on Wayland a layer surface's margins, clear of the panels", () => {
+  const size = { width: 260, height: 300 };
+  // KDE Plasma (the live test): GDK reports the whole 1280x800 display as the work area while a
+  // 54 px taskbar sits at the bottom. Kept WAYLAND_PANEL_INSET in, the window ends above it.
+  const kde = {
+    bounds: { x: 0, y: 0, width: 1280, height: 800 },
+    workArea: { x: 0, y: 0, width: 1280, height: 800 },
+    isPrimary: true,
+  };
+  const wayland = { wayland: true, edgeAnchored: false };
+  const at = cornerOnScreen(kde, size, wayland);
+  assertEquals(at, {
+    x: 1280 - WAYLAND_PANEL_INSET - 260 - 16,
+    y: 800 - WAYLAND_PANEL_INSET - 316,
+  });
+  assertEquals(at.y + size.height <= 800 - 54, true);
+  // Elsewhere, and on a runtime that anchors to the nearest edges: the reported work area.
+  assertEquals(cornerOnScreen(kde, size, { wayland: false, edgeAnchored: false }), {
+    x: 1004,
+    y: 484,
+  });
+  assertEquals(cornerOnScreen(kde, size, { wayland: true, edgeAnchored: true }), {
+    x: 1004,
+    y: 484,
+  });
+  // A display right of another: margins count from its own top-left; a work area the session
+  // does report is used as it is.
+  const right = {
+    bounds: { x: 1280, y: 0, width: 1920, height: 1080 },
+    workArea: { x: 1280, y: 0, width: 1920, height: 1036 },
+    isPrimary: true,
+  };
+  assertEquals(cornerOnScreen(right, size, wayland), { x: 1920 - 276, y: 1036 - 316 });
+  // A display smaller than twice the inset keeps the window's top-left on it.
+  const tiny = {
+    bounds: { x: 0, y: 0, width: 100, height: 100 },
+    workArea: { x: 0, y: 0, width: 100, height: 100 },
+    isPrimary: true,
+  };
+  assertEquals(cornerOnScreen(tiny, size, wayland), { x: 64, y: 64 });
 });
 
 // ---------------------------------------------------------------- the overlay's click-through

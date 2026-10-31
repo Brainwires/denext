@@ -336,6 +336,18 @@ Deno.test({
         work,
       ]);
       assertHarness(out);
+      // Headers files are named by the whole id (SHA-256), and the hash-code names of older
+      // templates migrate only to the one record they name.
+      for (
+        const line of [
+          "ok the colliding ids share a legacy name",
+          "ok a migrated legacy headers file stays its record's",
+          "ok a legacy headers file two ids share goes to neither",
+          "ok no legacy headers file is left",
+          "ok ids with one hash code keep their own headers",
+          "ok removing one leaves the other's headers",
+        ]
+      ) assert(out.includes(line), out);
       assert(out.includes("ok the cancel landed after the move"), out);
       assert(out.includes("ok a cancel after the move answers false"), out);
       assert(out.includes("ok a cancel after the move keeps the new download"), out);

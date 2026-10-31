@@ -26,6 +26,11 @@ import {
 } from "../src/build/desktop-app-config.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
+import { initialOverlayRuntime } from "../src/build/desktop-launch-policy.ts";
+import {
+  FIRST_INITIAL_OVERLAY_RUNTIME,
+  supportsInitialOverlay,
+} from "../src/build/deno-version.ts";
 
 /** Validate a config with just a `desktop` block. */
 function validateDesktop(desktop: unknown): void {
@@ -44,6 +49,7 @@ Deno.test("window settings: the creation-time and overlay keys resolve; a level 
         opacity: 0.5,
         skipTaskbar: true,
         visibleOnAllWorkspaces: true,
+        overlay: true,
       },
     }),
     {
@@ -55,6 +61,7 @@ Deno.test("window settings: the creation-time and overlay keys resolve; a level 
       opacity: 0.5,
       skipTaskbar: true,
       visibleOnAllWorkspaces: true,
+      overlay: true,
     },
   );
   assertEquals(resolveDesktopWindowSettings({ window: { alwaysOnTop: "status" } }), {
@@ -111,6 +118,38 @@ Deno.test("initialWindow: only for a hidden, frameless, transparent or non-activ
     desktopInitialWindow({ frameless: true, transparent: true, focusable: false, width: 70000 }),
     { frameless: true, noActivate: true, transparent: true },
     "a size over the runtime's limit is left to runDesktop",
+  );
+});
+
+Deno.test("initialWindow: overlay only for a runtime that reads it (an older one refuses the key)", () => {
+  assertEquals(desktopInitialWindow({ width: 260, height: 300, overlay: true }), undefined);
+  assertEquals(desktopInitialWindow({ width: 260, height: 300, overlay: true }, true), {
+    width: 260,
+    height: 300,
+    overlay: true,
+  });
+  assertEquals(
+    desktopInitialWindow({ frameless: true, focusable: false, overlay: true }, false),
+    { frameless: true, noActivate: true },
+  );
+  assertEquals(desktopInitialWindow({ overlay: false }, true), undefined);
+});
+
+Deno.test("initialOverlayRuntime: the pinned runtime from 3.0.0-denext.7, never stock or a local build", () => {
+  const env = (vars: Record<string, string>) => (k: string) => vars[k];
+  assertEquals(FIRST_INITIAL_OVERLAY_RUNTIME, "3.0.0-denext.7");
+  assertEquals(supportsInitialOverlay("3.0.0-denext.7"), true);
+  assertEquals(supportsInitialOverlay("3.0.0-denext.6"), false);
+  assertEquals(supportsInitialOverlay("nope"), false);
+  assertEquals(initialOverlayRuntime(env({}), "3.0.0-denext.7"), true);
+  assertEquals(initialOverlayRuntime(env({}), "3.0.0-denext.6"), false);
+  assertEquals(
+    initialOverlayRuntime(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-denext.7"),
+    false,
+  );
+  assertEquals(
+    initialOverlayRuntime(env({ DENEXT_DESKTOP_RUNTIME_DIR: "/x" }), "3.0.0-denext.7"),
+    false,
   );
 });
 
@@ -277,6 +316,12 @@ Deno.test("config validation: the new window, app and tray keys", () => {
     Error,
     "desktop.window.transparent",
   );
+  validateDesktop({ window: { overlay: true, focusable: false } });
+  assertThrows(
+    () => validateDesktop({ window: { overlay: "yes" } }),
+    Error,
+    "desktop.window.overlay",
+  );
   assertThrows(() => validateDesktop({ tray: { icon: "tray.png" } }), Error, "desktop.tray.icon");
 });
 
@@ -304,6 +349,23 @@ Deno.test("sync: initialWindow goes to app.json for a windowless or overlay wind
     assertEquals((await syncDesktopAppConfigAt(dir, config)).appJson, "written");
     assertEquals(JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))), {
       initialWindow: { width: 260, height: 300, frameless: true, showOnFirstLoad: false },
+    });
+    // On a runtime that reads them: the overlay flag, and the app's name for untitled windows.
+    const overlay = {
+      desktop: {
+        app: { name: "Loopy" },
+        window: { width: 260, height: 300, focusable: false, overlay: true },
+      },
+    };
+    await syncDesktopAppConfigAt(dir, overlay, true);
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))), {
+      name: "Loopy",
+      initialWindow: { width: 260, height: 300, noActivate: true, overlay: true },
+    });
+    // On an older runtime neither key (the runtime would refuse the file).
+    await syncDesktopAppConfigAt(dir, overlay, false);
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, DESKTOP_APP_CONFIG_FILE))), {
+      initialWindow: { width: 260, height: 300, noActivate: true },
     });
     // A plain sized window needs none (app.json is not written for it).
     assertEquals(

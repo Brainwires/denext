@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.11.0**; 4.x patch and minor releases are cut from
+> The current release is denext **4.11.1**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 >
 > Two parts: **Before 5.0** is the work the 5.0 gate waits on (an item stays here until its branch
@@ -109,9 +109,6 @@ Not blocking 5.0; each item says why.
 ## Deno Desktop
 
 - **Desktop hardening leftovers from the 4.8 packaging audit (all Low):**
-  - The runtime's build provenance (`gh attestation verify`) is opt-in (`--attest-runtime`); the
-    SHA-256 pin shipped in the denext package is the default trust root. Attest by default when
-    `gh` is signed in, and say so when it is not. _Why 5.x: the pin is already the trust root._
   - A sidecar's child under the Deno CLI (`spawnSelf` from an app run with `deno run`) gets the
     parent's unscoped `--allow-*` but not `desktop.denoFlags` or `--unstable-*` flags given on the
     command line. _Why 5.x: Low, the CLI-dev path only._
@@ -137,19 +134,12 @@ Not blocking 5.0; each item says why.
 - **List numbers:** the scroll-bench's emulator and iPhone runs, published in `/docs/lists`.
   _Why 5.x: docs; the docs have SSR and desktop numbers only._
 - **Capabilities:** a notification service extension and badges. _Why 5.x: a new capability._
-- **Android transfer record names** come from a hash of the id (a collision overwrites a record,
-  but the page chooses every id: no boundary is crossed). _Why 5.x: no boundary is crossed; fold it
-  into the next transfer change._
 - **A device check of the OTA isa-swap runtime.** _Why 5.x: needs a device._
 
 ## Backend (`@denext/backend`)
 
 Low findings of the 4.8 backend audit (realtime and storage):
 
-- **Realtime: a frame in the Live hub's flush window at a drop.** A frame published just before a
-  subscriber's connection dropped is fanned out on the hub's next flush, so a reconnect
-  re-authorized within those milliseconds under other claims can still receive it (same user).
-  Let a regranted subscription discard frames already handed to the hub. _Why 5.x: Low, same user._
 - **Realtime: a reconnect that finds a new subscription** (swept, or another instance) is
   detected by the client only after 10 seconds of silence. Let the client mark a re-subscribe,
   so the server answers one that recreated the subscription with an explicit `resync`.
