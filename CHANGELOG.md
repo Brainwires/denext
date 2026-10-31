@@ -10,6 +10,74 @@ and this project adheres to
 
 ### Added
 
+- **`channel.discard(key)`** drops this instance's publishes of a key that its Live hub has not
+  sent to a subscriber yet (the 16 ms coalescing window, or still in the transport); later
+  publishes go out as usual. For a key whose next subscriber must not get what was published for
+  an earlier one.
+- **`desktop.window.overlay`: the main window as a Wayland layer-shell surface** (Deno Desktop
+  runtime 3.0.0-denext.7, gated on `FIRST_INITIAL_OVERLAY_RUNTIME`). On Linux Wayland a window can't
+  ask to be on top, on every workspace, off the taskbar or unfocused; a layer-shell surface is all
+  of those, where the compositor has wlr-layer-shell (KDE Plasma, wlroots compositors, COSMIC; not
+  GNOME) and `libgtk-layer-shell` is installed. `overlay: true` is written to
+  `.deno-desktop/app.json` (`initialWindow.overlay`) so the window the app starts with is created as
+  one; on an older runtime it is left out with a warning (that runtime refuses the key), and it is
+  an ordinary window on every other OS and desktop. On the same runtime app.json also carries
+  `desktop.app.name` (`name`), which titles a window the app leaves untitled (a tray panel showed
+  the bundle's file name, `MyApp-arm64`). examples/companion (Loopy) sets it.
+
+### Changed
+
+- **The Expo icon fallback takes only a real monorepo sibling.** `denext mobile assets`, the
+  desktop packager's derived icon and `denext migrate` took the Expo app config of any folder
+  beside the project once a workspace root sat above it, so examples/companion and examples/hangar
+  were packaged with examples/expo-app's icon (denext's root is a Deno workspace of `packages/*`,
+  not of the examples). A sibling now counts only when the workspace lists both it and the project
+  (deno.json `workspace`, package.json `workspaces`, pnpm-workspace.yaml, lerna.json, rush.json;
+  `!` exclusions honoured); a workspace that lists no members (nx, turbo alone) keeps every sibling.
+
+### Fixed
+
+- **Overlay windows and tray panels placed on Linux Wayland.** A layer-shell `overlay` window (the
+  main window with `desktop.window.overlay`, the tray panel, both from Deno Desktop runtime
+  3.0.0-denext.7; an `openWindow({ overlay: true })` window) reports `setPosition` in
+  `windowCapabilities()` where the runtime has `layerShell`: the runtime's own report is app-wide
+  and says no on Wayland, but a layer surface's position becomes its margins. examples/companion
+  (Loopy) now goes to the bottom-right corner on KDE Plasma instead of the top-left one. GDK
+  reports the whole display as the work area on Wayland, so a tray panel opened at a click in a
+  bottom taskbar reached into it: on Wayland a display whose work area is the whole display is
+  placed in with 64 px kept clear of each edge (`WAYLAND_PANEL_INSET`, at most a quarter of the
+  display), unless the runtime reports `layerShellEdgeAnchor` (a layer surface anchored to its
+  nearest edges, where the compositor keeps it clear of panels).
+
+### Security
+
+- **The Deno Desktop runtime's build provenance is checked by default.** A fresh runtime download
+  is now checked with `gh attestation verify` (the release workflow and tag of the pin) whenever
+  the GitHub CLI is signed in, not only under `--attest-runtime`; when `gh` is missing or signed
+  out, the download says the provenance was not checked (the SHA-256 pin is enforced either way).
+  `--attest-runtime` / `DENEXT_DESKTOP_RUNTIME_ATTEST=1` make the check required, `=0` turns it
+  off; a cached runtime is not downloaded again for it.
+- **Android file transfers keep each transfer's request headers apart.** The Android half of
+  `downloadToFile()` / `uploadFile()` (`denext mobile add file-transfer`) named the file that holds
+  a live transfer's request headers by the id's 32-bit hash code and length, so two ids sharing
+  them (`"Aa"` and `"BB"`) shared one file: the later transfer's headers (an `Authorization`,
+  say) replaced the earlier one's, and a resume after a restart sent them to the earlier
+  transfer's URL. The file is now named by the SHA-256 of the whole id and holds the id, checked
+  on every read. The first launch of the new template moves the old files to their new names; one
+  that two saved transfers or none could have written is deleted, so neither gets the other's
+  headers (that transfer resumes without them). Re-run `denext mobile add file-transfer` and ship
+  a new binary (template generation 6).
+- **Realtime: a reconnect under other claims gets no frame from the Live hub's flush window.** A
+  `useTableChanges` frame (`@denext/backend`) published just before the subscriber's connection
+  dropped was fanned out on the hub's next flush, so a reconnect re-authorized within those
+  milliseconds under other claims (the same user, with a role or tenant changed) could still
+  receive rows read under the old claims. The re-authorization now discards the frames already
+  handed to the hub (`channel.discard`).
+
+## [4.11.0] - 2026-10-31
+
+### Added
+
 - **Tray events with their detail, `popUpMenu()`, and the macOS activation policy** (Deno Desktop
   runtime 3.0.0-denext.6, gated on `FIRST_OVERLAY_TRAY_RUNTIME`). A tray's handlers get the
   runtime's `TrayMouseEvent` detail (`button`, `modifiers`, `x` / `y`, `double`; `null` on an older
@@ -31,7 +99,6 @@ and this project adheres to
   creation; `windowCapabilities()` adds `visibleOnFullScreen`, `layerShell` and `activationPolicy`.
   The `.deb` recommends `libgtk-layer-shell0` and `speech-dispatcher`, the `.rpm` gtk-layer-shell
   (by soname) and `speech-dispatcher`.
-
 - **Tray-first and overlay desktop apps, and several windows** (`denext/desktop/window`,
   `denext/desktop/app`, `denext.config.ts`'s `desktop`). `desktop.window.show: false` starts the app
   with no visible window and no flash, and `frameless`, `transparent` and `focusable: false` (a
@@ -95,31 +162,8 @@ and this project adheres to
   pop up when a Claude Code session needs approval or finishes. The window chrome is
   feature-detected through `windowCapabilities()`, and in a browser (`denext dev`) Loopy renders in
   the page with demo buttons for every move.
-- **`channel.discard(key)`** drops this instance's publishes of a key that its Live hub has not
-  sent to a subscriber yet (the 16 ms coalescing window, or still in the transport); later
-  publishes go out as usual. For a key whose next subscriber must not get what was published for
-  an earlier one.
-
-- **`desktop.window.overlay`: the main window as a Wayland layer-shell surface** (Deno Desktop
-  runtime 3.0.0-denext.7, gated on `FIRST_INITIAL_OVERLAY_RUNTIME`). On Linux Wayland a window can't
-  ask to be on top, on every workspace, off the taskbar or unfocused; a layer-shell surface is all
-  of those, where the compositor has wlr-layer-shell (KDE Plasma, wlroots compositors, COSMIC; not
-  GNOME) and `libgtk-layer-shell` is installed. `overlay: true` is written to
-  `.deno-desktop/app.json` (`initialWindow.overlay`) so the window the app starts with is created as
-  one; on an older runtime it is left out with a warning (that runtime refuses the key), and it is
-  an ordinary window on every other OS and desktop. On the same runtime app.json also carries
-  `desktop.app.name` (`name`), which titles a window the app leaves untitled (a tray panel showed
-  the bundle's file name, `MyApp-arm64`). examples/companion (Loopy) sets it.
 
 ### Changed
-
-- **The Expo icon fallback takes only a real monorepo sibling.** `denext mobile assets`, the
-  desktop packager's derived icon and `denext migrate` took the Expo app config of any folder
-  beside the project once a workspace root sat above it, so examples/companion and examples/hangar
-  were packaged with examples/expo-app's icon (denext's root is a Deno workspace of `packages/*`,
-  not of the examples). A sibling now counts only when the workspace lists both it and the project
-  (deno.json `workspace`, package.json `workspaces`, pnpm-workspace.yaml, lerna.json, rush.json;
-  `!` exclusions honoured); a workspace that lists no members (nx, turbo alone) keeps every sibling.
 
 - **denext pins Deno runtime 3.0.0-denext.6** (`deno task desktop:pin-runtime
   denext-runtime-v3.0.0-denext.6`): the toolchain and the Deno Desktop runtime move from
@@ -165,42 +209,6 @@ and this project adheres to
   started its verb children without the project's `--config`, so a child discovered the config
   above the copy (a workspace root rather than the member). All three now ask the same location
   check the docs corpus uses, and treat a copy as the published package.
-- **Overlay windows and tray panels placed on Linux Wayland.** A layer-shell `overlay` window (the
-  main window with `desktop.window.overlay`, the tray panel, both from Deno Desktop runtime
-  3.0.0-denext.7; an `openWindow({ overlay: true })` window) reports `setPosition` in
-  `windowCapabilities()` where the runtime has `layerShell`: the runtime's own report is app-wide
-  and says no on Wayland, but a layer surface's position becomes its margins. examples/companion
-  (Loopy) now goes to the bottom-right corner on KDE Plasma instead of the top-left one. GDK
-  reports the whole display as the work area on Wayland, so a tray panel opened at a click in a
-  bottom taskbar reached into it: on Wayland a display whose work area is the whole display is
-  placed in with 64 px kept clear of each edge (`WAYLAND_PANEL_INSET`, at most a quarter of the
-  display), unless the runtime reports `layerShellEdgeAnchor` (a layer surface anchored to its
-  nearest edges, where the compositor keeps it clear of panels).
-
-### Security
-
-- **The Deno Desktop runtime's build provenance is checked by default.** A fresh runtime download
-  is now checked with `gh attestation verify` (the release workflow and tag of the pin) whenever
-  the GitHub CLI is signed in, not only under `--attest-runtime`; when `gh` is missing or signed
-  out, the download says the provenance was not checked (the SHA-256 pin is enforced either way).
-  `--attest-runtime` / `DENEXT_DESKTOP_RUNTIME_ATTEST=1` make the check required, `=0` turns it
-  off; a cached runtime is not downloaded again for it.
-- **Android file transfers keep each transfer's request headers apart.** The Android half of
-  `downloadToFile()` / `uploadFile()` (`denext mobile add file-transfer`) named the file that holds
-  a live transfer's request headers by the id's 32-bit hash code and length, so two ids sharing
-  them (`"Aa"` and `"BB"`) shared one file: the later transfer's headers (an `Authorization`,
-  say) replaced the earlier one's, and a resume after a restart sent them to the earlier
-  transfer's URL. The file is now named by the SHA-256 of the whole id and holds the id, checked
-  on every read. The first launch of the new template moves the old files to their new names; one
-  that two saved transfers or none could have written is deleted, so neither gets the other's
-  headers (that transfer resumes without them). Re-run `denext mobile add file-transfer` and ship
-  a new binary (template generation 6).
-- **Realtime: a reconnect under other claims gets no frame from the Live hub's flush window.** A
-  `useTableChanges` frame (`@denext/backend`) published just before the subscriber's connection
-  dropped was fanned out on the hub's next flush, so a reconnect re-authorized within those
-  milliseconds under other claims (the same user, with a role or tenant changed) could still
-  receive rows read under the old claims. The re-authorization now discards the frames already
-  handed to the hub (`channel.discard`).
 
 ## [4.10.5] - 2026-10-31
 
@@ -20393,7 +20401,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.5...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.0...development
+[4.11.0]: https://jsr.io/@denext/denext@4.11.0
 [4.10.5]: https://jsr.io/@denext/denext@4.10.5
 [4.10.4]: https://jsr.io/@denext/denext@4.10.4
 [4.10.3]: https://jsr.io/@denext/denext@4.10.3
