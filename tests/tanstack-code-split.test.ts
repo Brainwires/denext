@@ -7,7 +7,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { copy } from "@std/fs";
-import { basename, fromFileUrl, join } from "@std/path";
+import { basename, dirname, fromFileUrl, join, relative } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import { filterAdmits, tanstackCodeSplitPlugin } from "../src/build/tanstack-code-split.ts";
 import { generatorTmpDir } from "../src/build/tanstack-route-tree.ts";
@@ -23,8 +23,13 @@ async function fixture(): Promise<string> {
 }
 
 /** Bundle the fixture's entry; returns each output's text by file name. */
-async function bundle(dir: string, plugins: esbuild.Plugin[]): Promise<Map<string, string>> {
+async function bundle(
+  dir: string,
+  plugins: esbuild.Plugin[],
+  preserveSymlinks = false,
+): Promise<Map<string, string>> {
   const result = await esbuild.build({
+    preserveSymlinks,
     entryPoints: { index: join(dir, "src", "main.tsx") },
     outdir: join(dir, "out"),
     absWorkingDir: dir,
@@ -92,6 +97,115 @@ Deno.test({
     assert(seen.some((p) => p.endsWith(join("routes", "about.tsx"))), "about.tsx was transformed");
   } finally {
     await esbuild.stop();
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+/**
+ * Another name for `dir` that is not its real path: on Windows its 8.3 short name
+ * (`C:\Users\LONGNA~1\…`, which esbuild keeps as given), elsewhere a symlink (which esbuild
+ * keeps with `preserveSymlinks`). `null` on a Windows volume with 8.3 names turned off.
+ */
+async function aliasOf(dir: string, scratch: string): Promise<string | null> {
+  const real = Deno.realPathSync(dir);
+  if (Deno.build.os !== "windows") {
+    const link = join(scratch, "alias");
+    await Deno.symlink(real, link);
+    return link;
+  }
+  const out = await new Deno.Command("cmd.exe", {
+    args: ["/d", "/c", `for %I in ("${real}") do @echo %~sI`],
+    stdout: "piped",
+    stderr: "null",
+  }).output();
+  const short = new TextDecoder().decode(out.stdout).trim();
+  return short && short.toLowerCase() !== real.toLowerCase() ? short : null;
+}
+
+Deno.test({
+  name:
+    "tanstack autoCodeSplitting: a project reached through another name for its path (Windows 8.3 short name, a symlink) is still split",
+}, async () => {
+  // The route generator keys its route map by the real path; esbuild reported each module by the
+  // name it was reached through (an 8.3 short name on Windows), so no route matched and nothing
+  // was split.
+  const dir = await fixture();
+  const scratch = await Deno.makeTempDir({ prefix: "denext_tsr_alias_" });
+  try {
+    // A long name, so Windows gives the directory a distinct 8.3 short name.
+    const project = join(dir, "long-project-directory-name");
+    await Deno.mkdir(project);
+    for (const entry of ["src", "tsr.config.json"]) {
+      await Deno.rename(join(dir, entry), join(project, entry));
+    }
+    const alias = await aliasOf(project, scratch);
+    if (alias === null) {
+      console.warn("8.3 short names are off on this volume: nothing to alias");
+      return;
+    }
+    const split = await bundle(
+      alias,
+      [tanstackCodeSplitPlugin(alias, { autoCodeSplitting: true })],
+      true,
+    );
+    const entry = split.get("index.js")!;
+    assert(!entry.includes(ABOUT_TEXT), "the About component left the startup chunk");
+    assert(split.size >= 5, `one chunk per split route, got ${split.size - 1}`);
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name:
+    "tanstack autoCodeSplitting: explicit routesDirectory / generatedRouteTree; a module outside the project is left alone",
+}, async () => {
+  const dir = await fixture();
+  const outside = await Deno.makeTempDir({ prefix: "denext_tsr_outside_" });
+  try {
+    // A module outside the project, imported by the entry: not the app's source, never split.
+    const shared = join(outside, "shared.ts");
+    await Deno.writeTextFile(shared, `export const SHARED = "outside-the-project";\n`);
+    const main = join(dir, "src", "main.tsx");
+    await Deno.writeTextFile(
+      main,
+      `import { SHARED } from ${
+        JSON.stringify(relative(dirname(main), shared).replaceAll("\\", "/"))
+      };\n` +
+        `console.log(SHARED);\n` + await Deno.readTextFile(main),
+    );
+    // Route files in .ts and .jsx too: each is answered with the loader its extension needs.
+    const routes = join(dir, "src", "routes");
+    await Deno.writeTextFile(
+      join(routes, "plain.ts"),
+      `import { createFileRoute } from "@tanstack/react-router";\n` +
+        `export const Route = createFileRoute("/plain")({ component: () => "plain-ts-route" });\n`,
+    );
+    await Deno.writeTextFile(
+      join(routes, "legacy.jsx"),
+      `import { createFileRoute } from "@tanstack/react-router";\n` +
+        `export const Route = createFileRoute("/legacy")({ component: () => <p>legacy-jsx-route</p> });\n`,
+    );
+    const seen: string[] = [];
+    const after = (_source: string, path: string) => (seen.push(path), Promise.resolve(null));
+    const split = await bundle(dir, [
+      tanstackCodeSplitPlugin(dir, {
+        autoCodeSplitting: true,
+        routesDirectory: "./src/routes",
+        generatedRouteTree: "./src/routeTree.gen.ts",
+      }, after),
+    ]);
+    assert(!split.get("index.js")!.includes(ABOUT_TEXT), "routes were still split");
+    assertStringIncludes(split.get("index.js")!, "outside-the-project");
+    const all = [...split.values()].join("\n");
+    assertStringIncludes(all, "plain-ts-route");
+    assertStringIncludes(all, "legacy-jsx-route");
+    assert(!seen.some((p) => p.endsWith("shared.ts")), "the outside module was not answered here");
+  } finally {
+    await esbuild.stop();
+    await Deno.remove(outside, { recursive: true });
     await Deno.remove(dir, { recursive: true });
   }
 });

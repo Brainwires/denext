@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **TanStack Router route splitting works on a project reached through a Windows 8.3 short path.**
+  With `spa.tanstackRouter: { autoCodeSplitting: true }`, a project opened as
+  `C:\Users\LONGNA~1\…` (a short-name `TEMP`, or a working directory a tool handed over in that
+  form) built with every route in the startup chunk: esbuild names each module by the path it was
+  reached through, while the route generator keys its routes by the real, long path, so no route
+  file matched. Every module is now compared, and handed to the splitter, by its real path (8.3
+  names expanded, symlinks resolved), on both sides.
+
 ## [4.10.4] - 2026-10-31
 
 ### Added
