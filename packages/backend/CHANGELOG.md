@@ -26,6 +26,13 @@
 
 ### Security
 
+- **A reconnect under other claims gets no frame read under the old ones, even within the Live
+  hub's flush window.** A frame published just before a `useTableChanges` subscriber's connection
+  dropped was fanned out on the hub's next flush (up to 16 ms later), so a reconnect re-authorized
+  within that window under other claims (the same user, a role or tenant changed) could still
+  receive rows read under the old ones. The re-authorization now discards the subscription's
+  frames the hub has not sent yet (`channel.discard`, from the denext release after 4.10.4; on
+  an older denext the window stays as it was).
 - **A reconnect under a reduced grant forgets the keys it tracked.** A subscriber re-authorized
   with other claims (a role, tenant or group removed) kept the old set of tracked keys, so a later
   delete or move-out of a row it could only see before was still sent, with its old image under

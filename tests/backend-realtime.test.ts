@@ -2313,9 +2313,6 @@ Deno.test("realtime replay: a reconnect under other claims drops what was kept a
     await engine.flush();
     await until(() => first.frames.length >= 1, 5_000, "the first frame");
     env.hub.drop(first);
-    // A frame already handed to the Live hub before the drop is fanned out on the hub's next
-    // flush (a few ms): let that window pass, as any real reconnect does.
-    await settle(100);
     env.sql.insert("notes", { id: 900, email: "one@x.test", body: "while away" });
     env.sql.insert("notes", { id: 950, email: "two@x.test", body: "theirs under the new claims" });
     await engine.flush();
@@ -2338,6 +2335,61 @@ Deno.test("realtime replay: a reconnect under other claims drops what was kept a
     await until(() => changesOf(back).length >= 1, 3_000, "the delete the new grant may see");
     await settle(150);
     assertEquals(changesOf(back).map((c) => [c.op, c.key]), [["delete", "950"]]);
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime replay: a frame handed to the Live hub before the drop never reaches a reconnect under other claims", async () => {
+  const byEmail = (claims: Record<string, unknown>, row: Record<string, unknown>) =>
+    claims.email !== undefined && claims.email === row.email;
+  const sql = fakeRealtimeClient({ notes: { policy: byEmail } });
+  const env = await setUp({}, sql);
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(await cookieFor(A, "one@x.test"));
+    const { key } = await env.hub.subscribe(first, "notes");
+    // The frame for row 1 is published while the subscriber is connected, but the hub's flush
+    // has not fanned it out yet when the connection drops.
+    const window = env.hub.holdDelivery();
+    env.sql.insert("notes", { id: 1, email: "one@x.test", body: "read under the old claims" });
+    await engine.flush();
+    await until(() => window.held() === 1, 3_000, "the frame handed to the hub");
+    env.hub.drop(first);
+
+    // The same subject is back within that window, with other claims; then the hub flushes.
+    const back = env.hub.conn(await cookieFor(A, "two@x.test"));
+    assert((await env.hub.subscribe(back, "notes", { key })).ok, "the same subject may come back");
+    await until(() => window.held() === 2, 3_000, "the resync");
+    window.release();
+    await until(() => back.frames.length >= 1, 3_000, "the answer to the reconnect");
+    await settle(100);
+    assertEquals(first.frames, []);
+    assertEquals(unnumbered(back.frames), [{ resync: true }]);
+    assertEquals(changesOf(back), [], "no row read under the old claims");
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime replay: a frame in the hub's window still reaches a reconnect under the same claims", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(env.a);
+    const { key } = await env.hub.subscribe(first, "notes");
+    const window = env.hub.holdDelivery();
+    env.sql.insert("notes", { id: 1, owner: A, body: "x" });
+    await engine.flush();
+    await until(() => window.held() === 1, 3_000, "the frame handed to the hub");
+    env.hub.drop(first);
+    const back = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(back, "notes", { key })).ok);
+    await until(() => window.held() === 2, 3_000, "the resume");
+    window.release();
+    await until(() => back.frames.length >= 2, 3_000, "the frame and the resume");
+    assertEquals(changesOf(back).map((c) => c.key), ["1"], "the same grant keeps it");
+    assertEquals(unnumbered(back.frames).at(-1), { resumed: true });
   } finally {
     await env.done();
   }

@@ -146,10 +146,6 @@ Not blocking 5.0; each item says why.
 
 Low findings of the 4.8 backend audit (realtime and storage):
 
-- **Realtime: a frame in the Live hub's flush window at a drop.** A frame published just before a
-  subscriber's connection dropped is fanned out on the hub's next flush, so a reconnect
-  re-authorized within those milliseconds under other claims can still receive it (same user).
-  Let a regranted subscription discard frames already handed to the hub. _Why 5.x: Low, same user._
 - **Realtime: a reconnect that finds a new subscription** (swept, or another instance) is
   detected by the client only after 10 seconds of silence. Let the client mark a re-subscribe,
   so the server answers one that recreated the subscription with an explicit `resync`.

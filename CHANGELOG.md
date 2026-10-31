@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`channel.discard(key)`** drops this instance's publishes of a key that its Live hub has not
+  sent to a subscriber yet (the 16 ms coalescing window, or still in the transport); later
+  publishes go out as usual. For a key whose next subscriber must not get what was published for
+  an earlier one.
+
+### Security
+
+- **Realtime: a reconnect under other claims gets no frame from the Live hub's flush window.** A
+  `useTableChanges` frame (`@denext/backend`) published just before the subscriber's connection
+  dropped was fanned out on the hub's next flush, so a reconnect re-authorized within those
+  milliseconds under other claims (the same user, with a role or tenant changed) could still
+  receive rows read under the old claims. The re-authorization now discards the frames already
+  handed to the hub (`channel.discard`).
+
 ## [4.10.4] - 2026-10-31
 
 ### Added

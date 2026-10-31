@@ -1,7 +1,14 @@
 // The Live hub's channel half (`createChannelHub`), driven directly with fake hub primitives.
 
-import { assertEquals } from "@std/assert";
-import { createChannel, resetChannels } from "../src/runtime/channel.ts";
+import { assert, assertEquals } from "@std/assert";
+import {
+  type ChannelEvent,
+  channelEventDiscarded,
+  createChannel,
+  inMemoryChannelTransport,
+  resetChannels,
+  setChannelTransport,
+} from "../src/runtime/channel.ts";
 import { type ChannelConn, createChannelHub } from "../src/server/live-channels.ts";
 
 type Conn = ChannelConn & { errors: string[] };
@@ -213,6 +220,102 @@ Deno.test("channel hub: an ordered channel's frames held for a re-authorization 
   await until(() => frames("a").length === 3);
   assertEquals(frames("a"), [{ n: 1 }, { n: 2 }, { n: 3 }]);
   assertEquals(a.errors, []);
+  hub.dispose();
+  resetChannels();
+});
+
+Deno.test("channel hub: discard drops this instance's publishes of a key not yet fanned out", async () => {
+  resetChannels();
+  const ch = createChannel<{ n: number }>({ id: "deltas", authorize: () => true, ordered: true });
+  const { hub, conn, frames } = recordingHub();
+  const transport = inMemoryChannelTransport();
+  transport.subscribe((ev) => hub.deliver(ev));
+  setChannelTransport(transport);
+  const [a, b, c] = [conn("a"), conn("b"), conn("c")];
+  await hub.subscribe(a, { subId: "s", channelId: "deltas", key: "k" });
+  await hub.subscribe(c, { subId: "s", channelId: "deltas", key: "other" });
+  // Published while `a` is subscribed, inside the hub's coalescing window (no flush yet)…
+  await ch.publish("k", { n: 1 });
+  await ch.publish("other", { n: 1 });
+  // …then `a` goes, and the key's next subscriber must not get it.
+  hub.drop(a);
+  ch.discard("k");
+  await hub.subscribe(b, { subId: "s", channelId: "deltas", key: "k" });
+  await ch.publish("k", { n: 2 });
+  await until(() => frames("b").length === 1 && frames("c").length === 1);
+  // Only the discarded key loses its earlier publish; a later one and another key go out.
+  assertEquals(frames("a"), []);
+  assertEquals(frames("b"), [{ n: 2 }]);
+  assertEquals(frames("c"), [{ n: 1 }]);
+  // A discard of a key nothing was published on is a no-op; another instance's frame is not hit.
+  ch.discard("never");
+  hub.deliver({
+    kind: "publish",
+    channelId: "deltas",
+    key: "k",
+    encoded: JSON.stringify({ n: 9 }),
+    seq: 1,
+    instance: "elsewhere",
+  });
+  await until(() => frames("b").length === 2);
+  assertEquals(frames("b"), [{ n: 2 }, { n: 9 }]);
+  hub.dispose();
+  resetChannels();
+});
+
+Deno.test("channel discard: a fence outlives the key's counter, is bounded, and needs an id", async () => {
+  resetChannels();
+  const seen: ChannelEvent[] = [];
+  const transport = inMemoryChannelTransport();
+  transport.subscribe((ev) => seen.push(ev));
+  setChannelTransport(transport);
+  createChannel<number>({ authorize: () => true }).discard("k"); // no id yet: a no-op
+  const ch = createChannel<number>({ id: "fenced", authorize: () => true });
+  await ch.publish("k", 1);
+  ch.discard("k");
+  assert(channelEventDiscarded(seen[0]));
+  // 10 000 other keys push "k"'s counter out; its next publish still numbers past the fence.
+  for (let i = 0; i < 10_000; i++) await ch.publish(`x${i}`, i);
+  await ch.publish("k", 2);
+  const next = seen.at(-1)!;
+  assertEquals([next.key, next.seq], ["k", 2]);
+  assertEquals(channelEventDiscarded(next), false);
+  // The fences are bounded too: 10 000 newer ones push "k"'s out (its first publish is no longer
+  // dropped), and the newest holds.
+  for (let i = 0; i < 10_000; i++) {
+    await ch.publish(`y${i}`, i);
+    ch.discard(`y${i}`);
+  }
+  assertEquals(channelEventDiscarded(seen[0]), false);
+  assert(channelEventDiscarded(seen.at(-2)!), "the newest fence holds");
+  resetChannels();
+});
+
+Deno.test("channel hub: a malformed publish is dropped, a payload-less one is null, a peer's revoke spares the rest", async () => {
+  resetChannels();
+  createChannel<{ n: number }>({ id: "deltas", authorize: () => true, ordered: true });
+  const { hub, conn, frames } = recordingHub();
+  const [a, b] = [conn("a"), conn("b")];
+  await hub.subscribe(a, { subId: "s", channelId: "deltas", key: "k" });
+  await hub.subscribe(b, { subId: "s", channelId: "deltas", key: "k" });
+  const ev = { kind: "publish" as const, channelId: "deltas", key: "k", instance: "i" };
+  hub.deliver({ ...ev, seq: Number.NaN, encoded: "1" });
+  hub.deliver({ ...ev, seq: 1, encoded: "{not json" });
+  hub.deliver({ ...ev, seq: 2 });
+  await until(() => frames("a").length === 1);
+  assertEquals(frames("a"), [null]);
+  // A revoke of a key nobody holds is a no-op; one aimed at a peer leaves the others subscribed.
+  hub.deliver({ kind: "revoke", channelId: "deltas", key: "nobody", seq: 0, instance: "i" });
+  hub.deliver({
+    kind: "revoke",
+    channelId: "deltas",
+    key: "k",
+    seq: 0,
+    instance: "i",
+    peerId: "a",
+  });
+  assertEquals([a.errors, b.errors], [["denied"], []]);
+  assertEquals([a.channelSubs.size, b.channelSubs.size], [0, 1]);
   hub.dispose();
   resetChannels();
 });
