@@ -41,6 +41,7 @@ import {
 } from "../desktop/transport.ts";
 import { sha256Base64 } from "../server/csp.ts";
 import { devProxyTokenHeaders, hasDevSessionToken } from "./dev-server/dev-token.ts";
+import { readDesktopAppFile } from "./desktop-dev-file.ts";
 import type { DesktopUpdaterConfig } from "../desktop/updater.ts";
 import { appUpdateAutoConfirm, combineBootHooks } from "../desktop/app-update-confirm.ts";
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
@@ -1599,7 +1600,13 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.tray ? { options: options.tray } : {}),
     ...(options.configTray ? { settings: options.configTray } : {}),
     appUrl: desktopAppUrl(trust, server.addr),
-    readFile: (path) => readExportFile(uiFiles, path),
+    // `denext desktop dev` builds no export: a file missing there comes from the dev server.
+    readFile: (path) =>
+      readDesktopAppFile(
+        (p) => readExportFile(uiFiles, p),
+        path,
+        devUrl ? { url: devUrl, headers: devTokenHeaders } : undefined,
+      ),
   });
   startSidecars(sidecarHost);
   return {
