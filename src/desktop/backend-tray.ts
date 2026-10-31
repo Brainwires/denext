@@ -48,7 +48,9 @@ export interface DesktopTrayOptions {
   readonly panel?: { url: string; width?: number; height?: number; hideOnBlur?: boolean };
   /**
    * Called on a click on the icon with the primary button (before the pages hear of it), with the
-   * runtime's detail (runtime `3.0.0-denext.6`+; else `null`).
+   * runtime's detail (runtime `3.0.0-denext.6`+; else `null`). On macOS a tray with a menu and no
+   * panel opens its menu on a plain left click, as Electron's does; a handler here (or one added
+   * with the handle's `onClick`) takes the left click instead.
    */
   readonly onClick?: (detail: TrayMouseDetail | null) => void;
   /** Called on a double click. */
@@ -58,7 +60,11 @@ export interface DesktopTrayOptions {
    * opens the tray's menu on a right click by itself; this is for doing something else as well.
    */
   readonly onContextMenu?: (detail: TrayMouseDetail | null) => void;
-  /** Called with the id of the menu item chosen. */
+  /**
+   * Called with the id of the menu item chosen. It runs in the app's process, so it hears the
+   * click while no window shows; a hidden window's page may be suspended until it shows (macOS),
+   * so a tray-first app handles its menu here (or with the handle's `onMenuItem`).
+   */
   readonly onMenuItem?: (id: string) => void;
 }
 
@@ -98,7 +104,10 @@ export interface DesktopTrayHandle {
   update(options: DesktopTrayUpdate): void;
   /** Where the icon is, or `null` where the OS cannot say (Linux). */
   getBounds(): { x: number; y: number; width: number; height: number } | null;
-  /** Call `handler` on each primary-button click, with its detail. Returns the unsubscribe. */
+  /**
+   * Call `handler` on each primary-button click, with its detail. Returns the unsubscribe. While a
+   * handler is subscribed, a plain left click no longer opens a panel-less tray's menu (macOS).
+   */
   onClick(handler: (detail: TrayMouseDetail | null) => void): () => void;
   /** Call `handler` on each double click. Returns the unsubscribe. */
   onDoubleClick(handler: (detail: TrayMouseDetail | null) => void): () => void;
@@ -113,7 +122,10 @@ export interface DesktopTrayHandle {
    * older runtime, or where the OS can't (Linux: the tray host opens it).
    */
   popUpMenu(): boolean;
-  /** Call `handler` with the id of each menu item chosen. Returns the unsubscribe. */
+  /**
+   * Call `handler` with the id of each menu item chosen (in the app's process: it hears the click
+   * while no window shows). Returns the unsubscribe.
+   */
   onMenuItem(handler: (id: string) => void): () => void;
   /** The panel, when `panel` is set and the runtime has `Tray.attachPanel`. */
   readonly panel?: DesktopTrayPanelHandle;
@@ -145,6 +157,8 @@ export interface BackendTrayContext {
   readonly panelOverlay?: boolean;
   /** Where warnings go. */
   readonly warn: (message: string) => void;
+  /** The running OS (default `Deno.build.os`). */
+  readonly os?: string;
 }
 
 /** The runtime's `Tray.attachPanel`, as this module calls it. */
@@ -215,6 +229,62 @@ function listenMouse(
   });
 }
 
+/** How many primary-click (`onClick`) and menu-item (`onMenuItem`) handlers the backend has. */
+interface ClickHandlers {
+  count: number;
+  menus: number;
+}
+
+/**
+ * Whether a click is the plain primary click that opens the menu of a macOS tray with no panel
+ * and no backend click handler, as an Electron status item with a menu does: the left button, no
+ * modifier (a Control-click opens the menu by itself) and not the second click of a double click.
+ */
+function opensMenu(detail: TrayMouseDetail | null, clicks: ClickHandlers): boolean {
+  if (clicks.count > 0 || detail === null || detail.button !== "left" || detail.double) {
+    return false;
+  }
+  const m = detail.modifiers;
+  return !m.ctrl && !m.alt && !m.shift && !m.meta;
+}
+
+/** Whether any of the app's windows (the panel included) is showing; `true` with no registry. */
+function anyWindowShowing(registry: WindowRegistry | undefined): boolean {
+  if (!registry) return true;
+  return registry.list().some((w) => {
+    try {
+      return w.window.isVisible?.() ?? true;
+    } catch {
+      return false; // closing
+    }
+  });
+}
+
+/**
+ * Warn once when a menu item of the backend tray is chosen with no backend `onMenuItem` handler
+ * while no window shows: only hidden pages can act on it then, and a hidden page may be suspended
+ * (WKWebView suspends a page that is not on screen on macOS), so the click would wait until that
+ * window shows again.
+ */
+function warnPageOnlyMenu(
+  ctx: BackendTrayContext,
+  backend: BackendTray,
+  clicks: ClickHandlers,
+): void {
+  let warned = false;
+  listen(backend.tray, "menuclick", (e) => {
+    const id = clickedId(e);
+    if (warned || clicks.menus > 0 || id === undefined || !backend.menuIds.has(id)) return;
+    if (anyWindowShowing(ctx.registry)) return;
+    warned = true;
+    ctx.warn(
+      `the tray menu item "${id}" was chosen while no window shows: only hidden pages can act on ` +
+        "it, and a hidden page may be suspended (macOS) until its window shows. Handle the " +
+        "tray's menu in desktop.ts: runDesktop({ tray: { onMenuItem } }) or app.tray.onMenuItem",
+    );
+  });
+}
+
 /** The panel at the icon (registered as the window `"panel"`), or `undefined` when unavailable. */
 function attachPanel(
   ctx: BackendTrayContext,
@@ -266,6 +336,7 @@ function panelSettings(raw: unknown): DesktopTrayPanelSettings | undefined {
 function trayHandle(
   backend: BackendTray,
   panel: DesktopTrayPanelHandle | undefined,
+  clicks: ClickHandlers,
 ): DesktopTrayHandle {
   const tray = backend.tray;
   return {
@@ -281,15 +352,32 @@ function trayHandle(
       });
     },
     getBounds: () => tray.getBounds?.() ?? null,
-    onClick: (handler) => listenMouse(tray, "click", handler),
+    onClick: (handler) => {
+      clicks.count++;
+      const off = listenMouse(tray, "click", handler);
+      let on = true;
+      return () => {
+        if (on) clicks.count--;
+        on = false;
+        off();
+      };
+    },
     onDoubleClick: (handler) => listenMouse(tray, "dblclick", handler),
     on: (type, handler) => listenMouse(tray, type, handler),
     popUpMenu: () => typeof tray.popUpMenu === "function" && tray.popUpMenu() === true,
-    onMenuItem: (handler) =>
-      listen(tray, "menuclick", (e) => {
+    onMenuItem: (handler) => {
+      clicks.menus++;
+      const off = listen(tray, "menuclick", (e) => {
         const id = clickedId(e);
         if (id !== undefined && backend.menuIds.has(id)) handler(id);
-      }),
+      });
+      let on = true;
+      return () => {
+        if (on) clicks.menus--;
+        on = false;
+        off();
+      };
+    },
     ...(panel ? { panel } : {}),
   };
 }
@@ -314,7 +402,16 @@ export async function startBackendTray(
   }
   const panelConfig = panelSettings(merged.panel);
   const panel = panelConfig ? attachPanel(ctx, made, panelConfig) : undefined;
-  const handle = trayHandle(made, panel);
+  const clicks: ClickHandlers = { count: 0, menus: 0 };
+  const handle = trayHandle(made, panel, clicks);
+  warnPageOnlyMenu(ctx, made, clicks);
+  if (!panel && (ctx.os ?? Deno.build.os) === "darwin") {
+    // macOS: a status item with a menu opens it on a plain left click too (Electron's tray); a
+    // panel or a backend `onClick` handler takes the left click instead.
+    listenMouse(made.tray, "click", (detail) => {
+      if (opensMenu(detail, clicks)) handle.popUpMenu();
+    });
+  }
   const o = ctx.options;
   if (o?.onClick) handle.onClick(o.onClick);
   if (o?.onDoubleClick) handle.onDoubleClick(o.onDoubleClick);

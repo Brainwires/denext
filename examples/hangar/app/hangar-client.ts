@@ -38,6 +38,7 @@ interface HangarClient {
   deleteImage(args: { id: string; file: string; confirm: string }): Promise<void>;
   createVm(args: { id: string; config: HangarVmConfig; diskSize: string }): Promise<VmDefinition>;
   openTerminal(args: { id: string }): Promise<void>;
+  open(args: { path: string }): Promise<null>;
   getSettings(args?: Record<never, never>): Promise<HangarSettings>;
   setSettings(args: Partial<HangarSettings>): Promise<HangarSettings>;
 }

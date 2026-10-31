@@ -44,19 +44,20 @@ deno test -A tests/hangar.test.ts
 
 ## How it is built
 
-| File                  | What it is                                                                        |
-| --------------------- | --------------------------------------------------------------------------------- |
-| `desktop.ts`          | The Deno Desktop entry: `runDesktop` with the config's window, tray and Dock      |
-| `desktop/hangar.ts`   | The backend, a `defineDesktopExtension` the page calls through the bridge         |
-| `lib/hangar.ts`       | The VM logic over a `Host` (`lib/host.ts`): library, instances, images, settings  |
-| `lib/deno-host.ts`    | The real host: `ps`, `lsof` / `/proc`, `qemu-img`, unix sockets, files            |
-| `lib/qmp.ts`          | A small QMP client over any byte stream                                           |
-| `lib/start-script.ts` | The static `start.sh` reader                                                      |
-| `lib/vm-config.ts`    | `hangar.json` validation and its QEMU command line                                |
-| `lib/tray.ts`         | The window sizes and the tray menu                                                |
-| `app/tray-shell.tsx`  | The main page drives the backend tray: menu, tooltip, double click, close-to-tray |
-| `app/window-mode.ts`  | The panel, the main window (the library) and one window per other page            |
-| `app/*/`              | The pages: the library, the panel, a VM's details, images, a new VM, settings     |
+| File                    | What it is                                                                       |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `desktop.ts`            | The Deno Desktop entry: `runDesktop` with the config's window, tray and Dock     |
+| `desktop/hangar.ts`     | The backend, a `defineDesktopExtension` the page calls through the bridge        |
+| `lib/hangar.ts`         | The VM logic over a `Host` (`lib/host.ts`): library, instances, images, settings |
+| `lib/deno-host.ts`      | The real host: `ps`, `lsof` / `/proc`, `qemu-img`, unix sockets, files           |
+| `lib/qmp.ts`            | A small QMP client over any byte stream                                          |
+| `lib/start-script.ts`   | The static `start.sh` reader                                                     |
+| `lib/vm-config.ts`      | `hangar.json` validation and its QEMU command line                               |
+| `lib/tray.ts`           | The window sizes and the tray menu                                               |
+| `lib/tray-driver.ts`    | Run by `desktop.ts`: the tray's menu, clicks and tooltip, and the window manager |
+| `app/close-to-tray.tsx` | The main window's close button hides it                                          |
+| `app/window-mode.ts`    | A page's window actions: hide its own window, open a page through the backend    |
+| `app/*/`                | The pages: the library, the panel, a VM's details, images, a new VM, settings    |
 
 `tests/hangar.test.ts` drives `lib/` against an in-memory host (`tests/helpers/hangar-fake-host.ts`)
 and the QMP client against an in-memory socket: no QEMU, no `~/VMs`, no real process.
@@ -66,24 +67,28 @@ and the QMP client against an in-memory socket: no QEMU, no `~/VMs`, no real pro
 Everything below comes from denext's desktop windowing (`denext.config.ts`, `desktop.*`):
 
 - **Windowless start.** `desktop.window.show: false`: the main window (the library) starts hidden,
-  with no flash; its page still loads and drives the tray's menu and tooltip.
+  with no flash. Its page does not drive the tray: a window that does not show may have its page
+  suspended (WKWebView on macOS) until it shows, so a menu item handled there would do nothing.
 - **No Dock icon.** `desktop.app.activationPolicy: "accessory"` (macOS): no Dock icon or menu bar
-  from the first frame. `app/window-mode.ts` switches to `setActivationPolicy("regular")` while a
+  from the first frame. `lib/tray-driver.ts` switches to `setActivationPolicy("regular")` while a
   full window is open, so it comes to the front and Cmd-Tab reaches it, and back to `"accessory"`
   after.
 - **A backend tray.** `desktop.tray` is created by `runDesktop` before any page loads and survives
-  reloads; pages reach it with `getTray()` (`denext/desktop/app`).
+  reloads. `desktop.ts` drives it (`app.tray`: `onMenuItem`, `onDoubleClick`, `on("mouseenter")`,
+  `update`) in the app's process, so it answers while every window is hidden.
 - **A real panel.** `desktop.tray.panel` is the runtime's `Tray.attachPanel`: a frameless window
   that never takes the focus, toggled by a plain left click, hidden when it loses the focus, and
   placed by denext under a menu-bar icon or above a bottom taskbar, inside the display's work area.
 - **The tray's clicks.** A right click opens the menu (the OS does); a Control-click opens it too
-  (`popUpMenu()` in `desktop.ts`, for a one-button mouse); a double click opens the library; the
-  tooltip is refreshed as soon as the pointer is over the icon (`tray.on("mouseenter")` in
-  `app/tray-shell.tsx`, macOS and Windows), and every few seconds.
+  (`popUpMenu()`, for a one-button mouse); a double click opens the library; the tooltip is
+  refreshed as soon as the pointer is over the icon (`tray.on("mouseenter")`, macOS and Windows),
+  and every few seconds. All in `lib/tray-driver.ts`, run by `desktop.ts`.
 - **Several windows.** "Images", "New VM", "Settings" and a VM's details each open in a window of
-  their own (`openWindow` in `denext/desktop/window`); "Open Hangar" shows the main window.
+  their own (`app.windows.open` in `desktop.ts`; the panel's buttons ask for one through the
+  `hangar` extension's `open`, so there is one window per page); "Open Hangar" shows the main
+  window.
 - **Keep alive.** `desktop.app.keepAlive`: closing every window leaves Hangar in the tray; closing
-  the main window hides it (`onCloseRequested`), so its page keeps the tray current. "Quit" quits.
+  the main window hides it (`onCloseRequested`). "Quit" quits.
 
 On Windows the tray, the panel and the windows work, but the VM side doesn't: Hangar starts VMs
 through `/bin/sh` and lists running QEMU with `ps`, neither of which Windows has, so it lists no

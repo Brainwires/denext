@@ -8,6 +8,42 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`DesktopRuntime.windows` refs report `visible`, `getBounds()` and `onClosed(handler)`**, so
+  `desktop.ts` can manage the app's windows (one window per page, cascading, a Dock icon only while
+  a full window shows) without a page.
+- **A warning when a backend tray's menu item is chosen while no window shows and `desktop.ts` has
+  no `onMenuItem` handler** (once per launch): only hidden pages could act on it then.
+
+### Fixed
+
+- **A tray-first app's menu items work while every window is hidden.** A window that does not show
+  may have its page suspended (WKWebView suspends a page that is not on screen on macOS), so a tray
+  menu item handled by a hidden window's page did nothing until that window showed again
+  (examples/hangar's "Open Hangar" and "Images" on macOS). examples/hangar now answers its tray
+  (menu items, double click, tooltip) and opens its windows from `desktop.ts`, in the app's process;
+  the `getTray()` and `runDesktop({ tray: { onMenuItem } })` docs say where such clicks belong.
+- **No Dock tile at launch for a macOS menu-bar app.** `desktop.app.activationPolicy: "accessory"`
+  (or `desktop.app.dock: false`) reached the runtime only through `laufey-launch.json`, which is
+  read after LaunchServices has already put the app in the Dock: a packaged accessory app showed a
+  Dock tile for about 600 ms at every launch (examples/companion and examples/hangar, macOS 26).
+  The package scripts now also set `LSUIElement` in the bundle's `Info.plist` (on the pinned
+  runtime, which still switches to a Dock icon with `setActivationPolicy("regular")` for a full
+  window).
+- **`alwaysOnTop: "status" | "pop-up-menu" | "screen-saver"` takes effect on macOS.** On runtime
+  3.0.0-denext.6 a window's `setAlwaysOnTop` is still the runtime's native method, which drops the
+  level, so `desktop.window.alwaysOnTop` and `setAlwaysOnTop(true, level)` from
+  `denext/desktop/window` left every window at the floating level (CGWindow layer 3 instead of 25
+  for `"status"`). denext now also sets the level through the runtime's own window-level op.
+- **A macOS tray with a menu and no panel opens the menu on a plain left click**, as an Electron
+  tray does (it opened only on a right or Control click). A panel, or a click handler in
+  `desktop.ts` (`runDesktop({ tray: { onClick } })`, the handle's `onClick`), keeps the left click;
+  Windows and Linux are unchanged.
+- **examples/hangar and examples/companion ship app icons** (`desktop.app.icons` for macOS, Linux
+  and Windows) instead of the generic one, and Hangar's page windows open with their own titles
+  ("Hangar — Images"), cascaded from the library window instead of exactly over it.
+
 ## [4.11.2] - 2026-10-31
 
 ### Changed

@@ -8,6 +8,11 @@
     "app": {
       "name": "Hangar",
       "identifier": "dev.denext.hangar",
+      "icons": {
+        "macos": "./icons/macos.png",
+        "linux": "./icons/linux.png",
+        "windows": "./icons/windows.ico"
+      },
       "origin": "hangar://app",
       "singleInstance": true,
       "keepAlive": true,

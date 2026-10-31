@@ -7,6 +7,7 @@
 import { defineDesktopExtension, DesktopCapError } from "denext/desktop";
 import { join } from "@std/path/posix";
 import { denoHost } from "../lib/deno-host.ts";
+import type { HangarWindows } from "../lib/tray-driver.ts";
 import {
   createHangar,
   defaultSettings,
@@ -36,6 +37,21 @@ function hangar(appSupportDir: string): Promise<Hangar> {
     return createHangar(host, settings);
   })();
   return instance;
+}
+
+/**
+ * The backend for desktop.ts (the tray driver), the same instance the pages reach. `appSupportDir`
+ * is the one the bridge hands the methods (`runDesktop({ appSupportDir })`).
+ */
+export function hangarBackend(appSupportDir = ""): Promise<Hangar> {
+  return hangar(appSupportDir);
+}
+
+let windows: HangarWindows | undefined;
+
+/** Hand the methods desktop.ts's window manager (`open` opens every full window through it). */
+export function setHangarWindows(manager: HangarWindows): void {
+  windows = manager;
 }
 
 /** The page's arguments as an object (the bridge passes JSON). */
@@ -137,6 +153,19 @@ export default defineDesktopExtension({
       120_000,
     ),
     openTerminal: method((a, h) => h.openTerminal(str(a.id, "id"))),
+    // A page in a full window of its own (`"/"`: the library, the main window), through the window
+    // manager desktop.ts owns, so the panel's buttons and the tray's menu share one window per page.
+    open: {
+      handler: (raw: unknown) => {
+        const path = str(args(raw).path, "path");
+        if (!/^\/(?![/\\])/.test(path)) {
+          throw new DesktopCapError("validation", 'path must be a path of the app, like "/images"');
+        }
+        if (!windows) throw new DesktopCapError("unavailable", "no window manager in this launch");
+        windows.openFull(path);
+        return null;
+      },
+    },
     getSettings: method((_a, h) => Promise.resolve(h.settings())),
     setSettings: {
       handler: (raw: unknown, ctx: { appSupportDir: string }) =>
