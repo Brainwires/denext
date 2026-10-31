@@ -3,7 +3,8 @@
 // icon); here the page:
 //
 // - clears its own background where the window is transparent, so Loopy stands on the desktop;
-// - lets clicks through everywhere but Loopy, its bubble and its buttons: a hit region where the
+// - lets clicks through everywhere but Loopy, its bubble and its buttons (the elements marked
+//   `data-loopy-hit`, not the rows they sit in): a hit region where the
 //   runtime has one (`setHitRegion`), else click-through with pointer forwarding toggled over
 //   them (`setIgnoreMouseEvents(true, { forward: true })`), else the whole window catches clicks;
 // - moves the window to the bottom-right corner of the primary display (not on Wayland);
@@ -24,7 +25,7 @@ import {
   type WindowBounds,
   windowCapabilities,
 } from "denext/desktop/window";
-import { clickThroughPlan, hitRects, insideAny } from "./click-through.ts";
+import { clickThroughPlan, HIT_SELECTOR, hitRects, insideAny } from "./click-through.ts";
 import { cornerPosition, primaryScreen, WINDOW_SIZE } from "./placement.ts";
 
 /** What {@linkcode setupWindow} found and did. */
@@ -45,27 +46,46 @@ async function attempt(applied: string[], name: string, step: () => Promise<unkn
   } catch { /* unsupported here: Loopy works without it */ }
 }
 
-/** The current rectangles of the click-catching elements. */
-function rectsOf(elements: readonly Element[]): WindowBounds[] {
-  return hitRects(elements.map((e) => e.getBoundingClientRect()));
+/** The click-catching elements under `root` now (a bubble comes and goes). */
+function catchersIn(root: ParentNode): Element[] {
+  return Array.from(root.querySelectorAll(HIT_SELECTOR));
 }
 
-/** Keep the native hit region on `elements`, re-sent whenever one resizes. */
-function followRegion(elements: readonly Element[]): () => void {
-  const send = () => void setHitRegion(rectsOf(elements)).catch(() => {});
-  send();
-  if (typeof ResizeObserver !== "function") return () => {};
-  const observer = new ResizeObserver(send);
-  for (const e of elements) observer.observe(e);
-  return () => observer.disconnect();
+/** The current rectangles of the click-catching elements under `root`. */
+function rectsOf(root: ParentNode): WindowBounds[] {
+  return hitRects(catchersIn(root).map((e) => e.getBoundingClientRect()));
+}
+
+/**
+ * Keep the native hit region on the click-catching elements under `root`: re-sent when one is
+ * added or removed (a bubble opens or closes), resizes, or ends an entrance animation (the bubble
+ * springs in scaled down, which no resize reports).
+ */
+function followRegion(root: Element): () => void {
+  const resized = typeof ResizeObserver === "function" ? new ResizeObserver(() => send()) : null;
+  const send = () => void setHitRegion(rectsOf(root)).catch(() => {});
+  const observe = () => {
+    resized?.disconnect();
+    for (const e of catchersIn(root)) resized?.observe(e);
+    send();
+  };
+  observe();
+  const changed = typeof MutationObserver === "function" ? new MutationObserver(observe) : null;
+  changed?.observe(root, { childList: true, subtree: true });
+  root.addEventListener("animationend", send);
+  return () => {
+    resized?.disconnect();
+    changed?.disconnect();
+    root.removeEventListener("animationend", send);
+  };
 }
 
 /** Click-through with forwarded pointer moves, caught again while the pointer is over Loopy. */
-function followPointer(elements: readonly Element[]): () => void {
+function followPointer(root: Element): () => void {
   let ignoring = true;
   void setIgnoreMouseEvents(true, { forward: true }).catch(() => {});
   const onMove = (e: PointerEvent) => {
-    const over = insideAny(rectsOf(elements), e.clientX, e.clientY);
+    const over = insideAny(rectsOf(root), e.clientX, e.clientY);
     if (over === !ignoring) return;
     ignoring = !over;
     void setIgnoreMouseEvents(ignoring, { forward: true }).catch(() => {});
@@ -84,12 +104,15 @@ function clearBackground(caps: Caps, applied: string[]): void {
   applied.push("transparent");
 }
 
-/** Let clicks through outside `catchers` the best way the runtime has; returns the undo. */
-function startClickThrough(caps: Caps, catchers: readonly Element[], applied: string[]) {
+/**
+ * Let clicks through outside the click-catching elements under `root` the best way the runtime
+ * has; returns the undo.
+ */
+function startClickThrough(caps: Caps, root: Element | null, applied: string[]) {
   const plan = clickThroughPlan(caps);
-  if (plan === "none" || catchers.length === 0) return () => {};
+  if (plan === "none" || root === null) return () => {};
   applied.push(`click-through:${plan}`);
-  return plan === "region" ? followRegion(catchers) : followPointer(catchers);
+  return plan === "region" ? followRegion(root) : followPointer(root);
 }
 
 /** Move the window to the bottom-right corner of the primary display (not on Wayland). */
@@ -107,10 +130,11 @@ async function placeInCorner(caps: Caps, applied: string[]): Promise<void> {
 /**
  * Set the window up as Loopy's overlay where supported.
  *
- * @param catchers The elements that catch clicks (Loopy, its bubble, its buttons).
+ * @param root The page's root: the elements under it marked `data-loopy-hit` (Loopy, its bubble,
+ *   its buttons) catch clicks, followed as they come and go; `null` lets no click through.
  * @returns Whether this is a desktop window, what was applied, and how to stop following.
  */
-export async function setupWindow(catchers: readonly Element[] = []): Promise<WindowSetup> {
+export async function setupWindow(root: Element | null = null): Promise<WindowSetup> {
   let caps: Caps;
   try {
     caps = await windowCapabilities();
@@ -119,7 +143,7 @@ export async function setupWindow(catchers: readonly Element[] = []): Promise<Wi
   }
   const applied: string[] = [];
   clearBackground(caps, applied);
-  const stop = startClickThrough(caps, catchers, applied);
+  const stop = startClickThrough(caps, root, applied);
   await placeInCorner(caps, applied);
   return { desktop: true, applied, stop };
 }

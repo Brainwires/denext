@@ -22,7 +22,13 @@ export function SpeechBubble({ message, onAction, onClose }: SpeechBubbleProps) 
   }, [message.id, message.timeoutMs]);
 
   return (
-    <div class="bubble" data-mood={message.mood} role="status" aria-live="polite">
+    <div
+      class="bubble"
+      data-mood={message.mood}
+      data-loopy-hit=""
+      role="status"
+      aria-live="polite"
+    >
       <button type="button" class="bubble-close" aria-label="Close" onClick={() => onClose()}>
         ×
       </button>
