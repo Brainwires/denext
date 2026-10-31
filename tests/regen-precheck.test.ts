@@ -135,6 +135,43 @@ Deno.test("regen --check: a failing step still restores what earlier steps rewro
   }
 });
 
+Deno.test("regen: one run converges from a stale native-templates pack (the package scripts copy it after it is rewritten)", async () => {
+  // The real steps' phases, on stand-ins: the pack's generator (a subprocess, so it finishes
+  // later than an in-process step starts) and the copy of the scaffold's package scripts out of it.
+  const phaseOf = (name: string) => STEPS.find((s) => s.name.includes(name))!.phase;
+  const dir = await Deno.makeTempDir({ prefix: "denext_regen_pack_" });
+  try {
+    await Deno.writeTextFile(join(dir, "pack.txt"), "old template\n");
+    await Deno.writeTextFile(join(dir, "package-windows.ts"), "old template\n");
+    const steps: RegenStep[] = [
+      {
+        name: "deno task gen:native-templates",
+        run: async () => {
+          await new Promise((r) => setTimeout(r, 20));
+          await Deno.writeTextFile(join(dir, "pack.txt"), "new template\n");
+        },
+        outputs: ["pack.txt"],
+        phase: phaseOf("gen:native-templates"),
+      },
+      {
+        name: "package scripts",
+        run: async () => {
+          const pack = await Deno.readTextFile(join(dir, "pack.txt"));
+          await Deno.writeTextFile(join(dir, "package-windows.ts"), pack);
+        },
+        outputs: ["package-windows.ts"],
+        phase: phaseOf("package scripts"),
+      },
+    ];
+    await regen({ quiet: true, steps, root: dir });
+    assertEquals(await Deno.readTextFile(join(dir, "package-windows.ts")), "new template\n");
+    assertEquals((await regen({ check: true, quiet: true, steps, root: dir })).stale, []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  assert(phaseOf("package scripts") > phaseOf("gen:native-templates"));
+});
+
 Deno.test("precheck: the drift tests it runs exist", async () => {
   for (const t of DRIFT_TESTS) assert((await Deno.stat(new URL(t, ROOT))).isFile, t);
 });

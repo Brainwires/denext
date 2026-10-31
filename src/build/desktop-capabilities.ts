@@ -523,7 +523,9 @@ function hostOf(url: unknown): string | undefined {
 
 /**
  * The hosts self-update fetches from: the full-app manifest URL's host, the UI overlay's feed host
- * (`update.ui.feedUrl`) and `update.hosts`.
+ * (`update.ui.feedUrl`) and `update.hosts`, each entry of which is checked by
+ * `permissionListError` like any other baked network list (an entry with a comma would grant two
+ * hosts, a URL is no host): an invalid one fails the build rather than bake a wider grant.
  */
 function updateNetHosts(
   update: { manifestUrl?: unknown; hosts?: unknown; ui?: unknown } | undefined,
@@ -533,8 +535,10 @@ function updateNetHosts(
     const host = hostOf(url);
     if (host) hosts.push(host);
   }
-  if (Array.isArray(update?.hosts)) {
-    for (const h of update.hosts) if (typeof h === "string" && h) hosts.push(h);
+  if (update?.hosts !== undefined) {
+    const error = permissionListError("net", update.hosts);
+    if (error) throw new Error(`denext: desktop.update.hosts ${error}`);
+    hosts.push(...update.hosts as string[]);
   }
   return hosts;
 }

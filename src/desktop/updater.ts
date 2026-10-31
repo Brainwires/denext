@@ -786,9 +786,14 @@ async function verifies(
 // ---------------------------------------------------------------------------------------------
 // Proxy-tolerant fetch (#4812: TLS-inspecting proxies stalled Electron's updater).
 
+/** A proxy variable in its upper- or lower-case spelling (the `curl` convention; only proxies want both). */
+function proxyEnv(name: string): string | undefined {
+  return env(name) ?? env(name.toLowerCase());
+}
+
 /** The proxy URL to use for `target`, honouring `HTTPS_PROXY`/`HTTP_PROXY`/`NO_PROXY`. */
 function proxyUrlFor(target: URL): string | undefined {
-  const noProxy = env("NO_PROXY");
+  const noProxy = proxyEnv("NO_PROXY");
   if (noProxy) {
     const host = target.hostname;
     for (const raw of noProxy.split(",")) {
@@ -797,7 +802,7 @@ function proxyUrlFor(target: URL): string | undefined {
       if (entry === "*" || host === entry || host.endsWith(`.${entry}`)) return undefined;
     }
   }
-  const proxy = env(target.protocol === "https:" ? "HTTPS_PROXY" : "HTTP_PROXY");
+  const proxy = proxyEnv(target.protocol === "https:" ? "HTTPS_PROXY" : "HTTP_PROXY");
   return proxy && proxy.trim() ? proxy.trim() : undefined;
 }
 
