@@ -4,24 +4,11 @@
 
 import { resolve } from "@std/path";
 import type { CommandSpec } from "../command.ts";
-import { addFallow, FALLOW_VERSION } from "../../build/fallow-template.ts";
+import { addFallow } from "../../build/fallow-template.ts";
+import { commandMeta } from "../command-meta.ts";
 
 export const fallowCommand: CommandSpec = {
-  name: "fallow",
-  summary: "Add the fallow code-health gate to a project",
-  usage: "  denext fallow init [dir] [--dry-run]\n\n" +
-    `  init  writes fallow.toml, .githooks/pre-commit, scripts/coverage-to-istanbul.ts and\n` +
-    `        AGENTS.md (each only when missing), adds the fallow / fallow:audit /\n` +
-    `        coverage:fallow / hooks:install tasks to deno.json (npm:fallow@${FALLOW_VERSION})\n` +
-    `        and coverage/ + .fallow/ to .gitignore. Run \`denext task hooks:install\` to\n` +
-    `        enable the commit gate.`,
-  positionals: [
-    { name: "action", help: "init", required: true },
-    { name: "dir", help: "Project directory (default: .)" },
-  ],
-  flags: [
-    { name: "dry-run", type: "boolean", help: "Print what would change; write nothing" },
-  ],
+  ...commandMeta("fallow"),
   run: async (ctx) => {
     if (ctx.positionals[0] !== "init") {
       console.error(

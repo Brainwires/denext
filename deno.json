@@ -567,6 +567,7 @@
       "src/expo/manifest-data.ts",
       "src/react-native-compat/manifest-data.ts",
       "src/cli/register.ts",
+      "src/cli/commands/meta/",
       "src/ts/program-api.ts",
       "src/desktop/config-types.ts",
       "denext.config.schema.json",

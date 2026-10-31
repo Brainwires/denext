@@ -2,7 +2,7 @@
 // (or with `--linux`), what the session provides, with a fix for each missing piece
 // (../../build/desktop-doctor.ts). Exits 1 when a finding is an error.
 
-import type { CommandContext, FlagSpec } from "../command.ts";
+import type { CommandContext } from "../command.ts";
 import {
   type DesktopDoctorOptions,
   type DesktopDoctorReport,
@@ -19,16 +19,6 @@ import {
   stalePackageScripts,
 } from "../../build/desktop-launch-policy.ts";
 import { resolveProject } from "../../build/paths.ts";
-
-/** The flags only `desktop doctor` reads. */
-export const DESKTOP_DOCTOR_FLAGS: readonly FlagSpec[] = [
-  {
-    name: "linux",
-    type: "boolean",
-    help: "doctor: run the Linux session checks (tray host, Secret Service, portals, …); the " +
-      "default on a Linux host",
-  },
-];
 
 /**
  * The project's packaged launch-policy gaps (see `launchPolicyProblems`); a config that does not

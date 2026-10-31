@@ -125,6 +125,7 @@ on:
       - "src/build/dev-server.ts"
       - "src/build/react-native.ts"
       - "src/cli/command.ts"
+      - "src/cli/command-meta.ts"
       - "src/cli/commands/mobile-build.ts"
       - "src/cli/commands/toolchain.ts"
       - "src/cli/dev-attach.ts"

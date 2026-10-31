@@ -694,6 +694,18 @@ packs them Brotli-compressed into `packages/docs-corpus/native-templates.ts` (sh
 JSR package has a 20 MiB cap: a generated file over 50 KiB ships compressed or is listed, with
 its reason, in `tests/release-tools.test.ts`.
 
+A CLI verb's help text (its `summary`, `usage`, `flags`, `positionals` and the rest of its
+description) is edited in `src/cli/commands/meta/<module>.ts`, beside the module under
+`src/cli/commands/` that implements it: one `export const <verb>Meta: CommandMeta` per verb. Those
+files are not published. `deno task gen:command-table` (or `deno task regen`, which also rewrites
+the CLI reference from it) packs them Brotli-compressed into `src/cli/command-meta.packed.ts`,
+and the verb's spec reads its own back with `...commandMeta("<verb>")`
+(`src/cli/command-meta.ts`), so `--help`, `denext --help`, completions, `denext commands` and
+the CLI reference all print the packed copy. A new verb gets a meta export and a
+`...commandMeta("<name>")` spread in its spec; `tests/cli-command-meta.test.ts` fails when a
+registered verb has no description or a command module spells its help out again, and
+`deno task regen --check` (and `tests/cli-startup-graph.test.ts`) when the packed table is stale.
+
 ## Repo layout
 
 ```

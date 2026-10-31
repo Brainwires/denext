@@ -322,8 +322,11 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   // docs-corpus pack (holes filled by `fillTemplate`), packed the fallow init texts (the coverage
   // converter is read from scripts/coverage-to-istanbul.ts, no longer pasted), front-coded the font
   // metrics, moved the doc-lint list to scripts/doc-lint.ts and stopped publishing MISSION.md and
-  // POLICIES.md → 19.65 MiB; 0.25 MiB above that is past 19.75, so the guard stays. Raise it only
-  // with the reason.
+  // POLICIES.md → 19.65 MiB; 0.25 MiB above that is past 19.75, so the guard stays. The CLI verbs'
+  // help text stopped shipping twice (plain in src/cli/commands/*.ts and packed in
+  // src/cli/command-meta.packed.ts): the readable copy moved to the unpublished
+  // src/cli/commands/meta/ → 19.55 MiB; 0.25 MiB above that is still past 19.75, so the guard
+  // stays. Raise it only with the reason.
   const files = await publishedFiles();
   if (!files) return; // not a git checkout: nothing to measure
   const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
@@ -336,6 +339,7 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
       "src/build/native-templates/ota.ts",
       "src/compat/next/font/google-families.ts",
       "src/plugin/catalog.json",
+      "src/cli/commands/meta/desktop.ts",
     ]
   ) assert(!files.has(file), `${file} is published again`);
   for (

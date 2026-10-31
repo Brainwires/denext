@@ -43,6 +43,13 @@ Deno.test({
   const graph = JSON.parse(out.stdout) as {
     modules: Array<{ specifier: string; dependencies?: Array<{ code?: { specifier?: string } }> }>;
   };
+  // The CLI verbs' specs spread their packed description when imported (src/cli/command-meta.ts):
+  // that reader is lazy, but a verb module the runtime imports would decode it at once.
+  assertEquals(
+    graph.modules.map((m) => m.specifier).filter((s) => s.endsWith("/src/cli/command-meta.ts")),
+    [],
+    "the desktop runtime imports a CLI verb, whose spec decodes the packed verb table",
+  );
   const readers = graph.modules.filter((m) =>
     m.dependencies?.some((d) => d.code?.specifier?.endsWith("/src/build/packed-text.ts"))
   );
