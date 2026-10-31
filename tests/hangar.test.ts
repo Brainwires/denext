@@ -35,6 +35,7 @@ import {
   matchInstances,
   parsePidFile,
   parsePs,
+  psProgram,
 } from "../examples/hangar/lib/processes.ts";
 import { openQmpSession, QmpError } from "../examples/hangar/lib/qmp.ts";
 import {
@@ -257,6 +258,13 @@ Deno.test("hangar processes: ps output, and only qemu-system binaries count", ()
   assertEquals(parsePidFile(" 4242\n"), 4242);
   assertEquals(parsePidFile("1"), null);
   assertEquals(parsePidFile("12 34"), null);
+});
+
+Deno.test("hangar processes: no ps on Windows (the overview lists no QEMU there)", () => {
+  // Live test on Windows 11 Arm64: spawning /bin/ps (C:\bin\ps) failed on every overview poll.
+  assertEquals(psProgram("windows"), null);
+  assertEquals(psProgram("darwin"), "/bin/ps");
+  assertEquals(psProgram("linux"), "/bin/ps");
 });
 
 Deno.test("hangar processes: matched by working directory, never by -name", async () => {

@@ -108,6 +108,10 @@ on:
       # The pack readers the desktop runtime graph must keep lazy (tests/desktop-runtime-graph.test.ts).
       - "src/build/packed-text.ts"
       - "scripts/lib/pack-texts.ts"
+      # The scaffolded packaging scripts ship in the docs-corpus pack (scaffold.ts reads them).
+      - "src/build/native-templates.packed.ts"
+      - "src/build/native-templates/desktop-package-scripts.ts"
+      - "packages/docs-corpus/native-templates.ts"
       - "src/cli/commands/desktop*.ts"
       - "src/cli/commands/doctor.ts"
       - "src/client/live-client.ts"
@@ -121,6 +125,7 @@ on:
       - "src/build/dev-server.ts"
       - "src/build/react-native.ts"
       - "src/cli/command.ts"
+      - "src/cli/command-meta.ts"
       - "src/cli/commands/mobile-build.ts"
       - "src/cli/commands/toolchain.ts"
       - "src/cli/dev-attach.ts"

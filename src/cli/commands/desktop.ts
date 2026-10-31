@@ -39,10 +39,10 @@ import {
 } from "../../build/desktop-launch.ts";
 import { scaffoldFiles } from "../../build/scaffold.ts";
 import { createUnifiedDiff } from "../../build/patch-diff.ts";
-import { DESKTOP_ADD_FLAGS, desktopAdd } from "./desktop-add.ts";
+import { desktopAdd } from "./desktop-add.ts";
 import { workspaceVerbTarget } from "../../build/workspace-imports.ts";
-import { desktopPublishUpdate, PUBLISH_UPDATE_FLAGS } from "./desktop-publish-update.ts";
-import { DESKTOP_DOCTOR_FLAGS, desktopDoctor } from "./desktop-doctor.ts";
+import { desktopPublishUpdate } from "./desktop-publish-update.ts";
+import { desktopDoctor } from "./desktop-doctor.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
 import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
@@ -70,6 +70,7 @@ import {
   type InspectRendererPlan,
   parseInspectRendererAddr,
 } from "../../build/desktop-inspect-renderer.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** The project dir for a `desktop <action> [dir]` invocation (positional[1]). */
 function desktopDir(ctx: CommandContext): string {
@@ -108,9 +109,7 @@ const DESKTOP_ACTIONS: Record<
 };
 
 export const desktopCommand: CommandSpec = {
-  name: "desktop",
-  summary: "Build/run/package the app as a native desktop app",
-  loadsModules: true,
+  ...commandMeta("desktop"),
   moduleDir: desktopDir,
   // `package` writes dist/ and runs the packaging script, whose `deno task export` child takes
   // the build dir and out/ itself — so the parent locks dist/ only (rank 0, below the child's).
@@ -118,111 +117,6 @@ export const desktopCommand: CommandSpec = {
     ctx.positionals[0] === "package" && ctx.flags["regenerate-scripts"] !== true
       ? { projectDir: desktopDir(ctx), packageDirs: ["dist"] }
       : undefined,
-  usage:
-    "  denext desktop run                     Export, build into a temp dir and open the window\n" +
-    "  denext desktop build                   Export the SPA to out/\n" +
-    "  denext desktop dev                     Live reload: open a window proxied to `denext dev`\n" +
-    "  denext desktop dev --lan               …attach to a dev server on your network (loopback else)\n" +
-    "  denext desktop dev --inspect-renderer  …and open the window's renderer to a debugger (CDP on\n" +
-    "                                         a free loopback port; --inspect-renderer=127.0.0.1:9229)\n" +
-    "  denext desktop package                 Build a distributable bundle for the host OS\n" +
-    "  denext desktop package --target-os windows  Cross-build (Linux and Windows from any OS)\n" +
-    "  denext desktop package --format msi,zip    Pick the installers (dmg|pkg, tar.gz|deb|rpm|appimage, msi|zip)\n" +
-    "  denext desktop package --regenerate-scripts  Rewrite scripts/package-*.ts from the current template\n" +
-    "  denext desktop add secure-store fs     Enable capabilities in desktop.capabilities (--list, --dry-run)\n" +
-    "  denext desktop add sidecar --name api --entry server/main.mjs --node-modules server/node_modules\n" +
-    "                                         Run a backend next to the window (desktop.sidecars)\n" +
-    "  denext desktop publish-update --artifact dist/MyApp.app --url-base https://updates.example.com/myapp/\n" +
-    "                                         Sign a full-app update (archive + app-update.json)\n" +
-    "  denext desktop publish-update --resign Re-sign the published manifest before it expires\n" +
-    "  denext desktop doctor                  The pinned runtime, and on Linux the session's tray host,\n" +
-    "                                         Secret Service and portals, each with a fix (--json)\n" +
-    "  Deno's own `deno desktop` (compile a script into a desktop app): `denext deno desktop`.",
-  positionals: [
-    {
-      name: "action",
-      help: "run | build | dev | package | add | publish-update | doctor (default: run)",
-    },
-    { name: "dir", help: "Project directory (default: .)" },
-  ],
-  flags: [
-    {
-      name: "entry",
-      type: "string",
-      valueName: "<file>",
-      help: "Desktop entry (default: desktop.ts)",
-    },
-    {
-      name: "target-os",
-      type: "string",
-      valueName: "<os>",
-      help: "package for: macos | linux | windows (default: the host OS; Linux and Windows " +
-        "cross-build from any OS, macOS packages on a Mac)",
-    },
-    {
-      name: "port",
-      alias: "p",
-      type: "number",
-      valueName: "<port>",
-      help: "dev: the dev server port to start or attach to (default: 3000)",
-    },
-    {
-      name: "host",
-      type: "string",
-      valueName: "<host>",
-      help: "dev: the host to bind and proxy to (default: localhost; non-loopback needs --lan)",
-    },
-    {
-      name: "lan",
-      type: "boolean",
-      help: "dev: attach to a dev server on the LAN (a non-loopback target; opt in explicitly)",
-    },
-    {
-      name: "inspect-renderer",
-      type: "string",
-      optionalValue: true,
-      valueName: "[=<addr>]",
-      help: "dev: open the window's renderer to a debugger — the Chrome DevTools Protocol on CEF " +
-        "and WebView2, WebKit's inspector on WebKitGTK (default: 127.0.0.1 and a free port)",
-    },
-    {
-      name: "inspect-renderer-allow-remote",
-      type: "boolean",
-      help: "dev: let --inspect-renderer take a non-loopback address (the port is full control " +
-        "of the page)",
-    },
-    {
-      name: "format",
-      type: "string",
-      valueName: "<list>",
-      help: "package: the installers to build, comma-separated — macOS dmg | pkg; Linux tar.gz | " +
-        "deb | rpm | appimage; Windows msi | zip (default: desktop.installers.<os>, else " +
-        "dmg / tar.gz,deb / msi)",
-    },
-    {
-      name: "regenerate-scripts",
-      type: "boolean",
-      help:
-        "package: rewrite scripts/package-*.ts from the current template (least-privilege flags), " +
-        "keeping a .bak of any file that differs",
-    },
-    {
-      name: "verify-runtime",
-      type: "boolean",
-      help: "run | dev | package: re-hash the cached Deno Desktop runtime before use " +
-        "(DENEXT_DESKTOP_RUNTIME_VERIFY=1)",
-    },
-    {
-      name: "attest-runtime",
-      type: "boolean",
-      help: "run | dev | package: require the build provenance check of a downloaded runtime " +
-        "(`gh attestation verify`, run by default whenever gh is signed in; " +
-        "DENEXT_DESKTOP_RUNTIME_ATTEST=1, =0 turns it off)",
-    },
-    ...DESKTOP_ADD_FLAGS,
-    ...PUBLISH_UPDATE_FLAGS,
-    ...DESKTOP_DOCTOR_FLAGS,
-  ],
   run: async (ctx) => {
     const action = ctx.positionals[0] ?? "run";
     // Read by resolveDesktopRuntimeEnv here AND by a packaging script's own call (inherited env).

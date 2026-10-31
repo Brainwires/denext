@@ -766,8 +766,9 @@ async function listProviders(): Promise<string[]> {
 // ---- deno.json -----------------------------------------------------------------------------
 
 /**
- * `deno.json`'s text with its `next-auth/providers/*` exports and the doc-lint entry list set to
- * `modules` (the block's position and every other line kept).
+ * `deno.json`'s text with its `next-auth/providers/*` exports set to `modules` (the block's
+ * position and every other line kept). `deno task doc-lint` (scripts/doc-lint.ts) lints the
+ * modules those exports name.
  *
  * @param text The current `deno.json`.
  * @param modules The provider module names.
@@ -786,12 +787,6 @@ export function patchDenoJson(text: string, modules: readonly string[]): string 
     `${indent}"./next-auth/providers/${m}": "./${PROVIDERS_DIR}/${m}.ts",`
   );
   lines.splice(first, last - first + 1, ...block);
-  const docs = modules.map((m) => `${PROVIDERS_DIR}/${m}.ts`).join(" ");
-  const docLint = lines.findIndex((line) => /^\s*"doc-lint":/.test(line));
-  lines[docLint] = lines[docLint].replace(
-    new RegExp(`(?:${PROVIDERS_DIR}/(?!index\\.ts)[\\w-]+\\.ts ?)+`),
-    `${docs} `,
-  );
   return lines.join("\n");
 }
 

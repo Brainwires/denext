@@ -7,6 +7,7 @@ import { crashReportTest, type CrashReportTestOptions } from "../../build/crash-
 import { readEnv } from "../../build/idle-trim.ts";
 import { VERSION } from "../../version.ts";
 import { toolchainBinary } from "./deno-toolchain.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** What {@linkcode crashReportAction} reads and writes (seams for tests). */
 export interface CrashReportActionDeps {
@@ -49,16 +50,7 @@ export async function crashReportAction(
 
 /** `denext crash-report test`. */
 export const crashReportCommand: CommandSpec = {
-  name: "crash-report",
-  summary: "Check opt-in crash reports end to end (test)",
-  usage:
-    "test: run denext's Deno toolchain with DENEXT_CRASH_REPORT_SELFTEST=1, which panics on\n" +
-    'purpose just after start-up and sends one report (kind "selftest") to\n' +
-    "DENEXT_CRASH_REPORT_URL (an https:// endpoint or a file:///absolute/path.jsonl). For a\n" +
-    "file it shows the line written; an endpoint's answer is not read, so look for the report\n" +
-    "there. Exits 1 when the URL is unset or refused, the runtime has no crash reports, or no\n" +
-    "report was written. The URL's value is never printed.",
-  positionals: [{ name: "action", help: "test" }],
+  ...commandMeta("crash-report"),
   run: async (ctx) => {
     const code = await crashReportAction(ctx.positionals[0], {
       binary: toolchainBinary,

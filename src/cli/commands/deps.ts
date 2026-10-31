@@ -12,6 +12,7 @@ import {
   type JailRuntimeSeams,
   npmPackageName,
 } from "../../build/jail-scripts.ts";
+import { commandMeta } from "../command-meta.ts";
 
 function runDeno(
   sub: string,
@@ -144,36 +145,16 @@ export const JAIL_FAILURE_HINT = "denext add: if a dependency's install script f
   "explains it and names the exception to add";
 
 export const addCommand: CommandSpec = {
-  name: "add",
-  summary: "Add a dependency (deno add, or a Gleam package)",
-  passthrough: true,
-  usage: "  denext add jsr:@std/assert\n  denext add npm:zod\n" +
-    "  denext add gleam:gleam_json   Compile a Gleam package to JavaScript (@gleam/…)",
-  positionals: [{ name: "packages", help: "Packages to add", required: true }],
+  ...commandMeta("add"),
   run: runAdd,
 };
 
 export const removeCommand: CommandSpec = {
-  name: "remove",
-  summary: "Remove a dependency (deno remove)",
-  passthrough: true,
-  positionals: [{
-    name: "packages",
-    help: "Packages to remove",
-    required: true,
-  }],
+  ...commandMeta("remove"),
   run: (ctx) => runDeno("remove", ctx),
 };
 
 export const updateCommand: CommandSpec = {
-  name: "update",
-  summary: "Update dependencies to latest (deno outdated --update)",
-  passthrough: true,
-  usage: "Forwards to `deno outdated --update`. Pass package names to scope it,\n" +
-    "or `--latest` to cross semver ranges.",
-  positionals: [{
-    name: "packages",
-    help: "Packages to update (default: all)",
-  }],
+  ...commandMeta("update"),
   run: (ctx) => runDeno("outdated", ctx, ["--update"]),
 };

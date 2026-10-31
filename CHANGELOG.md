@@ -8,6 +8,24 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.2] - 2026-10-31
+
+### Changed
+
+- **The `@denext/denext` package is 0.19 MiB smaller (19.75 → 19.55 MiB against JSR's 20 MiB
+  cap).** The CLI verbs' help text ships once, Brotli-packed, instead of also as plain text in each
+  command module; the templates only generation commands read (fastlane, widget / Live Activity /
+  native-module sources, the composed `MainActivity`, the scaffolded desktop packaging scripts) move
+  into the docs-corpus pack; the fallow init texts are packed. Help output, completions,
+  `denext commands`, did-you-mean and every generated file are unchanged.
+
+### Fixed
+
+- **`denext desktop dev` starts an app whose `desktop.tray.icon` is a path** (`"/tray.png"`): a dev
+  build has no export, so the tray read its icon from nowhere and failed at launch ("the tray icon
+  /tray.png is not in the export", an unhandled rejection). A file the export lacks now comes from
+  the dev server the window proxies (with its token headers); a built app reads the export only.
+
 ## [4.11.1] - 2026-10-31
 
 ### Added
@@ -20414,7 +20432,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.1...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.2...development
+[4.11.2]: https://jsr.io/@denext/denext@4.11.2
 [4.11.1]: https://jsr.io/@denext/denext@4.11.1
 [4.11.0]: https://jsr.io/@denext/denext@4.11.0
 [4.10.5]: https://jsr.io/@denext/denext@4.10.5

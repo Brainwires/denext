@@ -5,7 +5,7 @@
 // action; the flags below are spread into that command's flag list.
 
 import { resolve } from "@std/path";
-import type { CommandContext, FlagSpec } from "../command.ts";
+import type { CommandContext } from "../command.ts";
 import { addDesktopSidecar } from "../../build/desktop-sidecar-add.ts";
 import {
   addDesktopCapabilities,
@@ -14,45 +14,6 @@ import {
   formatDesktopAddReport,
   formatDesktopCapabilityTable,
 } from "../../build/desktop-capabilities.ts";
-
-/** The flags `desktop add` reads (declared on the `desktop` command). */
-export const DESKTOP_ADD_FLAGS: readonly FlagSpec[] = [
-  { name: "list", type: "boolean", help: "add: list the desktop capabilities and what they need" },
-  { name: "dry-run", type: "boolean", help: "add: print the config diff and permissions only" },
-  {
-    name: "name",
-    type: "string",
-    valueName: "<name>",
-    help: "add sidecar: the sidecar's name (lower-case letters, digits and -)",
-  },
-  {
-    name: "node-modules",
-    type: "string",
-    valueName: "<dir>",
-    help: "add sidecar: the --entry module's node_modules (a Node backend, bundled at packaging)",
-  },
-  {
-    name: "exec",
-    type: "string",
-    valueName: "<program>",
-    help: "add sidecar: a program to spawn instead of a module",
-  },
-  {
-    name: "ready",
-    type: "string",
-    valueName: "<path>",
-    help: "add sidecar: a path polled on its port until it answers 2xx (e.g. /health)",
-  },
-  { name: "proxy", type: "boolean", help: "add sidecar: point spa.proxy at it" },
-  {
-    name: "rp-id",
-    type: "string",
-    valueName: "<domain>",
-    repeatable: true,
-    help: "add passkeys: a relying party's domain for desktop.capabilities.passkeys.rpIds " +
-      "(repeatable)",
-  },
-];
 
 /** `denext desktop add sidecar --name <n> (--entry <module> [--node-modules <dir>] | --exec <p>)`. */
 async function desktopAddSidecar(ctx: CommandContext, dir: string): Promise<void> {

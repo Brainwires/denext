@@ -8,15 +8,22 @@
 // for `deno compile --include`) and src/cli/offline-modules.generated.ts (those plus every module a
 // verb loads by URL: what `denext toolchain install` caches for a CLI installed from JSR).
 //
-// The verbs' descriptions (the table's data, about 100 KiB of help text) are written
-// Brotli-compressed (a third of their size, to keep the @denext/denext package under JSR's 20 MiB
-// cap) to src/cli/command-meta.packed.ts, which the table decodes once at startup. They stay in
-// the package, not in @denext/docs-corpus: every CLI start reads them, and the CLI run from a
-// checkout (or a URL) must not need a docs-corpus release of its own commit.
+// The verbs' descriptions (the table's data, about 100 KiB of help text: name, summary, usage,
+// flags, positionals, …) are written by hand in src/cli/commands/meta/<module>.ts, one
+// `export const <verb>Meta: CommandMeta` per verb, beside the module that implements it. Those
+// files are not published: this script packs them Brotli-compressed (a third of their size, to
+// keep the @denext/denext package under JSR's 20 MiB cap) into src/cli/command-meta.packed.ts,
+// and a verb's spec reads its own back with `...commandMeta("<verb>")` (src/cli/command-meta.ts),
+// so the help text ships once. They stay in the package, not in @denext/docs-corpus: every CLI
+// start reads them, and the CLI run from a checkout (or a URL) must not need a docs-corpus
+// release of its own commit.
+//
+// To change a verb's help: edit its meta file, then `deno task gen:command-table` (or `deno task
+// regen`, which also rewrites the CLI reference, site/app/docs/cli/cli.json, from the new table).
 //
 // tests/cli-startup-graph.test.ts fails when the committed table differs from what this writes.
 
-import { fromFileUrl, join, relative } from "@std/path";
+import { fromFileUrl, join, relative, toFileUrl } from "@std/path";
 import { denoFmt } from "./lib/deno-fmt.ts";
 import { packText } from "./lib/pack-texts.ts";
 import { CommandRegistry, type CommandSpec } from "../src/cli/command.ts";
@@ -30,6 +37,8 @@ import {
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
 const CLI_DIR = join(ROOT, "src", "cli");
 const COMMANDS_DIR = join(CLI_DIR, "commands");
+/** The verbs' readable descriptions (not published; packed into {@linkcode META_OUT}). */
+export const META_DIR: string = join(COMMANDS_DIR, "meta");
 
 /** Where the generated table is written. */
 export const TABLE_OUT: string = join(CLI_DIR, "command-table.generated.ts");
@@ -121,8 +130,33 @@ async function commandSources(eager: CommandRegistry): Promise<Map<string, Sourc
   return byName;
 }
 
+/**
+ * Every verb description under {@linkcode META_DIR}, by verb name: each module's exports that are
+ * an object with a string `name` and `summary` (a flag it shares has `help`, not `summary`).
+ * Throws on a verb described twice.
+ */
+export async function commandMetaSources(): Promise<Map<string, CommandMeta>> {
+  const byName = new Map<string, CommandMeta>();
+  const files = [...Deno.readDirSync(META_DIR)]
+    .filter((e) => e.isFile && e.name.endsWith(".ts"))
+    .map((e) => e.name)
+    .sort();
+  for (const file of files) {
+    const exports = await import(toFileUrl(join(META_DIR, file)).href);
+    for (const value of Object.values(exports)) {
+      const { name, summary } = (value ?? {}) as { name?: unknown; summary?: unknown };
+      if (typeof name !== "string" || typeof summary !== "string") continue;
+      if (byName.has(name)) {
+        throw new Error(`gen-command-table: "${name}" is described twice (commands/meta/${file})`);
+      }
+      byName.set(name, value as CommandMeta);
+    }
+  }
+  return byName;
+}
+
 /** The data half of `spec`; throws on a key the table does not know how to carry. */
-export function metaOf(spec: CommandSpec): CommandMeta {
+export function metaOf(spec: CommandMeta): CommandMeta {
   for (const key of Object.keys(spec)) {
     if (!COMMAND_FUNCTION_KEYS.includes(key) && !(COMMAND_META_KEYS as string[]).includes(key)) {
       throw new Error(
@@ -144,15 +178,29 @@ export async function generate(): Promise<
 > {
   const eager = buildRegistry();
   const sources = await commandSources(eager);
+  const described = await commandMetaSources();
   const metas: CommandMeta[] = [];
   const loads = eager.list().map((spec) => {
     const source = sources.get(spec.name);
     if (!source) {
       throw new Error(`gen-command-table: no export under src/cli/commands defines "${spec.name}"`);
     }
-    metas.push(metaOf(spec));
+    const meta = described.get(spec.name);
+    if (!meta) {
+      throw new Error(
+        `gen-command-table: no src/cli/commands/meta/*.ts module describes "${spec.name}"`,
+      );
+    }
+    described.delete(spec.name);
+    metas.push(metaOf(meta));
     return `  ${source.factory ? "factory" : "spec"}("${source.module}", "${source.exportName}"),`;
   });
+  if (described.size > 0) {
+    throw new Error(
+      `gen-command-table: src/cli/commands/meta describes verbs buildRegistry() does not ` +
+        `register: ${[...described.keys()].join(", ")}`,
+    );
+  }
   // The descriptions are one JSON document (parsed once at startup, cheaper than an object
   // literal), packed in command-meta.packed.ts; the loaders stay code.
   const table = await denoFmt(
@@ -160,8 +208,7 @@ export async function generate(): Promise<
 // Do not edit: run \`deno task gen:command-table\`. Each row is a verb's description and the
 // import of the module that implements it (src/cli/lazy-command.ts).
 
-import { unpackText } from "../build/packed-text.ts";
-import { CLI_COMMANDS_BROTLI_BASE64 } from "./command-meta.packed.ts";
+import { commandMetas } from "./command-meta.ts";
 import type { CommandRegistry, CommandSpec } from "./command.ts";
 import { type CommandLoader, type CommandMeta, importCliModule } from "./lazy-command.ts";
 
@@ -176,7 +223,7 @@ const factory = (module: string, name: string): CommandLoader => (registry) =>
   );
 
 /** Every first-party verb's description, in registry order (packed JSON: see the generator). */
-const META: readonly CommandMeta[] = JSON.parse(unpackText(CLI_COMMANDS_BROTLI_BASE64));
+const META: readonly CommandMeta[] = commandMetas();
 
 /** How to load each verb in {@linkcode META}, in the same order. */
 const LOADERS: readonly CommandLoader[] = [
@@ -193,13 +240,14 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
   );
   const meta =
     `// Generated by scripts/gen-command-table.ts from buildRegistry() (src/cli/register.ts).
-// Do not edit: run \`deno task gen:command-table\`. The description of every first-party verb (its
-// name, summary, usage text, flags and positionals), in registry order: JSON, Brotli-compressed,
-// in base64 (src/build/packed-text.ts). src/cli/command-table.generated.ts decodes it.
+// Do not edit: change src/cli/commands/meta/*.ts and run \`deno task gen:command-table\`. The
+// description of every first-party verb (its name, summary, usage text, flags and positionals), in
+// registry order: JSON (\`{ COMMANDS: [...] }\`), Brotli-compressed, in base64
+// (src/build/packed-text.ts). src/cli/command-meta.ts decodes it on first use.
 
 /** Every first-party verb's description, as packed JSON. */
 export const CLI_COMMANDS_BROTLI_BASE64: string =
-  ${JSON.stringify(packText(JSON.stringify(metas)))};
+  ${JSON.stringify(packText(JSON.stringify({ COMMANDS: metas })))};
 `;
   const modules = lazyModules(eager, sources);
   const modulesSource = await denoFmt(

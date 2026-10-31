@@ -1,8 +1,8 @@
 // The packaging scripts `denext create --desktop` / `migrate --desktop` scaffold into a project
 // (`scripts/package-{macos,linux,windows}.ts`), moved out of ./scaffold.ts. Not published:
-// `deno task gen:packed-texts` (scripts/gen-packed-texts.ts) packs them Brotli-compressed into
-// ./desktop-package-scripts.packed.ts (the published copy, against JSR's 20 MiB package cap),
-// which ./scaffold.ts reads. Edit them here, then regenerate.
+// `deno task gen:native-templates` (scripts/gen-native-templates.ts) packs them, through
+// ./native-templates/desktop-package-scripts.ts, into the docs-corpus pack (out of the 20 MiB
+// @denext/denext package), which ./scaffold.ts reads. Edit them here, then regenerate.
 
 /** The scaffolded macOS packaging script (scripts/package-macos.ts). Builds one or
  * more arch .apps, code-signs, and (with a Developer ID identity + notarytool profile)

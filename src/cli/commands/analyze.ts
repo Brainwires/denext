@@ -17,6 +17,7 @@ import {
 } from "../../build/bundle-report.ts";
 import { frameworkRoot } from "../../build/bundle.ts";
 import { nativeAnalyzeMeta } from "../../build/sourcemap-attribution.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /**
  * The per-module attribution `denext analyze --md` asked the build for: the esbuild metafile the
@@ -65,17 +66,9 @@ async function buildForAnalyze(dir: string, md: boolean): Promise<string> {
 }
 
 export const analyzeCommand: CommandSpec = {
-  name: "analyze",
-  summary: "Build, then break down client bundle sizes by chunk",
-  loadsModules: true,
+  ...commandMeta("analyze"),
   // analyze runs a full build into `.denext/` (Cargo's `check` likewise locks the build dir).
   locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "exclusive" }),
-  positionals: [{ name: "dir", help: "Project directory (default: .)" }],
-  flags: [{
-    name: "md",
-    type: "boolean",
-    help: "Print a markdown bundle report (with each chunk's top modules); pipe to a file",
-  }],
   run: async (ctx) => {
     const dir = projectDir(ctx);
     const md = ctx.flags.md === true;

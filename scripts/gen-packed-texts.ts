@@ -3,7 +3,7 @@
 //
 //   src/ui/assets.packed.ts                        UI_CSS, UI_JS (src/ui/styles.ts, client.ts)
 //   src/build/dev-server/dev-scripts.packed.ts     the dev console capture and reload scripts
-//   src/build/desktop-package-scripts.packed.ts    the scaffolded desktop packaging scripts
+//   src/build/fallow-texts.packed.ts               the `denext fallow init` texts (src/build/fallow-texts.ts)
 //   src/expo/manifest-data.packed.ts               EXPO_SHIMS (src/expo/manifest-data.ts)
 //   src/react-native-compat/manifest-data.packed.ts COMMUNITY_ALIASES (…/manifest-data.ts)
 //
@@ -101,25 +101,32 @@ export const PACKED_MODULES: readonly PackedModule[] = [
     ],
   },
   {
-    out: "src/build/desktop-package-scripts.packed.ts",
-    sources: ["src/build/desktop-package-scripts.ts"],
-    about: "the desktop packaging scripts a project is scaffolded with",
+    out: "src/build/fallow-texts.packed.ts",
+    sources: ["src/build/fallow-texts.ts", "scripts/coverage-to-istanbul.ts"],
+    about: "the files `denext create --fallow` / `denext fallow init` write",
     values: [
       reexport(
-        "src/build/desktop-package-scripts.ts",
-        "MACOS_PACKAGE_SCRIPT",
-        "The scaffolded macOS packaging script (`scripts/package-macos.ts`).",
+        "src/build/fallow-texts.ts",
+        "FALLOW_TOML",
+        "`fallow.toml` for a denext app: the path-loaded conventions as entry points.",
       ),
       reexport(
-        "src/build/desktop-package-scripts.ts",
-        "LINUX_PACKAGE_SCRIPT",
-        "The scaffolded Linux packaging script (`scripts/package-linux.ts`).",
+        "src/build/fallow-texts.ts",
+        "PRE_COMMIT_HOOK",
+        "`.githooks/pre-commit`: the fallow gate, enabled by `deno task hooks:install`.",
       ),
       reexport(
-        "src/build/desktop-package-scripts.ts",
-        "WINDOWS_PACKAGE_SCRIPT",
-        "The scaffolded Windows packaging script (`scripts/package-windows.ts`).",
+        "src/build/fallow-texts.ts",
+        "AGENTS_MD",
+        'The agent instructions: denext\'s "Fallow local gate" + task map, through deno tasks.',
       ),
+      {
+        name: "COVERAGE_TO_ISTANBUL_SCRIPT",
+        doc: "The scaffolded `scripts/coverage-to-istanbul.ts` (lcov → Istanbul map): denext's " +
+          "own script, byte for byte, so a fix lands in one place.",
+        type: "string",
+        value: () => Deno.readTextFile(join(ROOT, "scripts/coverage-to-istanbul.ts")),
+      },
     ],
   },
   {
