@@ -10,7 +10,7 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { join } from "@std/path";
-import { boundedOutput, processTree, runBounded } from "./helpers/bounded-command.ts";
+import { boundedOutput, processTree, renderTree, runBounded } from "./helpers/bounded-command.ts";
 import { inChild, pendingSpawns } from "./helpers/isolated.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 
@@ -156,12 +156,28 @@ Deno.test("boundedOutput: a stalled child fails with its pid and what it printed
 Deno.test("processTree: a process that finished reads as gone, and the listing never waits past its bound", async () => {
   const done = new Deno.Command(Deno.execPath(), { args: ["eval", ""], stdout: "null" }).spawn();
   await done.status;
-  const gone = await processTree(done.pid);
+  const gone = await processTree(done.pid, undefined, Deno.execPath());
   assert(gone.endsWith(`(pid ${done.pid} and its descendants are gone)`), gone);
   // This process: listed with its command line.
   assertStringIncludes(await processTree(Deno.pid), `${Deno.pid} `);
   // A listing given no time is abandoned with the reason, not awaited.
   assertMatch(await processTree(Deno.pid, 0), /^\(no process list: .+ still running after 0 ms\)$/);
+});
+
+Deno.test("renderTree: a recycled pid held by a look-alike process reads as gone", () => {
+  const list = [
+    "  900     1 43:00 00:09 Sl   deno test --parallel tests/",
+    "  901   900 00:01 00:00 S    deno info --json x",
+    "  950     1 00:01 00:00 S    deno eval ok",
+  ].join("\n");
+  const gone = "(pid 900 and its descendants are gone)";
+  // The id now belongs to the long-running test run: not the child, nor are its children.
+  assertEquals(renderTree(list, 900, "/bin/sleep"), gone);
+  // Without an identity to check, the id is taken at face value.
+  assertStringIncludes(renderTree(list, 900), "901 (parent 900)");
+  // The same process still matches, and a pid with no row is gone.
+  assertStringIncludes(renderTree(list, 950, "deno eval"), "950  ");
+  assertEquals(renderTree(list, 777, "deno"), "(pid 777 and its descendants are gone)");
 });
 
 Deno.test("pendingSpawns: a spawn with no exit and an output() with no end are unfinished", () => {
