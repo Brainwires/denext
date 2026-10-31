@@ -8,6 +8,18 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A tray menu's `{ role: "quit" }` quits the app on Windows.** Windows' tray menu drew a role as
+  an empty row that did nothing, so a tray app's "Quit" was blank and dead there. On Windows the
+  quit role is now a "Quit" item that quits the app (`app.quit()`'s path: a guarded close still
+  holds it), and the roles only macOS has (`about`, `hide`, ...) are left out of a tray menu.
+- **`setActivationPolicy` shows and hides the main window's taskbar entry on Windows and Linux.**
+  `desktop.app.activationPolicy: "accessory"` hides the main window's taskbar entry at launch
+  there, but `setActivationPolicy("regular")` answered `false`, so a tray app's main window opened
+  with no taskbar entry. `"regular"` now shows it and `"accessory"` / `"prohibited"` hide it, from
+  `desktop.ts` (`app.setActivationPolicy`) and from a page (`denext/desktop/app`).
+
 ## [4.11.4] - 2026-10-31
 
 ### Fixed

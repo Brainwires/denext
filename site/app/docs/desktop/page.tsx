@@ -2851,12 +2851,14 @@ await bounce({ critical: true }); // until the app is focused`}
           adds a status icon (the macOS menu bar, the Windows notification area, Linux&apos;s
           AppIndicator area) with a tooltip, a menu and click events; <code>update</code>,{" "}
           <code>getBounds</code> and <code>destroy</code>{" "}
-          are on the handle. A page load removes the trays the previous page created (their handlers
-          went with it), so create them at startup. Where no icon can be shown (a Linux session with
-          no tray host, such as stock GNOME without the AppIndicator extension),{" "}
-          <code>appCapabilities()</code> reports <code>tray: false</code> with a{" "}
-          <code>trayReason</code>, and <code>createTray</code> rejects <code>unsupported</code>{" "}
-          with that reason in{" "}
+          are on the handle. In a tray menu on Windows the <code>quit</code>{" "}
+          role is a "Quit" item that quits the app, and the macOS-only roles are left out. A page
+          load removes the trays the previous page created (their handlers went with it), so create
+          them at startup. Where no icon can be shown (a Linux session with no tray host, such as
+          stock GNOME without the AppIndicator extension), <code>appCapabilities()</code> reports
+          {" "}
+          <code>tray: false</code> with a <code>trayReason</code>, and <code>createTray</code>{" "}
+          rejects <code>unsupported</code> with that reason in{" "}
           <code>error.data.reason</code>. A tray-only app (its window hidden) gets its window shown
           instead (<code>error.data.windowShown</code>), so it is never left unreachable.
         </li>
@@ -2889,8 +2891,12 @@ await bounce({ critical: true }); // until the app is focused`}
           <code>getActivationPolicy()</code> drive the macOS activation policy (Electron&apos;s{" "}
           <code>app.setActivationPolicy</code>): a tray app can be <code>"accessory"</code>{" "}
           (no Dock icon, no menu bar) and switch to <code>"regular"</code>{" "}
-          only while it has a full window open, which also brings it to the front.{" "}
-          <code>desktop.app.activationPolicy</code> (or <code>dock: false</code>, which means{" "}
+          only while it has a full window open, which also brings it to the front. Windows and Linux
+          have no policy: there <code>"regular"</code>{" "}
+          shows the main window&apos;s taskbar entry and the others hide it, as{" "}
+          <code>"accessory"</code> hides it at launch. <code>desktop.app.activationPolicy</code> (or
+          {" "}
+          <code>dock: false</code>, which means{" "}
           <code>"accessory"</code>) is the policy the app starts in: denext writes it to the
           packaged app&apos;s <code>laufey-launch.json</code> (<code>LAUFEY_ACTIVATION_POLICY</code>
           {" "}

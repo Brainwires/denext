@@ -25296,14 +25296,14 @@
           "kind": "function",
           "signature": "setActivationPolicy(policy: ActivationPolicy): Promise<boolean>",
           "doc": "Set the app's macOS activation policy (Electron's app.setActivationPolicy): \"regular\" (a Dock icon and a menu bar), \"accessory\" (neither: a menu-bar app or a desktop companion) or \"prohibited\". Switching to regular also brings the app to the front, so a tray app can show a Dock icon only while it has a full window open. desktop.app.activationPolicy (or desktop.app.dock: false) sets the one the app starts in. Needs runtime 3.0.0-denext.6 (activationPolicy in appCapabilities); on an older runtime \"regular\" / \"accessory\" show / hide the Dock icon as setDockVisible does.",
-          "docFull": "Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `\"regular\"` (a\nDock icon and a menu bar), `\"accessory\"` (neither: a menu-bar app or a desktop companion) or\n`\"prohibited\"`. Switching to regular also brings the app to the front, so a tray app can show a\nDock icon only while it has a full window open. `desktop.app.activationPolicy` (or\n`desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6\n(`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `\"regular\"` /\n`\"accessory\"` show / hide the Dock icon as {@linkcode setDockVisible} does.",
+          "docFull": "Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `\"regular\"` (a\nDock icon and a menu bar), `\"accessory\"` (neither: a menu-bar app or a desktop companion) or\n`\"prohibited\"`. Switching to regular also brings the app to the front, so a tray app can show a\nDock icon only while it has a full window open. `desktop.app.activationPolicy` (or\n`desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6\n(`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `\"regular\"` /\n`\"accessory\"` show / hide the Dock icon as {@linkcode setDockVisible} does.\n\nWindows and Linux have no policy: there `\"regular\"` shows the main window's taskbar entry and the\nothers hide it, as `desktop.app.activationPolicy: \"accessory\"` hides it at launch.",
           "params": [
             {
               "name": "policy",
               "doc": "The policy."
             }
           ],
-          "returns": "Whether it applied: false on Windows and Linux, which have no policy.",
+          "returns": "Whether it applied (false where the runtime can't hide a taskbar entry).",
           "examples": [
             "```ts\nimport { setActivationPolicy } from \"denext/desktop/app\";\nimport { openWindow } from \"denext/desktop/window\";\n\nawait setActivationPolicy(\"regular\"); // a Dock icon while the window is open\nconst win = await openWindow({ url: \"/library\" });\nwin.onClosed(() => void setActivationPolicy(\"accessory\"));\n```"
           ],
