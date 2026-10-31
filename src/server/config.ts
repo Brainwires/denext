@@ -2715,7 +2715,9 @@ export interface LiveLimits {
    * fetchers peg the concurrency gate and stall the whole live fleet. On timeout the
    * run is aborted (a cooperative `AbortSignal` reaches the fetcher's `fetch`/cache
    * reads) and its slot released; the client gets an error/refresh frame. On by default
-   * — there is no "disable" value (an invalid one falls back to 30s).
+   * — there is no "disable" value (an invalid one falls back to 30s). It also bounds how long
+   * one live-view mount (`defineLiveView`, `defineLustreView`) may hold its connection's mount
+   * queue; past it the mount is answered `failed` and the next one runs.
    */
   renderTimeoutSeconds?: number;
   /** Max live views (`defineLiveView`) one connection may hold mounted (default 16). */

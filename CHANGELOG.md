@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **Live views mount in the order a connection sends them.** A `defineLiveView` (or
+  `defineLustreView`) mount awaits its signature check, `authorize`, the viewer's identity and
+  the resume before it is placed, so a later mount on the same socket could overtake an earlier
+  one and take its slot under `maxViewsPerConnection`. Each connection's mounts now run one at a
+  time in arrival order (other connections stay concurrent), the cap is checked in that order, an
+  unmount or a closing socket cancels the mounts still waiting or running, and one mount holds
+  the queue for at most `live.limits.renderTimeoutSeconds` before it is answered `failed`. The
+  wire protocol is unchanged.
+
 ## [4.11.4] - 2026-10-31
 
 ### Fixed
