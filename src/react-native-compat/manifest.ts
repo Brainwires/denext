@@ -7,7 +7,7 @@
  * Every entry is on by default; `reactNative: { aliases: { "<package>": false } }` resolves
  * that package normally again. A package not listed here always resolves normally.
  * `scripts/parity/native` checks each runtime stand-in's exports against the pinned package.
- * Pure data, decoded on import from a Brotli-packed copy (`node:zlib`; server-side only).
+ * Pure data, decoded on first read from a Brotli-packed copy (`node:zlib`; server-side only).
  *
  * @module
  */
