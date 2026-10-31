@@ -25101,8 +25101,8 @@
           "slug": "getTray",
           "kind": "function",
           "signature": "getTray(): Promise<AppTray | null>",
-          "doc": "The tray icon the app's backend owns (desktop.tray in denext.config.ts, or runDesktop({ tray })): every window's page gets the same one, and a page load never removes it (its destroy rejects validation). Clicks reach every window.",
-          "docFull": "The tray icon the app's backend owns (`desktop.tray` in `denext.config.ts`, or `runDesktop({\ntray })`): every window's page gets the same one, and a page load never removes it (its\n`destroy` rejects `validation`). Clicks reach every window.",
+          "doc": "The tray icon the app's backend owns (desktop.tray in denext.config.ts, or runDesktop({ tray })): every window's page gets the same one, and a page load never removes it (its destroy rejects validation). Clicks reach every window's page — while that page runs: a window that does not show may have its page suspended (WKWebView on macOS) until it shows again, so the clicks a tray-first app must always answer (its menu items, a double click) go in desktop.ts instead (app.tray.onMenuItem, runDesktop({ tray: { onMenuItem } })).",
+          "docFull": "The tray icon the app's backend owns (`desktop.tray` in `denext.config.ts`, or `runDesktop({\ntray })`): every window's page gets the same one, and a page load never removes it (its\n`destroy` rejects `validation`). Clicks reach every window's page — while that page runs: a\nwindow that does not show may have its page suspended (WKWebView on macOS) until it shows again,\nso the clicks a tray-first app must always answer (its menu items, a double click) go in\n`desktop.ts` instead (`app.tray.onMenuItem`, `runDesktop({ tray: { onMenuItem } })`).",
           "params": [],
           "returns": "The tray, or null when the app has none (or the session has no tray host).",
           "examples": [

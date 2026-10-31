@@ -50,6 +50,16 @@ import {
   trayMenu,
   windowTitle,
 } from "../examples/hangar/lib/tray.ts";
+import {
+  createHangarWindows,
+  driveTray,
+  type HangarDesktop,
+  type HangarTray,
+  type HangarWindowRef,
+  type HangarWindows,
+  onTrayMenu,
+  REFRESH_MS,
+} from "../examples/hangar/lib/tray-driver.ts";
 import type { Overview, VmDefinition } from "../examples/hangar/lib/types.ts";
 import {
   buildQemuCommand,
@@ -725,6 +735,283 @@ Deno.test("hangar windows: each page window has its own title and cascades from 
   assertEquals(cascadeOrigin(null, 1), {}); // bounds unknown (Wayland): the WM places it
 });
 
+// --- the tray and the windows, from the app's process (lib/tray-driver.ts) ----------------------
+
+/** A fake window of `DesktopRuntime.windows`. */
+class FakeWindow implements HangarWindowRef {
+  calls: string[] = [];
+  visible: boolean;
+  closed = new Set<() => void>();
+  constructor(
+    readonly id: string,
+    readonly kind: "main" | "panel" | "window",
+    visible = false,
+    readonly bounds: { x: number; y: number } | null = { x: 100, y: 80 },
+  ) {
+    this.visible = visible;
+  }
+  show() {
+    this.visible = true;
+    this.calls.push("show");
+  }
+  focus() {
+    this.calls.push("focus");
+  }
+  getBounds() {
+    return this.bounds;
+  }
+  onClosed(handler: () => void) {
+    this.closed.add(handler);
+    return () => void this.closed.delete(handler);
+  }
+}
+
+/** A fake runtime: a hidden main window, a hidden panel, and what was opened and set. */
+function fakeDesktop(opts: { tray?: boolean } = {}) {
+  const wins = new Map<string, FakeWindow>([
+    ["main", new FakeWindow("main", "main")],
+    ["panel", new FakeWindow("panel", "panel")],
+  ]);
+  const policies: string[] = [];
+  const opened: Record<string, unknown>[] = [];
+  const panel = {
+    shown: 0,
+    hidden: 0,
+    show() {
+      this.shown++;
+    },
+    hide() {
+      this.hidden++;
+    },
+  };
+  let n = 0;
+  const app: HangarDesktop = {
+    windows: {
+      open: (o) => {
+        opened.push(o);
+        const w = new FakeWindow(`window-${++n}`, "window", true);
+        wins.set(w.id, w);
+        return w;
+      },
+      get: (id) => wins.get(id),
+      list: () => [...wins.values()],
+    },
+    ...(opts.tray === false ? {} : { tray: { panel } as unknown as HangarTray }),
+    setActivationPolicy: (p) => {
+      policies.push(p);
+      return true;
+    },
+  };
+  /** The user closes window `id`. */
+  const close = (id: string) => {
+    const w = wins.get(id)!;
+    wins.delete(id);
+    for (const h of w.closed) h();
+  };
+  return { app, wins, policies, opened, panel, close };
+}
+
+Deno.test("hangar windows (backend): the library is the main window; a page opens once, cascaded", () => {
+  const d = fakeDesktop();
+  const w = createHangarWindows(d.app);
+  w.openFull("/");
+  assertEquals(d.wins.get("main")!.calls, ["show", "focus"]);
+  assertEquals([d.policies, d.panel.hidden, d.opened], [["regular"], 1, []]);
+  w.openFull("/images");
+  assertEquals(d.opened, [{
+    url: "/images",
+    title: "Hangar — Images",
+    width: 900,
+    height: 640,
+    x: 100 + CASCADE_STEP,
+    y: 80 + CASCADE_STEP,
+  }]);
+  assertEquals(d.wins.get("window-1")!.calls, ["focus"]);
+  // Again: the same window comes back, no second one.
+  w.openFull("/images");
+  assertEquals([d.opened.length, d.wins.get("window-1")!.calls], [1, ["focus", "show", "focus"]]);
+  w.openFull("/settings");
+  assertEquals(d.opened[1].x, 100 + 2 * CASCADE_STEP);
+  // Closing a page's window forgets it; the Dock icon stays while another full window shows.
+  d.close("window-1");
+  assertEquals(d.policies.at(-1), "regular");
+  w.openFull("/images");
+  assertEquals(d.opened.length, 3);
+  d.close("window-2");
+  d.wins.get("window-3")!.visible = false;
+  d.wins.get("main")!.visible = false;
+  w.syncDock();
+  assertEquals(d.policies.at(-1), "accessory");
+  w.showPanel();
+  assertEquals(d.panel.shown, 1);
+});
+
+Deno.test("hangar windows (backend): no main window or bounds, no tray, a window gone meanwhile", () => {
+  const d = fakeDesktop({ tray: false });
+  d.wins.delete("main");
+  const w = createHangarWindows(d.app);
+  w.openFull("/"); // the library in a window of its own
+  assertEquals(d.opened, [{ url: "/", title: "Hangar", width: 900, height: 640 }]);
+  w.showPanel(); // no tray: nothing
+  // A window gone from the runtime without its close reaching us: a new one.
+  const first = d.wins.get("window-1")!;
+  d.wins.delete("window-1");
+  w.openFull("/");
+  assertEquals(d.opened.length, 2);
+  // The old window's late close doesn't forget the new one.
+  for (const h of first.closed) h();
+  w.openFull("/");
+  assertEquals([d.opened.length, d.wins.get("window-2")!.calls], [2, ["focus", "show", "focus"]]);
+  const d2 = fakeDesktop();
+  d2.wins.set("main", new FakeWindow("main", "main", false, null));
+  createHangarWindows(d2.app).openFull("/vm?id=a");
+  assertEquals("x" in d2.opened[0], false); // no library bounds (Wayland): the WM places it
+});
+
+/** A fake backend tray: its listeners, what it was updated with and whether it popped up. */
+function fakeTray() {
+  const handlers = {
+    menu: [] as ((id: string) => void)[],
+    dbl: [] as (() => void)[],
+    click: [] as ((d: { modifiers: { ctrl: boolean } } | null) => void)[],
+    enter: [] as (() => void)[],
+  };
+  const updates: { tooltip?: string; menu?: readonly unknown[] }[] = [];
+  let popped = 0;
+  let failUpdate = false;
+  const add = <T>(list: T[], h: T) => {
+    list.push(h);
+    return () => void list.splice(list.indexOf(h), 1);
+  };
+  const tray: HangarTray = {
+    update: (u) => {
+      if (failUpdate) throw new Error("bad menu");
+      updates.push(u);
+    },
+    onClick: (h) => add(handlers.click, h),
+    onDoubleClick: (h) => add(handlers.dbl, h),
+    on: (_type, h) => add(handlers.enter, h),
+    onMenuItem: (h) => add(handlers.menu, h),
+    popUpMenu: () => {
+      popped++;
+      return true;
+    },
+  };
+  return {
+    tray,
+    handlers,
+    updates,
+    popped: () => popped,
+    failUpdates: () => void (failUpdate = true),
+  };
+}
+
+/** A window manager that records what it was asked. */
+function recordingWindows(): HangarWindows & { asked: string[] } {
+  const asked: string[] = [];
+  return {
+    asked,
+    openFull: (p) => void asked.push(`open ${p}`),
+    showPanel: () => void asked.push("panel"),
+    syncDock: () => void asked.push("dock"),
+  };
+}
+
+Deno.test("hangar tray (backend): menu items open windows, the panel, start and shut down VMs", async () => {
+  const w = recordingWindows();
+  const did: string[] = [];
+  let started = true;
+  const backend = {
+    overview: () => Promise.reject(new Error("unused")),
+    start: (id: string) => {
+      did.push(`start ${id}`);
+      return Promise.resolve({ started });
+    },
+    shutdown: (id: string) => {
+      did.push(`shutdown ${id}`);
+      return Promise.resolve(null);
+    },
+  };
+  await onTrayMenu(MENU.library, w, backend);
+  await onTrayMenu(MENU.images, w, backend);
+  await onTrayMenu(MENU.panel, w, backend);
+  await onTrayMenu(`${SHUTDOWN_PREFIX}a`, w, backend);
+  await onTrayMenu("start:b", w, backend);
+  started = false; // over the RAM budget: the panel asks
+  await onTrayMenu("start:c", w, backend);
+  await onTrayMenu("none", w, backend);
+  assertEquals(w.asked, ["open /", "open /images", "panel", "panel"]);
+  assertEquals(did, ["shutdown a", "start b", "start c"]);
+});
+
+Deno.test("hangar tray (backend): it answers clicks and keeps the tooltip and menu current", async () => {
+  const t = fakeTray();
+  const w = recordingWindows();
+  const errors: unknown[] = [];
+  const host = library().proc(101, `${ROOT}/linux-arm`, QEMU_A64);
+  const h = hangarOn(host);
+  let overviews = 0;
+  const backend = {
+    overview: () => {
+      overviews++;
+      return h.overview();
+    },
+    start: () => Promise.reject(new Error("no")),
+    shutdown: () => Promise.resolve(null),
+  };
+  const driver = driveTray(t.tray, w, backend, (err) => void errors.push(err));
+  try {
+    await driver.refresh();
+    assertEquals(t.updates.length, 2); // the first refresh (at start) and this one
+    assertStringIncludes(t.updates[0].tooltip!, "Hangar");
+    assert(t.updates[0].menu, "the first sets the menu");
+    assertEquals("menu" in t.updates[1], false, "an unchanged menu is not replaced");
+    t.handlers.menu[0](MENU.settings);
+    t.handlers.dbl[0]();
+    t.handlers.click[0]({ modifiers: { ctrl: true } });
+    t.handlers.click[0]({ modifiers: { ctrl: false } });
+    t.handlers.click[0](null);
+    assertEquals([w.asked, t.popped()], [["open /settings", "open /"], 1]);
+    t.handlers.menu[0]("start:linux-arm"); // a failed action goes to onError
+    t.handlers.enter[0]();
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(errors.length, 1);
+    assert(overviews >= 3, "mouseenter refreshes");
+    t.failUpdates();
+    await driver.refresh();
+    assertEquals(errors.length, 2);
+  } finally {
+    driver.stop();
+  }
+  assertEquals(Object.values(t.handlers).map((l) => l.length), [0, 0, 0, 0]);
+  const count = overviews;
+  await driver.refresh(); // stopped: nothing
+  assertEquals(overviews, count);
+  assertEquals(REFRESH_MS, 5000);
+});
+
+Deno.test("hangar tray (backend): a failed overview leaves the tray as it is; stop mid-refresh", async () => {
+  const t = fakeTray();
+  let release: (o: Overview) => void = () => {};
+  let calls = 0;
+  const driver = driveTray(t.tray, recordingWindows(), {
+    overview: () => {
+      calls++;
+      if (calls === 1) return Promise.reject(new Error("offline"));
+      return new Promise<Overview>((r) => (release = r));
+    },
+    start: () => Promise.resolve({ started: true }),
+    shutdown: () => Promise.resolve(null),
+  });
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(t.updates, []);
+  const pending = driver.refresh();
+  driver.stop();
+  release(await hangarOn(library()).overview());
+  await pending;
+  assertEquals(t.updates, [], "stopped while waiting: no update");
+});
+
 // --- QMP -------------------------------------------------------------------------------------
 
 /** A fake QEMU on the other end of an in-memory socket: answers each command with `reply`. */
@@ -812,6 +1099,7 @@ Deno.test("hangar: the entry, the extension and the pages type-check against den
     "desktop.ts",
     "desktop/hangar.ts",
     "lib/deno-host.ts",
+    "lib/tray-driver.ts",
     "app/layout.tsx",
     "app/page.tsx",
     "app/vm/page.tsx",

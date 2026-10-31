@@ -577,7 +577,10 @@ export async function createTray(options: TrayOptions): Promise<AppTray> {
 /**
  * The tray icon the app's backend owns (`desktop.tray` in `denext.config.ts`, or `runDesktop({
  * tray })`): every window's page gets the same one, and a page load never removes it (its
- * `destroy` rejects `validation`). Clicks reach every window.
+ * `destroy` rejects `validation`). Clicks reach every window's page — while that page runs: a
+ * window that does not show may have its page suspended (WKWebView on macOS) until it shows again,
+ * so the clicks a tray-first app must always answer (its menu items, a double click) go in
+ * `desktop.ts` instead (`app.tray.onMenuItem`, `runDesktop({ tray: { onMenuItem } })`).
  *
  * @returns The tray, or `null` when the app has none (or the session has no tray host).
  * @example

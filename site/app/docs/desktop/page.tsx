@@ -2927,16 +2927,21 @@ export default {
   },
 };
 
-// desktop.ts: the backend hears the clicks first
-const app = await runDesktop({ ...resolved, tray: { onMenuItem: (id) => { /* … */ } } });
+// desktop.ts: the backend hears the clicks first, and hears them with every window hidden
+const app = await runDesktop({
+  ...resolved,
+  tray: {
+    onMenuItem: (id) => id === "open" && app.windows.get("main")?.show(),
+    onDoubleClick: () => app.windows.open({ url: "/images" }).onClosed(() => syncDock()),
+  },
+});
 app.tray?.update({ tooltip: "2 VMs running" });
+app.tray?.on("mouseenter", () => void refreshTooltip()); // hover (macOS, Windows)
 
-// any page
+// any page (while its window shows)
 import { getTray, toggleTrayPanel } from "denext/desktop/app";
 const tray = await getTray(); // the same tray in every window; null without one
-tray?.onClick((e) => e === "doubleClick" && openWindow({ url: "/" }));
-tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Control-click: the menu
-tray?.on("mouseenter", () => void refreshTooltip()); // hover (macOS, Windows)`}
+tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Control-click: the menu`}
       </Code>
       <p>
         From runtime 3.0.0-denext.6 every tray event carries the runtime&apos;s detail (
@@ -2963,9 +2968,20 @@ tray?.on("mouseenter", () => void refreshTooltip()); // hover (macOS, Windows)`}
       <p>
         Its clicks reach the backend&apos;s handlers and every window&apos;s page;{" "}
         <code>showTrayPanel</code>, <code>hideTrayPanel</code> and <code>toggleTrayPanel</code>{" "}
-        drive the panel. A page cannot destroy it. Where the session has no tray host the app gets
-        no icon, its main window is shown instead, and it is no longer kept alive by the tray.{" "}
-        <a href="/docs/examples">examples/hangar</a> is a tray-first app built this way.
+        drive the panel. A page hears them only while it runs, though: a window that does not show
+        may have its page suspended until it shows again (WKWebView does that on macOS), so a menu
+        item handled by a hidden main window&apos;s page does nothing there. Answer the menu items
+        and the double click in{" "}
+        <code>desktop.ts</code>, in the app&apos;s process: the handle&apos;s{" "}
+        <code>onMenuItem</code> / <code>onDoubleClick</code>, with <code>app.windows</code>{" "}
+        to open and show windows (each ref has <code>visible</code>, <code>getBounds()</code> and
+        {" "}
+        <code>onClosed()</code>) and <code>app.setActivationPolicy</code>{" "}
+        for the Dock icon. denext warns once when a menu item is chosen with no window showing and
+        no <code>onMenuItem</code> in{" "}
+        <code>desktop.ts</code>. A page cannot destroy it. Where the session has no tray host the
+        app gets no icon, its main window is shown instead, and it is no longer kept alive by the
+        tray. <a href="/docs/examples">examples/hangar</a> is a tray-first app built this way.
       </p>
       <h3 id="desktop-user-activity">Handoff and Spotlight</h3>
       <p>

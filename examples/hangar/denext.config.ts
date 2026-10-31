@@ -31,14 +31,14 @@ export default {
       // open, and back.
       activationPolicy: "accessory",
     },
-    // The main window: the library. Hidden at launch; its page still loads and drives the tray's
-    // menu and tooltip (app/tray-shell.tsx).
+    // The main window: the library. Hidden at launch. The tray's menu and tooltip are driven from
+    // desktop.ts (lib/tray-driver.ts), not from this hidden page, which may be suspended (macOS).
     window: { width: 900, height: 640, title: "Hangar", show: false },
     minSize: { width: 320, height: 360 },
     tray: {
       icon: "/tray.png",
       tooltip: "Hangar",
-      // The menu until the main page has the overview (it updates it every few seconds).
+      // The menu until desktop.ts has the overview (it updates it every few seconds).
       // (A config form has no bare "separator" strings: `{ separator: true }`; the first menu
       // has no submenus.)
       menu: trayMenu(null).flatMap((item): DesktopTrayMenuItem[] =>

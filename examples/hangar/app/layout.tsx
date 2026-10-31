@@ -1,7 +1,7 @@
-// Root layout: denext supplies <html>/<head>/<body>. The tray shell owns the tray icon and the
-// window's panel / full / hidden modes for every page.
+// Root layout: denext supplies <html>/<head>/<body>. The main window's close button hides it
+// (close-to-tray); the tray and the windows are driven from the app's process (desktop.ts).
 import type { LayoutProps } from "denext/server";
-import { TrayShell } from "./tray-shell.tsx";
+import { CloseToTray } from "./close-to-tray.tsx";
 
 export const metadata = {
   title: "Hangar",
@@ -12,7 +12,7 @@ export const metadata = {
 export default function RootLayout({ children }: LayoutProps) {
   return (
     <main className="content">
-      <TrayShell />
+      <CloseToTray />
       {children}
     </main>
   );

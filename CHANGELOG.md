@@ -8,7 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`DesktopRuntime.windows` refs report `visible`, `getBounds()` and `onClosed(handler)`**, so
+  `desktop.ts` can manage the app's windows (one window per page, cascading, a Dock icon only while
+  a full window shows) without a page.
+- **A warning when a backend tray's menu item is chosen while no window shows and `desktop.ts` has
+  no `onMenuItem` handler** (once per launch): only hidden pages could act on it then.
+
 ### Fixed
+
+- **A tray-first app's menu items work while every window is hidden.** A window that does not show
+  may have its page suspended (WKWebView suspends a page that is not on screen on macOS), so a tray
+  menu item handled by a hidden window's page did nothing until that window showed again
+  (examples/hangar's "Open Hangar" and "Images" on macOS). examples/hangar now answers its tray
+  (menu items, double click, tooltip) and opens its windows from `desktop.ts`, in the app's process;
+  the `getTray()` and `runDesktop({ tray: { onMenuItem } })` docs say where such clicks belong.
 
 - **No Dock tile at launch for a macOS menu-bar app.** `desktop.app.activationPolicy: "accessory"`
   (or `desktop.app.dock: false`) reached the runtime only through `laufey-launch.json`, which is
