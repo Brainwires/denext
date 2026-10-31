@@ -133,6 +133,29 @@ Deno.test("boundedDeno: the caller's DENO_LOG replaces the default filter", asyn
   assertEquals(out.stdout, "warn\n");
 });
 
+Deno.test("boundedDeno: every child runs with NO_COLOR", async () => {
+  const out = await boundedDeno(["eval", `console.log(Deno.env.get("NO_COLOR"))`]);
+  assertEquals(out.stdout, "1\n");
+});
+
+Deno.test("denoDocJson: a template-literal type's repr carries no colour codes", async () => {
+  // Without NO_COLOR, `deno doc --json` colours the `${Name}` span even with stdout piped.
+  const dir = await Deno.makeTempDir({ prefix: "denext-deno-doc-" });
+  try {
+    const file = join(dir, "mod.ts");
+    await Deno.writeTextFile(
+      file,
+      '/** Kinds. */\nexport type Kind = "a" | "b";\n/** A kind or its string. */\n' +
+        "export type KindLike = Kind | `${Kind}`;\n",
+    );
+    const text = JSON.stringify(await denoDocJson(file));
+    assert(text.includes("Kind"), text);
+    assert(!text.includes("\\u001b"), `colour codes in deno doc output: ${text}`);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("denoDocJson: reads a module's symbols", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-deno-doc-" });
   try {
