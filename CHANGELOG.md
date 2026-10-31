@@ -143,6 +143,15 @@ and this project adheres to
   above the copy (a workspace root rather than the member). All three now ask the same location
   check the docs corpus uses, and treat a copy as the published package.
 
+### Security
+
+- **The Deno Desktop runtime's build provenance is checked by default.** A fresh runtime download
+  is now checked with `gh attestation verify` (the release workflow and tag of the pin) whenever
+  the GitHub CLI is signed in, not only under `--attest-runtime`; when `gh` is missing or signed
+  out, the download says the provenance was not checked (the SHA-256 pin is enforced either way).
+  `--attest-runtime` / `DENEXT_DESKTOP_RUNTIME_ATTEST=1` make the check required, `=0` turns it
+  off; a cached runtime is not downloaded again for it.
+
 ## [4.10.5] - 2026-10-31
 
 ### Added

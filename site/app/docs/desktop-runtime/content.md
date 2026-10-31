@@ -976,13 +976,14 @@ any difference. macOS apps package on a Mac.
 **`denext doctor`** reports the pinned runtime version, whether it is cached and verified on this
 machine, and whether `deno` is the version it needs.
 
-| Variable                           | Effect                                                             |
-| ---------------------------------- | ------------------------------------------------------------------ |
-| `DENEXT_DESKTOP_RUNTIME=pinned`    | The default: denext's runtime, downloaded and verified.            |
-| `DENEXT_DESKTOP_RUNTIME=stock`     | The stock Deno Desktop runtime (see [Opting out](#opting-out)).    |
-| `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` | A local runtime build, checked for its layout only (runtime work). |
-| `DENEXT_DESKTOP_RUNTIME_VERIFY=1`  | Re-hash every cached file before use (`--verify-runtime`).         |
-| `DENEXT_DESKTOP_RUNTIME_ATTEST=1`  | `gh attestation verify` a fresh download (`--attest-runtime`).     |
+| Variable                           | Effect                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------- |
+| `DENEXT_DESKTOP_RUNTIME=pinned`    | The default: denext's runtime, downloaded and verified.                   |
+| `DENEXT_DESKTOP_RUNTIME=stock`     | The stock Deno Desktop runtime (see [Opting out](#opting-out)).           |
+| `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` | A local runtime build, checked for its layout only (runtime work).        |
+| `DENEXT_DESKTOP_RUNTIME_VERIFY=1`  | Re-hash every cached file before use (`--verify-runtime`).                |
+| `DENEXT_DESKTOP_RUNTIME_ATTEST=1`  | Require `gh attestation verify` of a fresh download (`--attest-runtime`). |
+| `DENEXT_DESKTOP_RUNTIME_ATTEST=0`  | Never run it (unset: run it when `gh` is signed in, else say so).         |
 
 The provenance check accepts only an attestation from the runtime repository's release workflow
 (`.github/workflows/denext_runtime.yml`) built from the pinned tag, on a GitHub-hosted runner.
@@ -1085,8 +1086,9 @@ upstream version.
   versions differ.
 - **Verified before use.** denext checks the size and SHA-256 of every archive against its own pin
   before extracting it, and the cached files against the marker before reusing them.
-- **Attested.** Every archive has a build provenance attestation, and `--attest-runtime` checks it
-  on every fresh download.
+- **Attested.** Every archive has a build provenance attestation, checked on every fresh download
+  whenever the GitHub CLI is signed in (the build says so when it is not); `--attest-runtime` makes
+  the check required.
 
 ```sh
 gh attestation verify deno-desktop-runtime-<version>-<target>-<backend>.tar.gz -R Brainwires/deno

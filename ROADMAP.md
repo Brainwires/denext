@@ -109,9 +109,6 @@ Not blocking 5.0; each item says why.
 ## Deno Desktop
 
 - **Desktop hardening leftovers from the 4.8 packaging audit (all Low):**
-  - The runtime's build provenance (`gh attestation verify`) is opt-in (`--attest-runtime`); the
-    SHA-256 pin shipped in the denext package is the default trust root. Attest by default when
-    `gh` is signed in, and say so when it is not. _Why 5.x: the pin is already the trust root._
   - A sidecar's child under the Deno CLI (`spawnSelf` from an app run with `deno run`) gets the
     parent's unscoped `--allow-*` but not `desktop.denoFlags` or `--unstable-*` flags given on the
     command line. _Why 5.x: Low, the CLI-dev path only._
