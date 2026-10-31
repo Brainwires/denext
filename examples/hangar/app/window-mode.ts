@@ -14,7 +14,7 @@ import {
   windowHandle,
 } from "denext/desktop/window";
 import { hideTrayPanel, setActivationPolicy, showTrayPanel } from "denext/desktop/app";
-import { FULL_SIZE } from "../lib/tray.ts";
+import { cascadeOrigin, FULL_SIZE, windowTitle } from "../lib/tray.ts";
 
 /** The full windows this page opened, by path (one per page of the app). */
 const opened = new Map<string, DesktopWindowHandle>();
@@ -61,7 +61,10 @@ export async function openFull(path: string): Promise<void> {
       opened.delete(path); // closed meanwhile
     }
   }
-  const win = await openWindow({ url: path, title: "Hangar", ...FULL_SIZE });
+  // Its own title, and cascaded from the library window rather than exactly over it.
+  const library = await windowHandle("main").getBounds().catch(() => null);
+  const origin = cascadeOrigin(library, opened.size + 1);
+  const win = await openWindow({ url: path, title: windowTitle(path), ...FULL_SIZE, ...origin });
   opened.set(path, win);
   win.onClosed(() => {
     opened.delete(path);

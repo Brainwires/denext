@@ -14,6 +14,12 @@ export default {
     app: {
       name: "Hangar",
       identifier: "dev.denext.hangar",
+      // The app icon on each OS (icons/: original art, 1024 px; the .ico holds 16 to 256 px).
+      icons: {
+        macos: "./icons/macos.png",
+        linux: "./icons/linux.png",
+        windows: "./icons/windows.ico",
+      },
       // A stable origin, so the page's storage survives relaunches.
       origin: "hangar://app",
       // A second launch hands over to the running tray app instead of adding a second tray icon.

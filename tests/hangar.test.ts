@@ -42,7 +42,14 @@ import {
   parseMemoryMiB,
   parseStartScript,
 } from "../examples/hangar/lib/start-script.ts";
-import { MENU, SHUTDOWN_PREFIX, trayMenu } from "../examples/hangar/lib/tray.ts";
+import {
+  CASCADE_STEP,
+  cascadeOrigin,
+  MENU,
+  SHUTDOWN_PREFIX,
+  trayMenu,
+  windowTitle,
+} from "../examples/hangar/lib/tray.ts";
 import type { Overview, VmDefinition } from "../examples/hangar/lib/types.ts";
 import {
   buildQemuCommand,
@@ -698,6 +705,24 @@ Deno.test("hangar tray: the menu lists running VMs, startable ones and the windo
   assertStringIncludes(labels, MENU.settings);
   assertEquals(menu.at(-1), { role: "quit" });
   assertStringIncludes(JSON.stringify(trayMenu(null)), "No VMs running");
+});
+
+Deno.test("hangar windows: each page window has its own title and cascades from the library", () => {
+  assertEquals(windowTitle("/"), "Hangar");
+  assertEquals(windowTitle("/images"), "Hangar — Images");
+  assertEquals(windowTitle("/create/"), "Hangar — New VM");
+  assertEquals(windowTitle("/settings#disk"), "Hangar — Settings");
+  assertEquals(windowTitle("/vm?id=linux-arm"), "Hangar — VM");
+  assertEquals(windowTitle("/logs"), "Hangar — Logs");
+  assertEquals(cascadeOrigin({ x: 100, y: 80 }, 1), {
+    x: 100 + CASCADE_STEP,
+    y: 80 + CASCADE_STEP,
+  });
+  assertEquals(cascadeOrigin({ x: 100, y: 80 }, 2), {
+    x: 100 + 2 * CASCADE_STEP,
+    y: 80 + 2 * CASCADE_STEP,
+  });
+  assertEquals(cascadeOrigin(null, 1), {}); // bounds unknown (Wayland): the WM places it
 });
 
 // --- QMP -------------------------------------------------------------------------------------
