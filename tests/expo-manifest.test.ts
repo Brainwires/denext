@@ -1,6 +1,6 @@
 // The denext/expo shim manifest (src/expo/manifest.ts) against the shims themselves, the
-// deno.json exports, the prebuilt-runtime wiring, and the pinned versions in T3 Code's
-// apps/mobile/package.json (when that checkout is present).
+// deno.json exports, the prebuilt-runtime wiring, and the pinned versions in the reference
+// package.json fixture (tests/fixtures/expo-pins).
 
 import { assert, assertEquals } from "@std/assert";
 import { EXPO_SHIMS } from "../src/expo/manifest.ts";
@@ -14,7 +14,6 @@ import {
 } from "../src/build/expo-shims.ts";
 import { runtimeEntryPoints } from "../src/build/next-compat.ts";
 import { isSqliteWasmBridgeImport } from "../src/build/sqlite-wasm.ts";
-import { fromFileUrl } from "@std/path";
 
 const EXPO_DIR = new URL("../src/expo/", import.meta.url);
 
@@ -183,74 +182,20 @@ Deno.test("sqlite bridge: only denext/mobile's import of sqlite-wasm.ts is exter
   }
 });
 
-/** T3 Code's apps/mobile package.json: `$T3_MOBILE_PACKAGE_JSON`, else the sibling checkout. */
-const T3_PACKAGE_JSON = Deno.env.get("T3_MOBILE_PACKAGE_JSON") ??
-  fromFileUrl(new URL("../../t3code/apps/mobile/package.json", import.meta.url));
+/** The reference package.json whose expo-* pins the manifest is meant to track. */
+const PINS_FIXTURE = new URL("./fixtures/expo-pins/package.json", import.meta.url);
 
-/** The expo-* dependencies of T3's app that deliberately have no shim. */
-const NOT_SHIMMED: string[] = [];
-
-/**
- * Shims for packages T3's app does not depend on, pinned to their Expo SDK 58 release instead
- * (`expo-status-bar`: React Native mode's StatusBar makes it more than Expo's no-op web build).
- */
-const BEYOND_T3: Readonly<Record<string, string>> = {
-  "expo-status-bar": "58.0.3",
-  "expo-apple-authentication": "58.0.2",
-  "expo-local-authentication": "58.0.2",
-  "expo-location": "58.0.10",
-  "expo-application": "58.0.3",
-  "expo-maps": "58.0.4",
-  "expo-tracking-transparency": "58.0.2",
-  "expo-media-library": "58.0.5",
-  "expo-navigation-bar": "58.0.4",
-  "expo-screen-capture": "58.0.5",
-  "expo-screen-orientation": "58.0.2",
-  "expo-store-review": "58.0.2",
-  "expo-battery": "58.0.3",
-  "expo-cellular": "58.0.2",
-  "expo-checkbox": "58.0.2",
-  "expo-gl": "58.0.3",
-  "expo-brightness": "58.0.2",
-  "expo-intent-launcher": "58.0.3",
-  "expo-print": "58.0.5",
-  "expo-calendar": "58.0.6",
-  "expo-contacts": "58.0.6",
-  "expo-linear-gradient": "58.0.3",
-  "expo-localization": "58.0.3",
-  "expo-mail-composer": "58.0.3",
-  "expo-mesh-gradient": "58.0.3",
-  "expo-sensors": "58.0.2",
-  "expo-sms": "58.0.2",
-  "expo-speech": "58.0.3",
-  "expo-system-ui": "58.0.5",
-  "expo-video-thumbnails": "58.0.2",
-};
-
-let t3Present = false;
-try {
-  t3Present = Deno.statSync(T3_PACKAGE_JSON).isFile;
-} catch { /* no checkout: the pin test is skipped */ }
-
-Deno.test({
-  name: "expo manifest: pinned versions match T3's apps/mobile/package.json",
-  ignore: !t3Present,
-  async fn() {
-    const deps = JSON.parse(await Deno.readTextFile(T3_PACKAGE_JSON)).dependencies as Record<
-      string,
-      string
-    >;
-    for (const [key, shim] of Object.entries(EXPO_SHIMS)) {
-      const pkg = packageOf(key);
-      if (Object.hasOwn(BEYOND_T3, pkg)) {
-        assertEquals(shim.pinned, BEYOND_T3[pkg], `${key} pin (SDK 58 release)`);
-        continue;
-      }
-      assert(pkg in deps, `${pkg} is not a dependency of T3's app`);
-      assertEquals(shim.pinned, deps[pkg].replace(/^[~^]/, ""), `${key} pin`);
-    }
-    for (const pkg of Object.keys(deps).filter((d) => /^expo(-|$)/.test(d))) {
-      assert(pkg in EXPO_SHIMS || NOT_SHIMMED.includes(pkg), `${pkg} has no shim`);
-    }
-  },
+Deno.test("expo manifest: pinned versions match the reference package.json fixture", async () => {
+  const deps = JSON.parse(await Deno.readTextFile(PINS_FIXTURE)).dependencies as Record<
+    string,
+    string
+  >;
+  for (const [key, shim] of Object.entries(EXPO_SHIMS)) {
+    const pkg = packageOf(key);
+    assert(pkg in deps, `${pkg} is not in the reference package.json`);
+    assertEquals(shim.pinned, deps[pkg].replace(/^[~^]/, ""), `${key} pin`);
+  }
+  for (const pkg of Object.keys(deps).filter((d) => /^expo(-|$)/.test(d))) {
+    assert(Object.keys(EXPO_SHIMS).some((k) => packageOf(k) === pkg), `${pkg} has no shim`);
+  }
 });
