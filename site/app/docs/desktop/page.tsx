@@ -3923,6 +3923,39 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         </li>
       </ul>
 
+      <h3 id="desktop-baked-permissions">The permissions a package bakes</h3>
+      <p>
+        The package scripts derive the binary&apos;s <code>--allow-*</code>{" "}
+        flags from the config, never{" "}
+        <code>-A</code>: loopback networking, read and the environment as the baseline, plus what
+        the enabled capabilities, sidecars, the updater and <code>desktop.extraPermissions</code>
+        {" "}
+        need. The app&apos;s own folders (the <code>fs</code>, <code>sqlite</code> and{" "}
+        <code>updates</code> capabilities, a sidecar&apos;s log file, the UI overlay&apos;s{" "}
+        <code>ui-updates</code>) have a per-user path that is only known on the user&apos;s machine,
+        so a binary that writes there is baked an unscoped <code>--allow-write</code>.
+      </p>
+      <p>
+        From Deno Desktop runtime 3.0.0-denext.8 (once denext pins it), an app with{" "}
+        <code>desktop.app.identifier</code> is baked those writes as the folders themselves:{" "}
+        <code>$DENO_DESKTOP_DATA</code> (and <code>$DENO_DESKTOP_DATA/logs</code>,{" "}
+        <code>$DENO_DESKTOP_DATA/ui-updates</code>) and{" "}
+        <code>$DENO_DESKTOP_CACHE</code>, which the runtime expands at launch to the app&apos;s data
+        folder (<code>~/Library/Application Support/&lt;id&gt;</code> on macOS,{" "}
+        <code>%APPDATA%\&lt;id&gt;</code> on Windows, <code>$XDG_DATA_HOME/&lt;id&gt;</code>{" "}
+        on Linux) and cache folder. The token counts only at the start of a value, a value with a
+        {" "}
+        <code>..</code>{" "}
+        component is dropped, and with no folder to expand to the entry is dropped rather than
+        widened. In <code>desktop.extraPermissions.write</code>, <code>$APPDATA/…</code> and{" "}
+        <code>$CACHE/…</code>{" "}
+        become those tokens and an absolute path is kept as written. A write that has no token (a
+        picked path under <code>dialogs</code>, <code>$DOCUMENTS</code> in{" "}
+        <code>fs</code>, a relative path) keeps the unscoped <code>--allow-write</code>
+        . Code of the app that writes anywhere else needs that path in{" "}
+        <code>desktop.extraPermissions.write</code>.
+      </p>
+
       <h2 id="desktop-react-native">React Native on desktop</h2>
       <p>
         A <a href="/docs/react-native">React Native / Expo app</a> (<code>reactNative: true</code>,

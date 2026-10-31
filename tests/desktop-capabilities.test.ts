@@ -14,12 +14,14 @@ import {
   addDesktopCapabilities,
   DESKTOP_BASELINE_FLAGS,
   DESKTOP_CAPABILITIES,
+  DESKTOP_DATA_TOKEN,
   desktopBuildFlags,
   desktopIncludeArgs,
   desktopNpmArgs,
   desktopNpmArgsFor,
   desktopPackageFlags,
   desktopPermissionFlags,
+  desktopScopedPath,
   formatDesktopAddReport,
   formatDesktopCapabilityTable,
   passkeyRpId,
@@ -342,6 +344,95 @@ Deno.test("desktopBuildFlags: a capability that writes collapses to one broad --
   assert(!flags.some((f) => f.startsWith("--allow-write=")), flags.join(" "));
   // read is covered by the broad baseline, so no capability-scoped --allow-read is added.
   assertEquals(flags.filter((f) => f.startsWith("--allow-read")), ["--allow-read"]);
+});
+
+Deno.test("desktopBuildFlags: on a runtime that expands $DENO_DESKTOP_DATA the app-folder writes are scoped", () => {
+  const app = (
+    desktop: Record<string, unknown>,
+    identifier: string | null = "com.example.app",
+  ) => ({
+    desktop: { ...(identifier !== null ? { app: { identifier } } : {}), ...desktop },
+  });
+  const writeOf = (flags: string[]) => flags.filter((f) => f.startsWith("--allow-write"));
+  const scope = { dataScope: true, cacheScope: true } as const;
+  // fs (its default folders), sqlite and updates: the data and cache folders, never broad.
+  assertEquals(
+    writeOf(
+      desktopBuildFlags(
+        app({ capabilities: { fs: true, sqlite: true, updates: true } }),
+        "darwin",
+        scope,
+      ),
+    ),
+    [`--allow-write=$DENO_DESKTOP_CACHE,${DESKTOP_DATA_TOKEN}`],
+  );
+  // The UI overlay keeps its versions in <data>/ui-updates; a sidecar's log file in <data>/logs.
+  assertEquals(
+    writeOf(desktopBuildFlags(
+      app({
+        update: { ui: { feedUrl: "https://u.example.com/f", publicKey: "k" } },
+        sidecars: [{ name: "api", run: { module: "./api.ts" }, logs: "file" }],
+      }),
+      "linux",
+      scope,
+    )),
+    [`--allow-write=${DESKTOP_DATA_TOKEN}/logs,${DESKTOP_DATA_TOKEN}/ui-updates`],
+  );
+  // extraPermissions: a folder token or an absolute path is kept exactly.
+  assertEquals(
+    writeOf(desktopBuildFlags(
+      app({
+        capabilities: { sqlite: true },
+        extraPermissions: { write: ["$APPDATA/exports", "/var/tmp/app"] },
+      }),
+      "linux",
+      scope,
+    )),
+    [`--allow-write=${DESKTOP_DATA_TOKEN},${DESKTOP_DATA_TOKEN}/exports,/var/tmp/app`],
+  );
+  // A write that has no folder token stays broad: a picked path (dialogs), $DOCUMENTS, a relative
+  // path, a `..` component.
+  for (
+    const desktop of [
+      { capabilities: { dialogs: true, sqlite: true } },
+      { capabilities: { fs: { read: ["$APPDATA"], write: ["$APPDATA", "$DOCUMENTS"] } } },
+      { extraPermissions: { write: ["data"] } },
+      { extraPermissions: { write: ["$APPDATA/../other"] } },
+    ]
+  ) {
+    assertEquals(writeOf(desktopBuildFlags(app(desktop), "linux", scope)), ["--allow-write"]);
+  }
+  // No identifier (the runtime could not expand the token) or an older runtime: today's flags.
+  const sqlite = { capabilities: { sqlite: true } };
+  assertEquals(writeOf(desktopBuildFlags(app(sqlite, null), "linux", scope)), ["--allow-write"]);
+  assertEquals(writeOf(desktopBuildFlags(app(sqlite, " "), "linux", scope)), ["--allow-write"]);
+  assertEquals(
+    writeOf(desktopBuildFlags(app(sqlite), "linux", { dataScope: false })),
+    ["--allow-write"],
+  );
+  // Nothing writes: no --allow-write at all, whatever the runtime.
+  assertEquals(writeOf(desktopBuildFlags(app({}), "linux", scope)), []);
+  // Read stays the broad baseline in the default mode.
+  assert(desktopBuildFlags(app(sqlite), "linux", scope).includes("--allow-read"));
+});
+
+Deno.test("desktopScopedPath: folder tokens become the runtime's, absolute paths stay, the rest cannot be scoped", () => {
+  assertEquals(desktopScopedPath("$APPDATA"), DESKTOP_DATA_TOKEN);
+  assertEquals(desktopScopedPath("$APPDATA/logs"), `${DESKTOP_DATA_TOKEN}/logs`);
+  assertEquals(desktopScopedPath("$APPDATA\\a\\b"), `${DESKTOP_DATA_TOKEN}/a/b`);
+  assertEquals(desktopScopedPath("$CACHE"), "$DENO_DESKTOP_CACHE");
+  assertEquals(
+    desktopScopedPath("$DENO_DESKTOP_CACHE/sidecars/x"),
+    "$DENO_DESKTOP_CACHE/sidecars/x",
+  );
+  assertEquals(desktopScopedPath(`${DESKTOP_DATA_TOKEN}/x`), `${DESKTOP_DATA_TOKEN}/x`);
+  assertEquals(desktopScopedPath("/opt/app"), "/opt/app");
+  assertEquals(desktopScopedPath("C:\\Data"), "C:\\Data");
+  assertEquals(desktopScopedPath("D:/Data"), "D:/Data");
+  assertEquals(desktopScopedPath("\\\\server\\share"), "\\\\server\\share");
+  for (const value of ["*", "$DOCUMENTS", "$APPDATAX", "data", "./x", "$APPDATA/../x", "/a/../b"]) {
+    assertEquals(desktopScopedPath(value), undefined, value);
+  }
 });
 
 Deno.test("desktopBuildFlags: the full capability set on Windows, least-privilege", () => {

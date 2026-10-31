@@ -18,7 +18,7 @@ import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
 import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
 import { desktopNetSplitFor } from "./desktop-runtime.ts";
-import { desktopCacheTokenRuntime } from "./desktop-launch-policy.ts";
+import { desktopCacheTokenRuntime, desktopDataTokenRuntime } from "./desktop-launch-policy.ts";
 import { netSplitFlags } from "./net-permissions.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
@@ -167,10 +167,10 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // confines the page to the app dirs; the process-level grant is broad.
     trust: "broad",
     notes:
-      "app files under the OS app-support / cache folders (survive relaunch); broad --allow-write baked",
+      "app files under the OS app-support / cache folders (survive relaunch); broad --allow-write baked (the app's folders alone from runtime 3.0.0-denext.8 with desktop.app.identifier)",
     manual: [
       'fs: `directory: "documents"` needs "$DOCUMENTS" in desktop.capabilities.fs.read/write (it maps to ~/Documents/<app>); add it by hand if you use it.',
-      "fs: the packaged binary bakes a broad --allow-write (the per-user app-support path can't be baked); the runtime cap layer confines writes to the app's folders. downloadToFile fetches in the Deno process, so each download host needs net in desktop.extraPermissions (beyond the loopback baseline).",
+      "fs: the packaged binary bakes a broad --allow-write (the per-user app-support path can't be baked) unless the runtime expands $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE (3.0.0-denext.8, with desktop.app.identifier), which scopes it to the app's folders; the runtime cap layer confines writes to the app's folders. downloadToFile fetches in the Deno process, so each download host needs net in desktop.extraPermissions (beyond the loopback baseline).",
     ],
   },
   sqlite: {
@@ -180,7 +180,8 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     all: { read: ["$APPDATA"], write: ["$APPDATA"] },
     // BROAD for the same reason as `fs`: the app-support path can't be baked, so --allow-write is broad.
     trust: "broad",
-    notes: "node:sqlite database files in the app-support folder (broad --allow-write baked)",
+    notes:
+      "node:sqlite database files in the app-support folder (broad --allow-write baked; the folder alone from runtime 3.0.0-denext.8 with desktop.app.identifier)",
   },
   "context-menu": {
     key: "contextMenu",
@@ -469,6 +470,15 @@ export interface DesktopBuildFlagOptions {
    * `desktop.app.identifier` names the folder. Default: `desktopCacheTokenRuntime()`.
    */
   readonly cacheScope?: boolean;
+  /**
+   * The runtime expands `$DENO_DESKTOP_DATA` (and `$DENO_DESKTOP_CACHE`) in a baked permission
+   * (denext's pinned Deno Desktop runtime, 3.0.0-denext.8 or later; see `desktopDataTokenRuntime`):
+   * the app-folder writes (`$APPDATA`, `$CACHE`: the `fs` / `sqlite` / `updates` capabilities, a
+   * sidecar's log file, the UI overlay's `ui-updates`) are baked as those folders instead of an
+   * unscoped `--allow-write`, when `desktop.app.identifier` names them. Default:
+   * `desktopDataTokenRuntime()`.
+   */
+  readonly dataScope?: boolean;
 }
 
 /** The relevant slice of `denext.config.ts` for flag derivation. */
@@ -560,22 +570,64 @@ function bakesWrite(
 }
 
 /**
- * The `--allow-write` to bake: none, the broad one ({@linkcode bakesWrite}), or, when the only
- * writes are program sidecars' folders in the app's cache (`$DENO_DESKTOP_CACHE/…`, baked only for
- * a runtime that expands it), those folders.
+ * The `--allow-write` to bake: none, the broad one ({@linkcode bakesWrite}), or a scoped list. With
+ * `dataScope` (a runtime that expands both folder tokens, in an app with `desktop.app.identifier`)
+ * every write the app needs is baked as its folder ({@linkcode desktopScopedPath}) unless one of
+ * them cannot be (`*`, `$DOCUMENTS`, a relative path), which keeps the broad grant. Without it,
+ * only program sidecars' folders in the app's cache (`$DENO_DESKTOP_CACHE/…`, baked only for a
+ * runtime that expands it) are scoped, when they are the only writes.
  */
 function writeFlags(
   capFlags: readonly string[],
   extra: DesktopPermissionSet,
   cfg: DesktopFlagConfig,
+  dataScope = false,
 ): string[] {
   if (!bakesWrite(capFlags, extra, cfg)) return [];
+  if (dataScope) {
+    const scoped = scopedValues(writeValues(capFlags, extra, cfg));
+    return scoped ? [`--allow-write=${scoped.join(",")}`] : ["--allow-write"];
+  }
   const write = extra.write ?? [];
   const scoped = cfg.desktop?.update?.ui === undefined &&
     !capFlags.some((f) => kindOfFlag(f) === "--allow-write") &&
     write.every((v) => v.startsWith(`${DESKTOP_CACHE_TOKEN}/`));
   return scoped ? [`--allow-write=${[...write].sort().join(",")}`] : ["--allow-write"];
 }
+
+/** The `fs` capability's configured `read` or `write` folders (`desktop.capabilities.fs`). */
+function fsConfigFolders(cfg: DesktopFlagConfig, kind: "read" | "write"): string[] {
+  const fs = (cfg.desktop?.capabilities as { fs?: unknown } | undefined)?.fs;
+  const list = typeof fs === "object" && fs !== null ? (fs as Record<string, unknown>)[kind] : [];
+  return Array.isArray(list) ? list.filter((v): v is string => typeof v === "string") : [];
+}
+
+/** Every value the app writes: the capabilities', the `fs` folders, extras, the UI overlay's. */
+function writeValues(
+  capFlags: readonly string[],
+  extra: DesktopPermissionSet,
+  cfg: DesktopFlagConfig,
+): string[] {
+  return [
+    ...capFlags.filter((f) => kindOfFlag(f) === "--allow-write").flatMap(valuesOfFlag),
+    ...fsConfigFolders(cfg, "write"),
+    ...(extra.write ?? []),
+    // The UI overlay is staged and kept in `<data>/ui-updates` (src/desktop/updater.ts).
+    ...(cfg.desktop?.update?.ui !== undefined ? [UI_UPDATES_FOLDER] : []),
+  ];
+}
+
+/** Values as {@linkcode desktopScopedPath}s, sorted and unique, or `undefined` if one is not. */
+function scopedValues(values: readonly string[]): string[] | undefined {
+  const out = new Set<string>();
+  for (const value of values) {
+    const scoped = desktopScopedPath(value);
+    if (scoped === undefined) return undefined;
+    out.add(scoped);
+  }
+  return [...out].sort();
+}
+
 /** A flag's values; an unscoped flag (no `=`) is `["*"]`, the whole kind. */
 function valuesOfFlag(flag: string): string[] {
   const eq = flag.indexOf("=");
@@ -619,6 +671,51 @@ function isProjectProgram(exec: string): boolean {
  * `desktopAppDirs(<desktop.app.identifier>).cache` (Brainwires/deno DENEXT.md item 189).
  */
 export const DESKTOP_CACHE_TOKEN = "$DENO_DESKTOP_CACHE";
+
+/**
+ * The token denext's Deno Desktop runtime (from 3.0.0-denext.8) expands at launch, at the start of
+ * a baked `--allow-read` / `--allow-write` / `--allow-run` value, to the app's data folder:
+ * `desktopAppDirs(<desktop.app.identifier>).data` — macOS `~/Library/Application Support/<id>`,
+ * Windows `%APPDATA%\<id>`, Linux `$XDG_DATA_HOME|~/.local/share/<id>` (Brainwires/deno DENEXT.md
+ * item 191). A value with a `..` component, or with no folder to expand to, is dropped from an
+ * allow list.
+ */
+export const DESKTOP_DATA_TOKEN = "$DENO_DESKTOP_DATA";
+
+/** Where the UI overlay keeps its versions (`<data>/ui-updates`, src/desktop/updater.ts). */
+const UI_UPDATES_FOLDER = "$APPDATA/ui-updates";
+
+/** The config path tokens a runtime that expands the folder tokens takes, and what they become. */
+const FOLDER_TOKENS: ReadonlyArray<readonly [string, string]> = [
+  ["$APPDATA", DESKTOP_DATA_TOKEN],
+  ["$CACHE", DESKTOP_CACHE_TOKEN],
+  [DESKTOP_DATA_TOKEN, DESKTOP_DATA_TOKEN],
+  [DESKTOP_CACHE_TOKEN, DESKTOP_CACHE_TOKEN],
+];
+
+/** An absolute path on any desktop OS (`/x`, `C:\x`, `C:/x`, `\\server\share`). */
+const ABSOLUTE_PATH = /^(?:\/|[A-Za-z]:[\\/]|\\\\)/;
+
+/**
+ * A permission value as a runtime that expands the folder tokens takes it: `$APPDATA[/…]` is
+ * {@linkcode DESKTOP_DATA_TOKEN}`[/…]`, `$CACHE[/…]` {@linkcode DESKTOP_CACHE_TOKEN}`[/…]` (the
+ * token only at the start, followed by nothing or a separator), a token value or an absolute path
+ * stays as it is. Anything else — `*`, `$DOCUMENTS` (no runtime token), a relative path, a `..`
+ * component the runtime would drop — is `undefined`: the grant cannot be scoped.
+ *
+ * @param value A configured or derived permission value.
+ * @returns The value to bake, or `undefined`.
+ */
+export function desktopScopedPath(value: string): string | undefined {
+  if (value.split(/[\\/]/).includes("..")) return undefined;
+  for (const [token, baked] of FOLDER_TOKENS) {
+    if (value === token) return baked;
+    if (value.startsWith(`${token}/`) || value.startsWith(`${token}\\`)) {
+      return `${baked}/${value.slice(token.length + 1).replaceAll("\\", "/")}`;
+    }
+  }
+  return ABSOLUTE_PATH.test(value) ? value : undefined;
+}
 
 /**
  * Where a packaged app copies a project-file program sidecar (`resolveSidecarProgram`:
@@ -709,7 +806,8 @@ function sidecarNeeds(
   );
   const exec = (d.run as { exec?: unknown } | undefined)?.exec;
   if (typeof exec === "string") needs.push(...programNeeds(d.name, exec, cacheScope));
-  if (d.logs === "file" || d.logs === "both") needs.push(["write", ["$APPDATA"]]);
+  // Log files are `<data>/logs/<name>.log` (sidecar-host.ts).
+  if (d.logs === "file" || d.logs === "both") needs.push(["write", ["$APPDATA/logs"]]);
   // A Node backend's packages are unpacked into the cache folder (sidecar-modules.ts).
   if ((d.run as { nodeModules?: unknown } | undefined)?.nodeModules !== undefined) {
     needs.push(["write", ["$CACHE"]]);
@@ -738,9 +836,22 @@ function programNeeds(
  * binary; without one it would drop the entry).
  */
 function sidecarCacheScope(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): boolean {
+  return (options.cacheScope ?? desktopCacheTokenRuntime()) && hasIdentifier(cfg);
+}
+
+/** Whether `desktop.app.identifier` is set (the runtime keys both folders by it). */
+function hasIdentifier(cfg: DesktopFlagConfig): boolean {
   const identifier = cfg.desktop?.app?.identifier;
-  return (options.cacheScope ?? desktopCacheTokenRuntime()) &&
-    typeof identifier === "string" && identifier.trim() !== "";
+  return typeof identifier === "string" && identifier.trim() !== "";
+}
+
+/**
+ * Whether the app-folder grants are baked as {@linkcode DESKTOP_DATA_TOKEN} /
+ * {@linkcode DESKTOP_CACHE_TOKEN} paths: the runtime expands them (`options.dataScope`, by default
+ * the pinned runtime's) and `desktop.app.identifier` is set.
+ */
+function folderScope(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): boolean {
+  return (options.dataScope ?? desktopDataTokenRuntime()) && hasIdentifier(cfg);
 }
 
 /** The kinds a permission set merges: the flag kinds plus the two network directions. */
@@ -767,7 +878,10 @@ function mergePermissionSets(
  * proxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:
  * - the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a
  *   single broad `--allow-write` when any capability writes (a per-user path can't be baked; the
- *   runtime cap layer confines it); an unscoped `--allow-sys` when a capability needs it
+ *   runtime cap layer confines it) — or, on a runtime that expands `$DENO_DESKTOP_DATA` /
+ *   `$DENO_DESKTOP_CACHE` (3.0.0-denext.8, `dataScope`) in an app with `desktop.app.identifier`,
+ *   `--allow-write` scoped to those folders (and any absolute `extraPermissions.write` path) unless
+ *   a write has no token (a picked path, `$DOCUMENTS`); an unscoped `--allow-sys` when a capability needs it
  *   (clipboard, global shortcuts, launch at login, notifications) or `desktop.app.deepLinks`
  *   declares a scheme (claiming it back needs it): the pinned runtime refuses those with
  *   `NotCapable` under a partial `--allow-sys=<names>`;
@@ -788,7 +902,8 @@ function mergePermissionSets(
  *
  * @param config The project config (`denext.config.ts` default export), or `undefined` — baseline only.
  * @param os The target OS.
- * @param options `netSplit`: bake the network grant by direction.
+ * @param options `netSplit`: bake the network grant by direction; `cacheScope` / `dataScope`: the
+ *   runtime expands the folder tokens (default: the pinned runtime's).
  * @returns The flags, ready to splice into the `deno desktop` argv (never `-A`).
  */
 export function desktopBuildFlags(
@@ -844,7 +959,7 @@ export function desktopBuildFlags(
       : listFlag("net", new Set([...connect, ...listen]))),
     "--allow-read",
     "--allow-env",
-    ...writeFlags(capFlags, extra, cfg),
+    ...writeFlags(capFlags, extra, cfg, folderScope(cfg, options)),
     ...listFlag("sys", sys),
     ...listFlag("run", run),
     ...listFlag("ffi", ffi),

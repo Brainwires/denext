@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **A packaged desktop app's writes to its own folders are scoped to those folders** (takes effect
+  with Deno Desktop runtime 3.0.0-denext.8, once denext pins it; gated on
+  `FIRST_DESKTOP_DATA_TOKEN_RUNTIME`, so nothing changes on an older runtime). In an app with
+  `desktop.app.identifier`, the package scripts bake the `fs` / `sqlite` / `updates` capabilities'
+  folders, a sidecar's log file and the UI overlay's `ui-updates` as `$DENO_DESKTOP_DATA[/…]` and
+  `$DENO_DESKTOP_CACHE`, which the runtime expands at launch to the app's data and cache folders,
+  instead of an unscoped `--allow-write`; `$APPDATA/…` / `$CACHE/…` and absolute paths in
+  `desktop.extraPermissions.write` are kept scoped too. A write with no folder token (a picked path
+  under `dialogs`, `$DOCUMENTS`, a relative path) keeps the unscoped grant. Code that writes
+  anywhere else needs the path in `desktop.extraPermissions.write`.
+
 ## [4.11.4] - 2026-10-31
 
 ### Fixed

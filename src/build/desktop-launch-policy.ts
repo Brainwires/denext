@@ -11,6 +11,7 @@ import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 import {
   compareDenoVersions,
   supportsDesktopCacheToken,
+  supportsDesktopDataToken,
   supportsInitialOverlay,
   supportsOverlayTray,
 } from "./deno-version.ts";
@@ -134,6 +135,25 @@ export function desktopCacheTokenRuntime(
   version: string = pinJson.version,
 ): boolean {
   return pinnedRuntimeHas(env, version, supportsDesktopCacheToken);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime that
+ * expands `$DENO_DESKTOP_DATA` in a baked permission to the app's data folder: denext's pinned
+ * runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of
+ * unknown version) from `FIRST_DESKTOP_DATA_TOKEN_RUNTIME` (`3.0.0-denext.8`). An older runtime
+ * would read the token as a relative path, so the app-folder grants stay an unscoped
+ * `--allow-write`.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether to bake `$DENO_DESKTOP_DATA` grants.
+ */
+export function desktopDataTokenRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsDesktopDataToken);
 }
 
 /**
