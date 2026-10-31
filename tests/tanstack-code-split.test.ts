@@ -113,8 +113,16 @@ async function aliasOf(dir: string, scratch: string): Promise<string | null> {
     await Deno.symlink(real, link);
     return link;
   }
-  const out = await new Deno.Command("cmd.exe", {
-    args: ["/d", "/c", `for %I in ("${real}") do @echo %~sI`],
+  // The path goes in through the environment: no command-line quoting to get wrong.
+  const out = await new Deno.Command("powershell.exe", {
+    args: [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "(New-Object -ComObject Scripting.FileSystemObject).GetFolder($env:DENEXT_ALIAS_DIR).ShortPath",
+    ],
+    env: { DENEXT_ALIAS_DIR: real },
+    stdin: "null",
     stdout: "piped",
     stderr: "null",
   }).output();
