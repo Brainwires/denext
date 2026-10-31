@@ -34,6 +34,7 @@ import {
   desktopUserActivityTypes,
   desktopWindowsProxy,
   unpackagedLaunchEnv,
+  withActivationPolicy,
   withUserActivityTypes,
   writeLaufeyLaunchConfig,
 } from "../src/build/desktop-app-config.ts";
@@ -510,4 +511,45 @@ Deno.test("desktop.macos.userActivityTypes: the bundle's NSUserActivityTypes; va
   check({ userActivityTypes: types })();
   assertThrows(check({ userActivityTypes: "com.a.b" }), Error, "userActivityTypes");
   assertThrows(check({ userActivityTypes: ["nodots"] }), Error, "userActivityTypes");
+});
+
+// Live-tested on macOS 26 (lab VM): with the policy only in laufey-launch.json, LaunchServices puts
+// an accessory app's tile in the Dock for ~600 ms at every launch, before the runtime's
+// setActivationPolicy runs; LSUIElement in the bundle's Info.plist is what keeps it out from the
+// first frame (laufey reads it as accessory, and a later setActivationPolicy("regular") still shows
+// the Dock icon for a full window).
+Deno.test("activationPolicy accessory: the bundle's LSUIElement, so no Dock tile at launch", async () => {
+  const out = withActivationPolicy(INFO_PLIST, "accessory");
+  assert(out.includes("<key>CFBundleExecutable</key>"));
+  assertEquals(out.match(/<key>LSUIElement<\/key>\s*<true\/>/g)?.length, 1);
+  // Idempotent, and a regular app (or none set) carries no LSUIElement.
+  assertEquals(withActivationPolicy(out, "accessory").match(/LSUIElement/g)?.length, 1);
+  assert(!withActivationPolicy(out, "regular").includes("LSUIElement"));
+  assert(!withActivationPolicy(out, undefined).includes("LSUIElement"));
+  const dir = await Deno.makeTempDir({ prefix: "denext-lsui-" });
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    const app = join(dir, "App.app");
+    await Deno.mkdir(join(app, "Contents"), { recursive: true });
+    const plist = join(app, "Contents", "Info.plist");
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      `export default ${
+        JSON.stringify({ desktop: { app: { activationPolicy: "accessory" } } })
+      };\n`,
+    );
+    const entry = toFileUrl(join(dir, "scripts", "package-macos.ts")).href;
+    for (const [known, expected] of [[true, true], [false, false]] as const) {
+      await Deno.writeTextFile(plist, INFO_PLIST);
+      await writeLaufeyLaunchConfig(entry, "darwin", app, { activationPolicy: known });
+      // A runtime without activation policies could never show the Dock icon again: none there.
+      assertEquals((await Deno.readTextFile(plist)).includes("LSUIElement"), expected);
+    }
+    await Deno.writeTextFile(plist, INFO_PLIST);
+    const linux = join(dir, "linux");
+    await writeLaufeyLaunchConfig(entry, "linux", linux, { activationPolicy: true });
+    assert(!(await Deno.readTextFile(plist)).includes("LSUIElement"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

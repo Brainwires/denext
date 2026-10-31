@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **No Dock tile at launch for a macOS menu-bar app.** `desktop.app.activationPolicy: "accessory"`
+  (or `desktop.app.dock: false`) reached the runtime only through `laufey-launch.json`, which is
+  read after LaunchServices has already put the app in the Dock: a packaged accessory app showed a
+  Dock tile for about 600 ms at every launch (examples/companion and examples/hangar, macOS 26).
+  The package scripts now also set `LSUIElement` in the bundle's `Info.plist` (on the pinned
+  runtime, which still switches to a Dock icon with `setActivationPolicy("regular")` for a full
+  window).
+
 ## [4.11.1] - 2026-10-31
 
 ### Added

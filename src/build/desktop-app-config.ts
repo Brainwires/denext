@@ -22,7 +22,8 @@
 //
 // The scaffolded `scripts/package-*.ts` call {@linkcode syncDesktopAppConfig} before `deno desktop`
 // and {@linkcode writeLaufeyLaunchConfig} on its output (before signing on macOS; there it also
-// lists `desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes`). `denext desktop
+// lists `desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes` and sets
+// `LSUIElement` for an `"accessory"` app). `denext desktop
 // run` / `dev` sync `app.json` and pass the launch settings as `LAUFEY_*` env instead.
 
 import { dirname, fromFileUrl, join } from "@std/path";
@@ -210,6 +211,30 @@ export function withUserActivityTypes(text: string, types: readonly string[]): s
   };
   const entries = root.entries.filter(([k]) => k !== "NSUserActivityTypes");
   return renderPlist({ kind: "dict", entries: [...entries, ["NSUserActivityTypes", value]] });
+}
+
+/**
+ * `Info.plist` text with `LSUIElement` matching the activation policy the app starts in: `true` for
+ * `"accessory"`, absent otherwise. The policy in `laufey-launch.json` alone comes too late on macOS:
+ * LaunchServices shows a Dock tile for a launched bundle before the process sets its policy (live,
+ * macOS 26: ~600 ms at every launch), and only `LSUIElement` keeps a menu-bar app out of the Dock
+ * from the first frame. The runtime reads it as `"accessory"`, and `setActivationPolicy("regular")`
+ * still brings the Dock icon (and menu bar) back for a full window.
+ *
+ * @param text The bundle's `Contents/Info.plist` (XML).
+ * @param policy The policy the app starts in (`undefined`: the runtime's default, a Dock icon).
+ * @returns The new text.
+ * @throws When the file is not an XML plist dict.
+ */
+export function withActivationPolicy(
+  text: string,
+  policy: DesktopActivationPolicy | undefined,
+): string {
+  const root = parsePlist(text);
+  if (root.kind !== "dict") throw new Error("Info.plist is not a dict");
+  const entries = root.entries.filter(([k]) => k !== "LSUIElement");
+  if (policy === "accessory") entries.push(["LSUIElement", { kind: "bool", value: true }]);
+  return renderPlist({ kind: "dict", entries });
 }
 
 /** The `desktop.app` block of an untyped config value. */
@@ -441,7 +466,8 @@ export interface LaufeyLaunchWriteOptions {
  * Write the packaged app's `laufey-launch.json` ({@linkcode packagedLaunchConfig}) from the
  * project's `denext.config.ts` (resolved beside `entryUrl`'s directory, like
  * `desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's
- * `NSUserActivityTypes`. On macOS call it BEFORE code-signing: both files live inside the sealed
+ * `NSUserActivityTypes`, and marks an `"accessory"` app `LSUIElement` (no Dock tile at launch;
+ * {@linkcode withActivationPolicy}). On macOS call it BEFORE code-signing: both files live inside the sealed
  * bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
@@ -472,10 +498,20 @@ export async function writeLaufeyLaunchConfig(
   const path = laufeyLaunchPath(os, bundle);
   await Deno.mkdir(dirname(path), { recursive: true });
   await Deno.writeTextFile(path, JSON.stringify(launch, null, 2) + "\n");
-  const types = os === "darwin" ? desktopUserActivityTypes(config) : [];
-  if (types.length > 0) {
+  if (os === "darwin") {
+    const types = desktopUserActivityTypes(config);
     const plist = join(bundle, "Contents", "Info.plist");
-    await Deno.writeTextFile(plist, withUserActivityTypes(await Deno.readTextFile(plist), types));
+    if (types.length > 0) {
+      await Deno.writeTextFile(plist, withUserActivityTypes(await Deno.readTextFile(plist), types));
+    }
+    // Only for a runtime that reads the policy: on one without activation policies an LSUIElement
+    // app could never show its Dock icon again (`setActivationPolicy` is missing there).
+    if (launch.activationPolicy === "accessory") {
+      await Deno.writeTextFile(
+        plist,
+        withActivationPolicy(await Deno.readTextFile(plist), "accessory"),
+      );
+    }
   }
   return path;
 }
