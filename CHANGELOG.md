@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.0] - 2026-10-31
+
 ### Added
 
 - **Tray events with their detail, `popUpMenu()`, and the macOS activation policy** (Deno Desktop
@@ -31,7 +33,6 @@ and this project adheres to
   creation; `windowCapabilities()` adds `visibleOnFullScreen`, `layerShell` and `activationPolicy`.
   The `.deb` recommends `libgtk-layer-shell0` and `speech-dispatcher`, the `.rpm` gtk-layer-shell
   (by soname) and `speech-dispatcher`.
-
 - **Tray-first and overlay desktop apps, and several windows** (`denext/desktop/window`,
   `denext/desktop/app`, `denext.config.ts`'s `desktop`). `desktop.window.show: false` starts the app
   with no visible window and no flash, and `frameless`, `transparent` and `focusable: false` (a
@@ -20334,7 +20335,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.5...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.0...development
+[4.11.0]: https://jsr.io/@denext/denext@4.11.0
 [4.10.5]: https://jsr.io/@denext/denext@4.10.5
 [4.10.4]: https://jsr.io/@denext/denext@4.10.4
 [4.10.3]: https://jsr.io/@denext/denext@4.10.3
