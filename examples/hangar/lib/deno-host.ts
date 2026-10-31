@@ -2,7 +2,7 @@
 // app's Deno process; the tests never load it.
 
 import type { DirEntry, Host, ProcessInfo, QmpSession, RunResult } from "./host.ts";
-import { parsePs, PS_ARGS } from "./processes.ts";
+import { parsePs, PS_ARGS, psProgram } from "./processes.ts";
 import { openQmpSession } from "./qmp.ts";
 
 const decoder = new TextDecoder();
@@ -62,7 +62,8 @@ export function denoHost(): Host {
       return Promise.resolve(child.pid);
     },
     async processes(): Promise<ProcessInfo[]> {
-      return parsePs((await run("/bin/ps", PS_ARGS)).stdout);
+      const ps = psProgram(Deno.build.os);
+      return ps ? parsePs((await run(ps, PS_ARGS)).stdout) : [];
     },
     processCwd,
     kill(pid, signal) {

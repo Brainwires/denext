@@ -85,6 +85,10 @@ Everything below comes from denext's desktop windowing (`denext.config.ts`, `des
 - **Keep alive.** `desktop.app.keepAlive`: closing every window leaves Hangar in the tray; closing
   the main window hides it (`onCloseRequested`), so its page keeps the tray current. "Quit" quits.
 
+On Windows the tray, the panel and the windows work, but the VM side doesn't: Hangar starts VMs
+through `/bin/sh` and lists running QEMU with `ps`, neither of which Windows has, so it lists no
+running VMs there.
+
 What depends on the OS: hover and `popUpMenu()` are macOS and Windows only, and so is a click's
 modifier keys: a Linux tray host doesn't say which keys are held (`trayModifiers` is false), so
 there a Control-click is a plain click and toggles the panel. On Linux a session with a
