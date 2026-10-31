@@ -19,6 +19,12 @@ and this project adheres to
   the binary's ad-hoc signature before caching it, the change `codesign --force --sign -` would
   make, done in place so the result is pinned as well; a binary an older denext cached is
   verified against the release pin and repaired on its next use, with no new download.
+- **The migration beds keep a dependency-age hold on npm.** They ran every command with
+  `DENEXT_MIN_DEP_AGE=0`, so a bed's build could resolve an npm release published minutes before
+  and fail on a tarball the registry did not serve yet (`tslib` 2.9.1). The migrated app's
+  `deno.json` now carries `minimumDependencyAge: { age: "P1D", exclude: ["jsr:@denext/*"] }`: a
+  day's hold on everything but the `@denext` packages a release has just published, which the
+  checkout under test pins.
 
 ### Changed
 
