@@ -5,6 +5,7 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
+  CORPUS_DATA_MODULES,
   CORPUS_MODULE,
   CORPUS_PACKAGE,
   corpusVersion,
@@ -29,6 +30,15 @@ import {
 const VERSION = await corpusVersion();
 const TARGET = { version: VERSION, tag: `v${VERSION}`, branch: "development" };
 const LOCAL_HASH = moduleSourceHash(await Deno.readTextFile(CORPUS_MODULE))!;
+/** The corpus package's data modules as this tree has them (JSR serves the same). */
+const LOCAL_DATA: Record<string, string> = Object.fromEntries(
+  await Promise.all(
+    CORPUS_DATA_MODULES.map(async (m) => [
+      `/${CORPUS_PACKAGE}/${VERSION}/${m}`,
+      await Deno.readTextFile(new URL(`../packages/docs-corpus/${m}`, import.meta.url)),
+    ]),
+  ),
+);
 
 /** A fake jsr.io whose listed versions the test changes as time passes. */
 class FakeJsr {
@@ -59,6 +69,7 @@ class FakeJsr {
         new Response(`export const CORPUS_SOURCE_HASH: string = "${LOCAL_HASH}";\n`),
       );
     }
+    if (Object.hasOwn(LOCAL_DATA, path)) return Promise.resolve(new Response(LOCAL_DATA[path]));
     return Promise.resolve(new Response("", { status: 404 }));
   };
 }

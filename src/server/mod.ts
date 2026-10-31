@@ -82,6 +82,7 @@ export {
   sendPush,
 } from "./push-send.ts";
 export { serveWithPortFallback } from "./serve-utils.ts";
+export type { CertifiedKeyPem, ServeTls } from "./tls-certificates.ts";
 export type { ServeUtilOptions } from "./serve-utils.ts";
 // Typed route handlers: phantom-typed Request/Response so the typed-API-client generator
 // can recover request/response body shapes (see src/build/api-types.ts).
@@ -356,6 +357,8 @@ export {
   type SpaTanstackRouterConfig,
   type StartConfig,
   type StartLimits,
+  type StartTls,
+  type StartTlsCertificate,
   type TailwindConfig,
 } from "./config.ts";
 export { defineConfig } from "./define-config.ts";

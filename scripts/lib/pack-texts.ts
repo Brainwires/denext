@@ -49,3 +49,14 @@ export function packTexts(
   const json = new TextEncoder().encode(JSON.stringify(groups));
   return { layout, packed: brotliBase64(json), bytes: json.byteLength };
 }
+
+/**
+ * One text, packed whole: Brotli (as {@linkcode brotliBase64}) in base64, for
+ * `unpackText` (src/build/packed-text.ts) to read back.
+ *
+ * @param text The text.
+ * @returns The packed text.
+ */
+export function packText(text: string): string {
+  return brotliBase64(new TextEncoder().encode(text));
+}

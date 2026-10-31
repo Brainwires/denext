@@ -4,6 +4,7 @@
 // the published modules must hand out those same texts.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
+import { dirname, join } from "@std/path";
 import { templateGroups } from "../scripts/gen-native-templates.ts";
 import { packTexts } from "../scripts/lib/pack-texts.ts";
 import { NATIVE_TEMPLATES } from "../src/build/native-templates.packed.ts";
@@ -56,4 +57,53 @@ Deno.test("packedRecords: lazy, ordered, read-only records and a clear error for
   // Nothing decodes until a text is read: a bad pack throws only on the first read.
   const bad = packedRecords({ g: { R: ["x"] } }, "not-brotli");
   assertThrows(() => bad.g.R.x);
+});
+
+Deno.test("packed native templates: a checkout outside its workspace reads its own pack, never a docs-corpus release", async () => {
+  // An app that links a denext checkout by path, or CI running the checkout's CLI from another
+  // directory, resolves `@denext/docs-corpus` through its own import map: a JSR release, which
+  // for an unreleased commit lacks that commit's pack, or is younger than Deno's minimum
+  // dependency age. The layout module must read the checkout's file instead. Here the corpus maps
+  // to a version that does not exist, so any read through it fails the import.
+  const root = new URL("../", import.meta.url);
+  const dir = await Deno.makeTempDir({ prefix: "denext_native_pack_" });
+  try {
+    const copy = async (file: string) => {
+      const to = join(dir, ...file.split("/"));
+      await Deno.mkdir(dirname(to), { recursive: true });
+      await Deno.copyFile(new URL(file, root), to);
+    };
+    await copy("src/build/native-templates.packed.ts");
+    await copy("src/build/packed-text.ts");
+    await copy("packages/docs-corpus/native-templates.ts");
+    const imports = JSON.parse(await Deno.readTextFile(new URL("deno.json", root))).imports;
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({
+        imports: {
+          "@std/encoding": imports["@std/encoding"],
+          "@std/encoding/": `${imports["@std/encoding"].replace(/^jsr:/, "jsr:/")}/`,
+          "@denext/docs-corpus": "jsr:@denext/docs-corpus@0.0.0-unpublished.0",
+          "@denext/docs-corpus/": "jsr:/@denext/docs-corpus@0.0.0-unpublished.0/",
+        },
+      }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "probe.ts"),
+      'import { NATIVE_TEMPLATES } from "./src/build/native-templates.packed.ts";\n' +
+        "console.log(JSON.stringify(Object.keys(NATIVE_TEMPLATES.ota.OTA_IOS_FILES)));\n",
+    );
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", "--no-lock", "--config", join(dir, "deno.json"), join(dir, "probe.ts")],
+      cwd: dir,
+      stdout: "piped",
+      stderr: "piped",
+      env: { NO_COLOR: "1" },
+    }).output();
+    const decoder = new TextDecoder();
+    assert(out.success, decoder.decode(out.stderr));
+    assertEquals(JSON.parse(decoder.decode(out.stdout)), Object.keys(otaSource.OTA_IOS_FILES));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });

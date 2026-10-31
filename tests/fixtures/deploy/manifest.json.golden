@@ -128,7 +128,8 @@
     },
     "buildDir": ".denext",
     "idleTrim": true,
-    "limits": []
+    "limits": [],
+    "tls": null
   },
   "jobs": [
     {

@@ -16,8 +16,14 @@ import {
   staleToolchainLink,
   TOOLCHAIN_ENV,
   toolchainEnvValue,
+  toolchainSelection,
   unlinkDenoToolchain,
 } from "../../build/deno-toolchain.ts";
+import {
+  type RevocationMode,
+  revocationStatusLine,
+  type RuntimeRevocationStatus,
+} from "../../build/runtime-revocations.ts";
 import { esbuildBinaryStatus } from "../../build/esbuild/binary.ts";
 import { toolchainRemove } from "./toolchain-prune.ts";
 import { ensureGleamToolchain, gleamToolchainStatus } from "../../build/gleam-toolchain.ts";
@@ -31,16 +37,44 @@ import {
 const EXTRA_TOOLS = ["gleam", "fastlane"] as const;
 
 /**
- * `ensureDenoToolchain()`, or a clear refusal (exit 1) when the toolchain can't be had: `install`,
- * `path` and `link` name the toolchain itself, so there is nothing to fall back to.
+ * The toolchain {@linkcode toolchainSelection} picks, installed and verified, or a clear
+ * refusal (exit 1) when it can't be had: `install`, `path` and `link` name the toolchain itself,
+ * so there is nothing to fall back to.
  */
-async function requireToolchain(): Promise<{ deno: string; version: string; cached: boolean }> {
+async function requireToolchain(
+  mode: RevocationMode = "fetch",
+): Promise<
+  { deno: string; version: string; cached: boolean; revocation?: RuntimeRevocationStatus }
+> {
   try {
-    return await ensureDenoToolchain();
+    const selected = await toolchainSelection(mode);
+    if (selected.warning) console.error(selected.warning);
+    const rt = await ensureDenoToolchain({ pin: selected.pin });
+    return { ...rt, ...(selected.revocation ? { revocation: selected.revocation } : {}) };
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     Deno.exit(1);
   }
+}
+
+/** A revocation status, for `toolchain status` / `install` (a not-configured one when unchecked). */
+function revocationOf(
+  selected: { revocation?: RuntimeRevocationStatus },
+  pinned: string | null,
+): RuntimeRevocationStatus {
+  return selected.revocation ?? {
+    configured: false,
+    pinned,
+    revoked: false,
+    reason: null,
+    advisory: null,
+    fixedIn: null,
+    runningRollback: false,
+    running: pinned,
+    listSequence: null,
+    listExpiresAt: null,
+    expiredAt: null,
+  };
 }
 
 /** The binary `toolchain path` / `link` name: the pinned one (installed), or a refusal. */
@@ -115,11 +149,18 @@ async function status(ctx: CommandContext): Promise<void> {
   const esbuild = await esbuildBinaryStatus();
   const gleam = await gleamToolchainStatus({ verify });
   const fastlane = await fastlaneToolchainStatus({ verify });
+  const revocation = s.mode === "pinned"
+    ? revocationOf(await toolchainSelection("force").catch(() => ({})), s.version)
+    : revocationOf({}, s.version);
   if (ctx.global.json) {
-    console.log(JSON.stringify({ ...s, esbuildBinary: esbuild, gleam, fastlane }, null, 2));
+    console.log(
+      JSON.stringify({ ...s, revocation, esbuildBinary: esbuild, gleam, fastlane }, null, 2),
+    );
   } else {
     console.log("");
     statusLine(s.ok, "deno toolchain", s.detail, s.path);
+    const r = revocationStatusLine(revocation);
+    statusLine(r.ok, "revocations", r.detail, null);
     statusLine(esbuild.ok, "esbuild", esbuild.detail, esbuild.path);
     statusLine(s.tsgo.state !== "refused", "typescript", s.tsgo.detail, s.tsgo.path);
     statusLine(s.tsgoLsp.state !== "refused", "typescript lsp", s.tsgoLsp.detail, s.tsgoLsp.path);
@@ -145,8 +186,10 @@ async function status(ctx: CommandContext): Promise<void> {
  */
 async function install(ctx: CommandContext): Promise<void> {
   const extras = withTools(ctx);
-  const rt = await requireToolchain();
+  const rt = await requireToolchain("force");
   console.log(`  denext's Deno toolchain ${rt.version}: ${rt.deno}${rt.cached ? " (cached)" : ""}`);
+  const r = revocationStatusLine(revocationOf(rt, rt.version));
+  console.log(`  revocations: ${r.detail}`);
   if (extras.includes("gleam")) await installGleam();
   if (extras.includes("fastlane")) await installFastlane();
   if (!isRemoteCli()) return;

@@ -385,6 +385,25 @@ function jailFindings(r: MigrateResult): MigrateFinding[] {
   }));
 }
 
+/**
+ * The pnpm / Bun patches: each one carried into deno.json's `patchedDependencies` (or to add by
+ * hand), and each one the runtime can't apply.
+ */
+function patchFindings(r: MigrateResult): MigrateFinding[] {
+  const p = r.patches;
+  if (!p) return [];
+  return [
+    ...p.carried.map((c) => ({
+      item: `npm patch: ${c.key}`,
+      reason: `${c.from} copied to ${c.to}${
+        p.action === "manual" ? "; add it to deno.json's patchedDependencies by hand" : " and " +
+          "registered in deno.json's patchedDependencies (the runtime applies it on install)"
+      }`,
+    })),
+    ...p.review.map((c) => ({ item: `npm patch: ${c.key}`, reason: `${c.from}: ${c.reason}` })),
+  ];
+}
+
 /** Every finding for a successful dry run, split into won't-migrate and review. */
 function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFinding[] } {
   const next = nextConfigFindings(r);
@@ -411,6 +430,7 @@ function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFi
       ...appIconFindings(r),
       ...cap.review,
       ...jailFindings(r),
+      ...patchFindings(r),
     ],
   };
 }

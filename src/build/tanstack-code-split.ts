@@ -18,7 +18,11 @@ import { extname, SEPARATOR } from "@std/path";
 import type { SpaTanstackRouterConfig } from "../server/config.ts";
 import { inNodeModules } from "./path-segments.ts";
 import type { SourceTransform } from "./spa-compiler-plugin.ts";
-import { generatedRouteTreePath, keepCommittedRouteTree } from "./tanstack-route-tree.ts";
+import {
+  generatedRouteTreePath,
+  generatorTmpDir,
+  keepCommittedRouteTree,
+} from "./tanstack-route-tree.ts";
 
 /** A Vite hook filter pattern, as the TanStack plugins declare them. */
 type FilterPattern = string | RegExp | readonly (string | RegExp)[];
@@ -195,10 +199,14 @@ async function loadTanstackRouterPlugins(
   };
   if (options.routesDirectory) settings.routesDirectory = options.routesDirectory;
   if (options.generatedRouteTree) settings.generatedRouteTree = options.generatedRouteTree;
-  const plugins = [tanstackRouter(settings)].flat(Infinity) as VitePluginLike[];
   // The generator keys its route map by path under `root`; esbuild names modules by their real
   // path, so the root is the real one (a project reached through a symlink, macOS's /var → /private/var).
-  const config = { command: "build", root: realDir(projectDir), plugins };
+  const root = realDir(projectDir);
+  // Its scratch files go under the project, not the working directory (see generatorTmpDir).
+  const tmpDir = await generatorTmpDir(root);
+  if (tmpDir) settings.tmpDir = tmpDir;
+  const plugins = [tanstackRouter(settings)].flat(Infinity) as VitePluginLike[];
+  const config = { command: "build", root, plugins };
   // The generator (re)writes the project's route tree; a tree it regenerates with the same routes
   // is put back exactly as the app's own generator committed it (tanstack-route-tree.ts).
   const tree = await generatedRouteTreePath(config.root, settings);

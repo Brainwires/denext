@@ -1,7 +1,7 @@
 /**
  * The Prisma driver-adapter contract, restated structurally so the adapter imports nothing
  * from npm at run time (or type-check time). These shapes match
- * `@prisma/driver-adapter-utils` 6.19.3 — `tests/prisma-adapter-types.test.ts` checks them
+ * `@prisma/driver-adapter-utils` 7.10.1 — `tests/prisma-adapter-types.test.ts` checks them
  * against the real package in both directions, so a Prisma release that changes the contract
  * fails a test instead of a query.
  *
@@ -118,9 +118,10 @@ export type MappedError =
   | { kind: "UnsupportedNativeDataType"; type: string }
   | { kind: "InvalidIsolationLevel"; level: string }
   | { kind: "LengthMismatch"; column?: string }
-  | { kind: "UniqueConstraintViolation"; constraint?: ErrorConstraint }
+  | { kind: "UniqueConstraintViolation"; constraint?: ErrorConstraint; table?: string }
   | { kind: "NullConstraintViolation"; constraint?: ErrorConstraint }
   | { kind: "ForeignKeyConstraintViolation"; constraint?: ErrorConstraint }
+  | { kind: "RestrictViolation"; constraint?: ErrorConstraint }
   | { kind: "DatabaseNotReachable"; host?: string; port?: number }
   | { kind: "DatabaseDoesNotExist"; db?: string }
   | { kind: "DatabaseAlreadyExists"; db?: string }
@@ -133,6 +134,7 @@ export type MappedError =
   | { kind: "ColumnNotFound"; column?: string }
   | { kind: "TooManyConnections"; cause: string }
   | { kind: "ValueOutOfRange"; cause: string }
+  | { kind: "InvalidInputValue"; message: string }
   | { kind: "MissingFullTextSearchIndex" }
   | { kind: "SocketTimeout" }
   | { kind: "InconsistentColumnData"; cause: string }
@@ -146,7 +148,7 @@ export type MappedError =
     column: string | undefined;
     hint: string | undefined;
   }
-  | { kind: "mysql"; code: number; message: string; state: string }
+  | { kind: "mysql"; code: number; message: string; state: string; cause?: string }
   | { kind: "sqlite"; extendedCode: number; message: string }
   | { kind: "mssql"; code: number; message: string };
 
@@ -202,6 +204,12 @@ export interface Transaction extends SqlQueryable {
   commit(): Promise<void>;
   /** Finish after Prisma's ROLLBACK: release the connection. */
   rollback(): Promise<void>;
+  /** Create a savepoint in the running transaction (optional; Prisma 7). */
+  createSavepoint?(name: string): Promise<void>;
+  /** Roll the transaction back to a savepoint (optional; Prisma 7). */
+  rollbackToSavepoint?(name: string): Promise<void>;
+  /** Release a savepoint (optional; Prisma 7). */
+  releaseSavepoint?(name: string): Promise<void>;
 }
 
 /** A connected driver adapter. */

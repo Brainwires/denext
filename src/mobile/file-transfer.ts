@@ -938,9 +938,9 @@ class TrackedDownload extends SettlingDownload<{ path: string }> {
     }
   }
 
-  override cancelPaused(why: "cancel" | "caller"): void {
-    super.cancelPaused(why);
-    void this.engine.discard(this.info.id).catch(() => {});
+  /** A cancel while paused: the engine drops the partial file it kept, then the promise rejects. */
+  protected override discard(): Promise<void> {
+    return this.engine.discard(this.info.id).catch(() => {});
   }
 
   protected async attempt(resume: boolean): Promise<void> {
@@ -965,21 +965,22 @@ class TrackedDownload extends SettlingDownload<{ path: string }> {
       });
       this.succeed(done);
     } catch (err) {
-      this.#stopped(err);
+      await this.#stopped(err);
     } finally {
       this.#pausing = false;
     }
   }
 
   /** The run stopped: a pause (the promise stays pending), a cancel, or a failure. */
-  #stopped(err: unknown): void {
+  async #stopped(err: unknown): Promise<void> {
     const pause = this.#pausing ? this.engine.paused(err) : undefined;
     if (pause && !this.cancelled) {
       pageEvent(this, "paused", { state: "paused", ...pause });
       return;
     }
-    // A cancel that landed while the pause was settling: the engine kept the partial file.
-    if (pause) void this.engine.discard(this.info.id).catch(() => {});
+    // A cancel that landed while the pause was settling: the engine kept the partial file, which
+    // goes before the promise rejects.
+    if (pause) await this.discard();
     this.fail(this.#failure(err));
   }
 
@@ -1539,6 +1540,10 @@ export async function pauseFileTransfer(id: string): Promise<boolean> {
  * else anew, and an upload from the start. On the web and in a Deno Desktop window only a paused
  * download resumes: a failed transfer resolves `false` (start it again with `downloadToFile`; on
  * Deno Desktop the same URL to the same file continues from the partial file the runtime kept).
+ * After a restart, a Deno Desktop download started with a credential header (`Authorization`,
+ * `Cookie`, an API key) is refused here, since the runtime never writes one to disk: start it again
+ * with `downloadToFile` and its headers (the same id, URL and file), which continues from its
+ * partial file.
  *
  * @param id The transfer's id.
  * @returns Whether it resumed: `false` for an id with no record, a transfer that is neither

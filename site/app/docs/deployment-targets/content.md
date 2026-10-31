@@ -359,6 +359,80 @@ These are best-effort guardrails, not a security boundary: subprocesses are neit
 stopped, a `Worker` has its own heap (cap it with `new Worker(url, { deno: { memoryMb } })`), memory
 outside the JavaScript heap is not counted, and sampling can overshoot by a 20 ms tick.
 
+## HTTPS without a proxy
+
+`start: { tls }` in `denext.config.ts` makes `denext start` (and a `build --compile` server) serve
+HTTPS itself, with no proxy in front. Each certificate lists the host names it serves, and names
+the environment variables that hold the paths of its PEM certificate (chain) and private key
+files; the paths never go in the config, so neither a key nor where it lives is committed:
+
+```ts
+export default {
+  start: {
+    tls: {
+      certificates: [
+        {
+          hostnames: ["example.com", "www.example.com"],
+          certFileEnv: "SITE_CERT",
+          keyFileEnv: "SITE_KEY",
+        },
+        { hostnames: ["*.example.org"], certFileEnv: "ORG_CERT", keyFileEnv: "ORG_KEY" },
+        { hostnames: ["*"], certFileEnv: "DEFAULT_CERT", keyFileEnv: "DEFAULT_KEY" },
+      ],
+    },
+  },
+};
+```
+
+```sh
+SITE_CERT=/etc/ssl/site/fullchain.pem SITE_KEY=/etc/ssl/site/privkey.pem \
+ORG_CERT=… ORG_KEY=… DEFAULT_CERT=… DEFAULT_KEY=… denext start --port 443
+```
+
+A host name is an exact name, a wildcard for one label (`*.example.org` serves `api.example.org`,
+not `example.org` or `a.b.example.org`), or `"*"`: every name no other certificate lists, and a
+client that sends no name at all (one connecting to an IP address). A handshake for a name nothing
+matches is refused. The config validator rejects a malformed name, an environment variable name
+that isn't one, and a name two certificates both list.
+
+| Certificates | Runtime                                                                                |
+| ------------ | -------------------------------------------------------------------------------------- |
+| one          | any Deno: it is served for every name (`Deno.serve`'s `cert` / `key`)                  |
+| several      | denext's Deno from runtime `3.0.0-denext.3`, with `"unstable": ["net"]` in `deno.json` |
+
+Several certificates use the runtime's `resolveCertificate`, which picks one per connection by the
+name the client asks for (SNI) and caches it per name. It is behind the unstable net APIs, so the
+project's `deno.json` turns them on (`"unstable": ["net"]`), which every `deno` that runs the
+server reads: `denext start` and a Docker image's or systemd unit's `deno run`; `denext build
+--compile` bakes `--unstable-net` into the binary itself. On stock Deno, an older toolchain, or without the flag, the server
+does not start and says which is missing, rather than serve one certificate for every name.
+
+The files are read once, when the server starts: a variable that is unset or a file that can't be
+read fails the start, and a renewed certificate takes a restart (a rolling one, as above). The
+banner and `localServerOrigin()` say `https://`. `denext dev` never serves TLS.
+
+### The generated deploy files
+
+`denext generate docker`, `denext deploy prepare` and `denext build --compile` read `start.tls`
+(from the last build's deploy manifest, `server.tls`; before a first build, the literal values in
+`denext.config.ts`) and write what it needs. Each certificate's and key's variable is a
+placeholder, never a value or a path of yours:
+
+| Target                     | What `start.tls` changes                                                                                                                                                                                                                                                                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `generate docker` / docker | `./certs` is mounted read-only at `/certs` and kept out of the image (`.dockerignore`); the variables are required in the compose file and listed empty in `.env.example` (set them to `/certs/…` paths); the `HEALTHCHECK` probes `https://localhost` without checking the certificate; a start task that scopes `--allow-read` gets `/certs` added |
+| `genericHost()`            | the unit runs the server facing clients on every interface, default port 443 (`CAP_NET_BIND_SERVICE` below 1024), with no `DENEXT_TRUST_PROXY`; no `nginx.conf` or `Caddyfile` is written; `env.example` lists the variables, whose files the service user must read (or `LoadCredential=` hands a root-only key over, as the unit's comment shows)  |
+| `fly()`                    | `fly.toml` passes TLS through as raw TCP on 443 (`[[services]]`, a TCP check) instead of Fly's HTTP proxy, and trusts no forwarded header                                                                                                                                                                                                            |
+| `denoDeploy()`             | warns: the platform terminates TLS, and the server can't read the files there; leave `start.tls` out on Deno Deploy                                                                                                                                                                                                                                  |
+| `build --compile`          | several certificates bake `--unstable-net` into the executable (the compile's own config carries no `unstable` from `deno.json`)                                                                                                                                                                                                                     |
+
+The image's `CMD` and the unit's `ExecStart` run the start task's `deno run` from the project
+directory, so `"unstable": ["net"]` in `deno.json` reaches them; with several certificates and
+without it, the generators warn. With several certificates the Docker health probe's handshake
+(server name `localhost`) needs a certificate that lists `"localhost"` or `"*"`; the generator
+warns when none does. The static (SPA) image serves its files with Deno's std file server, which
+`start.tls` doesn't reach (a warning says so).
+
 ## A single binary with `denext build --compile`
 
 ```sh

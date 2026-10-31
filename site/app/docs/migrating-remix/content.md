@@ -501,9 +501,9 @@ The CLI prints up to twelve notes and a count of the rest.
 - **`headers` and `handle` are carried, not interpreted as Remix does.**
   `handle` is threaded to `useMatches`; a `headers` export is preserved in the
   data module for you to apply through denext's `headers()` or middleware.
-- **Prisma is auto-migrated to the Rust-free Deno client.** The schema
-  generator becomes the ESM `prisma-client` with `queryCompiler` and
-  `driverAdapters`, every `@prisma/client` import is repointed, the adapter is
+- **Prisma is auto-migrated to Prisma 7's Rust-free Deno client.** The schema
+  generator becomes the ESM `prisma-client`, the datasource URL moves to
+  `prisma.config.ts`, every `@prisma/client` import is repointed, the adapter is
   injected at each `new PrismaClient()`, and `deno.json` gets the npm pins and a
   `prisma:setup` task. Run `denext task prisma:setup` once. The
   seed and test tooling (`prisma/seed.ts`, `tests/`, mocks, `scripts/`, test

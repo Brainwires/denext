@@ -1,9 +1,23 @@
 {
   "name": "@denext/docs-corpus",
-  "version": "4.10.3",
-  "exports": "./mod.ts",
-  "denext": { "catalog": { "kind": "library" } },
+  "version": "4.10.4",
+  "exports": {
+    ".": "./mod.ts",
+    "./native-templates": "./native-templates.ts"
+  },
+  "denext": {
+    "catalog": {
+      "kind": "library"
+    }
+  },
   "publish": {
-    "include": ["mod.ts", "README.md", "CHANGELOG.md", "LICENSE", "deno.json"]
+    "include": [
+      "mod.ts",
+      "native-templates.ts",
+      "README.md",
+      "CHANGELOG.md",
+      "LICENSE",
+      "deno.json"
+    ]
   }
 }

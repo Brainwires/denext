@@ -12,6 +12,7 @@ import {
   editDenextFile,
   listPatches,
   npmPackageDir,
+  type PatchOptions,
   readPatch,
 } from "../../build/patches.ts";
 
@@ -32,11 +33,23 @@ function fail(message: string): never {
   Deno.exit(1);
 }
 
-/** `denext patch create <name>`: record the package's (or denext's) current edits. */
-async function create(name: string, dir: string): Promise<void> {
+/**
+ * `denext patch create <name>`: record the package's (or denext's) current edits, and say what was
+ * written (and, for an npm patch, whether deno.json's `patchedDependencies` registers it).
+ *
+ * @param name A package name, or `denext`.
+ * @param dir The project.
+ * @param opts For an npm patch: where the pristine package and the runtime come from (default:
+ *   Deno's npm cache and the pinned toolchain; a test passes its own).
+ */
+export async function patchCreate(
+  name: string,
+  dir: string,
+  opts: PatchOptions = {},
+): Promise<void> {
   const created = name === DENEXT_PATCH_NAME
     ? await createDenextPatch(dir)
-    : await createNpmPatch(dir, name);
+    : await createNpmPatch(dir, name, opts);
   console.log(`  ✔ wrote ${relative(dir, created.file)} (${created.files.length} file(s)):`);
   for (const f of created.files) console.log(`      ${f}`);
   if (name === DENEXT_PATCH_NAME) {
@@ -45,6 +58,12 @@ async function create(name: string, dir: string): Promise<void> {
     );
   } else {
     console.log("    re-applied to node_modules at every dev/build/start (idempotent).");
+    if (created.registered) {
+      console.log(
+        `    registered as "${created.registered}" in deno.json "patchedDependencies" (patches/npm/):` +
+          " applied by the runtime on install too.",
+      );
+    }
   }
 }
 
@@ -145,7 +164,7 @@ async function dispatch(action: Action, name: string, dir: string, ctx: CommandC
     case "list":
       return await list(dir, ctx.global.json);
     case "create":
-      return await create(name, dir);
+      return await patchCreate(name, dir);
     case "edit":
       return await edit(name, ctx.positionals[2], dir);
     case "delete": {

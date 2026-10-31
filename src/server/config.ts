@@ -1544,6 +1544,43 @@ export interface StartConfig {
    * {@link https://denext.dev/docs/deployment-targets#resource-limits}.
    */
   limits?: StartLimits;
+  /**
+   * Serve HTTPS directly, without a proxy in front: the certificates and the host names each
+   * serves. The certificate and key files' paths come from the environment variables each entry
+   * names (`certFileEnv`, `keyFileEnv`), never from the config, and are read when the server
+   * starts. One certificate serves every name, on any Deno. Several pick one per connection by
+   * the name the client asks for (SNI), which needs denext's Deno from runtime 3.0.0-denext.3 and
+   * `"unstable": ["net"]` in `deno.json`; elsewhere the server refuses to start and says why.
+   * Applies to `denext start` and a `build --compile` server, never to `dev`. See
+   * {@link https://denext.dev/docs/deployment-targets#https-without-a-proxy}.
+   */
+  tls?: StartTls;
+}
+
+/** HTTPS for the production server (see {@link StartConfig.tls}). */
+export interface StartTls {
+  /**
+   * The certificates, each for the host names it serves. With one, it is served for every name;
+   * with several, each handshake gets the one whose `hostnames` match the name the client asked
+   * for (an exact name first, then a `*.` wildcard, then `"*"`), and a name none matches is
+   * refused.
+   */
+  certificates: StartTlsCertificate[];
+}
+
+/** One certificate of {@linkcode StartTls}. */
+export interface StartTlsCertificate {
+  /**
+   * The host names it serves: an exact name (`example.com`), a wildcard for one label
+   * (`*.example.com`: `www.example.com`, not `example.com` or `a.b.example.com`), or `"*"`
+   * (every name no other certificate matches, and a client that sends none, as one connecting
+   * to an IP address does).
+   */
+  hostnames: string[];
+  /** The environment variable that holds the path of the PEM certificate (chain) file. */
+  certFileEnv: string;
+  /** The environment variable that holds the path of the PEM private key file. */
+  keyFileEnv: string;
 }
 
 /** The production server's resource limits (see {@link StartConfig.limits}). */

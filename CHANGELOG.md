@@ -8,6 +8,231 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.10.4] - 2026-10-31
+
+### Added
+
+- **Revoked runtimes roll back.** A released Deno toolchain or Deno Desktop runtime that turns out
+  to be broken can now be revoked after release, for every target or only some, through a list the
+  maintainers sign (ECDSA P-256, verified against public keys compiled into denext). Before it runs
+  its pinned toolchain, denext reads the list and, when the pin is revoked for the host, runs the
+  previous release the pin now names as its `rollback` (the `deno-toolchain-pin.json` and
+  `desktop-runtime-pin.json` pins gain the field; `deno task desktop:pin-runtime` fills it from the
+  pin it replaces, keeps the older fallback when that pin is revoked itself, and takes
+  `--rollback <tag>`). The rollback is verified against the SHA-256 the pin shipped with: the list
+  can only disable a pin, never name a binary. With no safe fallback the revoked release still
+  runs, with one warning per process tree. `build --compile`, `desktop build` and
+  `desktop package` refuse to ship a revoked runtime unless `DENEXT_ALLOW_REVOKED_RUNTIME=<version>`
+  names it; the desktop verbs move the toolchain and the Deno Desktop runtime back together. The
+  list is cached for 12 hours and refreshed within 1.5 seconds at most, from denext.dev and a
+  GitHub mirror at once (the newest valid list wins), and a list older than the one published
+  when this denext was released is never taken (`toolchain status`,
+  `install` and `doctor` fetch it every time, within 5 seconds, and report its sequence and expiry;
+  `toolchain status --json` adds `revocation`); a network, HTTP or signature problem never fails or
+  delays a command beyond that, a process without network permission never fetches, and
+  `denext start` / `denext job` read the cached list only. A list dated more than a day ahead of
+  the clock is refused, and the replay floor is the cached list's own signed sequence: the
+  bookkeeping file beside it is bound to the key set it was written under and can lower the floor
+  but never raise it, so a write to the cache cannot turn the check off for good; the tests' keys
+  file is honoured only under a switch a test turns on in its own process, and a run on it writes
+  nothing to the cache. The toolchain marker handed to child processes (`DENEXT_TOOLCHAIN_ACTIVE`)
+  never skips the check or forces the rollback on its own: a process on the rollback re-checks the
+  list, and `build --compile`, `desktop build` and `desktop package` ship the rollback only while
+  the list picks it. `toolchain prune` keeps the rollback.
+  `DENEXT_REVOCATION_CHECK=0` turns the check off. Until a signing key is compiled in, the check
+  reads and fetches nothing. See
+  [Revoked runtimes](https://denext.dev/docs/toolchain#revoked-runtimes).
+- **`deno task revocations`** (maintainers): `keygen` (the private key straight into the login
+  keychain), `init`, `add`, `sign`, `resign`, `verify`, `publish` and `floor` for the signed list, which
+  self-verifies against the compiled-in keys before it is published to denext.dev and a mirror.
+  A list expires 21 days after signing; `deno task release` re-signs it when fewer than 10 days
+  remain, and compiles the published list's sequence into the release as its floor (`floor`).
+- **`start.tls`: HTTPS for `denext start` without a proxy, a certificate per host name.**
+  `start: { tls: { certificates: [{ hostnames, certFileEnv, keyFileEnv }] } }` in
+  `denext.config.ts` serves HTTPS from `denext start` and a `build --compile` server. Each
+  certificate lists the host names it serves (an exact name, a one-label `*.` wildcard, or `"*"`
+  for every other name and a client that sends none) and names the environment variables that hold
+  its PEM certificate and key files' paths, so neither the key nor its location is in the config;
+  the files are read when the server starts, and an unset variable or unreadable file fails the
+  start. One certificate is served for every name on any Deno. Several are picked per connection
+  by the name the client asks for (SNI) through `resolveCertificate`, which denext's Deno has from
+  runtime 3.0.0-denext.3 behind the unstable net APIs (`"unstable": ["net"]` in `deno.json`); on
+  stock Deno, an older toolchain or without the flag the server refuses to start and says which is
+  missing. The config validator checks the host names and variable names and refuses a name two
+  certificates list. `denext/server` exports the `StartTls`, `StartTlsCertificate`, `ServeTls` and
+  `CertifiedKeyPem` types (`serveWithPortFallback` takes a `tls` option). See
+  https://denext.dev/docs/deployment-targets#https-without-a-proxy.
+- **`denext patch create` registers npm patches in deno.json's `patchedDependencies`.** When
+  the project runs on denext's Deno from runtime 3.0.0-denext.3 (the pinned toolchain, not
+  `DENEXT_DENO=stock`), an npm patch is also written as a package-relative copy under
+  `patches/npm/` and registered in the workspace root `deno.json`
+  (`"left-pad@1.3.0": "patches/npm/left-pad+1.3.0.patch"`), so the runtime applies it whenever it
+  installs the package — `deno install`, a Docker build, `deno compile` — and `deno.lock` records
+  its hash. denext's boot-time apply keeps running (a no-op once the runtime has applied it). A
+  re-create replaces the entry, `delete` removes it, and entries written by hand are left alone.
+  Nothing is registered, with a line saying why, without a `node_modules` directory or for a patch
+  that adds or deletes a file, which the runtime can't apply. See https://denext.dev/docs/patches.
+- **The generated deploy files carry `start.tls`.** `denext generate docker` (and the `docker` /
+  `fly` presets) mounts `./certs` read-only at `/certs`, keeps it out of the image
+  (`.dockerignore`), requires each certificate's and key's variable in the compose file and lists
+  them empty in `.env.example`, adds `/certs` to a start task's scoped `--allow-read`, and probes
+  health over `https://localhost`. `genericHost()` writes a unit whose server faces clients itself
+  (every interface, port 443 by default with `CAP_NET_BIND_SERVICE`, no `DENEXT_TRUST_PROXY`), no
+  nginx or Caddy snippet, and the variables in `env.example`; `fly()` passes TLS through as raw TCP;
+  `denoDeploy()` warns. The deploy manifest's `server.tls` lists the certificates' host names and
+  variable names (`null` for plain HTTP), typed as `DeployServerTls` / `DeployTlsCertificate`
+  from `denext/deploy`. The generators warn about several certificates without
+  `"unstable": ["net"]` in deno.json and a health probe no certificate serves.
+- **`denext migrate` carries pnpm and Bun patches.** `pnpm.patchedDependencies` (package.json),
+  `patchedDependencies` in pnpm-workspace.yaml (the workspace root's for an app inside one) and
+  Bun's `patchedDependencies` (package.json) are copied to `patches/npm/<name>+<version>.patch`
+  and registered in deno.json's `patchedDependencies` under the same key, so denext's Deno from
+  runtime 3.0.0-denext.3 applies them on install. A patch under `node_modules/<pkg>/` paths is made
+  package-relative and a plain unified diff gets its `diff --git` lines. A patch that adds, deletes,
+  renames or copies a file or changes a binary one is a review item (the runtime changes existing
+  text files only), as is every patch on a runtime that doesn't apply them, a key deno.json maps
+  already and an unreadable file; a hand-authored deno.json gets the entries to add by hand.
+  `migrate --check` lists each patch it would carry and each it would not. See
+  https://denext.dev/docs/migrating#npm-patches-from-pnpm-and-bun.
+
+### Changed
+
+- **Runtime 3.0.0-denext.5: denext pins it** (was `3.0.0-denext.3`; the toolchain, the Deno
+  Desktop runtime and CI's Linux toolchain zip move together; both pins name `3.0.0-denext.3` as
+  their `rollback`; there is no `3.0.0-denext.4` release). On Windows a finished process now ends
+  with `TerminateProcess` after flushing its output, so a `deno` child can no longer write its
+  whole output and then spin at 100% CPU in its teardown instead of exiting (denext's
+  `DENEXT_CHILD_EXIT_GRACE_MS` workaround stays for older runtimes). The panic banner prints the
+  subcommand and the argument count instead of the command line, which can carry tokens. Crash
+  reports are opt-in: `DENEXT_CRASH_REPORT_URL` (an `https:` endpoint or a `file:` path, from the
+  environment only) makes the CLI and a compiled program send one scrubbed JSON report when they
+  panic (`DENEXT_CRASH_REPORT_APP` names the app, `DENEXT_CRASH_REPORT_SELFTEST=1` checks the
+  pipeline); a packaged desktop app's panic report uses the same schema. The
+  [runtime reference](https://denext.dev/docs/runtime-reference) lists them.
+- **Runtime 3.0.0-denext.3: denext pins it** (was `3.0.0-denext.2`; the toolchain, the Deno
+  Desktop runtime and CI's Linux toolchain zip move together; both pins name `3.0.0-denext.2` as
+  their `rollback`). It moves to V8 15.2.124.45 and adds runtime APIs: the `HTMLRewriter` global
+  (`--unstable-html-rewriter`), `resolveCertificate` (a certificate per server name for
+  `Deno.listenTls` / `Deno.serve`, which `start.tls` uses), a cookie jar for `fetch`
+  (`Deno.CookieJar`, `Deno.Cookie`, `Deno.CookieMap`; `--unstable-cookies`) and npm
+  `patchedDependencies` (which `denext patch` registers in). Also: better-sqlite3 under Jest's
+  module registry, a shell-spawned `node` shim keeps the npm resolution, a package.json script's
+  arguments lose npm's leading `--`, `node:test` parents wait for unawaited subtests, a desktop
+  bind call from a page that is gone is rejected and dropped, and the idle trim keeps a wake-up
+  during a trim and skips the GC on a large live heap (`DENO_IDLE_TRIM_MAX_GC_HEAP_MB`). The glibc
+  floor stays 2.27. The [runtime reference](https://denext.dev/docs/runtime-reference) lists the
+  new APIs.
+- **`denext migrate` moves Prisma apps to Prisma 7.** It pins `prisma`, `@prisma/client` and the
+  `@prisma/adapter-*` packages at 7.10.1 whichever major the app was on (any `@prisma/adapter-*`
+  in `package.json` too), and applies the Prisma 7 upgrade guide: the schema's datasource `url`
+  (and `directUrl`, as the CLI's `url`, and `shadowDatabaseUrl`) moves to a `prisma.config.ts`
+  that reads the same variables through `process.env`, with a relative SQLite path rebased so the
+  CLI and the app keep opening the same file; the generator drops the `queryCompiler` /
+  `driverAdapters` preview features (other preview features stay); the injected SQLite adapter is
+  `PrismaBetterSqlite3`; the `better-sqlite3` link advertises 12.6.2, and an app's own
+  `better-sqlite3` dependency is pinned to that version too (Deno takes a link only for a range
+  its version satisfies: an app on `^11` would otherwise install the native package, whose addon
+  its server bundle cannot load); and `prisma:setup` runs
+  `prisma generate` and then a plain `db push` or `migrate deploy`, passing the app's `.env` with
+  `--env-file`. A Prisma 7 app keeps its own `prisma.config.ts` datasource, the output directory
+  of its `prisma-client` generator and any adapter it already passes to `new PrismaClient()`;
+  before, it was pinned back to Prisma 6, whose CLI rejected its schema without a `url`. The
+  seed is written to `prisma.config.ts`'s `migrations.seed`, where Prisma 7 reads it.
+- **The `@denext/denext` package is 0.33 MiB smaller** than it would be (19.70 MiB with this
+  release's additions, against JSR's 20 MiB cap; 4.10.3 was 19.86 MiB). The packed native
+  templates `denext mobile add` writes moved into `@denext/docs-corpus`, which denext already pins
+  at exactly its own version and which every release publishes first; denext run from a checkout
+  of its repository reads the checkout's own copy, so it never waits for a docs-corpus release.
+  The `denext.config.ts` JSON Schema the project UI renders its forms from, the CLI's verb
+  descriptions and the Google Fonts family list behind `next/font/google` now ship
+  Brotli-compressed. No import path or behaviour changes; the repository keeps
+  `denext.config.schema.json`, which the JSR package no longer carries.
+
+### Fixed
+
+- **A paused desktop download that is cancelled rejects once its partial file is gone.** In a
+  Deno Desktop window, `cancelFileTransfer` on a paused `downloadToFile` rejected its promise
+  with `CANCELLED` straight away, while the runtime was still dropping the kept partial file and
+  its record; code that acted on the rejection could still find them. It now rejects once both
+  are gone, as on the web, and so does a cancel that lands while a pause is settling.
+- **`spa.tanstackRouter` builds no longer fail with `EXDEV` when the project and the working
+  directory are on different file systems.** TanStack's route generator writes the route tree to
+  its scratch directory and renames it into place, and it resolved that directory
+  (`.tanstack/tmp`) against the process's working directory, not the project: a build run from
+  elsewhere (a monorepo root, a project under a `/tmp` tmpfs) failed the rename across devices and
+  left `.tanstack/` outside the project. denext now points it at the project's own
+  `.tanstack/tmp`, unless `tsr.config.json`'s `tmpDir` or `TSR_TMP_DIR` names one.
+- **A SPA shell's inline script that writes a `<script>` tag keeps working under
+  `nextScriptWorkers`.** The per-response nonce stamp put `nonce="…"` into every `<script` it
+  found, a script's string literal included (`"<script src=…><\/script>"`), which ended the string
+  early and broke the script; a `</head>` in a script's string drew the Partytown boot tag into it
+  too. The stamp now treats the content of `script`, `style`, `textarea` and `title` elements and
+  of comments as text, and an attribute value may hold `>`.
+- **`build --compile` with several `start.tls` certificates bakes `--unstable-net`.** The compile
+  runs with a config of its own, which carries no `unstable` from the project's `deno.json`, so the
+  executable refused to serve several certificates ("needs the unstable net APIs").
+- **A response a React Router middleware builds after `next()` keeps the app's headers and
+  cookies.** A fresh response, a copy of the rendered one, or a `redirect()` thrown after `next()`
+  now carries the app's `headers` rules, `middleware.ts`'s headers and the cookies
+  `cookies().set()` queued during the render, each added only where the response lacks it (a
+  Set-Cookie is never repeated); before, only a response made without calling `next()` got them,
+  so such a redirect dropped a sign-in cookie.
+- **A workspace entry that can't be read is an error naming it.** A class that isn't a valid
+  range (`[z-a]`), or braces that expand past 1024 patterns, is now an error that names the entry
+  and its file, not a raw `SyntaxError` or a pattern list of millions.
+- **`denext ui`'s listing children settle only on a document that ends their output.** `denext
+  commands --json` and `denext job --list` / `--history` / `--clear-history --json` print their
+  document as their last act; a JSON value printed earlier and followed by more output is no
+  longer taken for it. Such a child leads its own process group outside Windows, so the kill (or
+  the caller's abort) reaches every descendant by the group's id rather than by a list of pids
+  that may have been reused meanwhile; on Windows it is ended with
+  `%SystemRoot%\System32\taskkill.exe` by its own pid, never a `taskkill` found through `PATH` or
+  the working directory. The Database section's `denext db-admin` child and the Setup page's
+  `denext doctor --json` are always waited for to their exit or deadline: project code there may
+  print JSON of its own before a long silent stretch of work.
+- **`PrismaDenoSql` on Postgres reports Prisma 7's `RestrictViolation` and `InvalidInputValue`.**
+  A foreign-key `RESTRICT` failure (SQLSTATE 23001) and an invalid input value (22P02) are mapped
+  to those kinds, as `@prisma/adapter-pg` 7 does, instead of the generic `postgres` error, and a
+  deadlock (40P01) is a `TransactionWriteConflict`. The restated contract in
+  `denext/prisma-adapter` follows `@prisma/driver-adapter-utils` 7.10.1 (the new kinds, `table` on
+  a unique violation, optional savepoint methods on `Transaction`).
+- **`PrismaDenoSql` names the table of a unique-constraint violation.** A
+  `UniqueConstraintViolation` now carries `table`, as Prisma's own adapters fill it: on Postgres
+  from the server's `table` field (else from a default `<table>_<fields>_key` constraint name), and
+  on SQLite from the first `<table>.<column>` of `UNIQUE constraint failed: …`. On Postgres the
+  constraint is now reported by name (`{ index: "User_email_key" }`) when the server names it, as
+  `@prisma/adapter-pg` does, and by its `Key (…)` fields only when it does not.
+
+### Security
+
+- **Runtime 3.0.0-denext.5 fixes two security bugs in the pinned `3.0.0-denext.3`.** In a
+  package.json-only project (`nodeModulesDir: "manual"`), a link in `node_modules` that leads out
+  of it (`node_modules/pkg -> ../../outside`) made the files it reaches readable to `require()`,
+  `createRequire` and `require.resolve` without `--allow-read` and past `--deny-read` (since
+  runtime `2.9.7-denext.22`); such a read now needs read access, as `import()` does, so a workspace
+  member linked from `node_modules` needs read access to it when read is not fully granted
+  ([GHSA-xhq4-83x4-g734](https://github.com/Brainwires/deno/security/advisories/GHSA-xhq4-83x4-g734)). And the memory behind the
+  runtime's `tickInfo`, `immediateInfo` and `timerInfo` arrays was freed while V8 still referenced
+  it (read when a snapshot was made, and reachable until the isolate was disposed); it now belongs
+  to its V8 backing store ([GHSA-mvh6-5whv-26gw](https://github.com/Brainwires/deno/security/advisories/GHSA-mvh6-5whv-26gw)).
+- **Runtime 3.0.0-denext.3 carries V8 15.2.124.45**, with the fixes for two V8 bugs exploited in
+  the wild (CVE-2026-85046, a type confusion, and CVE-2026-87491, an out-of-bounds write) that the
+  pinned `3.0.0-denext.2`'s V8 15.2.124.1 lacks. A sloppy-import hint no longer reveals whether a
+  file exists to a computed `import()` without read permission. Security advisory
+  [GHSA-qr84-w8xw-f7r4](https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4).
+- **Deno Desktop download records never write a credential header to disk.** A credential
+  header (`Authorization`, `Proxy-Authorization`, `Cookie`, or one whose name says auth, token,
+  key, secret, session, password, credential or signature) of a download started with an `id` is
+  no longer kept in `denext-transfers/transfers.json`: it stays in memory for the launch, and after
+  a restart a resume of such a download is refused (`validation`) until the page starts it again
+  with its headers, which continues from the partial file. The file is `0600` on macOS and Linux;
+  Windows ignores the mode and it takes the user profile's ACL.
+- **`denext migrate` no longer pins a Prisma dependency tree with a high advisory.** It pinned
+  Prisma 6.19.3, and every Prisma 6 release's `@prisma/config` pins `deepmerge-ts` 7.1.5
+  ([GHSA-ggr8-5vv4-36mx](https://github.com/advisories/GHSA-ggr8-5vv4-36mx)), so every Prisma app
+  it migrated got that version. It now pins Prisma 7.10.1 (`deepmerge-ts` 8.0.2); migrating again
+  moves an app migrated before to it (see Changed).
+
 ## [4.10.3] - 2026-10-30
 
 ### Added
@@ -19899,7 +20124,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.3...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.10.4...development
+[4.10.4]: https://jsr.io/@denext/denext@4.10.4
 [4.10.3]: https://jsr.io/@denext/denext@4.10.3
 [4.10.2]: https://jsr.io/@denext/denext@4.10.2
 [4.10.1]: https://jsr.io/@denext/denext@4.10.1

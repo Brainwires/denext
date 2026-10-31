@@ -55,8 +55,23 @@ import {
 } from "./deno-version.ts";
 import { denoSupportsNetSplit, NET_SPLIT_RELEASE, supportsNetSplit } from "./net-permissions.ts";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
+import toolchainPinJson from "./deno-toolchain-pin.json" with { type: "json" };
 import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
 import { warnStockDeprecation } from "./stock-deprecation.ts";
+import {
+  decideRevocation,
+  findRevocation,
+  type LoadRevocationsOptions,
+  loadRuntimeRevocations,
+  REVOCATION_NOTICED_ENV,
+  revocationNotice,
+  revokedShipRefusal,
+  type RuntimeRevocation,
+  type RuntimeRevocationList,
+} from "./runtime-revocations.ts";
+
+/** The toolchain marker a command sets on the processes it starts (deno-toolchain.ts). */
+const TOOLCHAIN_ACTIVE_ENV = "DENEXT_TOOLCHAIN_ACTIVE";
 
 /** A runtime backend (`deno desktop --backend`). */
 export type DesktopRuntimeBackend = "webview" | "cef";
@@ -89,6 +104,25 @@ export interface DesktopRuntimePin {
       & Partial<Record<DesktopRuntimeBackend, DesktopRuntimeArtifact>>
     >
   >;
+  /**
+   * The previous pin, used instead of this one when the signed revoked-runtimes list revokes this
+   * one for the target (src/build/runtime-revocations.ts), always together with the Deno toolchain
+   * pin's `rollback` of the same release. Never nests another `rollback`.
+   */
+  readonly rollback?: DesktopRuntimeRollback;
+}
+
+/** A desktop runtime pin's `rollback`: the previous pinned release, as the pin named it. */
+export type DesktopRuntimeRollback = Omit<DesktopRuntimePin, "schema" | "rollback">;
+
+/**
+ * The pin's `rollback` as a pin of its own, or `null` when it names none.
+ *
+ * @param pin The pin.
+ * @returns The previous release's pin.
+ */
+export function rollbackDesktopPin(pin: DesktopRuntimePin): DesktopRuntimePin | null {
+  return pin.rollback ? { schema: 1, ...pin.rollback } : null;
 }
 
 /** The runtime denext pins (generated; see the header). */
@@ -927,6 +961,28 @@ export interface DesktopRuntimeEnvOptions {
    * unpackaged window beats a refusal).
    */
   readonly onDenoMismatch?: "fail" | "stock";
+  /**
+   * Whether this build ships the runtime to others (`desktop build` / `package`, the default): a
+   * runtime the revoked-runtimes list revokes for the target is then refused unless
+   * `DENEXT_ALLOW_REVOKED_RUNTIME` names it. `false` (`desktop run` / `dev`) warns instead.
+   */
+  readonly ship?: boolean;
+  /**
+   * How the revoked-runtimes list is consulted (test seams). Absent: the built-in pin is checked;
+   * a `pin` given without it is not.
+   */
+  readonly revocations?: Omit<LoadRevocationsOptions, "env">;
+  /**
+   * The Deno toolchain pin the `deno desktop` CLI comes from, as far as rolling back goes
+   * (default `deno-toolchain-pin.json`; tests pass a fixture's).
+   */
+  readonly toolchainPin?: ToolchainPinVersions;
+}
+
+/** The versions of a Deno toolchain pin and its rollback (all a desktop rollback needs of it). */
+export interface ToolchainPinVersions {
+  readonly version: string | null;
+  readonly rollback?: { readonly version: string };
 }
 
 /** The env for `deno desktop`, plus which runtime it selects. */
@@ -1224,6 +1280,92 @@ function stockForMismatch(
 }
 
 /**
+ * The runtime pin a `deno desktop` build uses: the pin in force, or its `rollback` when the Deno
+ * toolchain this process runs on is the toolchain pin's rollback (the command that started it
+ * rolled both back: libdenort must match the CLI) AND the revoked-runtimes list, read here, still
+ * moves both back for `target` — the toolchain marker alone (it can leak from a parent shell)
+ * never makes a package ship the older runtime. Otherwise a pin the list revokes for `target` is
+ * refused when the build ships it ({@linkcode revokedShipRefusal}), or used with one warning
+ * (`desktop run` / `dev`).
+ */
+async function selectDesktopPin(
+  options: DesktopRuntimeEnvOptions,
+  env: EnvGet,
+  target: string,
+  log: (line: string) => void,
+): Promise<DesktopRuntimePin> {
+  const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
+  const rollback = rollbackDesktopPin(pin);
+  const marked = rollback?.version !== undefined && env(TOOLCHAIN_ACTIVE_ENV) === rollback.version;
+  if (!marked && !checksPin(options)) return pin;
+  const { list } = await loadRuntimeRevocations({ ...options.revocations, env });
+  if (marked && rollsBackTogether(list, pin, target, options.toolchainPin)) return rollback!;
+  const hit = findRevocation(list, "desktop", pin.version, target);
+  const ship = options.ship !== false;
+  if (hit) revokedDesktopPin(hit, { list, rollback, ship, target, env, log });
+  return pin;
+}
+
+/** Whether the list is consulted for the pin: the built-in one, or a given one with `revocations`. */
+function checksPin(options: DesktopRuntimeEnvOptions): boolean {
+  return options.pin === undefined || options.revocations !== undefined;
+}
+
+/**
+ * Whether `list` moves the Deno toolchain and the Deno Desktop runtime back together for `target`
+ * (src/build/runtime-revocations.ts `decideRevocation`): one of them is revoked there, and both
+ * pins name the same rollback release, which is not revoked itself.
+ */
+function rollsBackTogether(
+  list: RuntimeRevocationList | null,
+  pin: DesktopRuntimePin,
+  target: string,
+  toolchain: ToolchainPinVersions = toolchainPinJson,
+): boolean {
+  const rollback = pin.rollback?.version ?? null;
+  if (toolchain.version === null || toolchain.rollback?.version !== rollback) return false;
+  const decision = decideRevocation(list, [
+    { component: "cli", version: toolchain.version, rollback, triple: target },
+    { component: "desktop", version: pin.version, rollback, triple: target },
+  ]);
+  return decision.hit !== null && decision.useRollback;
+}
+
+/**
+ * What a revoked desktop runtime pin means for this build: one warning (`desktop run` / `dev`),
+ * or a refusal to package on it unless `DENEXT_ALLOW_REVOKED_RUNTIME` names it — pointing at the
+ * pin's rollback when that one is not revoked too.
+ */
+function revokedDesktopPin(
+  hit: RuntimeRevocation,
+  o: {
+    list: RuntimeRevocationList | null;
+    rollback: DesktopRuntimePin | null;
+    ship: boolean;
+    target: string;
+    env: EnvGet;
+    log: (line: string) => void;
+  },
+): void {
+  const { target } = o;
+  if (!o.ship) {
+    if (o.env(REVOCATION_NOTICED_ENV) !== "1") o.log(revocationNotice(hit, target, null));
+    return;
+  }
+  const refusal = revokedShipRefusal(hit, target, "package on", o.env);
+  if (refusal === null) return;
+  const usable = o.rollback !== null &&
+    findRevocation(o.list, "desktop", o.rollback.version, target) === null;
+  throw new Error(refusal + (usable ? fallbackHint(o.rollback!.version) : ""));
+}
+
+/** Where a packaging refusal points when the pin's rollback could build instead. */
+function fallbackHint(version: string): string {
+  return "\n  `denext desktop build` / `denext desktop package` build on the pinned fallback " +
+    `${version} instead.`;
+}
+
+/**
  * Resolve the env one `deno desktop` invocation needs to run on denext's pinned runtime (and
  * download / verify it on first use). Honors `DENEXT_DESKTOP_RUNTIME=stock` (no env, a warning),
  * `DENEXT_DESKTOP_RUNTIME_DIR` (a local build, unverified, a warning),
@@ -1241,7 +1383,6 @@ export async function resolveDesktopRuntimeEnv(
 ): Promise<DesktopRuntimeEnv> {
   const env = options.env ?? processEnv;
   const log = options.log ?? ((l: string) => console.error(l));
-  const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
   const target = options.target ?? desktopRuntimeTarget();
   if (runtimeMode(env) === "stock") {
     log(
@@ -1252,13 +1393,15 @@ export async function resolveDesktopRuntimeEnv(
   }
   const localDir = env(RUNTIME_DIR_ENV);
   if (localDir) {
-    const local = await localRuntimeEnv(localDir, runtimeLibFor(pin, target), target);
+    const lib = runtimeLibFor(options.pin ?? DESKTOP_RUNTIME_PIN, target);
+    const local = await localRuntimeEnv(localDir, lib, target);
     log(
       `  denext: using the LOCAL Deno Desktop runtime at ${localDir} (${RUNTIME_DIR_ENV}); it is ` +
         "not downloaded, pinned or verified.",
     );
     return { mode: "local", env: local };
   }
+  const pin = await selectDesktopPin(options, env, target, log);
   const deno = options.deno ?? "deno";
   const found = asIdentity(await (options.denoVersion ?? denoCliVersion)(deno));
   if (denoReleaseVersion(found) !== pin.deno) {

@@ -212,6 +212,41 @@ entries).
 > `"use client"` / `"use server"` files still resolves from `node_modules` in that
 > mode, so its client components hydrate as islands.
 
+### npm patches from pnpm and Bun
+
+A project that patches npm packages with pnpm (`pnpm.patchedDependencies` in `package.json`, or
+`patchedDependencies` in `pnpm-workspace.yaml`, the workspace root's for an app inside one) or
+Bun (`patchedDependencies` in `package.json`) keeps its patches. `denext migrate` copies each one
+to `patches/npm/<name>+<version>.patch` and registers it in `deno.json`'s `patchedDependencies`
+under the same key (`left-pad@1.3.0`, a range, or a bare name), which denext's Deno from runtime
+`3.0.0-denext.3` (the pinned toolchain has it) applies whenever it installs the package:
+
+```json
+{
+  "patchedDependencies": {
+    "left-pad@1.3.0": "patches/npm/left-pad+1.3.0.patch",
+    "@scope/util@^2.1.0": "patches/npm/@scope+util+_2.1.0.patch"
+  }
+}
+```
+
+The copy is the patch as pnpm or Bun wrote it, `diff --git` sections with paths inside the
+package; a patch whose paths start `node_modules/<pkg>/` is made package-relative, and a plain
+unified diff gets its `diff --git` lines. The original files and `package.json` are left as they
+are. A few patches are not carried and are listed for review instead, by `migrate` and by
+`migrate --check`, which lists every patch it would carry too:
+
+- one that **adds, deletes, renames or copies a file, or changes a binary one**: the runtime's
+  applier changes existing text files only. Record the change with
+  [`denext patch create <pkg>`](/docs/patches), which denext applies at boot;
+- every patch, when the Deno that installs the packages doesn't apply `patchedDependencies`
+  (`DENEXT_DENO=stock`, or an older runtime);
+- a key `deno.json` already maps to another file (yours is kept), and a patch file that can't be
+  read.
+
+A `deno.json` you wrote yourself is not edited: the copies are made and migrate prints the
+`patchedDependencies` entries to add.
+
 ---
 
 ## 3b. Migrating a Vite, CRA or generic React SPA

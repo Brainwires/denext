@@ -14,6 +14,9 @@
 //
 // Build-time only; never imported by a shipped bundle.
 
+import type { DeployServerTls } from "../deploy/manifest.ts";
+import { TLS_CERT_DIR, tlsEnvNames, tlsProbeArgs } from "./start-tls-deploy.ts";
+
 /**
  * The header comment every generated Docker file carries. Its presence is what makes a
  * regeneration safe: a file without it was written (or edited) by a human and is left alone.
@@ -72,6 +75,12 @@ export interface StackOptions {
    * the image runs `deno task start` under `tini -g` (the signal goes to the whole group).
    */
   readonly startCommand?: readonly string[];
+  /**
+   * `start.tls`: the server serves HTTPS itself. The app gets each certificate's and key's
+   * variable from `.env` (a path under `/certs`, where `./certs` is mounted read-only), and its
+   * health check probes `https:`. Absent or `null`: plain HTTP.
+   */
+  readonly tls?: DeployServerTls | null;
 }
 
 /** One variable `.env.example` lists. */
@@ -443,13 +452,17 @@ function appDependsOn(options: StackOptions): string[] {
   return deps;
 }
 
-/** The app service's liveness probe (the same one the Dockerfile bakes in). */
-function appHealthcheck(port: number, static_: boolean): string {
+/**
+ * The app service's liveness probe (the same one the Dockerfile bakes in): `https:` when the
+ * server serves TLS itself (`tls`).
+ */
+function appHealthcheck(port: number, static_: boolean, tls = false): string {
   const path = static_ ? "/" : "/_denext/health";
   const probe =
     `fetch('http://127.0.0.1:${port}${path}').then((r)=>Deno.exit(r.ok?0:1)).catch(()=>Deno.exit(1))`;
+  const test = tls ? ["CMD", "deno", ...tlsProbeArgs(port, path)] : ["CMD", "deno", "eval", probe];
   return `    healthcheck:
-      test: ["CMD", "deno", "eval", "${probe}"]
+      test: [${test.map((w) => `"${w}"`).join(", ")}]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -459,6 +472,7 @@ function appHealthcheck(port: number, static_: boolean): string {
 /** The `web` service. */
 function webService(options: StackOptions, port: number, static_: boolean): string {
   const deps = appDependsOn(options);
+  const tls = options.tls && !static_ ? options.tls : null;
   return `  web:
     build: .
     image: ${APP_IMAGE}
@@ -468,13 +482,65 @@ function webService(options: StackOptions, port: number, static_: boolean): stri
     stop_grace_period: 30s
     ports:
       - "${port}:${port}"
-    # Anything else the app reads at runtime: put it in .env (optional file).
+${
+    tls
+      ? tlsVolume()
+      : ""
+  }    # Anything else the app reads at runtime: put it in .env (optional file).
     env_file:
       - path: .env
         required: false
     environment:
-${indent(["NODE_ENV: production", ...appEnvLines(options)], 6)}
-${appHealthcheck(port, static_)}${deps.length ? `\n    depends_on:\n${indent(deps, 6)}` : ""}`;
+${indent(["NODE_ENV: production", ...appEnvLines(options), ...tlsEnvLines(tls)], 6)}
+${appHealthcheck(port, static_, tls !== null)}${
+    deps.length ? `\n    depends_on:\n${indent(deps, 6)}` : ""
+  }`;
+}
+
+/**
+ * The app's read-only mount of the certificate files (`start.tls`): `./certs` beside the compose
+ * file, which `.dockerignore` keeps out of the image.
+ *
+ * @returns The `volumes:` lines (4-space indented), with a comment.
+ */
+export function tlsVolume(): string {
+  return `    # start.tls: the certificate and key files, read-only (never baked into the image).
+    volumes:
+      - ./certs:${TLS_CERT_DIR}:ro
+`;
+}
+
+/**
+ * The `environment:` entries (`NAME: ${NAME:?…}`) naming the certificate and key files: required,
+ * so compose refuses to start without them.
+ *
+ * @param tls The certificates (`null`: none).
+ * @param form `map` (`NAME: value`) or `list` (`NAME=value`).
+ * @returns The entries.
+ */
+export function tlsEnvLines(
+  tls: DeployServerTls | null | undefined,
+  form: "map" | "list" = "map",
+): string[] {
+  if (!tls) return [];
+  const sep = form === "map" ? ": " : "=";
+  return tlsEnvNames(tls).map((name) => `${name}${sep}${ref(`${name}:?${MISSING}`)}`);
+}
+
+/** The `.env.example` entries for `start.tls`'s variables (empty: they are required). */
+function tlsEnvBlocks(tls: DeployServerTls | null | undefined): string[] {
+  if (!tls) return [];
+  return tlsEnvNames(tls).map((name) => {
+    const key = tls.certificates.some((c) => c.keyFileEnv === name);
+    return [
+      ...commentWrap(
+        `start.tls: the path of the PEM ${key ? "private key" : "certificate (chain)"} file ` +
+          `inside the container. Put the file in ./certs, mounted at ${TLS_CERT_DIR} read-only ` +
+          `(e.g. ${TLS_CERT_DIR}/${key ? "privkey" : "fullchain"}.pem). Required.`,
+      ),
+      `${name}=`,
+    ].join("\n");
+  });
 }
 
 /** The one-shot migrations service: the app's image, `denext job migrate`, then exit. */
@@ -815,7 +881,10 @@ function envBlock(v: StackEnvVar, options: StackOptions): string {
  * @returns The file's contents.
  */
 export function renderEnvExample(options: StackOptions): string {
-  const blocks = stackEnv(options).map((v) => envBlock(v, options));
+  const blocks = [
+    ...stackEnv(options).map((v) => envBlock(v, options)),
+    ...tlsEnvBlocks(options.tls),
+  ];
   return `${DOCKER_SENTINEL}.
 # Copy to .env and replace every placeholder:  cp .env.example .env
 # .env holds real secrets: keep it out of git (add \`.env\` to .gitignore) — .dockerignore
@@ -823,6 +892,11 @@ export function renderEnvExample(options: StackOptions): string {
 
 ${blocks.join("\n\n")}
 `;
+}
+
+/** The dev overlay's health check: `denext dev` serves plain HTTP, whatever `start.tls` says. */
+function devHealthcheck(port: number): string {
+  return "\n    # denext dev never serves TLS: probe plain HTTP.\n" + appHealthcheck(port, false);
 }
 
 /**
@@ -854,6 +928,8 @@ services:
       - .:/app
     environment:
       NODE_ENV: development
-      DENO_DIR: /app/.denext/deno-dir${extra.length ? "\n\n" + extra.join("\n\n") : ""}
+      DENO_DIR: /app/.denext/deno-dir${options.tls ? devHealthcheck(port) : ""}${
+    extra.length ? "\n\n" + extra.join("\n\n") : ""
+  }
 `;
 }

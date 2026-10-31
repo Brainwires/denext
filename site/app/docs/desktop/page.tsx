@@ -2105,11 +2105,19 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         lists it after one (a download the app quit during as{" "}
         <code>failed</code>, resumable from its partial file), <code>resumeFileTransfer</code>{" "}
         continues it with the request headers it was started with, and a cancel drops its record
-        with its partial file; a done record is listed for 7 days unless forgotten first. It sends
-        the page&apos;s request headers except those a browser&apos;s <code>fetch</code>{" "}
-        refuses (<code>Cookie</code>, <code>Host</code>, <code>Origin</code>, the hop-by-hop and
-        {" "}
-        <code>Sec-</code> / <code>Proxy-</code> ones), and drops <code>Authorization</code>{" "}
+        with its partial file; a done record is listed for 7 days unless forgotten first. The
+        record&apos;s file never holds a credential header (<code>Authorization</code>,{" "}
+        <code>Cookie</code>, an API key or token): those stay in memory for the launch, so after a
+        restart a download started with one is refused by{" "}
+        <code>resumeFileTransfer</code>; start it again with <code>downloadToFile</code>{" "}
+        and its headers (the same{" "}
+        <code>id</code>, URL and file) and it continues from its partial file. The file is readable
+        by the user only on macOS and Linux (mode{" "}
+        <code>0600</code>); Windows ignores the mode, and the file takes the user profile&apos;s
+        ACL. It sends the page&apos;s request headers except those a browser&apos;s{" "}
+        <code>fetch</code> refuses (<code>Cookie</code>, <code>Host</code>,{" "}
+        <code>Origin</code>, the hop-by-hop and <code>Sec-</code> / <code>Proxy-</code>{" "}
+        ones), and drops <code>Authorization</code>{" "}
         on a redirect to another origin. LAN addresses (<code>
           192.168.x.x
         </code>, <code>10.x.x.x</code>, …) stay allowed, so a download from a NAS works.{" "}
@@ -2119,9 +2127,8 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>fs</code>, <code>shell</code>{" "}
         and drag-out never reach the runtime's own folders in the data directory (the updater's{" "}
         <code>ui-updates</code>, the download records&apos; <code>denext-transfers</code>{" "}
-        (a live record holds its request headers), and the web engine's profile: <code>CEF</code>,
-        {" "}
-        <code>WebKitGTK</code>,{" "}
+        (a live record holds its non-credential request headers), and the web engine's profile:{" "}
+        <code>CEF</code>, <code>WebKitGTK</code>,{" "}
         <code>WebView2</code>, in any letter case): no read, list, write, delete, open, reveal,
         trash or drag. SQLite connections cannot <code>ATTACH</code> another file, and a{" "}
         <code>query</code>{" "}

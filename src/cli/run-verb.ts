@@ -18,6 +18,7 @@ import {
   mergeRunFlags,
   pinnedConfigArgs,
   pinnedDenextCli,
+  revocationCheckFor,
   servesInProcess,
   toolchainApplies,
   toolchainConfigArgs,
@@ -507,7 +508,7 @@ async function toolchainGate(command: CommandSpec, ctx: CommandContext): Promise
     ...(denext ? { denext } : {}),
     pinnedVersion: pinnedToolchainVersion(),
     standalone: () => standalone,
-    resolve: () => resolveDenoToolchain(),
+    resolve: () => resolveDenoToolchain({ revocations: revocationCheckFor(command) }),
     // This child may re-run again before it serves (the CSS / module-config re-exec): it gets
     // `start.limits` as data, never as flags (src/build/resource-limits.ts `hopLimits`).
     spawn: async (deno, marker, env = {}) =>

@@ -534,9 +534,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.2
-      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.2-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: 7134d7fe2f399919428e5abde4b6d37e99662531b74d3515ff5910a139d71bc5
+      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.5
+      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.5-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: 0ee6d075a68da07dd8801387077742fae823e8812d66bd134323934b236022b6
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 

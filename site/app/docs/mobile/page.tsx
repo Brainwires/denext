@@ -224,9 +224,13 @@ denext mobile add haptics share secure-store`}
         <code>.gitignore</code>. It installs the pinned Capacitor 8 packages with the project&apos;s
         package manager (as dev dependencies, without the project&apos;s lifecycle scripts), and
         with <code>--platform ios,android</code> exports and runs{" "}
-        <code>npx cap add</code>, which run the project&apos;s own build code. What it cannot know
-        (a hosted / remote mode switch in the build env, a backend URL a phone can reach, CORS for
-        {" "}
+        <code>npx cap add</code>. Those commands run the project&apos;s own code (its package
+        manager&apos;s configuration, its build, its Capacitor config), so migrate runs them only
+        with <code>--yes</code>{" "}
+        or after an interactive prompt that lists them; a non-interactive run without{" "}
+        <code>--yes</code>{" "}
+        prints them for you to run once you trust the project. What it cannot know (a hosted /
+        remote mode switch in the build env, a backend URL a phone can reach, CORS for{" "}
         <code>capacitor://localhost</code> and <code>https://localhost</code>) is listed for review;
         {" "}
         <code>--check</code> shows the whole plan.{" "}

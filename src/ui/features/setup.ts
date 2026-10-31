@@ -756,7 +756,8 @@ export function setDoctorRunner(runner: DoctorRunner | null): void {
 async function runDoctorSubprocess(dir: string, offline: boolean): Promise<DoctorCheck[]> {
   const run = await runDeno(
     [...cliInvocation({ offline, dir }), "doctor", "--json", "--cwd", dir],
-    { cwd: dir, signal: AbortSignal.timeout(120_000), jsonDocument: {} },
+    // No `jsonDocument`: a route probe may run silently after a page logged JSON of its own.
+    { cwd: dir, signal: AbortSignal.timeout(120_000) },
   );
   const parsed = run.json();
   if (!Array.isArray(parsed)) {

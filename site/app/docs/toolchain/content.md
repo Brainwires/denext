@@ -249,6 +249,73 @@ The notice is printed once per process tree: the first one sets `DENEXT_STOCK_DE
 in the command's environment, so the processes it starts stay quiet.
 `DENEXT_NO_DEPRECATION_WARNINGS=1` hides it.
 
+## Revoked runtimes
+
+A Deno toolchain or Deno Desktop runtime release that turns out to be broken (it crashes on start
+on some hosts, say) can be revoked after release. The maintainers publish a signed list of revoked
+releases, and denext reads it before it runs its pinned toolchain:
+
+- **The pin is revoked for this host:** denext runs the previous release instead, which the pin
+  names as its `rollback`, provided that release is not revoked too. It is downloaded and verified
+  like the pinned one: its SHA-256 comes from the pin that shipped with your denext, never from
+  the list. The command says so once, on stderr:
+
+  ```text
+  denext: Deno toolchain 3.0.0-denext.3 is revoked for x86_64-unknown-linux-gnu (crashes on start under glibc 2.27;
+    https://…). Running 3.0.0-denext.2 instead. Fixed in denext 4.10.3: run `denext upgrade`.
+  ```
+
+  The processes it starts stay quiet (`DENEXT_REVOCATION_NOTICED=1` in their environment).
+- **No safe fallback is pinned:** the revoked release still runs, with a warning that names the
+  fix (`denext upgrade`, or `DENEXT_DENO=<path>`). Refusing would strand you with nothing to run.
+- **Commands that ship a runtime to others refuse it:** `build --compile` (the `denort` inside the
+  binary), `desktop build` and `desktop package` stop with the reason, unless
+  `DENEXT_ALLOW_REVOKED_RUNTIME=<version>` names the revoked version. `desktop run` and `dev` warn
+  instead. The desktop verbs move the toolchain and the Deno Desktop runtime back together, since
+  the `deno desktop` CLI and libdenort must come from one release.
+
+The list can only disable a pin and choose among the two releases your denext pins. It never names
+a binary of its own, so a stolen signing key could at worst force that one step back.
+
+**When it is checked.** The list is cached under the toolchain cache
+(`<DENO_DIR>/denext-deno/revocations.json`) for 12 hours and re-verified on every read: its
+signature against the public keys compiled into denext, its expiry (21 days after signing; an
+expired list is ignored) and a sequence number that only grows (an older list is never taken back).
+A list dated more than a day ahead of this machine's clock is refused. The replay floor is the
+sequence of the cached list as it was signed: the bookkeeping file beside it
+(`revocations.state.json`) records the key set it was written under, is ignored under any other,
+and can lower the floor but never raise it, so nothing that writes to the cache can turn the check
+off for good.
+Each denext release also compiles in the sequence of the list published when it was cut, so even a
+fresh machine never takes an older list. A stale cache is refreshed from
+`https://denext.dev/runtime/revocations.json` and a mirror on GitHub, both asked at once within 1.5
+seconds in all; the newest valid list wins, so a stale copy on one never hides a newer list on the
+other. **A command never fails and never waits longer because of the
+list:** offline, an HTTP error, a bad signature or an oversized answer all mean the cached list is
+used, or none, and a failed fetch is not retried for an hour. A process without network permission
+for those hosts (`--deny-net`, or a least-privilege process that would be prompted) does not fetch
+at all.
+
+- `denext start` and `denext job` read the cached list only: a production boot never touches the
+  network for it. A Docker image gets the check when it is built, where `denext toolchain path`
+  runs.
+- `denext toolchain status`, `toolchain install` and `denext doctor` fetch it every time (5 seconds
+  at most) and print the list's sequence, its expiry and what it says about the pinned toolchain.
+  `toolchain status --json` carries the same as `revocation`: `revoked`, `reason`, `advisory`,
+  `fixedIn`, `runningRollback`, `running`, `listSequence`, `listExpiresAt` (and `expiredAt` for a
+  list that was ignored because it expired). `doctor` warns about a revoked pin and an expired list.
+- `toolchain prune` keeps the rollback release's cache, so the fallback works offline.
+- The toolchain marker denext hands the processes it starts (`DENEXT_TOOLCHAIN_ACTIVE`) never
+  skips the check or picks the fallback on its own, so a value leaked from a parent shell or a
+  copied CI environment changes nothing: a process running the fallback asks again and moves to the
+  pinned toolchain once the list no longer calls for the fallback, and `build --compile`,
+  `desktop build` and `desktop package` ship the fallback only while the list picks it.
+- `DENEXT_REVOCATION_CHECK=0` turns the check off. A pin file override
+  (`DENEXT_TOOLCHAIN_PIN_FILE`) and `DENEXT_DENO=stock | <path>` are never checked.
+
+Until the maintainers' signing key is compiled into a denext release, the check does nothing: no
+list is read and nothing is fetched.
+
 ## esbuild
 
 denext's bundling (the SPA and compatibility builds, dev's dependency pre-bundle, `analyze`,
@@ -972,10 +1039,24 @@ release is `3.0.0-denext.1` (denext's version comparison orders `3.0.0-denext.N`
 above every `3.0.0-rc.N`), which carries everything in rc.6 and adds the hardened jail:
 `jailScripts.knownPackages` for the hosts a package declares itself, `deno info --json`'s
 `lifecycleJail` report, and package.json's `"deno"` object as the settings' home in a project
-with no deno.json. `3.0.0-denext.2` (the build denext pins today) gives the CLI's downloads
+with no deno.json. `3.0.0-denext.2` gives the CLI's downloads
 deadlines and retries on a fresh connection (`DENO_DOWNLOAD_*`), encrypts the Secret Service
 sessions of the Deploy token and the secure-store migration, fixes Windows pipes and spawns, moves
-to V8 15.2, and builds the Linux binaries for glibc 2.27 and later. The
+to V8 15.2, and builds the Linux binaries for glibc 2.27 and later. `3.0.0-denext.3` moves to V8 15.2.124.45, which fixes two V8 bugs exploited in the wild
+([GHSA-qr84-w8xw-f7r4](https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4)),
+and adds the `HTMLRewriter` global (`--unstable-html-rewriter`), `resolveCertificate` for a
+certificate per server name on `Deno.listenTls` / `Deno.serve`, a cookie jar for `fetch`
+(`Deno.CookieJar`, `Deno.Cookie`, `Deno.CookieMap`; `--unstable-cookies`) and npm
+`patchedDependencies`; better-sqlite3 under Jest's module registry, a shell-spawned `node` shim
+keeping the npm resolution, and a package.json script's arguments without npm's `--` come with it.
+`3.0.0-denext.5` (the build denext pins today; there is no `3.0.0-denext.4` release) fixes two
+security bugs: in a package.json-only project, `require()` no longer reads files a `node_modules`
+link leads to outside `node_modules` without read permission ([GHSA-xhq4-83x4-g734](https://github.com/Brainwires/deno/security/advisories/GHSA-xhq4-83x4-g734)), and
+the memory behind three arrays the runtime shares with JavaScript is no longer used after it is
+freed ([GHSA-mvh6-5whv-26gw](https://github.com/Brainwires/deno/security/advisories/GHSA-mvh6-5whv-26gw)). On Windows a finished process ends
+with `TerminateProcess`, so it can no longer spin in its teardown instead of exiting; the panic
+banner names the subcommand and the argument count instead of printing the command line; and
+`DENEXT_CRASH_REPORT_URL` turns on opt-in crash reports from the CLI and compiled programs. The
 [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases

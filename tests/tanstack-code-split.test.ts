@@ -10,6 +10,7 @@ import { copy } from "@std/fs";
 import { basename, fromFileUrl, join } from "@std/path";
 import * as esbuild from "../src/build/esbuild/mod.ts";
 import { filterAdmits, tanstackCodeSplitPlugin } from "../src/build/tanstack-code-split.ts";
+import { generatorTmpDir } from "../src/build/tanstack-route-tree.ts";
 
 const EXAMPLE = fromFileUrl(new URL("../examples/tanstack-router", import.meta.url));
 
@@ -158,6 +159,46 @@ Deno.test({
     await generate(dir);
     assertStringIncludes(await Deno.readTextFile(tree), "ContactRouteImport");
   } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test({
+  name:
+    "tanstack route tree: the generator's scratch files stay in the project, not the working directory",
+}, async () => {
+  // The generator renames each file from its scratch directory into place; resolved against the
+  // working directory (another file system: a /tmp tmpfs) that rename failed with EXDEV.
+  const dir = await fixture();
+  try {
+    // A new route: the generator writes the tree (an unchanged one is left alone).
+    await Deno.writeTextFile(
+      join(dir, "src", "routes", "contact.tsx"),
+      `import { createFileRoute } from "@tanstack/react-router";\n` +
+        `export const Route = createFileRoute("/contact")({ component: () => null });\n`,
+    );
+    await generate(dir);
+    const scratch = await Deno.stat(join(Deno.realPathSync(dir), ".tanstack", "tmp"));
+    assert(scratch.isDirectory, "the generator's tmpDir is under the project");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("tanstack generatorTmpDir: the project's .tanstack/tmp unless tsr.config.json or TSR_TMP_DIR names one", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_tsr_tmp_" });
+  const saved = Deno.env.get("TSR_TMP_DIR");
+  try {
+    Deno.env.delete("TSR_TMP_DIR");
+    assertEquals(await generatorTmpDir(dir), join(dir, ".tanstack", "tmp"));
+    Deno.env.set("TSR_TMP_DIR", "/elsewhere");
+    assertEquals(await generatorTmpDir(dir), undefined);
+    Deno.env.delete("TSR_TMP_DIR");
+    await Deno.writeTextFile(join(dir, "tsr.config.json"), JSON.stringify({ tmpDir: "scratch" }));
+    assertEquals(await generatorTmpDir(dir), undefined);
+  } finally {
+    if (saved === undefined) Deno.env.delete("TSR_TMP_DIR");
+    else Deno.env.set("TSR_TMP_DIR", saved);
     await Deno.remove(dir, { recursive: true });
   }
 });

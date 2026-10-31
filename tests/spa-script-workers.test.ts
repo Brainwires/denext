@@ -40,6 +40,29 @@ Deno.test("stampWorkerNonce: the boot tag, the shell's scripts and the CSP carry
   assert(!own.includes("nonce-n"));
 });
 
+Deno.test("stampWorkerNonce: markup inside a script, a style or a comment is text, not a tag", () => {
+  // An inline script that writes a `<script>` tag of its own: stamping `nonce="…"` into its string
+  // literal would end the string early and break the script.
+  const inline = `<script>document.head.insertAdjacentHTML("beforeend", ` +
+    `"<script src=/x.js><\\/script>"); var t = "</head>";</script>`;
+  const shell = `<html><head>${inline}<style>a::after { content: "<script>" }</style>` +
+    `<!-- <script src="/old.js"></script> --></head><body>` +
+    `<script data-note="a > b" src="/a.js"></script></body></html>`;
+  const out = stampWorkerNonce(shell, LIB, "n0nce");
+  assertStringIncludes(
+    out,
+    `<script nonce="n0nce">document.head.insertAdjacentHTML("beforeend", ` +
+      `"<script src=/x.js><\\/script>"); var t = "</head>";</script>`,
+  );
+  assertStringIncludes(out, `<style>a::after { content: "<script>" }</style>`);
+  assertStringIncludes(out, `<!-- <script src="/old.js"></script> -->`);
+  assertStringIncludes(out, `<script nonce="n0nce" data-note="a > b" src="/a.js"></script>`);
+  // The boot goes before the real `</head>`, not the one in the script's string.
+  const boot = `<script src="${LIB}boot.js" nonce="n0nce"></script>`;
+  assertEquals(out.indexOf(boot), out.indexOf("-->") + 3);
+  assertEquals(out.split("nonce=").length - 1, 3);
+});
+
 /** A built SPA (shell, bundle, and the Partytown directory the build publishes). */
 async function builtSpa(config: string, partytown: boolean): Promise<string> {
   const dir = await Deno.makeTempDir({ prefix: "denext_spa_workers_" });

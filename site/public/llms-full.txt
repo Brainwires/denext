@@ -711,7 +711,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.2 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.5 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -1236,7 +1236,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
   packages (puppeteer, sharp, Prisma's engines, electron, …) need (into the workspace root's
   deno.json, the only one Deno reads; download hosts instead of `net: true` from runtime
-  3.0.0-rc.6, which denext's 3.0.0-denext.2 pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
+  3.0.0-rc.6, which denext's 3.0.0-denext.5 pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
@@ -1647,7 +1647,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = conditional` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: 4.10.3` — The denext framework version.
+- `VERSION: 4.10.4` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -1798,6 +1798,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `canSign(keys: SupabaseKeys): boolean` — Whether these keys can mint access tokens (a signing key or a legacy secret).
 - `cappedBody(request: Request, maxBytes: number): Request` — request with its body wrapped so that reading past maxBytes errors the stream (the consumer — formData(), json(), a multipart parser — then throws). For streaming consumers that cannot use readCappedBody; a declared content-length over the cap is refused up front.
 - `interface CdnCacheHeadersConfig` — Shared-cache headers on ISR pages with options (DenextConfig.cdnCacheHeaders as an object: the headers on, with these settings).
+- `interface CertifiedKeyPem` — A certificate and its key, PEM.
 - `interface Channel<T>` — A channel on the server.
 - `class ChannelAccessError` — Why tapChannelAuthorized refused a subscriber.
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
@@ -2387,6 +2388,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `serverAction<A, R>(id: string, handler: (...args: A) => R | Promise<R>): ServerActionRef<A, R>` — Define a server action. Give it a **stable, explicit id** (unique per app) so the client stub and the server handler agree across the boundary.
 - `interface ServerActionRef<A, R>` — A reference to a server action: callable, and tagged with its stable id.
 - `serveStatic(publicDir: string, pathname: string, acceptEncoding?: string, request?: Request): Promise<Response | null>` — Try to serve pathname from publicDir. Returns a Response, or null if no matching file exists (so the caller can fall through to routing).
+- `type ServeTls = CertifiedKeyPem | object` — What Deno.serve gets for TLS: a static pair, or a resolver by server name.
 - `interface ServeUtilOptions` — Options for serveWithPortFallback.
 - `serveWithPortFallback(options: ServeUtilOptions, handler: (request: Request) => Response | Promise<Response>): Deno.HttpServer` — Like Deno.serve, but if the port is in use it retries on port + 1, port + 2, … up to maxAttempts times. Returns the bound server.
 - `interface Service` — A service: returned by defineService; the shape a services/ file default-exports.
@@ -2458,6 +2460,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface StandardSchemaV1<Output>` — The Standard Schema v1 surface (https://standardschema.dev) — validator-agnostic.
 - `interface StartConfig` — The production server's settings (see DenextConfig.start).
 - `interface StartLimits` — The production server's resource limits (see StartConfig.limits).
+- `interface StartTls` — HTTPS for the production server (see StartConfig.tls).
+- `interface StartTlsCertificate` — One certificate of StartTls.
 - `type StaticParamsGenerator = (context: object) => RouteParams[] | Promise<RouteParams[]>` — generateStaticParams — the param sets to pre-render. Called with the parent segments' params (from a layout's own generator, or {} at the root), Next.js style; a [...rest] value may be a string[].
 - `interface SubscriptionConfig<In, Out>` — The definition passed to defineSubscription.
 - `interface SubscriptionContext` — What a subscription's authorize / resolve receive besides the input.
@@ -3852,7 +3856,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `class DriverAdapterError` — The error an adapter throws so Prisma reports a typed database error instead of a generic one. Prisma recognizes it by name and cause (no instanceof), so this class needs no import from Prisma.
 - `type ErrorConstraint = object | object | object` — A constraint a database error names (fields, an index, or a foreign key).
 - `type IsolationLevel = READ UNCOMMITTED | READ COMMITTED | REPEATABLE READ | SNAPSHOT | SERIALIZABLE` — The transaction isolation levels Prisma may ask for.
-- `type MappedError = object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object` — A database error in the form Prisma turns into its own P20xx errors. Each kind is one Prisma knows; postgres / sqlite carry an error it has no dedicated kind for.
+- `type MappedError = object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object | object` — A database error in the form Prisma turns into its own P20xx errors. Each kind is one Prisma knows; postgres / sqlite carry an error it has no dedicated kind for.
 - `postgresConnection(url: string, schemaOption: string | undefined): object` — A Postgres URL with Prisma's own parameters read into Deno.SQL options and removed, as PrismaDenoSql does before it connects. schema becomes the search_path, connection_limit the pool's max, connect_timeout (or pool_timeout) the connectionTimeout, and pgbouncer=true turns prepared statements off; Prisma-only parameters a server would refuse (socket_timeout, statement_cache_size, sslaccept, …) are dropped. Use it to open a Deno.SQL client of your own from a Prisma DATABASE_URL.
 - `class PrismaDenoSql` — The Prisma driver adapter factory over Deno.SQL, for Postgres and SQLite. Pass it to new PrismaClient({ adapter }).
 - `interface PrismaDenoSqlOptions` — Options of PrismaDenoSql.

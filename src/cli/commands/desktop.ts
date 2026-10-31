@@ -307,6 +307,9 @@ async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWi
     projectDir: dir,
     deno: denoExecutable(),
     onDenoMismatch: denoChosenExplicitly() ? "stock" : "fail",
+    // An unpackaged window ships nothing: a revoked runtime is a warning here, a refusal when
+    // packaging.
+    ship: false,
   });
   const env = {
     ...unpackagedLaunchEnv(config, dev ? "dev" : "run"),

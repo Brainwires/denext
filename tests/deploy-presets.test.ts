@@ -26,7 +26,8 @@ import type { DeployManifest } from "../src/deploy/manifest.ts";
 import { denoDeploy, docker, fly, genericHost, staticHost } from "../src/deploy/mod.ts";
 import { PRESET_NAMES } from "../src/deploy/presets.ts";
 import { staticRefusal } from "../src/deploy/presets/static.ts";
-import { fixtureProject } from "./helpers/deploy-fixture.ts";
+import { DEPLOY_FIXTURE_CONFIG, fixtureProject } from "./helpers/deploy-fixture.ts";
+import type { DenextConfig } from "../src/server/config.ts";
 
 const GOLDEN = fromFileUrl(new URL("./fixtures/deploy/golden/", import.meta.url));
 const UPDATE = Deno.env.get("DENEXT_UPDATE_GOLDEN") === "1";
@@ -63,11 +64,20 @@ function recordingContext(
   return { ctx, files, warnings, runs };
 }
 
-/** The fixture's manifest (framework version normalized, so goldens survive a release). */
-async function fixtureManifest(): Promise<{ paths: ProjectPaths; manifest: DeployManifest }> {
-  const paths = await fixtureProject();
-  const manifest = await collectDeployManifest(paths);
-  return { paths, manifest: { ...manifest, denext: "4.1.0" } };
+/**
+ * The fixture's manifest (framework version normalized, so goldens survive a release), written
+ * where `denext build` writes it (the docker preset reads `start.tls` from there).
+ */
+async function fixtureManifest(
+  config?: DenextConfig,
+): Promise<{ paths: ProjectPaths; manifest: DeployManifest }> {
+  const paths = await fixtureProject(config);
+  const manifest = { ...await collectDeployManifest(paths), denext: "4.1.0" };
+  await Deno.writeTextFile(
+    join(paths.outDir, "deploy-manifest.json"),
+    JSON.stringify(manifest, null, 2),
+  );
+  return { paths, manifest };
 }
 
 /**
@@ -105,8 +115,12 @@ async function assertGolden(preset: string, files: Map<string, string>): Promise
 }
 
 /** Run one preset's prepare over the fixture and check its files against the golden. */
-async function checkPreset(adapter: DeployAdapter, golden: string): Promise<string[]> {
-  const { paths, manifest } = await fixtureManifest();
+async function checkPreset(
+  adapter: DeployAdapter,
+  golden: string,
+  config?: DenextConfig,
+): Promise<string[]> {
+  const { paths, manifest } = await fixtureManifest(config);
   try {
     const { ctx, files, warnings } = recordingContext(manifest, paths.projectDir);
     await adapter.prepare(ctx);
@@ -137,6 +151,96 @@ Deno.test("deploy preset deno-deploy: the entry maps cron + KV; app settings", a
 
 Deno.test("deploy preset generic-host: systemd unit, nginx, Caddy, env example", async () => {
   await checkPreset(genericHost({ name: "shop", domain: "shop.example.com" }), "generic-host");
+});
+
+/** The fixture's config with `start.tls`: two certificates, one the `"*"` fallback. */
+const TLS_CONFIG: DenextConfig = {
+  ...DEPLOY_FIXTURE_CONFIG,
+  start: {
+    tls: {
+      certificates: [
+        { hostnames: ["shop.example.com"], certFileEnv: "SHOP_CERT", keyFileEnv: "SHOP_KEY" },
+        { hostnames: ["*"], certFileEnv: "DEFAULT_CERT", keyFileEnv: "DEFAULT_KEY" },
+      ],
+    },
+  },
+};
+
+Deno.test("deploy preset docker with start.tls: certs mounted, variables required, https probe", async () => {
+  const warnings = await checkPreset(docker({ denoTag: "2.9.7" }), "docker-tls", TLS_CONFIG);
+  // The fixture's deno.json has no "unstable": ["net"].
+  assert(warnings.some((w) => w.includes('"unstable": ["net"]')), warnings.join("\n"));
+});
+
+Deno.test("deploy preset fly with start.tls: TLS passed through as TCP, no proxy trust", async () => {
+  await checkPreset(fly({ app: "my-app", region: "ams", denoTag: "2.9.7" }), "fly-tls", TLS_CONFIG);
+});
+
+Deno.test("deploy preset generic-host with start.tls: the server faces clients, no proxy files", async () => {
+  const warnings = await checkPreset(
+    genericHost({ name: "shop", domain: "shop.example.com" }),
+    "generic-host-tls",
+    TLS_CONFIG,
+  );
+  assert(warnings.some((w) => w.includes("no nginx.conf or Caddyfile")), warnings.join("\n"));
+  assert(warnings.some((w) => w.includes('"unstable": ["net"]')), warnings.join("\n"));
+});
+
+Deno.test("deploy preset generic-host with start.tls: port, compiled binary and scoped reads", async () => {
+  const { paths, manifest } = await fixtureManifest(TLS_CONFIG);
+  const unit = async (m: DeployManifest, options: Parameters<typeof genericHost>[0] = {}) => {
+    const { ctx, files, warnings } = recordingContext(m, paths.projectDir);
+    await genericHost({ name: "shop", domain: "shop.example.com", ...options }).prepare(ctx);
+    return { unit: files.get("output/shop.service") ?? "", warnings, files };
+  };
+  try {
+    // Off 443: the origin carries the port, and no capability is granted.
+    const high = await unit(manifest, { port: 8443 });
+    assertStringIncludes(
+      high.unit,
+      "Environment=DENEXT_CANONICAL_ORIGIN=https://shop.example.com:8443\n",
+    );
+    assert(!high.unit.includes("CAP_NET_BIND_SERVICE"), high.unit);
+    assert(!high.unit.includes("DENEXT_TRUST_PROXY"), high.unit);
+    // A compiled executable binds every interface and has --unstable-net baked in.
+    const compiled = await unit({ ...manifest, compile: { output: "dist/shop", permissions: [] } });
+    assertStringIncludes(compiled.unit, "ExecStart=/srv/shop/shop\n");
+    assert(!compiled.warnings.some((w) => w.includes("unstable")), compiled.warnings.join("\n"));
+    // A start command that scopes its reads can't reach the certificate files: said so.
+    const scoped = await unit({
+      ...manifest,
+      server: {
+        ...manifest.server,
+        command: manifest.server.command.map((w) => w === "--allow-read" ? "--allow-read=." : w),
+      },
+    });
+    assert(
+      scoped.warnings.some((w) => w.includes("scopes --allow-read")),
+      scoped.warnings.join("\n"),
+    );
+    // One certificate needs no unstable net APIs.
+    const one = await unit({
+      ...manifest,
+      server: {
+        ...manifest.server,
+        tls: { certificates: [manifest.server.tls!.certificates[0]] },
+      },
+    });
+    assert(!one.warnings.some((w) => w.includes("unstable")), one.warnings.join("\n"));
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
+});
+
+Deno.test("deploy preset deno-deploy with start.tls: warned, the platform terminates TLS", async () => {
+  const { paths, manifest } = await fixtureManifest(TLS_CONFIG);
+  try {
+    const { ctx, warnings } = recordingContext(manifest, paths.projectDir);
+    await denoDeploy({ org: "acme", app: "shop" }).prepare(ctx);
+    assert(warnings.some((w) => w.includes("leave start.tls out")), warnings.join("\n"));
+  } finally {
+    await Deno.remove(paths.projectDir, { recursive: true });
+  }
 });
 
 Deno.test("deploy preset generic-host: the unit serves on denext's toolchain from the app's DENO_DIR", async () => {

@@ -18,7 +18,7 @@ import { isRedirect } from "../runtime/error-boundary.ts";
 import { safeRedirectLocation } from "./config.ts";
 import { isAbortError } from "./abort.ts";
 import { isRegenRequest, reportRequestError } from "./app-config.ts";
-import { finalize, type RequestState } from "./pipeline-state.ts";
+import { finalize, finalizeLacking, type RequestState } from "./pipeline-state.ts";
 import { resolveFlightLoader } from "./flight-routing.ts";
 import {
   augmentPageMetadata,
@@ -330,9 +330,11 @@ export async function servePage(state: RequestState, match: MatchedPageRequest):
     render,
     recover,
   });
-  // A response the middleware made without rendering still leaves through `finalize`; one
-  // made from the rendered response already carries what `finalize` added.
-  return rendered === undefined ? finalize(state, response) : response;
+  // A response the middleware made without rendering still leaves through `finalize`. Once the
+  // page rendered, the rendered response itself already carries what `finalize` added; any other
+  // (a fresh or copied response, or a redirect thrown after `next()`) gets what it lacks.
+  if (rendered === undefined) return finalize(state, response);
+  return response === rendered ? response : finalizeLacking(state, response);
 }
 
 /** The page's stages: the ISR cache, the prerendered shell, else the render. */

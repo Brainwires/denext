@@ -15,6 +15,7 @@ import {
   computedModuleUrls,
   ENTRY_LAZY_MODULES,
   generate,
+  META_OUT,
   MODULES_OUT,
   OFFLINE_OUT,
   TABLE_OUT,
@@ -115,9 +116,10 @@ Deno.test("`denext commands` and completions load project discovery, not denext/
 });
 
 Deno.test("the committed verb table matches buildRegistry() (drift check)", async () => {
-  const { table, modules, offline } = await generate();
+  const { table, meta, modules, offline } = await generate();
   const stale = "is stale: run `deno task gen:command-table` and commit";
   assertEquals(await Deno.readTextFile(TABLE_OUT), table, `command-table.generated.ts ${stale}`);
+  assertEquals(await Deno.readTextFile(META_OUT), meta, `command-meta.packed.ts ${stale}`);
   assertEquals(await Deno.readTextFile(MODULES_OUT), modules, `lazy-modules.generated.ts ${stale}`);
   assertEquals(
     await Deno.readTextFile(OFFLINE_OUT),

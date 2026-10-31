@@ -11,8 +11,7 @@
 //   or `node_modules`, and `**` never descends into either.
 // - `!pattern` excludes the directories that pattern matches itself (`!packages/a` leaves
 //   `packages/a/inner` a member), whatever its place in the list.
-// - A glob names only directories that hold the tool's manifest; the root is never a member, and
-//   nothing outside it is.
+// - A glob names only directories that hold the tool's manifest, and the root is never a member.
 // Where they differ:
 // - Deno (libs/config: `is_glob_pattern`, `escape_brackets`) has no character classes or braces:
 //   `[` `]` `{` `}` are literal. Its wildcards never match a symlinked directory, a path entry
@@ -21,13 +20,43 @@
 // - npm (@npmcli/map-workspaces over `glob`), Yarn (fast-glob) and pnpm (micromatch) take
 //   `[abc]` classes and `{a,b}` braces, apply `!` to every entry, and may match a symlinked
 //   directory. A member holds a `package.json` (pnpm: also `package.yaml` / `package.json5`).
-// Unlike the tools, a match whose real path leaves the root (a symlink out of it) is no member
-// here, and `**` does not descend through a symlink.
+// Unlike the tools, a GLOB match whose real path leaves the root (a symlink out of it) is no
+// member here, and `**` does not descend through a symlink. A Deno path entry (no glob) is kept as
+// written, as Deno keeps it: one through a symlink out of the root is still a member.
+// An entry that cannot be read (a character class such as `[z-a]`, or braces that expand past
+// {@linkcode MAX_BRACE_EXPANSIONS} patterns) throws a {@linkcode WorkspaceEntryError} naming it.
 
 import { isAbsolute, join, normalize, relative, SEPARATOR } from "@std/path";
 
 /** Which tool's rules a member list follows. */
 export type WorkspaceKind = "deno" | "npm" | "pnpm";
+
+/** The most patterns one entry's `{a,b}` braces may expand to (`{a,b}` 25 times would be 2^25). */
+export const MAX_BRACE_EXPANSIONS = 1024;
+
+/** Where each tool's member list lives, for an error that names it. */
+const LIST_OF: Record<WorkspaceKind, string> = {
+  deno: "deno.json `workspace`",
+  npm: "package.json `workspaces`",
+  pnpm: "pnpm-workspace.yaml `packages`",
+};
+
+/** A workspace member list entry that cannot be expanded: the entry, and why. */
+export class WorkspaceEntryError extends Error {
+  /** The entry as written. */
+  readonly entry: string;
+
+  /**
+   * @param entry The entry as written.
+   * @param kind Whose list it is in.
+   * @param why What is wrong with it.
+   */
+  constructor(entry: string, kind: WorkspaceKind, why: string) {
+    super(`invalid ${LIST_OF[kind]} entry ${JSON.stringify(entry)}: ${why}`);
+    this.name = "WorkspaceEntryError";
+    this.entry = entry;
+  }
+}
 
 /** The manifests a glob member must hold, per tool. */
 const MANIFESTS: Record<WorkspaceKind, readonly string[]> = {
@@ -54,17 +83,31 @@ function hasGlob(s: string, kind: WorkspaceKind): boolean {
   return kind === "deno" ? /[*?]/.test(s) : /[*?[]/.test(s);
 }
 
-/** `{a,b}` braces expanded (the npm family's globs), innermost-first; none: the entry itself. */
-function expandBraces(entry: string): string[] {
-  const m = /\{([^{}]*)\}/.exec(entry);
-  if (!m || !m[1].includes(",")) return [entry];
-  const head = entry.slice(0, m.index);
-  const tail = entry.slice(m.index + m[0].length);
-  return m[1].split(",").flatMap((alt) => expandBraces(head + alt + tail));
+/**
+ * `{a,b}` braces expanded (the npm family's globs), innermost-first; none: the entry itself. Past
+ * {@linkcode MAX_BRACE_EXPANSIONS} patterns it throws, before expanding any further.
+ */
+function expandBraces(entry: string, kind: WorkspaceKind): string[] {
+  const out: string[] = [];
+  const expand = (pattern: string): void => {
+    const m = /\{([^{}]*)\}/.exec(pattern);
+    if (!m || !m[1].includes(",")) {
+      if (out.push(pattern) > MAX_BRACE_EXPANSIONS) {
+        const why = `its braces expand to more than ${MAX_BRACE_EXPANSIONS} patterns`;
+        throw new WorkspaceEntryError(entry, kind, why);
+      }
+      return;
+    }
+    const head = pattern.slice(0, m.index);
+    const tail = pattern.slice(m.index + m[0].length);
+    for (const alt of m[1].split(",")) expand(head + alt + tail);
+  };
+  expand(entry);
+  return out;
 }
 
-/** A glob segment as an anchored regular expression. */
-function segmentRegExp(seg: string, kind: WorkspaceKind): RegExp {
+/** A glob segment as an anchored regular expression; a class it can't hold throws. */
+function segmentRegExp(seg: string, kind: WorkspaceKind, entry: string): RegExp {
   let out = "";
   for (let i = 0; i < seg.length; i++) {
     const c = seg[i];
@@ -80,14 +123,18 @@ function segmentRegExp(seg: string, kind: WorkspaceKind): RegExp {
       }
     } else out += c.replace(/[.+^${}()|[\]\\]/g, "\\$&");
   }
-  return new RegExp(`^${out}$`);
+  try {
+    return new RegExp(`^${out}$`);
+  } catch {
+    throw new WorkspaceEntryError(entry, kind, `${JSON.stringify(seg)} is not a valid glob`);
+  }
 }
 
 /**
  * One list entry parsed, or null when it names nothing: the root itself, a path that leaves it
  * (`../x`), or an absolute one.
  */
-function parseEntry(entry: string, kind: WorkspaceKind): Pattern | null {
+function parseEntry(entry: string, kind: WorkspaceKind, written = entry): Pattern | null {
   const negated = entry.startsWith("!");
   const body = (negated ? entry.slice(1) : entry).trim().replaceAll("\\", "/");
   if (body === "" || body.startsWith("/") || /^[A-Za-z]:\//.test(body)) return null;
@@ -97,18 +144,18 @@ function parseEntry(entry: string, kind: WorkspaceKind): Pattern | null {
     seg === "**"
       ? { kind: "globstar" }
       : hasGlob(seg, kind)
-      ? { kind: "glob", re: segmentRegExp(seg, kind), dot: seg.startsWith(".") }
+      ? { kind: "glob", re: segmentRegExp(seg, kind, written), dot: seg.startsWith(".") }
       : { kind: "literal", name: seg }
   );
   return { segments, negated, glob: segments.some((s) => s.kind !== "literal") };
 }
 
-/** Every entry parsed (the npm family's braces expanded first). */
+/** Every entry parsed (the npm family's braces expanded first); a bad entry throws. */
 function parseEntries(entries: readonly string[], kind: WorkspaceKind): Pattern[] {
   const out: Pattern[] = [];
   for (const entry of entries) {
-    for (const e of kind === "deno" ? [entry] : expandBraces(entry)) {
-      const p = parseEntry(e, kind);
+    for (const e of kind === "deno" ? [entry] : expandBraces(entry, kind)) {
+      const p = parseEntry(e, kind, entry);
       if (p) out.push(p);
     }
   }
@@ -161,6 +208,9 @@ function excluded(patterns: readonly Pattern[], parts: readonly string[]): boole
  * @param entries The list's entries.
  * @param rel A directory relative to the workspace root (`apps/admin`).
  * @param kind Whose rules the list follows.
+ * @returns Whether a (non-negated) entry selects it and no `!` entry excludes it.
+ * @throws {WorkspaceEntryError} When an entry cannot be read (see
+ *   {@linkcode expandWorkspaceMembers}).
  */
 export function workspaceSelects(
   entries: readonly string[],
@@ -287,15 +337,18 @@ function globMembers(root: string, p: Pattern, patterns: readonly Pattern[], kin
 
 /**
  * The member directories a workspace list names, as the tool `kind` reads it (see the module
- * comment): absolute and de-duplicated, in list order (each glob's matches sorted), none outside
- * `root` and never `root` itself. A Deno path entry (no glob) is kept as written, existing or
- * not (Deno reports a missing one), while a glob names only directories that hold the tool's
- * manifest, and none whose real path leaves the root.
+ * comment): absolute and de-duplicated, in list order (each glob's matches sorted), never `root`
+ * itself and never a path that leaves it as written (`../x`, an absolute path). A Deno path entry
+ * (no glob) is kept as written, existing or not (Deno reports a missing one), even when a symlink
+ * on it leads out of the root, as Deno keeps it; a glob names only directories that hold the
+ * tool's manifest, and none whose real path leaves the root.
  *
  * @param root The workspace root directory.
  * @param entries The list's entries (`["./apps/*", "packages/**", "!packages/legacy"]`).
  * @param kind Whose rules the list follows.
  * @returns The member directories.
+ * @throws {WorkspaceEntryError} When an entry cannot be read: a character class that is not a
+ *   valid range (`[z-a]`), or braces that expand past {@linkcode MAX_BRACE_EXPANSIONS} patterns.
  */
 export function expandWorkspaceMembers(
   root: string,

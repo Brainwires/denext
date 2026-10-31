@@ -15,7 +15,7 @@ import { fromFileUrl, join } from "@std/path";
 import { denoSqlHasColumns } from "../../src/server/prisma-adapter/mod.ts";
 
 const ADAPTER_SRC = fromFileUrl(new URL("../../src/server/prisma-adapter/", import.meta.url));
-const PRISMA = "npm:prisma@6.19.3";
+const PRISMA = "npm:prisma@7.10.1";
 const PG_URL = Deno.env.get("DENEXT_TEST_POSTGRES_URL") || undefined;
 const SETUP_TIMEOUT_MS = 300_000;
 const reason = (await denoSqlHasColumns())
@@ -59,16 +59,14 @@ const POSTGRES_ONLY = `
 
 function schema(provider: "sqlite" | "postgresql"): string {
   return `generator client {
-  provider        = "prisma-client"
-  output          = "../generated/client"
-  runtime         = "deno"
-  moduleFormat    = "esm"
-  previewFeatures = ["queryCompiler", "driverAdapters"]
+  provider     = "prisma-client"
+  output       = "../generated/client"
+  runtime      = "deno"
+  moduleFormat = "esm"
 }
 
 datasource db {
   provider = "${provider}"
-  url      = env("DATABASE_URL")
 }
 
 enum Role {
@@ -100,6 +98,15 @@ model Post {
 }
 `;
 }
+
+// Prisma 7's CLI reads the datasource URL from here, not from the schema.
+const PRISMA_CONFIG = `import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  datasource: { url: process.env.DATABASE_URL },
+});
+`;
 
 // The CRUD script: prints one JSON object of what it saw.
 const CRUD = `
@@ -180,17 +187,19 @@ async function setUp(dir: string, provider: "sqlite" | "postgresql", env: Record
     JSON.stringify({
       nodeModulesDir: "manual",
       imports: {
-        "@prisma/client": "npm:@prisma/client@6.19.3",
+        "@prisma/client": "npm:@prisma/client@7.10.1",
         "denext/prisma-adapter": "./vendor/prisma-adapter/mod.ts",
       },
     }),
   );
   await Deno.writeTextFile(join(dir, "prisma", "schema.prisma"), schema(provider));
+  await Deno.writeTextFile(join(dir, "prisma.config.ts"), PRISMA_CONFIG);
   await Deno.writeTextFile(join(dir, "crud.ts"), CRUD);
   for (
     const args of [
       ["install"],
-      ["run", "-A", "--no-config", PRISMA, "migrate", "dev", "--name", "init", "--skip-generate"],
+      // Prisma 7's `migrate dev` no longer generates (nor takes `--skip-generate`).
+      ["run", "-A", "--no-config", PRISMA, "migrate", "dev", "--name", "init"],
       ["run", "-A", "--no-config", PRISMA, "generate"],
     ]
   ) {
