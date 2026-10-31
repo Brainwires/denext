@@ -29,7 +29,8 @@
     "denext/desktop/client": "../../src/desktop/client.ts",
     "denext/desktop/window": "../../src/desktop/window.ts",
     "denext/desktop/app": "../../src/desktop/app.ts",
-    "@std/path": "jsr:@std/path@^1"
+    "@std/path": "jsr:@std/path@^1",
+    "@std/path/posix": "jsr:@std/path@^1/posix"
   },
   "lint": {
     "plugins": [

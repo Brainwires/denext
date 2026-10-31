@@ -3,7 +3,7 @@
 // fake host. Every action names a library VM by id and is refused for anything else, and every
 // destructive one takes a `confirm` that must repeat the target's name (the page's confirm step).
 
-import { join } from "@std/path";
+import { join } from "@std/path/posix";
 import { overBudgetBy, ramBudget, sshCommand, trayTooltip } from "./format.ts";
 import type { Host } from "./host.ts";
 import {

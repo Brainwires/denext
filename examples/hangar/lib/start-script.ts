@@ -4,7 +4,7 @@
 // `QEMU=/path` then `exec "$QEMU"`); anything it cannot read is `null`, and Hangar still starts
 // the VM through the script itself.
 
-import { isAbsolute, join } from "@std/path";
+import { isAbsolute, join } from "@std/path/posix";
 import type { PortForward, VmDefinition } from "./types.ts";
 
 /** Expand `${VAR:-default}`, `${VAR}`, `"$VAR"` and `$VAR` from the script's own assignments. */

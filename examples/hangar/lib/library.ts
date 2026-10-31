@@ -4,7 +4,7 @@
 // other content. Every path an action takes is resolved here and must stay inside its VM's
 // folder, symlinks included.
 
-import { join } from "@std/path";
+import { join } from "@std/path/posix";
 import type { Host } from "./host.ts";
 import { parseStartScript } from "./start-script.ts";
 import type { ImageEntry, VmDefinition } from "./types.ts";

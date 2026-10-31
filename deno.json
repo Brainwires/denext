@@ -425,6 +425,7 @@
     "next/font/local": "./src/compat/next/font/local.ts",
     "@std/http": "jsr:@std/http@^1.0.0",
     "@std/path": "jsr:@std/path@^1.0.0",
+    "@std/path/posix": "jsr:@std/path@^1.0.0/posix",
     "@std/fs": "jsr:@std/fs@^1.0.0",
     "@std/media-types": "jsr:@std/media-types@^1.0.0",
     "@std/async": "jsr:@std/async@^1.0.0",

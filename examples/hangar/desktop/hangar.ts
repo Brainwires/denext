@@ -5,7 +5,7 @@
 // (`lib/deno-host.ts`). Errors reach the page as a code and a message without absolute paths.
 
 import { defineDesktopExtension, DesktopCapError } from "denext/desktop";
-import { join } from "@std/path";
+import { join } from "@std/path/posix";
 import { denoHost } from "../lib/deno-host.ts";
 import {
   createHangar,

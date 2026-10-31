@@ -1,7 +1,7 @@
 // An in-memory `Host` for examples/hangar's tests: files, processes, `qemu-img` and QMP sockets are
 // all fakes, so no test reads ~/VMs, starts QEMU, signals a process or opens a socket.
 
-import { dirname } from "@std/path";
+import { dirname } from "@std/path/posix";
 import type {
   DirEntry,
   Host,

@@ -2,7 +2,7 @@
 // QEMU command line built from it. Validation is strict (the file is also what the page sends to
 // "create VM"), so a value never reaches QEMU's argv unchecked.
 
-import { join } from "@std/path";
+import { join } from "@std/path/posix";
 import type { PortForward, VmDefinition } from "./types.ts";
 
 /** The config file's name in a VM folder. */
