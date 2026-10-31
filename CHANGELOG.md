@@ -95,6 +95,13 @@ and this project adheres to
 
 ### Changed
 
+- **Capacitor 8.6.0.** `denext create --capacitor`, `denext migrate --enable-capacitor` and
+  `--from expo` pin `@capacitor/core`, `cli`, `ios` and `android` to `8.6.0` (was `8.5.2`), now
+  that it has cleared Deno's two-day dependency-age hold; the Capacitor examples move with them
+  (`package.json`, `deno.lock`, `package-lock.json` and the iOS Swift package pin). Its
+  `@capacitor/cli` takes `xcode` 4, which drops `uuid` 7.0.3
+  ([GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq), moderate) from
+  `examples/clerk`, `mobile`, `native-views` and `expo-app`.
 - **Runtime 3.0.0-denext.5: denext pins it** (was `3.0.0-denext.3`; the toolchain, the Deno
   Desktop runtime and CI's Linux toolchain zip move together; both pins name `3.0.0-denext.3` as
   their `rollback`; there is no `3.0.0-denext.4` release). On Windows a finished process now ends

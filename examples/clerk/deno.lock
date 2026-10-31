@@ -44,10 +44,10 @@
     "jsr:@std/yaml@^1.0.5": "1.3.0",
     "jsr:@zip-js/zip-js@^2.7.52": "2.18.2",
     "npm:@aparajita/capacitor-secure-storage@8.0.1": "8.0.1",
-    "npm:@capacitor/android@8.5.2": "8.5.2_@capacitor+core@8.5.2",
-    "npm:@capacitor/cli@8.5.2": "8.5.2",
-    "npm:@capacitor/core@8.5.2": "8.5.2",
-    "npm:@capacitor/ios@8.5.2": "8.5.2_@capacitor+core@8.5.2",
+    "npm:@capacitor/android@8.6.0": "8.6.0_@capacitor+core@8.6.0",
+    "npm:@capacitor/cli@8.6.0": "8.6.0",
+    "npm:@capacitor/core@8.6.0": "8.6.0",
+    "npm:@capacitor/ios@8.6.0": "8.6.0_@capacitor+core@8.6.0",
     "npm:@clerk/electron@^0.0.48": "0.0.48_electron@45.0.0_react@19.3.0_react-dom@19.3.0",
     "npm:@clerk/nextjs@^7.9.8": "7.9.20_next@16.4.2_react@19.3.0_react-dom@19.3.0_sass@1.106.1",
     "npm:@mdx-js/mdx@3": "3.1.1",
@@ -58,7 +58,7 @@
     "npm:react-dom@^19.2.0": "19.3.0_react@19.3.0",
     "npm:react@^19.2.0": "19.3.0",
     "npm:sass@^1.80.0": "1.106.1",
-    "npm:ws@8": "8.21.3_bufferutil@4.1.0_utf-8-validate@6.0.6"
+    "npm:ws@8": "8.21.0"
   },
   "jsr": {
     "@astral/astral@0.5.6": {
@@ -128,11 +128,11 @@
     "@std/encoding@1.0.11": {
       "integrity": "e7cef2f0b3153bccc17431e7c864a1de03a4b6d9647389c43e08aaa775d37385"
     },
-    "@std/fmt@1.0.10": {
-      "integrity": "90dfba288802ac6de82fb31d0917eb9e4450b9925b954d5e51fc29ac07419db5"
-    },
     "@std/fmt@1.0.3": {
       "integrity": "97765c16aa32245ff4e2204ecf7d8562496a3cb8592340a80e7e554e0bb9149f"
+    },
+    "@std/fmt@1.0.10": {
+      "integrity": "90dfba288802ac6de82fb31d0917eb9e4450b9925b954d5e51fc29ac07419db5"
     },
     "@std/front-matter@1.0.9": {
       "integrity": "ee6201d06674cbef137dda2252f62477450b48249e7d8d9ab57a30f85ff6f051",
@@ -238,20 +238,20 @@
         "zustand"
       ]
     },
-    "@capacitor/android@8.5.2_@capacitor+core@8.5.2": {
-      "integrity": "sha512-rtiaz78egCcS+vs29wkWCL3C+RhazKMSygXcjutwWP8NmO6r5UBxOvGf3Wjz5+ahobyQ723tn9gCePwRwcNDZQ==",
+    "@capacitor/android@8.6.0_@capacitor+core@8.6.0": {
+      "integrity": "sha512-6IJS0TCfV/F/8+324CCwYd3xL6r+TH0W7zzaxYzPz9IV3YWCNvsZDuCCPHUIBC5iASb9od827ddSJ6rz+9Pu1Q==",
       "dependencies": [
         "@capacitor/core"
       ]
     },
-    "@capacitor/app@8.1.1_@capacitor+core@8.5.2": {
+    "@capacitor/app@8.1.1_@capacitor+core@8.6.0": {
       "integrity": "sha512-xM2ZTX5jK60tFtmjsmJv+Cdj1Qsb6NcavkqmdEnCPQBeya9oKhamZJxYOnQNj1ZvcJM7sWfG6BEtSLx42pisbA==",
       "dependencies": [
         "@capacitor/core"
       ]
     },
-    "@capacitor/cli@8.5.2": {
-      "integrity": "sha512-O2kpA5ZPJUAmliDCcmpMf8xnJwMezxlFPUrlyOAjbL3U9MFNY3l4ZpPI/UXwvyPmR8ETcVF9pFr+VdWq61rqTQ==",
+    "@capacitor/cli@8.6.0": {
+      "integrity": "sha512-TyLo1v6AqK39inlB5Edm7eFc+dyk4r+Du5bbyD+cRm/u/3b+LkNIeyp5wwYp3ToO3rWiLs4T/PabXGADO0Rlxg==",
       "dependencies": [
         "@ionic/cli-framework-output",
         "@ionic/utils-subprocess",
@@ -274,19 +274,19 @@
       ],
       "bin": true
     },
-    "@capacitor/core@8.5.2": {
-      "integrity": "sha512-agnQbGdhGw/KZFuLf7H9SY2o+oE7upkr/WPQsYaokXP6f9chaE8iVmbKkfN6SVl4w3pmz7oZ3Ur1hbkmy1hx+w==",
+    "@capacitor/core@8.6.0": {
+      "integrity": "sha512-9F2zzuGYTJu+wqmQSEmqnFBfGrhC/njjMCfmxbvg9mq8xJT4wNh5pxbMFZxvW/yDhYJWPEBFQxeqzfo1gKrvxg==",
       "dependencies": [
         "tslib"
       ]
     },
-    "@capacitor/ios@8.5.2_@capacitor+core@8.5.2": {
-      "integrity": "sha512-eOT2S67AfTFG7KN0T3oxwAajrJz4rSye+ODfvChiwrk0F/+kWufFM1qU6cDjGJUOfwdAoeuEpZyWHSwZlu4GFg==",
+    "@capacitor/ios@8.6.0_@capacitor+core@8.6.0": {
+      "integrity": "sha512-Y2PE4zoBqMrSTWoVMJmX2byBznjn6egmATzoEUJiGVbVubkNpAvkF/tl0SBKDyP67ngyedTx1tQq5IGYIhby1A==",
       "dependencies": [
         "@capacitor/core"
       ]
     },
-    "@capacitor/keyboard@8.0.5_@capacitor+core@8.5.2": {
+    "@capacitor/keyboard@8.0.5_@capacitor+core@8.6.0": {
       "integrity": "sha512-oFXygC4eKYA5l2MdpTR06L2M/4x6e2SLD5yS1T9+UBDKTkzyvhWKEhbYLUaTIBPpLKqlfGudJw1X73S1H9eUzQ==",
       "dependencies": [
         "@capacitor/core"
@@ -1391,13 +1391,6 @@
     "buffer-crc32@0.2.13": {
       "integrity": "sha512-VO9Ht/+p3SN7SKWqcrgEzjGbRSJYTx+Q1pTQC0wrWqHx0vpJraQ6GtHx8tvcg1rlK1byhU5gccxgOgj7B0TDkQ=="
     },
-    "bufferutil@4.1.0": {
-      "integrity": "sha512-ZMANVnAixE6AWWnPzlW2KpUrxhm9woycYvPOo67jWHyFowASTEd9s+QN1EIMsSDtwhIxN4sWE1jotpuDUIgyIw==",
-      "dependencies": [
-        "node-gyp-build"
-      ],
-      "scripts": true
-    },
     "caniuse-lite@1.0.30001814": {
       "integrity": "sha512-/Uaf1lAzr59XcMpW0o96WoEfr+VXK2OX4U9AgFoiSHsVJ4HppnIFUjtYzsyDH2+tgANaQb2/oxYGwCPapN1FpA=="
     },
@@ -1784,7 +1777,7 @@
     "isows@1.0.7_ws@8.21.0": {
       "integrity": "sha512-I1fSfDCZL5P0v33sVqeTDSpcstAg/N+wF5HS033mogOVIp4B+oHC7oOCsA3axAbBSGTJ8QubbNmnIRN/h8U7hg==",
       "dependencies": [
-        "ws@8.21.0"
+        "ws"
       ]
     },
     "js-cookie@3.0.8": {
@@ -2254,10 +2247,6 @@
     "node-addon-api@7.1.1": {
       "integrity": "sha512-5m3bsyrjFWE1xf7nz7YXdN4udnVtXK6/Yfgn5qnahL6bCkf2yKt4k3nuTKAtT4r3IG8JNR2ncsIMdZuAzJjHQQ=="
     },
-    "node-gyp-build@4.8.4": {
-      "integrity": "sha512-LA4ZjwlnUblHVgq0oBF3Jl/6h/Nvs5fzBLwdEF4nuxnFdsfajde4WfxtJr3CaiH+F6ewcIB/q4jQ4UzPyid+CQ==",
-      "bin": true
-    },
     "open@8.4.2": {
       "integrity": "sha512-7x81NCL719oNbsq/3mh+hVrAWmFuEYUqrq/Iw3kUzH8ReypT9QQ0BLoJS7/G9k6N81XjW4qHWtjWwe/9eLy1EQ==",
       "dependencies": [
@@ -2723,20 +2712,8 @@
     "urlpattern-polyfill@10.1.0": {
       "integrity": "sha512-IGjKp/o0NL3Bso1PymYURCJxMPNAf/ILOpendP9f5B6e1rTJgdgiOvgfoT8VxCAdY+Wisb9uhGaJJf3yZ2V9nw=="
     },
-    "utf-8-validate@6.0.6": {
-      "integrity": "sha512-q3l3P9UtEEiAHcsgsqTgf9PPjctrDWoIXW3NpOHFdRDbLvu4DLIcxHangJ4RLrWkBcKjmcs/6NkerI8T/rE4LA==",
-      "dependencies": [
-        "node-gyp-build"
-      ],
-      "scripts": true
-    },
     "util-deprecate@1.0.2": {
       "integrity": "sha512-EPD5q1uXyFxJpCrLnCc1nHnq3gOa6DZBocAIiI2TaSCA7VCJ1UJDMagCzIkXNsUYfD1daK//LTEQ8xiIbrHtcw=="
-    },
-    "uuid@7.0.3": {
-      "integrity": "sha512-DPSke0pXhTZgoF/d+WSt2QaKMCFSfx7QegxEWT+JOuHF5aWrKEn0G+ztjuJg/gG8/ItK+rbPCD/yNv8yyih6Cg==",
-      "deprecated": true,
-      "bin": true
     },
     "vfile-message@4.0.3": {
       "integrity": "sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==",
@@ -2762,7 +2739,7 @@
         "abitype",
         "isows",
         "ox@0.14.57",
-        "ws@8.21.0"
+        "ws"
       ]
     },
     "which@2.0.2": {
@@ -2783,22 +2760,10 @@
     "ws@8.21.0": {
       "integrity": "sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g=="
     },
-    "ws@8.21.3_bufferutil@4.1.0_utf-8-validate@6.0.6": {
-      "integrity": "sha512-201TZ/kPWxoPr/OKWjquZR1SWKXcvxdH+e1xrx89b3YbmzLMFCLfnaG1HFIgWzJOEWZ7MvpK++odZufgYR50Rw==",
+    "xcode@4.0.0": {
+      "integrity": "sha512-dDaoWzc9EP2fp9FS9PVZUkyvFxY4y1TOV9pcKaKLk++Ei/qb97XDFEVP7GnW7Osii/TzVABJ0jq2F+9/lq0TVA==",
       "dependencies": [
-        "bufferutil",
-        "utf-8-validate"
-      ],
-      "optionalPeers": [
-        "bufferutil",
-        "utf-8-validate"
-      ]
-    },
-    "xcode@3.0.1": {
-      "integrity": "sha512-kCz5k7J7XbJtjABOvkc5lJmkiDh8VhjVCGNiqdKCscmVpdVUpEAyXv1xmCLkQJ5dsHqx3IPO4XW+NTDhU/fatA==",
-      "dependencies": [
-        "simple-plist",
-        "uuid"
+        "simple-plist"
       ]
     },
     "xml2js@0.6.2": {
@@ -2856,10 +2821,10 @@
     "packageJson": {
       "dependencies": [
         "npm:@aparajita/capacitor-secure-storage@8.0.1",
-        "npm:@capacitor/android@8.5.2",
-        "npm:@capacitor/cli@8.5.2",
-        "npm:@capacitor/core@8.5.2",
-        "npm:@capacitor/ios@8.5.2",
+        "npm:@capacitor/android@8.6.0",
+        "npm:@capacitor/cli@8.6.0",
+        "npm:@capacitor/core@8.6.0",
+        "npm:@capacitor/ios@8.6.0",
         "npm:@clerk/electron@^0.0.48",
         "npm:@clerk/nextjs@^7.9.8",
         "npm:next@16",
