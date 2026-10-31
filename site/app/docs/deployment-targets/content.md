@@ -359,6 +359,42 @@ These are best-effort guardrails, not a security boundary: subprocesses are neit
 stopped, a `Worker` has its own heap (cap it with `new Worker(url, { deno: { memoryMb } })`), memory
 outside the JavaScript heap is not counted, and sampling can overshoot by a 20 ms tick.
 
+## Crash reports
+
+denext's Deno from runtime `3.0.0-denext.5` can report its own crashes. Set
+`DENEXT_CRASH_REPORT_URL` in the server's environment and, when the CLI or a compiled program
+(`denort`) panics, it sends one JSON report (`schema: 2`) there: an `https:` endpoint gets one
+POST (waited on for about 5 s at most, no retries, the answer ignored) and a
+`file:///absolute/path.jsonl` gets one line appended. Reports are off while the variable is unset;
+`http:`, a `file://` URL with a host and a value that is not a URL turn them off with one warning.
+The fields, what is never sent (the environment, the command line, the working directory, host and
+user names, addresses, JavaScript source) and what is not covered (the `--max-memory` exit 137,
+SIGKILL, a native crash outside Rust) are in the
+[runtime reference](/docs/runtime-reference#crashes-and-process-exit).
+
+The URL is read when the process starts, from the environment only: no config key, build flag or
+deploy-manifest field takes it, because such a URL often carries an ingest token and builds, images
+and manifests get copied around. So it goes where the rest of the server's secrets go:
+
+| Where                                      | How                                                                     |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| `denext generate docker` / `denext stack`  | `DENEXT_CRASH_REPORT_URL=` in `.env` (listed, empty, in `.env.example`) |
+| the `genericHost()` systemd unit           | a line in the unit's `EnvironmentFile`                                  |
+| `denext build --compile`                   | the binary's environment when it runs                                   |
+| `denext start`, `denext job`, `denext dev` | the shell's environment, or `.env`                                      |
+
+Each report carries an application name. denext's CLI hands `DENEXT_CRASH_REPORT_APP=denext@<version>`
+to the Deno processes it re-runs itself on (the toolchain, a pinned denext, the CSS or module-config
+and resource-limit re-runs), unless the variable is already set: set it yourself (up to 64 of
+`A-Z a-z 0-9 @ . _ + / -`, for example `shop@2.3.1`) to name your app instead.
+
+`denext doctor` checks a set URL: it warns on `http:` and on any URL the runtime would ignore, and
+on stock Deno or an older runtime, which send no reports. `denext crash-report test` checks the
+pipeline end to end: it runs the toolchain's `deno --version` with `DENEXT_CRASH_REPORT_SELFTEST=1`,
+which panics on purpose just after start-up and sends one report with `kind: "selftest"`. For a
+`file:` URL it prints the line that was written; for an endpoint, look for the report there.
+Neither prints the URL's value.
+
 ## HTTPS without a proxy
 
 `start: { tls }` in `denext.config.ts` makes `denext start` (and a `build --compile` server) serve

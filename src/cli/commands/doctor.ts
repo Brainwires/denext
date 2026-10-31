@@ -9,7 +9,8 @@
 import { platformFilesReport } from "../../build/platform-extensions.ts";
 import type { DenextConfig } from "../../server/config.ts";
 import { join, resolve } from "@std/path";
-import { denoVersionOk, MIN_DENO_VERSION } from "../../build/deno-version.ts";
+import { currentDenoIdentity, denoVersionOk, MIN_DENO_VERSION } from "../../build/deno-version.ts";
+import { crashReportCheck } from "../../build/crash-report.ts";
 import { VERSION } from "../../../mod.ts";
 import type { CommandContext, CommandLocks, CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs, projectDir } from "../shared.ts";
@@ -971,9 +972,11 @@ export async function collectDoctorReport(
   const checks: Check[] = [
     denoVersionCheck(),
     await denoToolchainCheck(dir),
-    ...[await runtimeRevocationsCheck(), await linuxLibcCheck()].filter((c): c is Check =>
-      c !== null
-    ),
+    ...[
+      await runtimeRevocationsCheck(),
+      await linuxLibcCheck(),
+      crashReportCheck(safeEnv, currentDenoIdentity().denext),
+    ].filter((c): c is Check => c !== null),
   ];
 
   // resolveProject loads + validates denext.config and throws on a malformed one; catch it
