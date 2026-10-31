@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A paused Deno Desktop download resumes at once.** `pauseFileTransfer` on a Deno Desktop
+  download answered as soon as the runtime acknowledged the pause, which can come before the
+  download's own call has settled in the page: the transfer was still listed as running, so a
+  `resumeFileTransfer` straight after it answered `false`, and the call's request was still in
+  flight. The pause now answers once that call has settled (the transfer is `paused`, its
+  `paused` event sent), and answers `false` when a cancel landed first.
+
 ## [4.10.4] - 2026-10-31
 
 ### Added

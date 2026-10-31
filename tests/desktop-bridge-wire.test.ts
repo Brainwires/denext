@@ -664,8 +664,8 @@ Deno.test({
     });
     run.catch(() => {});
     await partReaches(join(root, "dl", "r.bin.part"), 64 * 1024);
+    // The pause answers once the runtime's run has settled here: paused, its request gone.
     assert(await pauseFileTransfer("wire-pause"));
-    await until(() => events.some((e) => e.type === "paused"), 5_000);
     const paused = events.find((e) => e.type === "paused")!;
     assertEquals([paused.state, paused.bytes, paused.resumable], ["paused", 64 * 1024, true]);
     assertEquals(await filesUnder(root), ["dl/r.bin.part", "dl/r.bin.part.json"]);
@@ -684,7 +684,7 @@ Deno.test({
     again.catch(() => {});
     await partReaches(join(root, "dl", "s.bin.part"), 64 * 1024);
     assert(await pauseFileTransfer("wire-pause-2"));
-    await until(() => events.some((e) => e.id === "wire-pause-2" && e.type === "paused"), 5_000);
+    assertEquals(events.at(-1)?.type, "paused");
     assert(await cancelFileTransfer("wire-pause-2"));
     const err = await assertRejects(() => again, FileTransferError);
     assertEquals(err.code, "CANCELLED");

@@ -916,6 +916,8 @@ function failedPatch(error: unknown): Partial<FileTransferEvent> {
  */
 class TrackedDownload extends SettlingDownload<{ path: string }> {
   #pausing = false;
+  /** The current run, settled once its outcome (done, paused, cancelled, failed) is handled. */
+  #run: Promise<void> = Promise.resolve();
 
   constructor(
     spec: PageTransferSpec,
@@ -926,16 +928,24 @@ class TrackedDownload extends SettlingDownload<{ path: string }> {
     super(spec, id, settle);
   }
 
+  /**
+   * Pause through the engine, and answer once the run it stopped has settled here: the engine's
+   * answer can arrive before its run's rejection, and a resume (or the end of a test) that came in
+   * between would find the transfer still running, its request still in flight. `false` when it
+   * finished, failed or was cancelled instead.
+   */
   async pause(): Promise<boolean> {
     this.#pausing = true;
     let paused = false;
     try {
       paused = await this.engine.pause(this.info.id);
-      return paused;
     } finally {
       // Not paused (it had already settled, or the call failed): a later stop is not a pause.
       if (!paused) this.#pausing = false;
     }
+    if (!paused) return false;
+    await this.#run;
+    return this.info.state === "paused";
   }
 
   /** A cancel while paused: the engine drops the partial file it kept, then the promise rejects. */
@@ -943,7 +953,12 @@ class TrackedDownload extends SettlingDownload<{ path: string }> {
     return this.engine.discard(this.info.id).catch(() => {});
   }
 
-  protected async attempt(resume: boolean): Promise<void> {
+  protected attempt(resume: boolean): Promise<void> {
+    this.#run = this.#attempt(resume);
+    return this.#run;
+  }
+
+  async #attempt(resume: boolean): Promise<void> {
     const { id } = this.info;
     const progress = (bytes: number, total: number | null) => {
       pageEvent(this, "progress", { bytes, total });
