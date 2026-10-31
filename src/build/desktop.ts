@@ -626,6 +626,15 @@ export interface DesktopRuntime {
    * window's taskbar entry, where the runtime can). Returns whether it applied.
    */
   setDockVisible(visible: boolean): boolean;
+  /**
+   * Set the macOS activation policy: `"regular"` (a Dock icon and a menu bar), `"accessory"`
+   * (neither: a tray app) or `"prohibited"` (runtime `3.0.0-denext.6`+; on an older runtime
+   * `"regular"` / `"accessory"` show / hide the Dock icon). Switching to regular also brings the
+   * app to the front. Returns whether it applied (`false` on Windows and Linux).
+   */
+  setActivationPolicy(policy: "regular" | "accessory" | "prohibited"): boolean;
+  /** The macOS activation policy, or `null` where there is none (Windows, Linux, older runtimes). */
+  getActivationPolicy(): "regular" | "accessory" | "prohibited" | null;
   /** The desktop world the gates enforce. */
   readonly trust: DesktopTrust;
   /**
@@ -1598,6 +1607,8 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     windows: windows.windows,
     ...(tray ? { tray } : {}),
     setDockVisible: (visible) => windows.setDockVisible(visible),
+    setActivationPolicy: (policy) => windows.setActivationPolicy(policy),
+    getActivationPolicy: () => windows.getActivationPolicy(),
     trust,
     emit: (cap, event, data) => bridge.emit(cap, event, data),
     sidecar: (name) => {

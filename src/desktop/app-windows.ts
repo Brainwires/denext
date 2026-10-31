@@ -10,7 +10,12 @@
  * @module
  */
 
-import { type AppController, createAppController, type DockLike } from "./caps/app.ts";
+import {
+  type ActivationPolicy,
+  type AppController,
+  createAppController,
+  type DockLike,
+} from "./caps/app.ts";
 import { createWindowController } from "./caps/window.ts";
 import type { DesktopCapability } from "./extension.ts";
 import type { DesktopAppApi } from "./launch-events.ts";
@@ -73,8 +78,14 @@ export interface DesktopOpenWindowOptions {
   readonly resizable?: boolean;
   /** No title bar or chrome. */
   readonly frameless?: boolean;
-  /** A transparent background (macOS, Linux with the system WebView). */
+  /** A transparent background (macOS, Linux with the system WebView, Windows from runtime 3.0.0-denext.6). */
   readonly transparent?: boolean;
+  /**
+   * A desktop overlay surface (runtime `3.0.0-denext.6`+): on a Wayland compositor with
+   * wlr-layer-shell (wlroots, KDE Plasma, COSMIC) a layer above every window, on every workspace and
+   * out of the task list (`layerShell` in the window capabilities); an ordinary window elsewhere.
+   */
+  readonly overlay?: boolean;
   /** `false`: a non-activating panel that never takes the focus. */
   readonly focusable?: boolean;
   /** Float above other windows (`true` = `"floating"`, or a level). */
@@ -163,6 +174,10 @@ export interface DesktopWindowsSetup {
   readonly windows: DesktopWindows;
   /** Show or hide the macOS Dock icon; whether it applied. */
   setDockVisible(visible: boolean): boolean;
+  /** Set the macOS activation policy; whether it applied. */
+  setActivationPolicy(policy: ActivationPolicy): boolean;
+  /** The macOS activation policy, or `null` where there is none. */
+  getActivationPolicy(): ActivationPolicy | null;
   /** Set the URL resolver new windows load with (known once the server listens). */
   setAppUrl(appUrl: (path: string) => string): void;
 }
@@ -210,6 +225,36 @@ function setDock(st: SetupState, visible: boolean): boolean {
   if (typeof main?.setSkipTaskbar !== "function") return false;
   main.setSkipTaskbar(!visible);
   return true;
+}
+
+/**
+ * Set the macOS activation policy (`Deno.dock.setActivationPolicy`, runtime `3.0.0-denext.6`+);
+ * on an older runtime `"regular"` / `"accessory"` show / hide the Dock icon instead. `false` on
+ * Windows and Linux, which have no policy.
+ */
+function setPolicy(st: SetupState, policy: ActivationPolicy): boolean {
+  if (st.os !== "darwin" || !st.dock) return false;
+  if (typeof st.dock.setActivationPolicy === "function") {
+    return st.dock.setActivationPolicy(policy) === true;
+  }
+  if (policy === "prohibited") return false;
+  return setDock(st, policy === "regular");
+}
+
+/** The macOS activation policy, or `null` (no `Deno.dock.getActivationPolicy`, not macOS). */
+function getPolicy(st: SetupState): ActivationPolicy | null {
+  if (st.os !== "darwin") return null;
+  return st.dock?.getActivationPolicy?.() ?? null;
+}
+
+/**
+ * Whether the app starts with no Dock icon: `desktop.app.activationPolicy: "accessory"` or
+ * `desktop.app.dock: false`. From runtime `3.0.0-denext.6` the launch file already started it so;
+ * applying it again here covers an older runtime (where the icon shows until now).
+ */
+function startsAccessory(st: SetupState): boolean {
+  const app = st.options.appSettings;
+  return app?.activationPolicy === "accessory" || app?.dock === false;
 }
 
 /** A registered window as `desktop.ts` sees it. */
@@ -314,7 +359,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
   applyDesktopWindowSettings(win, options.windowSettings, st.warn);
   const capabilities = win ? buildControllers(st, win) : [];
   applyKeepAlive(st);
-  if (options.appSettings?.dock === false && win) setDock(st, false);
+  if (startsAccessory(st) && win) setDock(st, false);
   return {
     capabilities,
     ...(st.registry ? { registry: st.registry } : {}),
@@ -354,6 +399,8 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     },
     windows: windowsApi(st),
     setDockVisible: (visible) => setDock(st, visible),
+    setActivationPolicy: (policy) => setPolicy(st, policy),
+    getActivationPolicy: () => getPolicy(st),
     setAppUrl: (appUrl) => {
       st.appUrl = appUrl;
     },
@@ -373,11 +420,13 @@ function screensOf(api: DesktopAppApi | undefined): readonly PlacementScreen[] {
  * The windows API of a launch that has no windows (a sidecar's child): opening one throws, there
  * are none to find, and the Dock is left alone.
  *
- * @returns `windows` and `setDockVisible` for such a `DesktopRuntime`.
+ * @returns `windows`, `setDockVisible` and the activation policy for such a `DesktopRuntime`.
  */
 export function noDesktopWindows(): {
   windows: DesktopWindows;
   setDockVisible(visible: boolean): boolean;
+  setActivationPolicy(policy: ActivationPolicy): boolean;
+  getActivationPolicy(): ActivationPolicy | null;
 } {
   return {
     windows: {
@@ -388,5 +437,7 @@ export function noDesktopWindows(): {
       list: () => [],
     },
     setDockVisible: () => false,
+    setActivationPolicy: () => false,
+    getActivationPolicy: () => null,
   };
 }

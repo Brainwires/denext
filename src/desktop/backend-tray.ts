@@ -22,6 +22,14 @@ import {
   placeTrayPanel,
 } from "./tray-config.ts";
 import type { RegisteredWindow, RegistryWindow, WindowRegistry } from "./window-registry.ts";
+import {
+  isPrimaryClick,
+  type TrayEventType,
+  type TrayMouseDetail,
+  trayMouseDetail,
+} from "./tray-events.ts";
+
+export type { TrayEventType, TrayMouseDetail } from "./tray-events.ts";
 
 /** A tray icon image: PNG bytes, or a PNG path in the export (`"/tray.png"`). */
 export type DesktopTrayIcon = Uint8Array | string;
@@ -38,10 +46,18 @@ export interface DesktopTrayOptions {
   readonly menu?: readonly unknown[];
   /** The panel at the icon: `{ url, width?, height?, hideOnBlur? }`. */
   readonly panel?: { url: string; width?: number; height?: number; hideOnBlur?: boolean };
-  /** Called on a click on the icon (before the pages hear of it). */
-  readonly onClick?: () => void;
+  /**
+   * Called on a click on the icon with the primary button (before the pages hear of it), with the
+   * runtime's detail (runtime `3.0.0-denext.6`+; else `null`).
+   */
+  readonly onClick?: (detail: TrayMouseDetail | null) => void;
   /** Called on a double click. */
-  readonly onDoubleClick?: () => void;
+  readonly onDoubleClick?: (detail: TrayMouseDetail | null) => void;
+  /**
+   * Called on a right click (runtime `3.0.0-denext.6`+, where `trayRightClick` is reported). The OS
+   * opens the tray's menu on a right click by itself; this is for doing something else as well.
+   */
+  readonly onContextMenu?: (detail: TrayMouseDetail | null) => void;
   /** Called with the id of the menu item chosen. */
   readonly onMenuItem?: (id: string) => void;
 }
@@ -82,10 +98,21 @@ export interface DesktopTrayHandle {
   update(options: DesktopTrayUpdate): void;
   /** Where the icon is, or `null` where the OS cannot say (Linux). */
   getBounds(): { x: number; y: number; width: number; height: number } | null;
-  /** Call `handler` on each click. Returns the unsubscribe. */
-  onClick(handler: () => void): () => void;
+  /** Call `handler` on each primary-button click, with its detail. Returns the unsubscribe. */
+  onClick(handler: (detail: TrayMouseDetail | null) => void): () => void;
   /** Call `handler` on each double click. Returns the unsubscribe. */
-  onDoubleClick(handler: () => void): () => void;
+  onDoubleClick(handler: (detail: TrayMouseDetail | null) => void): () => void;
+  /**
+   * Call `handler` on each `type` event (`contextmenu`, `auxclick`, `mouseenter`, `mouseleave`,
+   * … — runtime `3.0.0-denext.6`+), with its detail. Returns the unsubscribe.
+   */
+  on(type: TrayEventType, handler: (detail: TrayMouseDetail | null) => void): () => void;
+  /**
+   * Open the tray's menu at the icon now (runtime `3.0.0-denext.6`+), for another gesture than the
+   * right click (which opens it by itself): a Control-click, say. `false` without a menu, on an
+   * older runtime, or where the OS can't (Linux: the tray host opens it).
+   */
+  popUpMenu(): boolean;
   /** Call `handler` with the id of each menu item chosen. Returns the unsubscribe. */
   onMenuItem(handler: (id: string) => void): () => void;
   /** The panel, when `panel` is set and the runtime has `Tray.attachPanel`. */
@@ -167,6 +194,19 @@ function listen(tray: TrayLike, type: string, handler: (event: Event) => void): 
   return () => tray.removeEventListener(type, handler);
 }
 
+/** Subscribe `handler` to `type` with the event's detail (`click`: the primary button's only). */
+function listenMouse(
+  tray: TrayLike,
+  type: TrayEventType,
+  handler: (detail: TrayMouseDetail | null) => void,
+): () => void {
+  return listen(tray, type, (e) => {
+    const detail = trayMouseDetail(e);
+    if (type === "click" && !isPrimaryClick(detail)) return;
+    handler(detail);
+  });
+}
+
 /** The panel at the icon (registered as the window `"panel"`), or `undefined` when unavailable. */
 function attachPanel(
   ctx: BackendTrayContext,
@@ -231,8 +271,10 @@ function trayHandle(
       });
     },
     getBounds: () => tray.getBounds?.() ?? null,
-    onClick: (handler) => listen(tray, "click", () => handler()),
-    onDoubleClick: (handler) => listen(tray, "dblclick", () => handler()),
+    onClick: (handler) => listenMouse(tray, "click", handler),
+    onDoubleClick: (handler) => listenMouse(tray, "dblclick", handler),
+    on: (type, handler) => listenMouse(tray, type, handler),
+    popUpMenu: () => typeof tray.popUpMenu === "function" && tray.popUpMenu() === true,
     onMenuItem: (handler) =>
       listen(tray, "menuclick", (e) => {
         const id = clickedId(e);
@@ -266,6 +308,7 @@ export async function startBackendTray(
   const o = ctx.options;
   if (o?.onClick) handle.onClick(o.onClick);
   if (o?.onDoubleClick) handle.onDoubleClick(o.onDoubleClick);
+  if (o?.onContextMenu) handle.on("contextmenu", o.onContextMenu);
   if (o?.onMenuItem) handle.onMenuItem(o.onMenuItem);
   return handle;
 }

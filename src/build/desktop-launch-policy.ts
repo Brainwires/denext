@@ -8,7 +8,7 @@
 
 import { join } from "@std/path";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
-import { compareDenoVersions } from "./deno-version.ts";
+import { compareDenoVersions, supportsOverlayTray } from "./deno-version.ts";
 import { readJson } from "./json-edit.ts";
 
 /**
@@ -63,6 +63,26 @@ export function strictLaunchRuntime(
   const mode = (env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase();
   if (mode === "stock" || env("DENEXT_DESKTOP_RUNTIME_DIR")) return false;
   return supportsStrictLaunch(version);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process launches a runtime that
+ * reads the macOS activation policy (`"activationPolicy"` in `laufey-launch.json`,
+ * `LAUFEY_ACTIVATION_POLICY`): denext's pinned runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a
+ * local `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown version) from `FIRST_OVERLAY_TRAY_RUNTIME`
+ * (`3.0.0-denext.6`). An older laufey would report the unknown launch-file key.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether to write the policy.
+ */
+export function activationPolicyRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  const mode = (env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase();
+  if (mode === "stock" || env("DENEXT_DESKTOP_RUNTIME_DIR")) return false;
+  return supportsOverlayTray(version);
 }
 
 /**

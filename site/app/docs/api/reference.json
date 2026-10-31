@@ -24881,6 +24881,18 @@
       "module": "denext/desktop/app",
       "symbols": [
         {
+          "name": "ActivationPolicy",
+          "slug": "ActivationPolicy",
+          "kind": "typeAlias",
+          "signature": "type ActivationPolicy = regular | accessory | prohibited",
+          "doc": "The macOS activation policy: a Dock icon and menu bar, neither, or no activation at all.",
+          "docFull": "The macOS activation policy: a Dock icon and menu bar, neither, or no activation at all.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "appCapabilities",
           "slug": "appCapabilities-fn",
           "kind": "function",
@@ -25057,6 +25069,18 @@
           "docFull": "Why a desktop call failed:\n\n- `unavailable`: not inside a Deno Desktop window, or the capability / method is not enabled\n  in `desktop.capabilities` (the runtime's allowlist), or no runtime answered.\n- `forbidden`: the runtime's gate refused the request (token, origin or content type).\n- `validation`: the arguments did not match the method's input schema.\n- `timeout`: no answer in time.\n- `too_large`: the request body is over {@linkcode MAX_RPC_BODY_BYTES}.\n- `bridge_error`: the runtime answered without the bridge envelope.\n\nA capability may fail with its own codes too (`not_found`, `cancelled`, …).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "getActivationPolicy",
+          "slug": "getActivationPolicy",
+          "kind": "function",
+          "signature": "getActivationPolicy(): Promise<ActivationPolicy | null>",
+          "doc": "The app's macOS activation policy.",
+          "docFull": "The app's macOS activation policy.",
+          "params": [],
+          "returns": "The policy, or null where there is none (Windows, Linux, a runtime before 3.0.0-denext.6).",
           "examples": [],
           "denextOnly": true
         },
@@ -25267,6 +25291,25 @@
           "denextOnly": true
         },
         {
+          "name": "setActivationPolicy",
+          "slug": "setActivationPolicy",
+          "kind": "function",
+          "signature": "setActivationPolicy(policy: ActivationPolicy): Promise<boolean>",
+          "doc": "Set the app's macOS activation policy (Electron's app.setActivationPolicy): \"regular\" (a Dock icon and a menu bar), \"accessory\" (neither: a menu-bar app or a desktop companion) or \"prohibited\". Switching to regular also brings the app to the front, so a tray app can show a Dock icon only while it has a full window open. desktop.app.activationPolicy (or desktop.app.dock: false) sets the one the app starts in. Needs runtime 3.0.0-denext.6 (activationPolicy in appCapabilities); on an older runtime \"regular\" / \"accessory\" show / hide the Dock icon as setDockVisible does.",
+          "docFull": "Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `\"regular\"` (a\nDock icon and a menu bar), `\"accessory\"` (neither: a menu-bar app or a desktop companion) or\n`\"prohibited\"`. Switching to regular also brings the app to the front, so a tray app can show a\nDock icon only while it has a full window open. `desktop.app.activationPolicy` (or\n`desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6\n(`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `\"regular\"` /\n`\"accessory\"` show / hide the Dock icon as {@linkcode setDockVisible} does.",
+          "params": [
+            {
+              "name": "policy",
+              "doc": "The policy."
+            }
+          ],
+          "returns": "Whether it applied: false on Windows and Linux, which have no policy.",
+          "examples": [
+            "```ts\nimport { setActivationPolicy } from \"denext/desktop/app\";\nimport { openWindow } from \"denext/desktop/window\";\n\nawait setActivationPolicy(\"regular\"); // a Dock icon while the window is open\nconst win = await openWindow({ url: \"/library\" });\nwin.onClosed(() => void setActivationPolicy(\"accessory\"));\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "setAppMenu",
           "slug": "setAppMenu",
           "kind": "function",
@@ -25416,12 +25459,48 @@
           "denextOnly": true
         },
         {
+          "name": "TrayEventType",
+          "slug": "TrayEventType",
+          "kind": "typeAlias",
+          "signature": "type TrayEventType = click | dblclick | contextmenu | auxclick | mouseenter | mouseleave",
+          "doc": "A tray icon event, by its DOM name.",
+          "docFull": "A tray icon event, by its DOM name.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "TrayIcon",
           "slug": "TrayIcon",
           "kind": "typeAlias",
           "signature": "type TrayIcon = Uint8Array | string",
           "doc": "A tray icon's image: PNG bytes, or base64 PNG.",
           "docFull": "A tray icon's image: PNG bytes, or base64 PNG.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TrayModifiers",
+          "slug": "TrayModifiers",
+          "kind": "interface",
+          "signature": "interface TrayModifiers",
+          "doc": "The modifier keys held during a tray event.",
+          "docFull": "The modifier keys held during a tray event.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "TrayMouseDetail",
+          "slug": "TrayMouseDetail",
+          "kind": "interface",
+          "signature": "interface TrayMouseDetail",
+          "doc": "What a tray mouse event carries (the runtime's TrayMouseEvent, runtime 3.0.0-denext.6+).",
+          "docFull": "What a tray mouse event carries (the runtime's `TrayMouseEvent`, runtime `3.0.0-denext.6`+).",
           "params": [],
           "returns": "",
           "examples": [],

@@ -1125,13 +1125,25 @@ export interface DesktopConfig {
     keepAlive?: boolean;
     /**
      * Show the app's icon in the macOS Dock (default `true`). `false` makes it an accessory app (a
-     * menu-bar / tray app or a desktop companion): the runtime's `Deno.dock.setVisible(false)` at
-     * launch, so give it a {@link DesktopConfig.tray} or another way back in. Until the runtime
-     * reads it before the first frame, the Dock icon shows briefly at launch. On Windows and Linux
+     * menu-bar / tray app or a desktop companion), so give it a {@link DesktopConfig.tray} or
+     * another way back in. From runtime `3.0.0-denext.6` it is the `"accessory"` activation policy
+     * from the first frame (`activationPolicy`); on an older runtime the backend hides the icon
+     * once it starts, so it shows briefly at launch. On Windows and Linux
      * the app's windows are kept off the taskbar instead where the runtime can
      * (`setSkipTaskbar`); a `focusable: false` window is always off it.
      */
     dock?: boolean;
+    /**
+     * The macOS activation policy the app starts in (runtime `3.0.0-denext.6` and later):
+     * `"accessory"` has no Dock icon and no menu bar from its first frame (a menu-bar / tray app
+     * or a desktop companion), `"regular"` is an ordinary app. Written to the packaged app's
+     * `laufey-launch.json` (`denext desktop run` / `dev`: `LAUFEY_ACTIVATION_POLICY`).
+     * `desktop.app.dock: false` implies `"accessory"`. Switch it while the app runs with
+     * `setActivationPolicy` (`denext/desktop/app`, or `DesktopRuntime.setActivationPolicy` in
+     * `desktop.ts`). On an older runtime `dock: false` still hides the icon, once the backend
+     * starts. Windows and Linux have no policy.
+     */
+    activationPolicy?: "regular" | "accessory";
   };
   /**
    * A tray icon (macOS menu bar extra, Windows notification area, Linux StatusNotifierItem /

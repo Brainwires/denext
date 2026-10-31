@@ -164,7 +164,23 @@ function validateDesktopApp(app: unknown, fail: Fail): void {
   if (a.name !== undefined && (typeof a.name !== "string" || a.name.trim() === "")) {
     fail("desktop.app.name", "must be a non-empty string");
   }
+  validateActivationPolicy(a, fail);
   validateDesktopIcons(a.icons, fail);
+}
+
+/** `desktop.app.activationPolicy`: `"regular"` or `"accessory"`, and not regular with no Dock. */
+function validateActivationPolicy(a: Record<string, unknown>, fail: Fail): void {
+  const policy = a.activationPolicy;
+  if (policy === undefined) return;
+  if (policy !== "regular" && policy !== "accessory") {
+    fail("desktop.app.activationPolicy", 'must be "regular" or "accessory"');
+  }
+  if (policy === "regular" && a.dock === false) {
+    fail(
+      "desktop.app.activationPolicy",
+      'is "regular" (a Dock icon) but desktop.app.dock is false: drop one of them',
+    );
+  }
 }
 
 /** `desktop.app.icons`: `{ macos?, windows?, linux? }` file paths. */

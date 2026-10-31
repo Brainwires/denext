@@ -318,9 +318,8 @@ export interface DesktopAppApi {
    */
   quitOnLastWindowClosed?: boolean;
   /**
-   * The OS's text to speech, when the runtime has it (none does yet; the `textToSpeech` capability and
-   * `speak()` in `denext/mobile` light up once it does): AVSpeechSynthesizer, SAPI / WinRT,
-   * speech-dispatcher.
+   * The OS's text to speech (runtime 3.0.0-denext.6 and later, behind the `textToSpeech`
+   * capability and `speak()` in `denext/mobile`): AVSpeechSynthesizer, SAPI, speech-dispatcher.
    */
   readonly speech?: DesktopSpeechApi;
 }

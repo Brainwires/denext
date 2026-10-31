@@ -299,6 +299,7 @@ Deno.test("registry: open maps focusable false to noActivate, levels, hidden sta
     opacity: 0.9,
     frameless: true,
     transparent: true,
+    skipTaskbar: true,
     noActivate: true,
     alwaysOnTop: true,
     show: false,

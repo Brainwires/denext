@@ -32,6 +32,12 @@
  * (`Tray.attachPanel`) is shown, hidden and toggled with `panel`. The Dock icon is shown or hidden
  * with `setDockVisible` (macOS), and a click on it with no window showing is `dockReopen`.
  *
+ * From runtime 3.0.0-denext.6 a tray's clicks carry the runtime's `TrayMouseEvent` detail (button,
+ * modifiers, position, double), a right click is also `contextmenu`, a middle click `auxclick`, and
+ * hover is `mouseenter` / `mouseleave` (`../tray-events.ts`); `popUpMenu` opens a tray's menu at the
+ * icon, `capabilities` folds in `Deno.Tray.capabilities()`, and `setActivationPolicy` /
+ * `getActivationPolicy` drive the macOS activation policy (`Deno.dock`). Each is feature-detected.
+ *
  * Runtime-only (imported by `runDesktop`, never a client bundle).
  *
  * @module
@@ -44,6 +50,12 @@ import { clickedId, nativeMenu } from "./menu.ts";
 import { platformFacts, reasonText } from "./platform.ts";
 import { createPullQueue, type PullQueue } from "./queue.ts";
 import { createUserActivity, type UserActivityHandle } from "./user-activity.ts";
+import {
+  isPrimaryClick,
+  trayCapabilitiesOf,
+  type TrayMouseDetail,
+  trayMouseDetail,
+} from "../tray-events.ts";
 
 /** The most tray icons the page may hold. */
 const MAX_TRAYS = 8;
@@ -59,8 +71,16 @@ export interface TrayLike extends EventTarget {
   setTooltip(text: string | null): void;
   setMenu(menu: DesktopMenuItem[] | null): void;
   getBounds?(): { x: number; y: number; width: number; height: number } | null;
+  /** Open the tray's menu at the icon (runtime `3.0.0-denext.6`+); `false` where it can't. */
+  popUpMenu?(): boolean;
   destroy(): void;
 }
+
+/** `Deno.Tray`: the constructor, and (runtime `3.0.0-denext.6`+) its static `capabilities()`. */
+export type TrayConstructor = (new () => TrayLike) & { capabilities?(): unknown };
+
+/** The macOS activation policies (`Deno.dock.setActivationPolicy`). */
+export type ActivationPolicy = "regular" | "accessory" | "prohibited";
 
 /** `Deno.dock`, as far as this module uses it. */
 export interface DockLike extends EventTarget {
@@ -68,6 +88,10 @@ export interface DockLike extends EventTarget {
   bounce(critical?: boolean): void;
   setMenu?(menu: DesktopMenuItem[] | null): void;
   setVisible?(visible: boolean): void;
+  /** The activation policy (runtime `3.0.0-denext.6`+, macOS); `false` where there is none. */
+  setActivationPolicy?(policy: ActivationPolicy): boolean;
+  /** The current activation policy, or `null` where there is none. */
+  getActivationPolicy?(): ActivationPolicy | null;
 }
 
 /** The id pages know the backend tray by. */
@@ -93,10 +117,28 @@ export interface BackendTray {
   setPanel(panel: TrayPanelLike): void;
 }
 
+/**
+ * A tray event on the wire: `click` / `doubleClick` (the names before runtime `3.0.0-denext.6`)
+ * and the DOM names of the events that runtime added.
+ */
+type TrayWireEvent =
+  | "click"
+  | "doubleClick"
+  | "contextmenu"
+  | "auxclick"
+  | "mouseenter"
+  | "mouseleave";
+
 /** One click the page takes. */
 type AppAction =
   | { readonly source: "menu" | "dock"; readonly id: string }
-  | { readonly source: "tray"; readonly tray: string; readonly event: "click" | "doubleClick" }
+  | {
+    readonly source: "tray";
+    readonly tray: string;
+    readonly event: TrayWireEvent;
+    /** The runtime's `TrayMouseEvent` detail (runtime `3.0.0-denext.6`+), else absent. */
+    readonly detail?: TrayMouseDetail;
+  }
   | { readonly source: "trayMenu"; readonly tray: string; readonly id: string }
   | { readonly source: "dockReopen"; readonly hasVisibleWindows: boolean };
 
@@ -109,7 +151,7 @@ export interface AppControllerOptions {
   /** Push an event to the pages (the bridge's `emit`): every window's, or only `target`'s. */
   readonly emit: (cap: string, event: string, data: unknown, target?: string) => void;
   /** The `Deno.Tray` constructor (default the runtime's); tests pass a fake. */
-  readonly Tray?: new () => TrayLike;
+  readonly Tray?: TrayConstructor;
   /** `Deno.dock` (default the runtime's); tests pass a fake. */
   readonly dock?: DockLike;
   /** The running OS (default `Deno.build.os`). */
@@ -208,10 +250,10 @@ function shortText(value: unknown, name: string): string | null {
 }
 
 /** The runtime's `Deno.Tray` / `Deno.dock`, when present. */
-function runtimeChrome(): { Tray?: new () => TrayLike; dock?: DockLike } {
+function runtimeChrome(): { Tray?: TrayConstructor; dock?: DockLike } {
   const d = Deno as unknown as { Tray?: unknown; dock?: unknown };
   return {
-    ...(typeof d.Tray === "function" ? { Tray: d.Tray as new () => TrayLike } : {}),
+    ...(typeof d.Tray === "function" ? { Tray: d.Tray as TrayConstructor } : {}),
     ...(typeof d.dock === "object" && d.dock !== null ? { dock: d.dock as DockLike } : {}),
   };
 }
@@ -236,7 +278,7 @@ type AppWindow = EventTarget & {
 /** The controller's state, shared by the capability's methods and its listeners. */
 interface AppState {
   readonly options: AppControllerOptions;
-  readonly Tray: (new () => TrayLike) | undefined;
+  readonly Tray: TrayConstructor | undefined;
   readonly dock: DockLike | undefined;
   readonly os: string;
   readonly win: AppWindow | undefined;
@@ -331,6 +373,36 @@ function newTray(s: AppState, T: new () => TrayLike): TrayLike {
   }
 }
 
+/** The runtime tray events, by the wire name the page takes them under. */
+const TRAY_WIRE: ReadonlyArray<readonly [string, TrayWireEvent]> = [
+  ["click", "click"],
+  ["dblclick", "doubleClick"],
+  ["contextmenu", "contextmenu"],
+  ["auxclick", "auxclick"],
+  ["mouseenter", "mouseenter"],
+  ["mouseleave", "mouseleave"],
+];
+
+/**
+ * Queue a tray's mouse events for `owner` (or every window), with the runtime's detail where it
+ * has one. A `click` is the primary button's only: a right click comes as `contextmenu`, a middle
+ * one as `auxclick` (runtime `3.0.0-denext.6` fires `click` for every button).
+ */
+function forwardTrayEvents(
+  s: AppState,
+  tray: TrayLike,
+  id: string,
+  owner: string | undefined,
+): void {
+  for (const [type, event] of TRAY_WIRE) {
+    tray.addEventListener(type, (e) => {
+      const detail = trayMouseDetail(e);
+      if (type === "click" && !isPrimaryClick(detail)) return;
+      pushAction(s, { source: "tray", tray: id, event, ...(detail ? { detail } : {}) }, owner);
+    });
+  }
+}
+
 /** A new live tray (icon, texts, menu) whose clicks go to `owner`'s queue, or every window's. */
 function liveTray(
   s: AppState,
@@ -342,14 +414,7 @@ function liveTray(
   const live: LiveTray = { tray: newTray(s, s.Tray!), ids: new Set(), owner };
   live.tray.setIcon(icon);
   applyTray(live, { ...args, icon: undefined });
-  live.tray.addEventListener(
-    "click",
-    () => pushAction(s, { source: "tray", tray: id, event: "click" }, owner),
-  );
-  live.tray.addEventListener(
-    "dblclick",
-    () => pushAction(s, { source: "tray", tray: id, event: "doubleClick" }, owner),
-  );
+  forwardTrayEvents(s, live.tray, id, owner);
   live.tray.addEventListener("menuclick", (e) => {
     const item = clickedId(e);
     if (item !== undefined && live.ids.has(item)) {
@@ -464,16 +529,29 @@ async function appCapabilities(s: AppState) {
     passkeysReason: facts.passkeysReason,
     bounce: typeof dock?.bounce === "function",
     dockMenu: dockMenuWorks(s),
-    ...trayAndDockCapabilities(s),
+    ...trayAndDockCapabilities(s, trayReason === null),
   };
 }
 
-/** The Dock icon's visibility and the backend tray, as `capabilities` reports them. */
-function trayAndDockCapabilities(s: AppState) {
+/**
+ * The Dock icon's visibility and activation policy, the backend tray, and the tray events this OS
+ * delivers (`Deno.Tray.capabilities()`), as `capabilities` reports them.
+ */
+function trayAndDockCapabilities(s: AppState, trayAvailable: boolean) {
+  const events = trayCapabilitiesOf(s.Tray, trayAvailable);
   return {
     dockVisibility: s.os === "darwin" && typeof s.dock?.setVisible === "function",
+    activationPolicy: s.os === "darwin" && typeof s.dock?.setActivationPolicy === "function",
     backendTray: s.trays.has(BACKEND_TRAY_ID),
     trayPanel: s.trays.get(BACKEND_TRAY_ID)?.panel !== undefined,
+    trayClick: events.click,
+    trayDoubleClick: events.doubleClick,
+    trayRightClick: events.rightClick,
+    trayMiddleClick: events.middleClick,
+    trayHover: events.hover,
+    trayModifiers: events.modifiers,
+    trayPosition: events.position,
+    trayPopUpMenu: events.popUpMenu,
   };
 }
 
@@ -541,7 +619,38 @@ function menuAndDockMethods(s: AppState): DesktopCapability["methods"] {
         return { applied: true };
       },
     },
+    setActivationPolicy: { handler: (args) => setActivationPolicy(s, args) },
+    getActivationPolicy: {
+      handler: () => {
+        if (s.os !== "darwin") return { policy: null };
+        const policy = s.dock?.getActivationPolicy?.() ?? null;
+        return { policy: POLICIES.has(policy as string) ? policy : null };
+      },
+    },
   };
+}
+
+/** The activation policies `setActivationPolicy` takes. */
+const POLICIES = new Set<string>(["regular", "accessory", "prohibited"]);
+
+/**
+ * `setActivationPolicy`: the macOS activation policy (`Deno.dock.setActivationPolicy`, runtime
+ * `3.0.0-denext.6`+); on an older runtime `"regular"` / `"accessory"` show / hide the Dock icon.
+ * `{ applied: false }` on Windows and Linux, which have no policy.
+ */
+function setActivationPolicy(s: AppState, args: unknown): { applied: boolean } {
+  const policy = argsOf(args).policy;
+  if (typeof policy !== "string" || !POLICIES.has(policy)) {
+    throw invalid('policy must be "regular", "accessory" or "prohibited"');
+  }
+  const dock = s.dock;
+  if (s.os !== "darwin" || !dock) return { applied: false };
+  if (typeof dock.setActivationPolicy === "function") {
+    return { applied: dock.setActivationPolicy(policy as ActivationPolicy) === true };
+  }
+  if (policy === "prohibited" || typeof dock.setVisible !== "function") return { applied: false };
+  dock.setVisible(policy === "regular");
+  return { applied: true };
 }
 
 /** The tray methods, and `take` (the clicks queued for the page). */
@@ -565,6 +674,12 @@ function trayMethods(s: AppState): DesktopCapability["methods"] {
     },
     trayBounds: {
       handler: (args) => trayOf(s, args).tray.getBounds?.() ?? null,
+    },
+    popUpMenu: {
+      handler: (args) => {
+        const tray = trayOf(s, args).tray;
+        return { shown: typeof tray.popUpMenu === "function" && tray.popUpMenu() === true };
+      },
     },
     backendTray: {
       handler: async () => {

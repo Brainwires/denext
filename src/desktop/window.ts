@@ -16,9 +16,9 @@
  * acts on that one by id; {@linkcode onWindowFocus} / {@linkcode onWindowBlur} follow the focus.
  * Overlay windows (a desktop companion, a HUD) use {@linkcode setWindowOpacity},
  * {@linkcode setIgnoreMouseEvents}, {@linkcode setHitRegion},
- * {@linkcode setVisibleOnAllWorkspaces} and {@linkcode setSkipTaskbar}; the last three need a
- * runtime that reports them in {@linkcode windowCapabilities} (none does yet: they reject
- * `unsupported` until it does).
+ * {@linkcode setVisibleOnAllWorkspaces} and {@linkcode setSkipTaskbar}; the last three need
+ * runtime 3.0.0-denext.6 or later (reported in {@linkcode windowCapabilities}; an older runtime
+ * rejects them `unsupported`).
  *
  * Coordinates and sizes are the runtime's: CSS pixels for sizes, and screen positions in points on
  * macOS and Linux and in physical pixels on Windows' WebView2 backend.
@@ -181,6 +181,20 @@ export interface WindowCapabilities {
   readonly transparent: boolean;
   /** `focusable: false` windows never take the focus (every OS). */
   readonly nonActivating: boolean;
+  /**
+   * `setVisibleOnAllWorkspaces` also shows the window over other apps' full-screen windows (macOS,
+   * at a `"status"` level or above; runtime 3.0.0-denext.6).
+   */
+  readonly visibleOnFullScreen: boolean;
+  /**
+   * An `overlay: true` window ({@linkcode openWindow}) is a wlr-layer-shell surface (wlroots
+   * compositors, KDE Plasma and COSMIC on Wayland; runtime 3.0.0-denext.6).
+   */
+  readonly layerShell: boolean;
+  /**
+   * `setActivationPolicy` in `denext/desktop/app` works (macOS; runtime 3.0.0-denext.6).
+   */
+  readonly activationPolicy: boolean;
   /** {@linkcode onWindowFocus} / {@linkcode onWindowBlur} fire. */
   readonly focusEvents: boolean;
   /** Any other key the runtime reports. */
@@ -1121,8 +1135,15 @@ export interface OpenWindowOptions {
   /** On every Space / virtual desktop (where the runtime can). */
   readonly visibleOnAllWorkspaces?: boolean;
   /**
+   * A desktop overlay surface (runtime 3.0.0-denext.6): on a Wayland compositor with
+   * wlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) a layer above every window, on every
+   * workspace and out of the task list, placed with `setBounds` (`layerShell` in
+   * {@linkcode windowCapabilities}); an ordinary window elsewhere.
+   */
+  readonly overlay?: boolean;
+  /**
    * Show it once created (default `true`). With `false` it opens hidden (its page loads), to be
-   * shown with the handle's `show()`; until the runtime can create a window hidden, it may flash.
+   * shown with the handle's `show()`; a runtime before 3.0.0-denext.6 may flash it first.
    */
   readonly show?: boolean;
   /**

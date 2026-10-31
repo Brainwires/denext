@@ -213,6 +213,28 @@ export function supportsPatchedDependencies(version: string): boolean {
   return compareDenoVersions(version, FIRST_PATCHED_DEPENDENCIES_RUNTIME) >= 0;
 }
 
+/**
+ * The first Deno Desktop runtime with overlay windows, tray events with detail, the activation
+ * policy and OS text to speech (Brainwires/deno DENEXT.md item 183, laufey API 50): it reads
+ * `"activationPolicy"` in `laufey-launch.json` (and `LAUFEY_ACTIVATION_POLICY`), fires the
+ * `contextmenu` / `auxclick` / `mouseenter` / `mouseleave` tray events with a `TrayMouseEvent`,
+ * and has `Tray.popUpMenu()`, `Tray.capabilities()`, `Deno.dock.setActivationPolicy()`, the
+ * `overlay` / `skipTaskbar` window options and `Deno.desktop.speech`. The page-side bindings
+ * feature-detect each API; the launch file and the dev env carry the policy only from here on.
+ */
+export const FIRST_OVERLAY_TRAY_RUNTIME = "3.0.0-denext.6";
+
+/**
+ * Whether the Deno Desktop runtime `version` has the overlay, tray-event and activation-policy
+ * APIs (from {@linkcode FIRST_OVERLAY_TRAY_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether it reads the launch file's `"activationPolicy"`.
+ */
+export function supportsOverlayTray(version: string): boolean {
+  return compareDenoVersions(version, FIRST_OVERLAY_TRAY_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

@@ -2,9 +2,10 @@
  * The `textToSpeech` capability: the OS's text to speech in the desktop app's process
  * (`Deno.desktop.speech`: AVSpeechSynthesizer on macOS, SAPI / WinRT on Windows, speech-dispatcher
  * on Linux) for `speak()` in `denext/mobile` where the window's engine has no Web Speech
- * (WebKitGTK). No Deno Desktop runtime has `Deno.desktop.speech` yet: until one does, every call
- * answers `unsupported` and `capabilities` reports `native: false`, and `speak()` keeps using the
- * page's own `speechSynthesis` (WKWebView, WebView2, CEF on macOS and Windows).
+ * (WebKitGTK). `Deno.desktop.speech` is in runtime 3.0.0-denext.6 and later; on an older runtime
+ * every call answers `unsupported` and `capabilities` reports `native: false`. `speak()` uses the
+ * page's own `speechSynthesis` first where the engine has it (WKWebView, WebView2, CEF on macOS and
+ * Windows). On Linux the OS engine needs speech-dispatcher (the packages recommend it).
  *
  * Registered by `runDesktop` for every app (it needs no Deno permission).
  *

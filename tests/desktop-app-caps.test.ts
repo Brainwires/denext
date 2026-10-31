@@ -1363,8 +1363,18 @@ Deno.test("app: no window, dock or api — capabilities fall back and dock calls
     bounce: false,
     dockMenu: false,
     dockVisibility: false,
+    activationPolicy: false,
     backendTray: false,
     trayPanel: false,
+    // A Deno.Tray before 3.0.0-denext.6 (no capabilities()): clicks and double clicks only.
+    trayClick: true,
+    trayDoubleClick: true,
+    trayRightClick: false,
+    trayMiddleClick: false,
+    trayHover: false,
+    trayModifiers: false,
+    trayPosition: false,
+    trayPopUpMenu: false,
   });
   assertEquals(await codeOf(call(cap, "setBadge", { text: "1" })), "unsupported");
   assertEquals(await codeOf(call(cap, "bounce", null)), "unsupported");

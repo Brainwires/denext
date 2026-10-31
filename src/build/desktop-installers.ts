@@ -838,6 +838,19 @@ function linuxCapabilityDeps(meta: DesktopPackageMeta): ReadonlyArray<readonly [
   return meta.secureStore === true ? [["libsecret-1-0", "libsecret"]] : [];
 }
 
+/**
+ * What the packages recommend (a weak dependency: installed by default where the package manager
+ * does, never required), as (Debian package, RPM requirement): gtk-layer-shell, which the runtime
+ * loads for an `overlay: true` window on a wlr-layer-shell compositor (wlroots, KDE Plasma,
+ * COSMIC), and speech-dispatcher, the OS text to speech `Deno.desktop.speech` speaks through
+ * (runtime 3.0.0-denext.6). Without them an overlay is an ordinary window and speech is
+ * unsupported.
+ */
+const LINUX_RECOMMENDS: ReadonlyArray<readonly [string, string]> = [
+  ["libgtk-layer-shell0", "libgtk-layer-shell.so.0()(64bit)"],
+  ["speech-dispatcher", "speech-dispatcher"],
+];
+
 /** Strip control characters (a `.desktop` / control value is one line). */
 function oneLine(s: string): string {
   // deno-lint-ignore no-control-regex
@@ -1234,6 +1247,7 @@ export function debControl(
       [...linuxDeps(meta.backend).map(([, p]) => p), ...linuxCapabilityDeps(meta).map(([d]) => d)]
         .join(", ")
     }`,
+    `Recommends: ${LINUX_RECOMMENDS.map(([d]) => d).join(", ")}`,
     "Section: utils",
     "Priority: optional",
     `Description: ${oneLine(meta.description)}`,
@@ -1429,8 +1443,8 @@ export async function buildDesktopTarball(o: BuildDesktopTarballOptions): Promis
  * The `rpmbuild` spec for a staged Linux root: the files are copied as staged (no strip, no
  * debuginfo, no automatic dependency scan), `Requires` names the backend's shared libraries by
  * soname (every RPM distro provides those, whatever it calls the package) and `libsecret` (the
- * library the runtime loads) when the secure store is on; `%post` / `%postun` refresh the desktop
- * and icon databases.
+ * library the runtime loads) when the secure store is on, `Recommends` gtk-layer-shell (by soname)
+ * and speech-dispatcher; `%post` / `%postun` refresh the desktop and icon databases.
  *
  * @param meta The package metadata.
  * @param stage The staged root ({@linkcode stageLinuxRoot}).
@@ -1446,6 +1460,7 @@ export function rpmSpec(
   const requires = [
     ...linuxDeps(meta.backend).map(([so]) => `Requires: ${so}()(64bit)`),
     ...linuxCapabilityDeps(meta).map(([, rpm]) => `Requires: ${rpm}`),
+    ...LINUX_RECOMMENDS.map(([, rpm]) => `Recommends: ${rpm}`),
   ];
   // rpmbuild expands `%macro` / `%(shell)` / `%{lua:…}` everywhere in the spec, so every value
   // that comes from the project carries its `%` as the literal `%%`.

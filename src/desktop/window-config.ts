@@ -74,6 +74,8 @@ export interface DesktopAppSettings {
   readonly keepAlive?: boolean;
   /** Show the macOS Dock icon (`desktop.app.dock`, default `true`). */
   readonly dock?: boolean;
+  /** The macOS activation policy at launch (`desktop.app.activationPolicy`). */
+  readonly activationPolicy?: "regular" | "accessory";
 }
 
 /**
@@ -99,6 +101,7 @@ export interface DesktopInitialWindow {
 export const DEFAULT_VIBRANCY = "under-window";
 
 const TITLE_BARS = ["default", "hidden", "hiddenInset"] as const;
+const POLICIES = ["regular", "accessory"] as const;
 const BACKDROPS = ["none", "mica", "acrylic", "vibrancy"] as const;
 
 /** A launch-time config error. */
@@ -221,7 +224,8 @@ function levelSetting(top: unknown): { alwaysOnTop?: DesktopWindowLevel | false 
 }
 
 /**
- * Resolve `desktop.app`'s launch-time settings (`keepAlive`, `dock`), throwing on a bad value.
+ * Resolve `desktop.app`'s launch-time settings (`keepAlive`, `dock`, `activationPolicy`), throwing
+ * on a bad value.
  *
  * @param desktop The config's `desktop` block (or `undefined`).
  * @returns The settings (empty when none are set).
@@ -229,14 +233,15 @@ function levelSetting(top: unknown): { alwaysOnTop?: DesktopWindowLevel | false 
 export function resolveDesktopAppSettings(desktop: unknown): DesktopAppSettings {
   const app = (desktop as { app?: unknown } | null | undefined)?.app;
   if (typeof app !== "object" || app === null) return {};
-  const a = app as { keepAlive?: unknown; dock?: unknown };
+  const a = app as { keepAlive?: unknown; dock?: unknown; activationPolicy?: unknown };
   const out: { keepAlive?: boolean; dock?: boolean } = {};
   for (const key of ["keepAlive", "dock"] as const) {
     if (a[key] === undefined) continue;
     if (typeof a[key] !== "boolean") throw bad(`app.${key}`, "must be a boolean");
     out[key] = a[key] as boolean;
   }
-  return out;
+  const policy = oneOf(a.activationPolicy, POLICIES, "app.activationPolicy");
+  return policy !== undefined ? { ...out, activationPolicy: policy } : out;
 }
 
 /**
@@ -317,7 +322,10 @@ interface ConfigurableWindow {
   setVisibleOnAllWorkspaces?(visible: boolean, options?: { visibleOnFullScreen?: boolean }): void;
 }
 
-/** The window methods no runtime has yet: a missing one names the method, not the pinned runtime. */
+/**
+ * The window methods only runtime 3.0.0-denext.6 and later have: a missing one names the method,
+ * not the pinned runtime (which has them).
+ */
 const FUTURE_METHODS = new Set<keyof ConfigurableWindow>([
   "setSkipTaskbar",
   "setVisibleOnAllWorkspaces",

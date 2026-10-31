@@ -24,8 +24,8 @@
  * Overlay windows (a desktop companion, a HUD): the opacity, click-through
  * (`setIgnoreMouseEvents`), a click-catching hit region (`setHitRegion`), every-workspace
  * visibility, the taskbar entry and always-on-top levels. Each is feature-detected on the
- * runtime's `BrowserWindow` and reported by `capabilities`; the ones no runtime has yet answer
- * `unsupported` until it does. Click-through with no way back (no `forward`, and no tray icon to
+ * runtime's `BrowserWindow` and reported by `capabilities` (runtime 3.0.0-denext.6 has them all);
+ * a runtime without one answers `unsupported`. Click-through with no way back (no `forward`, and no tray icon to
  * reach the app) is refused: the window could never be clicked again.
  *
  * Close guard. A close event must be answered synchronously, but the page is across the bridge:
@@ -389,6 +389,10 @@ function overlayCapabilities(
     transparent: win !== undefined && Deno.build.os !== "windows" && !cef,
     nonActivating: win !== undefined,
     focusEvents: win !== undefined,
+    // Reported by the runtime's windowCapabilities() from 3.0.0-denext.6; false until then.
+    visibleOnFullScreen: false,
+    layerShell: false,
+    activationPolicy: false,
   };
 }
 

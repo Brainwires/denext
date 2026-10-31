@@ -10,6 +10,28 @@ and this project adheres to
 
 ### Added
 
+- **Tray events with their detail, `popUpMenu()`, and the macOS activation policy** (Deno Desktop
+  runtime 3.0.0-denext.6, gated on `FIRST_OVERLAY_TRAY_RUNTIME`). A tray's handlers get the
+  runtime's `TrayMouseEvent` detail (`button`, `modifiers`, `x` / `y`, `double`; `null` on an older
+  runtime): `onClick(handler(event, detail))` hears the primary button, and `tray.on(type, handler)`
+  in `denext/desktop/app` (the backend handle's `on` and `runDesktop({ tray: { onContextMenu } })`
+  in `desktop.ts`) hears `click`, `dblclick`, `contextmenu` (a right click), `auxclick` (a middle
+  click) and `mouseenter` / `mouseleave` (macOS, Windows). `tray.popUpMenu()` opens the tray's menu
+  at the icon from another gesture than the right click. `appCapabilities()` folds in
+  `Deno.Tray.capabilities()` (`trayClick`, `trayDoubleClick`, `trayRightClick`, `trayMiddleClick`,
+  `trayHover`, `trayModifiers`, `trayPosition`, `trayPopUpMenu`) and adds `activationPolicy`.
+  `setActivationPolicy("regular" | "accessory" | "prohibited")` / `getActivationPolicy()` (and
+  `DesktopRuntime.setActivationPolicy` / `getActivationPolicy`) drive `Deno.dock`'s policy, falling
+  back to the Dock icon's visibility on an older runtime. `desktop.app.activationPolicy`
+  (`"regular"` / `"accessory"`; `desktop.app.dock: false` means `"accessory"`) is written to the
+  packaged macOS app's `laufey-launch.json` and passed as `LAUFEY_ACTIVATION_POLICY` to
+  `denext desktop run` / `dev`, so an accessory app shows no Dock icon from its first frame;
+  `"regular"` with `dock: false` is a config error. `openWindow` takes `overlay: true` (a
+  wlr-layer-shell surface on wlroots compositors, KDE Plasma and COSMIC) and passes `skipTaskbar` at
+  creation; `windowCapabilities()` adds `visibleOnFullScreen`, `layerShell` and `activationPolicy`.
+  The `.deb` recommends `libgtk-layer-shell0` and `speech-dispatcher`, the `.rpm` gtk-layer-shell
+  (by soname) and `speech-dispatcher`.
+
 - **Tray-first and overlay desktop apps, and several windows** (`denext/desktop/window`,
   `denext/desktop/app`, `denext.config.ts`'s `desktop`). `desktop.window.show: false` starts the app
   with no visible window and no flash, and `frameless`, `transparent` and `focusable: false` (a
@@ -31,8 +53,8 @@ and this project adheres to
   backend. Each window's page drives its own window: the bridge tells windows apart by a per-window
   token the runtime hands only that window's documents, and a reload releases only that window's
   tray icons, close guard and drops. `onWindowFocus` / `onWindowBlur`, `setWindowOpacity`,
-  `setAlwaysOnTop(flag, level)` and, where the runtime has them (none yet; `windowCapabilities()`
-  turns each on), `setIgnoreMouseEvents(ignore, { forward })`, `setHitRegion(rects)`,
+  `setAlwaysOnTop(flag, level)` and, from runtime 3.0.0-denext.6 (`windowCapabilities()` turns
+  each on), `setIgnoreMouseEvents(ignore, { forward })`, `setHitRegion(rects)`,
   `setVisibleOnAllWorkspaces` and `setSkipTaskbar`. `windowCapabilities()` adds `transparent`,
   `nonActivating`, `opacity`, `clickThrough`, `clickThroughForward`, `hitRegion`,
   `visibleOnAllWorkspaces`, `skipTaskbar`, `alwaysOnTopLevels` and `focusEvents`;
@@ -40,11 +62,17 @@ and this project adheres to
   `onPageLoad` gets the window's id, and `perWindow: true` has it called for every window.
 - **`speak()` / `stopSpeaking()` in `denext/mobile`**: the Capacitor text-to-speech plugin in the
   shell, else the Web Speech API (WKWebView, WebView2, CEF on macOS and Windows), else the desktop
-  runtime's OS speech through the new `textToSpeech` capability once the runtime has
-  `Deno.desktop.speech` (for WebKitGTK on Linux).
+  runtime's OS speech through the new `textToSpeech` capability (`Deno.desktop.speech`, runtime
+  3.0.0-denext.6; for WebKitGTK on Linux).
 - **examples/companion and examples/hangar use them.** Loopy is a transparent, frameless overlay
   that never takes the focus, on top on every Space, with no Dock or taskbar entry and a tray to
-  show, hide and quit it; it lets clicks through outside itself where the runtime can. Hangar
+  show, hide and quit it; it lets clicks through outside itself where the runtime can. With runtime
+  3.0.0-denext.6 Loopy starts as an accessory app (no Dock icon flash), catches clicks only on
+  itself (a hit region), floats at the `"status"` level on every Space including full-screen apps,
+  and reads its bubbles aloud with the OS's voice when **Voice on** is set. Hangar launches as an
+  accessory app, opens its menu on a Control-click (`popUpMenu`), refreshes its tooltip on hover
+  and is a regular app with a Dock icon only while a full window is open (`setActivationPolicy`).
+  Hangar
   starts with no window and no Dock icon, owns its tray in the backend, shows a real panel at the
   icon, and opens each page in a window of its own, staying alive with every window closed.
 - **Hangar, a tray-first desktop example** (`examples/hangar`): an app that lives in the tray /
@@ -67,6 +95,19 @@ and this project adheres to
   pop up when a Claude Code session needs approval or finishes. The window chrome is
   feature-detected through `windowCapabilities()`, and in a browser (`denext dev`) Loopy renders in
   the page with demo buttons for every move.
+
+### Changed
+
+- **denext pins Deno runtime 3.0.0-denext.6** (`deno task desktop:pin-runtime
+  denext-runtime-v3.0.0-denext.6`): the toolchain and the Deno Desktop runtime move from
+  3.0.0-denext.5 together (every archive checked against the release's manifest, SHA256SUMS and
+  build-provenance attestation), and both pins name 3.0.0-denext.5 as their rollback. ci.yml's
+  backend-integration toolchain zip follows. V8 (15.2.124.45) and the glibc floor (2.27) are
+  unchanged. The release is a Deno Desktop one: overlay windows (click-through, hit regions, every
+  workspace, the taskbar entry, always-on-top levels, hidden and layer-shell windows, transparent
+  WebView2 windows), tray events with their detail, `popUpMenu`, `Tray.capabilities()` and laufey's
+  own StatusNotifierItem on Linux, the macOS activation policy and `Deno.desktop.speech`; the window
+  capabilities `feat/desktop-windowing` already detects now report them.
 
 ## [4.10.4] - 2026-10-31
 

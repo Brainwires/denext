@@ -49,12 +49,14 @@ import { desktopRpc, subscribeDesktopEvent } from "./bridge-client.ts";
 import { onAppAction } from "./app-actions.ts";
 import { menuWire } from "./menu-wire.ts";
 import { pullQueue } from "./pull.ts";
+import type { TrayEventType, TrayMouseDetail } from "./tray-events.ts";
 
 export {
   type DesktopBridgeError,
   type DesktopErrorCode,
   isDesktopBridgeError,
 } from "./bridge-client.ts";
+export type { TrayEventType, TrayModifiers, TrayMouseDetail } from "./tray-events.ts";
 
 /** A standard menu item the OS draws and handles itself. */
 export type AppMenuRole =
@@ -228,6 +230,24 @@ export interface AppCapabilities {
   readonly backendTray: boolean;
   /** The backend tray has a panel ({@linkcode toggleTrayPanel}). */
   readonly trayPanel: boolean;
+  /** {@linkcode setActivationPolicy} works (macOS; runtime 3.0.0-denext.6). */
+  readonly activationPolicy: boolean;
+  /** A tray's `click` fires (`Deno.Tray.capabilities()`; every runtime with a tray). */
+  readonly trayClick: boolean;
+  /** A tray's `dblclick` fires. */
+  readonly trayDoubleClick: boolean;
+  /** A tray's `contextmenu` fires on a right click (runtime 3.0.0-denext.6). */
+  readonly trayRightClick: boolean;
+  /** A tray's `auxclick` fires on a middle click (runtime 3.0.0-denext.6). */
+  readonly trayMiddleClick: boolean;
+  /** A tray's `mouseenter` / `mouseleave` fire (macOS, Windows; runtime 3.0.0-denext.6). */
+  readonly trayHover: boolean;
+  /** A tray event's detail carries the modifier keys (runtime 3.0.0-denext.6). */
+  readonly trayModifiers: boolean;
+  /** A tray event's detail carries the cursor position (runtime 3.0.0-denext.6). */
+  readonly trayPosition: boolean;
+  /** A tray's `popUpMenu()` opens its menu (macOS, Windows; runtime 3.0.0-denext.6). */
+  readonly trayPopUpMenu: boolean;
 }
 
 /** `raw[key]` when it is one of `allowed`, else `"unknown"`. */
@@ -296,6 +316,15 @@ export async function appCapabilities(): Promise<AppCapabilities> {
     dockVisibility: flag("dockVisibility"),
     backendTray: flag("backendTray"),
     trayPanel: flag("trayPanel"),
+    activationPolicy: flag("activationPolicy"),
+    trayClick: flag("trayClick"),
+    trayDoubleClick: flag("trayDoubleClick"),
+    trayRightClick: flag("trayRightClick"),
+    trayMiddleClick: flag("trayMiddleClick"),
+    trayHover: flag("trayHover"),
+    trayModifiers: flag("trayModifiers"),
+    trayPosition: flag("trayPosition"),
+    trayPopUpMenu: flag("trayPopUpMenu"),
   };
 }
 
@@ -378,6 +407,47 @@ export async function setDockVisible(visible: boolean): Promise<boolean> {
   return out?.applied === true;
 }
 
+/** The macOS activation policy: a Dock icon and menu bar, neither, or no activation at all. */
+export type ActivationPolicy = "regular" | "accessory" | "prohibited";
+
+/**
+ * Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `"regular"` (a
+ * Dock icon and a menu bar), `"accessory"` (neither: a menu-bar app or a desktop companion) or
+ * `"prohibited"`. Switching to regular also brings the app to the front, so a tray app can show a
+ * Dock icon only while it has a full window open. `desktop.app.activationPolicy` (or
+ * `desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6
+ * (`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `"regular"` /
+ * `"accessory"` show / hide the Dock icon as {@linkcode setDockVisible} does.
+ *
+ * @param policy The policy.
+ * @returns Whether it applied: `false` on Windows and Linux, which have no policy.
+ * @example
+ * ```ts
+ * import { setActivationPolicy } from "denext/desktop/app";
+ * import { openWindow } from "denext/desktop/window";
+ *
+ * await setActivationPolicy("regular"); // a Dock icon while the window is open
+ * const win = await openWindow({ url: "/library" });
+ * win.onClosed(() => void setActivationPolicy("accessory"));
+ * ```
+ */
+export async function setActivationPolicy(policy: ActivationPolicy): Promise<boolean> {
+  const out = await desktopRpc<{ applied?: unknown }>("app", "setActivationPolicy", { policy });
+  return out?.applied === true;
+}
+
+/**
+ * The app's macOS activation policy.
+ *
+ * @returns The policy, or `null` where there is none (Windows, Linux, a runtime before
+ *   3.0.0-denext.6).
+ */
+export async function getActivationPolicy(): Promise<ActivationPolicy | null> {
+  const out = await desktopRpc<{ policy?: unknown }>("app", "getActivationPolicy", {});
+  const p = out?.policy;
+  return p === "regular" || p === "accessory" || p === "prohibited" ? p : null;
+}
+
 /**
  * Call `handler` when the user clicks the app's macOS Dock icon (Electron's `activate`). With no
  * window showing, the main window is shown again first; `hasVisibleWindows` says whether one was.
@@ -428,8 +498,30 @@ export interface AppTray {
   update(options: Partial<TrayOptions>): Promise<void>;
   /** Where it is, or `null` where the OS cannot say (Linux). */
   getBounds(): Promise<TrayBounds | null>;
-  /** Call `handler` on each click (`"click"` or `"doubleClick"`). Returns the unsubscribe. */
-  onClick(handler: (event: "click" | "doubleClick") => void): () => void;
+  /**
+   * Call `handler` on each click of the primary button (`"click"`) and each double click
+   * (`"doubleClick"`), with the runtime's detail (button, modifiers, position, `double`; runtime
+   * 3.0.0-denext.6, else `null`). A right click is a `contextmenu` event ({@linkcode AppTray.on}).
+   * Returns the unsubscribe.
+   */
+  onClick(
+    handler: (event: "click" | "doubleClick", detail: TrayMouseDetail | null) => void,
+  ): () => void;
+  /**
+   * Call `handler` on each `type` event, by its DOM name: `click` (the primary button), `dblclick`,
+   * `contextmenu` (a right click), `auxclick` (a middle click), `mouseenter` / `mouseleave` (hover;
+   * macOS, Windows). All but `click` / `dblclick` need runtime 3.0.0-denext.6 (`trayRightClick`,
+   * `trayMiddleClick`, `trayHover` in {@linkcode appCapabilities}). Returns the unsubscribe.
+   */
+  on(type: TrayEventType, handler: (detail: TrayMouseDetail | null) => void): () => void;
+  /**
+   * Open the tray's menu at the icon now (Electron's `popUpContextMenu`): from another gesture than
+   * the right click, which opens it by itself (a Control-click on macOS, a left click in an app that
+   * wants its menu there, a shortcut). Resolves `false` without a menu, on a runtime before
+   * 3.0.0-denext.6, or where the OS can't (Linux, where the tray host opens the menu itself;
+   * `trayPopUpMenu`).
+   */
+  popUpMenu(): Promise<boolean>;
   /** Call `handler` with the id of each menu item chosen. Returns the unsubscribe. */
   onMenuItem(handler: (id: string) => void): () => void;
   /** Remove it. */
@@ -550,8 +642,19 @@ function trayById(id: string): AppTray {
     },
     onClick: (handler) =>
       onAppAction((a) => {
-        if (a.source === "tray" && a.tray === id) handler(a.event);
+        if (a.source !== "tray" || a.tray !== id) return;
+        if (a.event === "click" || a.event === "doubleClick") handler(a.event, a.detail);
       }),
+    on: (type, handler) => {
+      const wire = type === "dblclick" ? "doubleClick" : type;
+      return onAppAction((a) => {
+        if (a.source === "tray" && a.tray === id && a.event === wire) handler(a.detail);
+      });
+    },
+    popUpMenu: async () => {
+      const out = await desktopRpc<{ shown?: unknown }>("app", "popUpMenu", { id });
+      return out?.shown === true;
+    },
     onMenuItem: (handler) =>
       onAppAction((a) => {
         if (a.source === "trayMenu" && a.tray === id) handler(a.id);

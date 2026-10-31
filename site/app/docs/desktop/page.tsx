@@ -2464,13 +2464,14 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
       <Code lang="ts">
         {`export default {
   desktop: {
-    app: { dock: false }, // no Dock icon (macOS); give the app a tray to come back through
+    // No Dock icon from the first frame (macOS); give the app a tray to come back through.
+    app: { activationPolicy: "accessory" },
     window: {
       width: 260, height: 300,
       frameless: true,              // no title bar or chrome
-      transparent: true,            // macOS, Linux (WebKitGTK); opaque on WebView2 and CEF
+      transparent: true,            // macOS, Linux (WebKitGTK), Windows (WebView2); not CEF
       focusable: false,             // a non-activating panel: never steals the focus
-      alwaysOnTop: true,            // or "status" | "pop-up-menu" | "screen-saver"
+      alwaysOnTop: "status",        // true ("floating") | "status" | "pop-up-menu" | "screen-saver"
       visibleOnAllWorkspaces: true, // every Space / virtual desktop
       skipTaskbar: true,            // Windows, Linux
       opacity: 1,
@@ -2493,15 +2494,24 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
         (<code>transparent</code>, <code>nonActivating</code>, <code>opacity</code>,{" "}
         <code>clickThrough</code>, <code>clickThroughForward</code>, <code>hitRegion</code>,{" "}
         <code>visibleOnAllWorkspaces</code>, <code>skipTaskbar</code>,{" "}
-        <code>alwaysOnTopLevels</code>,{" "}
-        <code>focusEvents</code>). Click-through, hit regions, every-workspace visibility, the
-        taskbar setter and levels above <code>"floating"</code>{" "}
-        need a runtime that has them: none does yet, so they report <code>false</code> and reject
+        <code>alwaysOnTopLevels</code>, <code>focusEvents</code>, <code>visibleOnFullScreen</code>,
         {" "}
-        <code>unsupported</code> until one does, with no change to the app (a{" "}
+        <code>layerShell</code>,{" "}
+        <code>activationPolicy</code>). Click-through, hit regions, every-workspace visibility (with
+        {" "}
+        <code>visibleOnFullScreen</code>, over other apps&apos; full-screen windows on macOS at a
+        {" "}
+        <code>"status"</code> level or above), the taskbar setter and levels above{" "}
+        <code>"floating"</code>{" "}
+        need runtime 3.0.0-denext.6, which denext pins; an older runtime reports them{" "}
+        <code>false</code> and rejects <code>unsupported</code>, with no change to the app (a{" "}
         <code>focusable: false</code>{" "}
         window already joins every Space on macOS and stays off the taskbar elsewhere).{" "}
-        <a href="/docs/examples">examples/companion</a> is one.
+        <code>openWindow({"{ overlay: true }"})</code>{" "}
+        makes a desktop overlay surface on a Wayland compositor with wlr-layer-shell (wlroots
+        compositors, KDE Plasma, COSMIC): above every window, on every workspace, out of the task
+        list (<code>layerShell</code>); elsewhere it is an ordinary window. The Linux packages
+        recommend gtk-layer-shell for it. <a href="/docs/examples">examples/companion</a> is one.
       </p>
       <h3 id="desktop-multi-window">More windows</h3>
       <p>
@@ -2849,9 +2859,24 @@ await bounce({ critical: true }); // until the app is focused`}
           <code>setDockVisible(false)</code>{" "}
           hides the app&apos;s Dock icon (an accessory app: a menu-bar app or a companion), and{" "}
           <code>desktop.app.dock: false</code>{" "}
-          does it at launch. Until the runtime reads that setting before its first frame, the icon
-          shows for a moment at launch. On Windows and Linux there is no app-level icon (the call
-          answers <code>false</code>).
+          does it at launch. On Windows and Linux there is no app-level icon (the call answers{" "}
+          <code>false</code>).
+        </li>
+        <li>
+          <code>setActivationPolicy("regular" | "accessory" | "prohibited")</code> and{" "}
+          <code>getActivationPolicy()</code> drive the macOS activation policy (Electron&apos;s{" "}
+          <code>app.setActivationPolicy</code>): a tray app can be <code>"accessory"</code>{" "}
+          (no Dock icon, no menu bar) and switch to <code>"regular"</code>{" "}
+          only while it has a full window open, which also brings it to the front.{" "}
+          <code>desktop.app.activationPolicy</code> (or <code>dock: false</code>, which means{" "}
+          <code>"accessory"</code>) is the policy the app starts in: denext writes it to the
+          packaged app&apos;s <code>laufey-launch.json</code> (<code>LAUFEY_ACTIVATION_POLICY</code>
+          {" "}
+          for <code>denext desktop run</code> /{" "}
+          <code>dev</code>), so no Dock icon flashes at launch. Both need runtime 3.0.0-denext.6
+          (<code>activationPolicy</code> in{" "}
+          <code>appCapabilities()</code>); on an older runtime the policy falls back to showing or
+          hiding the Dock icon once the backend starts.
         </li>
       </ul>
       <h3 id="desktop-backend-tray">A tray owned by the backend, and its panel</h3>
@@ -2887,8 +2912,28 @@ app.tray?.update({ tooltip: "2 VMs running" });
 // any page
 import { getTray, toggleTrayPanel } from "denext/desktop/app";
 const tray = await getTray(); // the same tray in every window; null without one
-tray?.onClick((e) => e === "doubleClick" && openWindow({ url: "/" }));`}
+tray?.onClick((e) => e === "doubleClick" && openWindow({ url: "/" }));
+tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Control-click: the menu
+tray?.on("mouseenter", () => void refreshTooltip()); // hover (macOS, Windows)`}
       </Code>
+      <p>
+        From runtime 3.0.0-denext.6 every tray event carries the runtime&apos;s detail (
+        <code>button</code>, <code>modifiers</code>, <code>x</code> / <code>y</code>,{" "}
+        <code>double</code>; <code>null</code> on an older runtime): <code>onClick</code>{" "}
+        hears the primary button, a right click is <code>contextmenu</code>, a middle click{" "}
+        <code>auxclick</code>, and hover is <code>mouseenter</code> / <code>mouseleave</code>{" "}
+        (macOS, Windows), through <code>tray.on(type, handler)</code> in a page or the handle&apos;s
+        {" "}
+        <code>on</code> (and <code>runDesktop({"{ tray: { onContextMenu } }"})</code>) in{" "}
+        <code>desktop.ts</code>. A right click opens the tray&apos;s menu by itself;{" "}
+        <code>popUpMenu()</code>{" "}
+        opens it from another gesture, a Control-click say (not on Linux, where the tray host opens
+        it). <code>appCapabilities()</code> says what this OS delivers (<code>trayRightClick</code>,
+        {" "}
+        <code>trayMiddleClick</code>, <code>trayHover</code>, <code>trayModifiers</code>,{" "}
+        <code>trayPosition</code>, <code>trayPopUpMenu</code>), from the runtime&apos;s{" "}
+        <code>Deno.Tray.capabilities()</code>. The panel toggles on a plain left click only.
+      </p>
       <p>
         Its clicks reach the backend&apos;s handlers and every window&apos;s page;{" "}
         <code>showTrayPanel</code>, <code>hideTrayPanel</code> and <code>toggleTrayPanel</code>{" "}

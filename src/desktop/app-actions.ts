@@ -9,11 +9,39 @@
  */
 
 import { pullQueue } from "./pull.ts";
+import { parseTrayMouseDetail, type TrayMouseDetail } from "./tray-events.ts";
+
+/**
+ * A tray event as the runtime queues it: `click` / `doubleClick`, and the DOM names of the events
+ * runtime 3.0.0-denext.6 added.
+ */
+export type TrayActionEvent =
+  | "click"
+  | "doubleClick"
+  | "contextmenu"
+  | "auxclick"
+  | "mouseenter"
+  | "mouseleave";
+
+const TRAY_EVENTS = new Set<string>([
+  "click",
+  "doubleClick",
+  "contextmenu",
+  "auxclick",
+  "mouseenter",
+  "mouseleave",
+]);
 
 /** One click, as the runtime queues it. */
 export type AppActionEvent =
   | { readonly source: "menu" | "dock"; readonly id: string }
-  | { readonly source: "tray"; readonly tray: string; readonly event: "click" | "doubleClick" }
+  | {
+    readonly source: "tray";
+    readonly tray: string;
+    readonly event: TrayActionEvent;
+    /** The runtime's detail (runtime 3.0.0-denext.6+), else `null`. */
+    readonly detail: TrayMouseDetail | null;
+  }
   | { readonly source: "trayMenu"; readonly tray: string; readonly id: string }
   | { readonly source: "dockReopen"; readonly hasVisibleWindows: boolean };
 
@@ -30,7 +58,8 @@ function parse(raw: unknown): AppActionEvent | undefined {
       return tray === undefined ? undefined : {
         source: "tray",
         tray,
-        event: a.event === "doubleClick" ? "doubleClick" : "click",
+        event: TRAY_EVENTS.has(a.event as string) ? a.event as TrayActionEvent : "click",
+        detail: parseTrayMouseDetail(a.detail),
       };
     case "trayMenu":
       return tray === undefined || id === undefined ? undefined : { source: "trayMenu", tray, id };

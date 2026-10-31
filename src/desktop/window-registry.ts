@@ -185,6 +185,7 @@ export interface OpenWindowSettings {
   readonly resizable?: boolean;
   readonly frameless?: boolean;
   readonly transparent?: boolean;
+  readonly overlay?: boolean;
   readonly focusable?: boolean;
   readonly alwaysOnTop?: DesktopWindowLevel | false;
   readonly opacity?: number;
@@ -247,6 +248,7 @@ const OPEN_FLAGS = [
   "resizable",
   "frameless",
   "transparent",
+  "overlay",
   "focusable",
   "skipTaskbar",
   "visibleOnAllWorkspaces",
@@ -286,6 +288,10 @@ function creationOptions(o: OpenWindowSettings): Record<string, unknown> {
     ...pick("opacity"),
     ...pick("frameless"),
     ...pick("transparent"),
+    // Creation-time from runtime 3.0.0-denext.6 (an older one ignores them; the taskbar entry is
+    // also set right after creation, where the runtime has `setSkipTaskbar`).
+    ...pick("overlay"),
+    ...pick("skipTaskbar"),
     ...(o.focusable === false ? { noActivate: true } : {}),
     ...(o.alwaysOnTop !== undefined ? { alwaysOnTop: o.alwaysOnTop !== false } : {}),
     // Honoured once the runtime can create a window hidden; it is hidden right after otherwise.
