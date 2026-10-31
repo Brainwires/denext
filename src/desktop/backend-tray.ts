@@ -133,8 +133,16 @@ export interface BackendTrayContext {
   readonly registry?: WindowRegistry;
   /** The URL a window loads for an app path. */
   readonly appUrl: (path: string) => string;
-  /** The displays (`Deno.desktop.screens()`), for the panel's placement. */
+  /**
+   * The displays (`Deno.desktop.screens()`), for the panel's placement (on Linux Wayland with
+   * their work areas kept clear of panels the session can't report, `panelPlacementScreens`).
+   */
   readonly screens: () => readonly PlacementScreen[];
+  /**
+   * Whether the runtime makes the panel a layer-shell overlay where it has layer-shell (runtime
+   * `3.0.0-denext.7`+): the panel then reports `setPosition` on Wayland. Default not.
+   */
+  readonly panelOverlay?: boolean;
   /** Where warnings go. */
   readonly warn: (message: string) => void;
 }
@@ -225,7 +233,9 @@ function attachPanel(
     hideOnBlur: settings.hideOnBlur,
     position: (icon, size) => placeTrayPanel(icon, size, ctx.screens()),
   });
-  const entry: RegisteredWindow | undefined = ctx.registry?.adopt(panel.window, "panel");
+  const entry: RegisteredWindow | undefined = ctx.registry?.adopt(panel.window, "panel", "panel", {
+    overlay: ctx.panelOverlay === true,
+  });
   panel.window.navigate?.(ctx.appUrl(settings.url));
   backend.setPanel(panel);
   return {

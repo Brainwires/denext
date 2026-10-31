@@ -165,6 +165,17 @@ and this project adheres to
   started its verb children without the project's `--config`, so a child discovered the config
   above the copy (a workspace root rather than the member). All three now ask the same location
   check the docs corpus uses, and treat a copy as the published package.
+- **Overlay windows and tray panels placed on Linux Wayland.** A layer-shell `overlay` window (the
+  main window with `desktop.window.overlay`, the tray panel, both from Deno Desktop runtime
+  3.0.0-denext.7; an `openWindow({ overlay: true })` window) reports `setPosition` in
+  `windowCapabilities()` where the runtime has `layerShell`: the runtime's own report is app-wide
+  and says no on Wayland, but a layer surface's position becomes its margins. examples/companion
+  (Loopy) now goes to the bottom-right corner on KDE Plasma instead of the top-left one. GDK
+  reports the whole display as the work area on Wayland, so a tray panel opened at a click in a
+  bottom taskbar reached into it: on Wayland a display whose work area is the whole display is
+  placed in with 64 px kept clear of each edge (`WAYLAND_PANEL_INSET`, at most a quarter of the
+  display), unless the runtime reports `layerShellEdgeAnchor` (a layer surface anchored to its
+  nearest edges, where the compositor keeps it clear of panels).
 
 ### Security
 
