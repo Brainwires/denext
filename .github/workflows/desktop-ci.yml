@@ -105,6 +105,9 @@ on:
       - "src/build/doctor-format.ts"
       - "src/build/spa/shared.ts"
       - "src/build/react-native-desktop.ts"
+      # The pack readers the desktop runtime graph must keep lazy (tests/desktop-runtime-graph.test.ts).
+      - "src/build/packed-text.ts"
+      - "scripts/lib/pack-texts.ts"
       - "src/cli/commands/desktop*.ts"
       - "src/cli/commands/doctor.ts"
       - "src/client/live-client.ts"
