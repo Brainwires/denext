@@ -55,9 +55,10 @@ under Loopy instead.
 - `app/companion.tsx` — the client component: runs the reducer and the timers, listens for the
   inbox's messages (`onDesktopEvent("loopy", "say", …)`) and sets up the window.
 - `denext.config.ts` — the overlay window (`desktop.window`: `frameless`, `transparent`,
-  `focusable: false`, `alwaysOnTop: "status"`, `visibleOnAllWorkspaces`, `skipTaskbar`), no Dock
-  icon from the first frame (`desktop.app.activationPolicy: "accessory"`) and the tray
-  (`desktop.tray`, handled in `desktop.ts`).
+  `focusable: false`, `alwaysOnTop: "status"`, `visibleOnAllWorkspaces`, `skipTaskbar`, and
+  `overlay` for a layer-shell surface on Linux Wayland), no Dock icon from the first frame
+  (`desktop.app.activationPolicy: "accessory"`) and the tray (`desktop.tray`, handled in
+  `desktop.ts`).
 - `lib/speech.ts` — **Voice on** reads each bubble aloud (its text, then its buttons as the choices)
   with `speak()` from `denext/mobile`: the window's Web Speech where it has one, else the OS engine
   through the desktop runtime (`Deno.desktop.speech`; speech-dispatcher on Linux). Off until turned
@@ -103,14 +104,28 @@ the token (401); a body over 16 KiB is a 413.
 ## Where it works
 
 On denext's pinned Deno Desktop runtime (3.0.0-denext.6): the transparent, frameless overlay on
-macOS, Linux and Windows' WebView2 (the CEF backend paints it opaque); never taking the focus;
-clicks passing through everywhere but Loopy, its bubble and its buttons (`setHitRegion`); always on
-top at the `"status"` level and on every Space, over full-screen apps too (macOS; Windows and Linux
-have one floating level); no taskbar entry on Windows and Linux; no Dock icon on macOS from the
-first frame; the tray; placement; every animation; reading aloud; the inbox and `--wait` replies;
-the Claude Code hooks. Each window feature is checked with `windowCapabilities()` first, so on an
-older runtime Loopy still runs, catching every click in its window and showing a Dock icon for a
-moment at launch.
+macOS, Linux and Windows' WebView2 (the CEF backend paints it opaque); clicks passing through
+everywhere but Loopy, its bubble and its buttons (`setHitRegion`); no Dock icon on macOS from the
+first frame; the tray; every animation; reading aloud; the inbox and `--wait` replies; the Claude
+Code hooks. On macOS, Windows and Linux X11 it also never takes the focus, stays on top (at the
+`"status"` level and on every Space, over full-screen apps too, on macOS; Windows and Linux have one
+floating level), stays off the taskbar (Windows, Linux) and sits in the bottom-right corner.
+
+Linux on Wayland is narrower, because a Wayland window can't ask to be placed, kept on top, shown on
+every workspace, left off the taskbar or kept from taking the focus:
+
+- **KDE Plasma and wlroots compositors** (Sway, Hyprland, …), with `libgtk-layer-shell0` installed
+  (Kubuntu does not install it by default) and runtime 3.0.0-denext.7 or later: `overlay: true`
+  makes Loopy a layer-shell surface, so it is on top, on every workspace, off the task manager and
+  never focused. It opens in the top-left corner (Loopy places itself only where
+  `windowCapabilities().setPosition` says windows can be placed). Before 3.0.0-denext.7 KWin also
+  draws a title bar around the frameless window, and Loopy opens at 800 × 600 on every Linux
+  desktop.
+- **GNOME** (Mutter has no layer-shell): an ordinary window, where Mutter puts it, focused when it
+  opens, under the windows you raise, on one workspace and in the dock.
+
+Each window feature is checked with `windowCapabilities()` first, so on an older runtime Loopy still
+runs, catching every click in its window and showing a Dock icon for a moment at launch.
 
 ## Tests
 

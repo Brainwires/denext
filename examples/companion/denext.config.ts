@@ -29,6 +29,10 @@ export default {
       alwaysOnTop: "status",
       visibleOnAllWorkspaces: true,
       skipTaskbar: true,
+      // Linux Wayland: a window can't ask to be on top, on every workspace, off the taskbar or
+      // unfocused there; a layer-shell surface is all of those (KDE Plasma, wlroots compositors,
+      // with libgtk-layer-shell installed; runtime 3.0.0-denext.7). An ordinary window elsewhere.
+      overlay: true,
     },
     backdrop: "none",
     tray: {

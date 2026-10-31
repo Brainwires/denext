@@ -85,9 +85,15 @@ Everything below comes from denext's desktop windowing (`denext.config.ts`, `des
 - **Keep alive.** `desktop.app.keepAlive`: closing every window leaves Hangar in the tray; closing
   the main window hides it (`onCloseRequested`), so its page keeps the tray current. "Quit" quits.
 
-What depends on the OS: hover and `popUpMenu()` are macOS and Windows only; on Linux a session
-with a StatusNotifierWatcher gets the clicks, one with only AppIndicator has no left click and no
-icon position (the panel opens where it last was; the menu has "Show panel"), and stock GNOME needs
-the AppIndicator extension (without a tray host the main window is shown instead). On a runtime
+What depends on the OS: hover and `popUpMenu()` are macOS and Windows only, and so is a click's
+modifier keys: a Linux tray host doesn't say which keys are held (`trayModifiers` is false), so
+there a Control-click is a plain click and toggles the panel. On Linux a session with a
+StatusNotifierWatcher (KDE Plasma) gets the clicks and the panel opens at the click, one with only
+AppIndicator has no left click and no icon position (the panel opens where the compositor puts it;
+the menu has "Show panel"), and stock GNOME needs the AppIndicator extension (without a tray host
+the main window is shown instead). On Wayland the panel stays on top, out of the task manager and
+where it is put only as a layer-shell surface: KDE Plasma and wlroots compositors with
+`libgtk-layer-shell0` installed, runtime 3.0.0-denext.7 or later; on GNOME it is an ordinary window.
+Before 3.0.0-denext.7 the panel opens at 800 × 600 on Linux (with a title bar on KDE). On a runtime
 before 3.0.0-denext.6 the Dock icon shows for a moment at launch and the tray's clicks carry no
 detail.

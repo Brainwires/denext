@@ -66,6 +66,8 @@ export interface DesktopWindowSettings {
   readonly skipTaskbar?: boolean;
   /** On every Space / virtual desktop (`desktop.window.visibleOnAllWorkspaces`). */
   readonly visibleOnAllWorkspaces?: boolean;
+  /** A Wayland layer-shell overlay surface (`desktop.window.overlay`, creation-time). */
+  readonly overlay?: boolean;
 }
 
 /** The app-level settings of `desktop.app` that `runDesktop` applies at launch. */
@@ -95,6 +97,8 @@ export interface DesktopInitialWindow {
   readonly transparent?: boolean;
   /** `false`: do not reveal the window once the app's first page loads. */
   readonly showOnFirstLoad?: boolean;
+  /** A Wayland layer-shell overlay surface (runtime `3.0.0-denext.7`+). */
+  readonly overlay?: boolean;
 }
 
 /** The macOS vibrancy material `desktop.backdrop: "vibrancy"` puts behind the page. */
@@ -149,6 +153,7 @@ const WINDOW_FLAGS = [
   "focusable",
   "skipTaskbar",
   "visibleOnAllWorkspaces",
+  "overlay",
 ] as const;
 
 /**
@@ -246,21 +251,25 @@ export function resolveDesktopAppSettings(desktop: unknown): DesktopAppSettings 
 
 /**
  * The `initialWindow` block of `.deno-desktop/app.json` for these settings, or `undefined` when
- * the window needs none: written only when the window is hidden at launch, frameless, transparent
- * or non-activating (the creation-time settings), then with its configured size so it opens at
- * that size. A size above the runtime's 65535 limit is left to `runDesktop` to apply.
+ * the window needs none: written only when the window is hidden at launch, frameless, transparent,
+ * non-activating or a layer-shell overlay (the creation-time settings), then with its configured
+ * size so it opens at that size. A size above the runtime's 65535 limit is left to `runDesktop` to
+ * apply. `overlay` only for a runtime that reads it (an older one refuses the key).
  *
  * @param settings The resolved window settings.
+ * @param overlayKnown Whether the runtime reads `initialWindow.overlay` (`initialOverlayRuntime`).
  * @returns The block, or `undefined`.
  */
 export function desktopInitialWindow(
   settings: DesktopWindowSettings,
+  overlayKnown = false,
 ): DesktopInitialWindow | undefined {
   const flags = {
     ...(settings.frameless === true ? { frameless: true } : {}),
     ...(settings.focusable === false ? { noActivate: true } : {}),
     ...(settings.transparent === true ? { transparent: true } : {}),
     ...(settings.show === false ? { showOnFirstLoad: false } : {}),
+    ...(settings.overlay === true && overlayKnown ? { overlay: true } : {}),
   };
   if (Object.keys(flags).length === 0) return undefined;
   const fits = (n: number | undefined) => n !== undefined && n <= 65535;

@@ -8,7 +8,11 @@
 
 import { join } from "@std/path";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
-import { compareDenoVersions, supportsOverlayTray } from "./deno-version.ts";
+import {
+  compareDenoVersions,
+  supportsInitialOverlay,
+  supportsOverlayTray,
+} from "./deno-version.ts";
 import { readJson } from "./json-edit.ts";
 
 /**
@@ -83,6 +87,26 @@ export function activationPolicyRuntime(
   const mode = (env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase();
   if (mode === "stock" || env("DENEXT_DESKTOP_RUNTIME_DIR")) return false;
   return supportsOverlayTray(version);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process launches a runtime that
+ * reads `initialWindow.overlay` and `name` in `.deno-desktop/app.json`: denext's pinned runtime
+ * (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown
+ * version) from `FIRST_INITIAL_OVERLAY_RUNTIME` (`3.0.0-denext.7`). An older runtime refuses an
+ * app.json with either key, so the app would not start.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether to write the keys.
+ */
+export function initialOverlayRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  const mode = (env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase();
+  if (mode === "stock" || env("DENEXT_DESKTOP_RUNTIME_DIR")) return false;
+  return supportsInitialOverlay(version);
 }
 
 /**

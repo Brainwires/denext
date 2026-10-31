@@ -1684,6 +1684,17 @@ export interface DesktopWindowConfig {
    * on macOS a `focusable: false` window already joins every Space.
    */
   visibleOnAllWorkspaces?: boolean;
+  /**
+   * Make the window a desktop overlay surface on Linux Wayland: where the compositor has
+   * wlr-layer-shell (KDE Plasma, wlroots compositors such as Sway and Hyprland, COSMIC; not GNOME)
+   * the window is a layer surface above every other window, on every workspace, with no taskbar
+   * entry, placeable, and with `focusable: false` never focused; that is the only way to get those
+   * on Wayland, where an ordinary window can't ask for them. An ordinary window elsewhere (every
+   * other OS, GNOME, X11, a missing `libgtk-layer-shell`; `windowCapabilities().layerShell` says).
+   * Creation-time (written to `.deno-desktop/app.json` `initialWindow.overlay`); needs denext's Deno
+   * Desktop runtime 3.0.0-denext.7 or later (ignored with a warning before). Default `false`.
+   */
+  overlay?: boolean;
 }
 
 /** The production server's settings (see {@link DenextConfig.start}). */

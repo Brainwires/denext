@@ -235,6 +235,28 @@ export function supportsOverlayTray(version: string): boolean {
   return compareDenoVersions(version, FIRST_OVERLAY_TRAY_RUNTIME) >= 0;
 }
 
+/**
+ * The first Deno Desktop runtime that reads `initialWindow.overlay` and `name` in
+ * `.deno-desktop/app.json` (Brainwires/deno `fix/wayland-overlay-panel`): the window the app starts
+ * with can be a Wayland layer-shell overlay (`desktop.window.overlay`), and an untitled window is
+ * titled with the app's name (`desktop.app.name`) rather than the bundle's file name. An older
+ * runtime refuses either key (its app.json has no unknown keys), so the packager writes them only
+ * from here on.
+ */
+export const FIRST_INITIAL_OVERLAY_RUNTIME = "3.0.0-denext.7";
+
+/**
+ * Whether the Deno Desktop runtime `version` reads `initialWindow.overlay` and `name` in
+ * `.deno-desktop/app.json` (from {@linkcode FIRST_INITIAL_OVERLAY_RUNTIME}). A version that does
+ * not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether the packager may write the keys.
+ */
+export function supportsInitialOverlay(version: string): boolean {
+  return compareDenoVersions(version, FIRST_INITIAL_OVERLAY_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

@@ -44,6 +44,7 @@ import { desktopInitialWindow, resolveDesktopWindowSettings } from "../desktop/w
 import {
   activationPolicyRuntime,
   desktopPasskeyRpIds,
+  initialOverlayRuntime,
   PASSKEY_RP_IDS_FIX,
   strictLaunchRuntime,
 } from "./desktop-launch-policy.ts";
@@ -571,30 +572,42 @@ async function writeJsonEdit(
  * itself is `laufey-launch.json`'s) and `allowedNavigationOrigins` (the navigation guard's extra
  * origins, only when configured: a runtime before 2.9.7-denext.18 refuses the key) and
  * `initialWindow` (the window the runtime starts with, only when `desktop.window` hides it at
- * launch or makes it frameless, transparent or non-activating; every supported runtime reads it).
- * The identifier rides along whenever it is valid, since the runtime needs it to register schemes
- * on Linux and next to `singleInstance`.
+ * launch or makes it frameless, transparent, non-activating or, on a runtime that reads it, a
+ * layer-shell overlay). The identifier rides along whenever it is valid, since the runtime needs
+ * it to register schemes on Linux and next to `singleInstance`; `name` (`desktop.app.name`, the
+ * title of an untitled window) rides along on a runtime that reads it (`3.0.0-denext.7`+), which
+ * otherwise titles it with the bundle's file name (`MyApp-arm64`).
  */
 function appJsonBody(
   config: unknown,
   updatePublicKey?: string,
+  overlayKnown: boolean = initialOverlayRuntime(),
 ): Record<string, unknown> | null {
   const identity = desktopAppIdentity(config);
   const app = appBlock(config);
+  const settings = resolveDesktopWindowSettings(
+    (config as { desktop?: unknown } | undefined)?.desktop,
+  );
+  if (settings.overlay === true && !overlayKnown) {
+    console.warn(
+      "  desktop.window.overlay needs denext's Deno Desktop runtime 3.0.0-denext.7 or later: " +
+        "the window opens as an ordinary one.",
+    );
+  }
   const wanted = definedEntries({
     origin: identity?.origin,
     deepLinks: nonEmpty(normalizeDesktopDeepLinks(app?.deepLinks)),
     singleInstance: typeof app?.singleInstance === "boolean" ? app.singleInstance : undefined,
     update: updatePublicKey ? { publicKey: updatePublicKey } : undefined,
     allowedNavigationOrigins: nonEmpty(desktopNavigationOrigins(config)),
-    initialWindow: desktopInitialWindow(
-      resolveDesktopWindowSettings((config as { desktop?: unknown } | undefined)?.desktop),
-    ),
+    initialWindow: desktopInitialWindow(settings, overlayKnown),
   });
   if (Object.keys(wanted).length === 0) return null;
   const identifier = validAppIdentifier(identity?.identifier ?? app?.identifier);
+  const name = overlayKnown ? configIdentity(config).name : undefined;
   // `singleInstance` only with an identifier: the runtime keys the lock on it.
   return definedEntries({
+    name,
     origin: wanted.origin,
     identifier,
     deepLinks: wanted.deepLinks,
@@ -782,13 +795,16 @@ function configIdentity(config: unknown): Record<string, string> {
  *
  * @param root The project root.
  * @param config The project config.
+ * @param overlayKnown Whether the runtime reads app.json's `initialWindow.overlay` and `name`
+ *   (default `initialOverlayRuntime()`: denext's pinned runtime from `3.0.0-denext.7`).
  * @returns What changed (`deepLinks` only when schemes are configured).
  */
 export async function syncDesktopAppConfigAt(
   root: string,
   config: unknown,
+  overlayKnown: boolean = initialOverlayRuntime(),
 ): Promise<DesktopAppSyncReport> {
-  const body = appJsonBody(config, await desktopUpdatePublicKey(config));
+  const body = appJsonBody(config, await desktopUpdatePublicKey(config), overlayKnown);
   const appJson = await syncAppJson(root, body);
   const runtimeConfig = await syncRuntimeConfig(root, config);
   const include = await syncInclude(root, body !== null);
