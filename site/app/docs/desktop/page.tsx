@@ -2344,6 +2344,7 @@ if (folder) {
         {`import {
   getWindowState,
   makeWindowDraggable,
+  hideWindow,
   onCloseRequested,
   onWindowStateChange,
   setWindowBackdrop,
@@ -2362,8 +2363,15 @@ onWindowStateChange(async () => {
 makeWindowDraggable(document.querySelector("header")!);
 await setWindowBackdrop("vibrancy", { material: "sidebar" });
 
-// Ask before closing (the close button, Cmd+W / Alt+F4, or quitApp()).
-onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"));`}
+// Ask before closing (the close button, Cmd+W / Alt+F4, or the app quitting).
+onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"));
+
+// Close to the tray, but let the app quit (Electron's before-quit + close).
+onCloseRequested(({ reason }) => {
+  if (reason === "quit") return true;
+  void hideWindow();
+  return false;
+});`}
       </Code>
       <ul>
         <li>
@@ -2414,12 +2422,30 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
         <li>
           <strong>Closing</strong>: while an <code>onCloseRequested</code>{" "}
           handler is registered, the runtime holds every close and asks the page; the window closes
-          unless a handler returns{" "}
-          <code>false</code>. A page that never answers loses its hold: a close requested again 5
-          seconds later goes through. <code>closeWindow()</code> closes without asking;{" "}
-          <code>quitApp()</code> asks first (Electron&apos;s{" "}
-          <code>app.quit()</code>). Cmd+Q from the macOS app menu is never held. A reload drops the
-          hold.
+          unless a handler returns <code>false</code>. The handler gets an event whose{" "}
+          <code>reason</code> says why: <code>"close"</code> (the close button, Cmd+W / Alt+F4) or
+          {" "}
+          <code>"quit"</code> (the app is quitting: <code>quitApp()</code>,{" "}
+          <code>Deno.desktop.quit()</code>, the Quit item of a Windows tray menu), so a
+          close-to-tray window hides on a close and lets a quit through, as an Electron app checks
+          an <code>isQuitting</code> flag set in <code>before-quit</code>. A handler written as{" "}
+          <code>() =&gt; boolean</code>{" "}
+          keeps working. Once every guarded window lets a quit go, the app quits. A page that never
+          answers loses its hold: a close requested again 5 seconds later goes through.{" "}
+          <code>closeWindow()</code> closes without asking; <code>quitApp()</code>{" "}
+          asks first (Electron&apos;s{" "}
+          <code>app.quit()</code>). Cmd+Q from the macOS app menu and a macOS tray menu&apos;s quit
+          role end the app at once and are never held. A reload drops the hold.
+        </li>
+        <li>
+          <strong>Before quitting</strong>: <code>onBeforeQuit(handler)</code> is Electron&apos;s
+          {" "}
+          <code>before-quit</code>: it is asked when the app quits (never on a plain close) and
+          before the window&apos;s <code>onCloseRequested</code> handlers; a handler that returns
+          {" "}
+          <code>false</code>{" "}
+          keeps the app running, and no close handler is asked then. Use it to save state on the way
+          out.
         </li>
       </ul>
       <p>

@@ -88,7 +88,8 @@ Everything below comes from denext's desktop windowing (`denext.config.ts`, `des
   `hangar` extension's `open`, so there is one window per page); "Open Hangar" shows the main
   window.
 - **Keep alive.** `desktop.app.keepAlive`: closing every window leaves Hangar in the tray; closing
-  the main window hides it (`onCloseRequested`). "Quit" quits.
+  the main window hides it (`onCloseRequested`). "Quit" quits: the same handler is told the app is
+  quitting (`reason: "quit"`) and lets it go.
 
 On Windows the tray, the panel and the windows work, but the VM side doesn't: Hangar starts VMs
 through `/bin/sh` and lists running QEMU with `ps`, neither of which Windows has, so it lists no
