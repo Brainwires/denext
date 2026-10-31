@@ -117,6 +117,13 @@ and this project adheres to
   `resumeFileTransfer` straight after it answered `false`, and the call's request was still in
   flight. The pause now answers once that call has settled (the transfer is `paused`, its
   `paused` event sent), and answers `false` when a cancel landed first.
+- **`denext doctor` explains a `@denext` dependency-age exemption.** A `deno.json` that exempts
+  `jsr:@denext/*` (or another `@denext` entry) from Deno's minimum dependency age still fails the
+  non-critical `dependency age` check, since the hold is what keeps a compromised release out while
+  it is fresh; the message now says so and links the guide. A harness that deliberately builds
+  against just-published `@denext` releases sets `DENEXT_ALLOW_DENEXT_AGE_EXEMPTION=1`, and the
+  check passes, still naming the entries. The migration beds set it, so their one-day hold with
+  `@denext` exempt no longer reports a failure.
 
 ## [4.10.5] - 2026-10-31
 
