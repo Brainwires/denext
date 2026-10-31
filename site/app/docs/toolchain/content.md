@@ -1049,14 +1049,17 @@ certificate per server name on `Deno.listenTls` / `Deno.serve`, a cookie jar for
 (`Deno.CookieJar`, `Deno.Cookie`, `Deno.CookieMap`; `--unstable-cookies`) and npm
 `patchedDependencies`; better-sqlite3 under Jest's module registry, a shell-spawned `node` shim
 keeping the npm resolution, and a package.json script's arguments without npm's `--` come with it.
-`3.0.0-denext.5` (the build denext pins today; there is no `3.0.0-denext.4` release) fixes two
+`3.0.0-denext.5` (there is no `3.0.0-denext.4` release) fixes two
 security bugs: in a package.json-only project, `require()` no longer reads files a `node_modules`
 link leads to outside `node_modules` without read permission ([GHSA-xhq4-83x4-g734](https://github.com/Brainwires/deno/security/advisories/GHSA-xhq4-83x4-g734)), and
 the memory behind three arrays the runtime shares with JavaScript is no longer used after it is
 freed ([GHSA-mvh6-5whv-26gw](https://github.com/Brainwires/deno/security/advisories/GHSA-mvh6-5whv-26gw)). On Windows a finished process ends
 with `TerminateProcess`, so it can no longer spin in its teardown instead of exiting; the panic
 banner names the subcommand and the argument count instead of printing the command line; and
-`DENEXT_CRASH_REPORT_URL` turns on opt-in crash reports from the CLI and compiled programs. The
+`DENEXT_CRASH_REPORT_URL` turns on opt-in crash reports from the CLI and compiled programs.
+`3.0.0-denext.6` (the build denext pins today) is a Deno Desktop release: beyond `deno desktop`
+reading deno.json's `desktop.app.activationPolicy`, the CLI is unchanged, and the runtime adds overlay windows, tray events with their detail, the macOS activation policy and the
+OS's text to speech ([Our Deno Desktop runtime](/docs/desktop-runtime#overlay-windows-tray-events-and-the-activation-policy)). The
 [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases

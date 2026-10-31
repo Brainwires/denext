@@ -657,7 +657,12 @@ on macOS and Windows (on Linux, what denext posted this run). `context-menu`
 is the native menu (submenus, `destructive` items in red, an item's `iconPng`, `null` on dismiss).
 `share()` opens the OS share sheet over the window (macOS, Windows; `shareFromWindow({ files })` from
 `denext/desktop/window` shares picked / app-folder files). `denext/desktop/app` (no `add`): `setAppMenu([...])` +
-`onAppMenuItem(id => …)` with accelerators, roles, PNG `icon`s and `destructive` items, `createTray({ icon, tooltip, menu })`,
+`onAppMenuItem(id => …)` with accelerators, roles, PNG `icon`s and `destructive` items, `createTray({ icon, tooltip, menu })`
+(or the backend-owned `desktop.tray` with a `panel`, `getTray()`; `tray.on("contextmenu" | "auxclick" |
+"mouseenter" | …, detail => …)` with button / modifiers / position and `tray.popUpMenu()` on runtime
+3.0.0-denext.6), `setActivationPolicy("accessory" | "regular")` (`desktop.app.activationPolicy`: no Dock
+icon from the first frame), `openWindow({ url, overlay, focusable: false, … })` and the overlay calls
+(`setHitRegion`, `setIgnoreMouseEvents`, `setVisibleOnAllWorkspaces`) in `denext/desktop/window`,
 `setBadge(n)`, `bounce()`, Handoff / Spotlight on macOS (`setUserActivity({ type, title, url, userInfo,
 searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.userActivityTypes`);
 `setQuickActions` sets the macOS Dock menu. With no tray host (stock GNOME)
@@ -711,7 +716,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.5 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.6 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -1236,7 +1241,7 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
   packages (puppeteer, sharp, Prisma's engines, electron, …) need (into the workspace root's
   deno.json, the only one Deno reads; download hosts instead of `net: true` from runtime
-  3.0.0-rc.6, which denext's 3.0.0-denext.5 pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
+  3.0.0-rc.6, which denext's 3.0.0-denext.6 pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
@@ -3170,6 +3175,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/desktop/app`
 
+- `type ActivationPolicy = regular | accessory | prohibited` — The macOS activation policy: a Dock icon and menu bar, neither, or no activation at all.
 - `appCapabilities(): Promise<AppCapabilities>` — What the application menu, tray and Dock can do on this OS and runtime, plus the session facts the runtime probed (Deno.desktop.platformFeatures(), runtime 2.9.7-denext.10 and later): the tray host, the Secret Service, the session type and the cookie store; the badge (2.9.7-denext.11); the Linux CEF sandbox and the Linux file chooser (2.9.7-denext.12); the Linux window blur and native Linux passkeys (3.0.0-rc.1). A fact an older runtime cannot report reads "unknown".
 - `interface AppCapabilities` — What this OS and runtime can do (appCapabilities).
 - `interface AppMenuAction` — A clickable menu item.
@@ -3184,6 +3190,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `createTray(options: TrayOptions): Promise<AppTray>` — Add an icon to the system tray (the macOS menu bar's status items, the Windows notification area, Linux's AppIndicator area).
 - `interface DesktopBridgeError` — A failed desktop bridge call. Narrow with isDesktopBridgeError.
 - `type DesktopErrorCode = unavailable | forbidden | validation | timeout | too_large | bridge_error | parenthesized` — Why a desktop call failed:
+- `getActivationPolicy(): Promise<ActivationPolicy | null>` — The app's macOS activation policy.
 - `getLaunchAtLogin(): Promise<LaunchAtLoginState>` — Whether the app starts when the user logs in. Needs denext desktop add launch-at-login and denext's pinned runtime.
 - `getTray(): Promise<AppTray | null>` — The tray icon the app's backend owns (desktop.tray in denext.config.ts, or runDesktop({ tray })): every window's page gets the same one, and a page load never removes it (its destroy rejects validation). Clicks reach every window.
 - `hideTrayPanel(): Promise<boolean>` — Hide the backend tray's panel.
@@ -3198,6 +3205,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RegisteredShortcut` — A registered shortcut (registerShortcut).
 - `registerShortcut(accelerator: string, handler: () => void): Promise<RegisteredShortcut>` — Bind a key combination system-wide: handler runs whichever app has the keyboard focus. Needs denext desktop add global-shortcuts and denext's pinned runtime.
 - `type SecretServiceState = available | locked | activatable | absent | no-session-bus | os` — The Secret Service's state, as the runtime reads it without starting or unlocking it: "os" on macOS and Windows (Keychain, DPAPI); on Linux "locked" also covers a missing default keyring and "activatable" is installed but not running.
+- `setActivationPolicy(policy: ActivationPolicy): Promise<boolean>` — Set the app's macOS activation policy (Electron's app.setActivationPolicy): "regular" (a Dock icon and a menu bar), "accessory" (neither: a menu-bar app or a desktop companion) or "prohibited". Switching to regular also brings the app to the front, so a tray app can show a Dock icon only while it has a full window open. desktop.app.activationPolicy (or desktop.app.dock: false) sets the one the app starts in. Needs runtime 3.0.0-denext.6 (activationPolicy in appCapabilities); on an older runtime "regular" / "accessory" show / hide the Dock icon as setDockVisible does.
 - `setAppMenu(menu: typeOperator): Promise<void>` — Replace the application menu: the macOS menu bar, the window's menu bar on Windows and Linux. Chosen items reach onAppMenuItem; roles are handled by the OS.
 - `setBadge(badge: string | number | null): Promise<void>` — Show a badge: on the Dock icon on macOS, and as a "(N) " prefix of the window titles on Windows. On Linux a count shows on the app's launcher where a dock reads launcher badges (runtime 2.9.7-denext.11: Ubuntu's dock, Dash to Dock, Plasma's task manager), else as the same title prefix; appCapabilities().badgeShows says which. null, "" or 0 removes it.
 - `setDockVisible(visible: boolean): Promise<boolean>` — Show or hide the app's icon in the macOS Dock (the activation policy: hidden, the app is an accessory with no Dock icon or menu bar, as a menu-bar app or a desktop companion). Give the app a tray icon first so the user can reach it. desktop.app.dock: false hides it at launch.
@@ -3208,7 +3216,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `showTrayPanel(): Promise<boolean>` — Show the backend tray's panel (desktop.tray.panel) at the tray icon, as a click on the icon does.
 - `toggleTrayPanel(): Promise<boolean>` — Show the backend tray's panel when hidden, hide it when shown.
 - `interface TrayBounds` — Where a tray icon is on screen.
+- `type TrayEventType = click | dblclick | contextmenu | auxclick | mouseenter | mouseleave` — A tray icon event, by its DOM name.
 - `type TrayIcon = Uint8Array | string` — A tray icon's image: PNG bytes, or base64 PNG.
+- `interface TrayModifiers` — The modifier keys held during a tray event.
+- `interface TrayMouseDetail` — What a tray mouse event carries (the runtime's TrayMouseEvent, runtime 3.0.0-denext.6+).
 - `interface TrayOptions` — The settings of a tray icon (createTray).
 - `unregisterAllShortcuts(): Promise<void>` — Release every shortcut this app registered.
 - `unregisterShortcut(accelerator: string): Promise<boolean>` — Release a shortcut this app registered (any spelling of it).
