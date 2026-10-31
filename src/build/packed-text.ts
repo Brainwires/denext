@@ -116,3 +116,30 @@ export function packedRecords<const L extends PackLayout>(
   }
   return out as PackedRecords<L>;
 }
+
+/** A hole in a packed template: `{{=name}}`. */
+const HOLE = /\{\{=([A-Za-z][A-Za-z0-9]*)\}\}/g;
+
+/**
+ * A packed template with its holes filled. A template that interpolates (a function of the app's
+ * names in its readable source) is packed with each `${expr}` written as a hole, `{{=name}}`, and
+ * the published function fills them. Every hole must have a value and every value a hole, so a
+ * template and the code that fills it cannot drift apart silently. Values are inserted as they
+ * are, in one pass: a value that looks like a hole stays text.
+ *
+ * @param template The packed text.
+ * @param values Each hole's text, by name.
+ * @returns The filled text.
+ */
+export function fillTemplate(template: string, values: Readonly<Record<string, string>>): string {
+  const used = new Set<string>();
+  const out = template.replace(HOLE, (_, name: string) => {
+    if (!Object.hasOwn(values, name)) throw new Error(`template hole {{=${name}}} has no value`);
+    used.add(name);
+    return values[name];
+  });
+  for (const name of Object.keys(values)) {
+    if (!used.has(name)) throw new Error(`the template has no hole {{=${name}}}`);
+  }
+  return out;
+}

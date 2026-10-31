@@ -1,6 +1,7 @@
 // Generate the packed native templates: every native template record the readable sources under
 // src/build/native-templates/ export (Swift, Java, Kotlin and XML texts that `denext mobile add …`
-// writes into a Capacitor project), packed into one Brotli-compressed JSON document in base64 that
+// writes into a Capacitor project, the fastlane files, and the desktop packaging scripts
+// `denext create --desktop` scaffolds: files only generation commands write), packed into one Brotli-compressed JSON document in base64 that
 // the published `src/build/*-native-templates.ts` modules read through `packedRecords`
 // (src/build/packed-text.ts). The sources stay in the repo, out of the JSR package (deno.json
 // `publish.exclude`): packed, the templates are a quarter of their size. The pack itself ships in
@@ -87,8 +88,9 @@ export const NATIVE_TEMPLATES = packedRecords(
 // repository). Do not edit.
 
 /**
- * The native templates \`denext mobile add …\` writes into a Capacitor project (Swift, Java, Kotlin
- * and XML), as Brotli-compressed JSON in base64. \`@denext/denext\` lays the records out and
+ * The native templates \`denext mobile add …\` writes into a Capacitor project (Swift, Java, Kotlin,
+ * XML, the fastlane files) and the desktop packaging scripts \`denext create --desktop\` scaffolds,
+ * as Brotli-compressed JSON in base64. \`@denext/denext\` lays the records out and
  * decodes them on first read (\`src/build/native-templates.packed.ts\`).
  *
  * @module

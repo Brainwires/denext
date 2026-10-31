@@ -15,6 +15,7 @@ import {
   type PatchOptions,
   readPatch,
 } from "../../build/patches.ts";
+import { commandMeta } from "../command-meta.ts";
 
 type Action = "create" | "list" | "delete" | "apply" | "edit";
 
@@ -110,31 +111,7 @@ async function edit(name: string, file: string | undefined, dir: string): Promis
 }
 
 export const patchCommand: CommandSpec = {
-  name: "patch",
-  summary: "Patch npm packages — or denext itself (patches/*.patch)",
-  usage: "  denext patch create <package|denext> [dir]\n" +
-    "  denext patch list [dir]\n" +
-    "  denext patch delete <name|index> [dir]\n" +
-    "  denext patch apply [dir]\n" +
-    "  denext patch edit <package|denext> <file> [dir]\n\n" +
-    "  create  diff the package's installed files (node_modules/<pkg>) — or denext's working\n" +
-    "          copies (patches/.work/denext/) — against pristine → patches/<name>+<version>.patch\n" +
-    "          (added and deleted files are recorded; a file over 2 MiB / 50k lines is skipped)\n" +
-    "  list    the patches, indexed\n" +
-    "  delete  remove a patch and undo it (npm files reverted, denext mapping dropped)\n" +
-    "  apply   apply every patch now (dev/build/start/export do this at boot)\n" +
-    "  edit    for denext: copy a framework file to patches/.work/denext/ to edit;\n" +
-    "          for a package: print the installed file's path\n\n" +
-    "  denext patch edit denext src/server/document.ts\n" +
-    "  denext patch create denext\n" +
-    "  denext patch create left-pad\n" +
-    "  denext patch delete 2",
-  positionals: [
-    { name: "action", help: "create | list | delete | apply | edit", required: true },
-    { name: "name", help: "Package name, `denext`, or (delete) a list index" },
-    { name: "file", help: "(edit) path inside the package" },
-    { name: "dir", help: "Project directory (default: .)" },
-  ],
+  ...commandMeta("patch"),
   run: async (ctx: CommandContext) => {
     const action = patchAction(ctx.positionals[0]);
     const { name, dir } = parseArgs(action, ctx);

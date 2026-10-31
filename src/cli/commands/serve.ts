@@ -5,7 +5,7 @@
 
 import { parsePlatform, type Platform, PLATFORM_ENV } from "../../build/platform-extensions.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
-import { markProduction, portOf, SERVE_FLAGS } from "./start-options.ts";
+import { markProduction, portOf } from "./start-options.ts";
 import { ensureAppDir, projectDir, runBuildStep } from "../shared.ts";
 import { installShutdown } from "../shutdown.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
@@ -13,7 +13,7 @@ import { canonicalPath } from "../../build/canonical-path.ts";
 import { startDevServer } from "../../build/dev-server.ts";
 import { startProdServer } from "../../build/prod-server.ts";
 import { build } from "../../build/build.ts";
-import { COMPILE_TARGETS, compileApp } from "../../build/compile-app.ts";
+import { compileApp } from "../../build/compile-app.ts";
 import { staticExport } from "../../build/export.ts";
 import { deployAfterBuild } from "../../build/deploy-flow.ts";
 import { applyPatchesAtBoot } from "./patch.ts";
@@ -23,7 +23,8 @@ import { devOriginError } from "../../server/config-validate.ts";
 import { SOURCEMAPS_ENV } from "../../build/hidden-sourcemaps.ts";
 import { abortJobRuns } from "../../server/jobs.ts";
 import { markBuildPhase } from "../../server/phase.ts";
-import { applyRawFlag, RAW_FLAG } from "../explain-output.ts";
+import { applyRawFlag } from "../explain-output.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /**
  * Resolve the project a command operates on. SPA mode has no `app/` directory — skip the
@@ -89,34 +90,7 @@ function fail(message: string): never {
 }
 
 export const devCommand: CommandSpec = {
-  name: "dev",
-  summary: "Start the dev server",
-  loadsModules: true,
-  flags: [
-    ...SERVE_FLAGS,
-    {
-      name: "lan",
-      type: "boolean",
-      help: "Bind the machine's LAN IPv4, allow it, and print its URL as a QR code",
-    },
-    {
-      name: "allowed-dev-origin",
-      type: "string",
-      repeatable: true,
-      valueName: "<origin>",
-      help: "Also let this origin or host load the dev assets (repeatable, or comma-separated)",
-    },
-    RAW_FLAG,
-  ],
-  positionals: [{ name: "dir", help: "Project directory (default: .)" }],
-  usage: "Without --port, an open port is auto-selected starting at 3000.\n" +
-    "With --port, that exact port is required and the server errors if it is taken.\n" +
-    "The dev assets (/_denext/*) answer only loopback hosts plus allowedDevOrigins. An\n" +
-    "explicit --host allows the host it binds (0.0.0.0: this machine's addresses); --lan\n" +
-    "binds the LAN IPv4 alone (not localhost), allows it and prints a QR code for a phone;\n" +
-    "--allowed-dev-origin adds entries to the config's allowedDevOrigins for this run.\n" +
-    "A non-loopback bind (--lan, --host) prints its URL with a session token\n" +
-    "(?__denext_dev=…): other machines need it for every request; this one does not.",
+  ...commandMeta("dev"),
   run: async (ctx) => {
     applyRawFlag(ctx);
     const allowed = allowedDevOriginFlag(ctx.flags["allowed-dev-origin"]);
@@ -148,48 +122,9 @@ export const devCommand: CommandSpec = {
 };
 
 export const buildCommand: CommandSpec = {
-  name: "build",
-  envTier: "production",
-  summary: "Build for production",
-  loadsModules: true,
+  ...commandMeta("build"),
   // `.denext/` is both the build dir and the artifact dir: one exclusive lock.
   locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "exclusive" }),
-  positionals: [{ name: "dir", help: "Project directory (default: .)" }],
-  flags: [
-    RAW_FLAG,
-    {
-      name: "compile",
-      type: "boolean",
-      help: "Also compile the app's server into one executable (deno compile on the toolchain)",
-    },
-    {
-      name: "target",
-      type: "string",
-      valueName: "<triple>",
-      help: `With --compile: the target (${COMPILE_TARGETS.join(", ")}; default: this machine)`,
-    },
-    {
-      name: "output",
-      alias: "o",
-      type: "string",
-      valueName: "<path>",
-      help: "With --compile: the executable's path (default: dist/<name>)",
-    },
-    {
-      name: "sign",
-      type: "boolean",
-      help: "With --compile: code-sign the executable (codesign + notarytool for macOS, " +
-        "signtool / osslsigncode for Windows; credentials from DENEXT_* env)",
-    },
-  ],
-  usage: "Writes .denext/deploy-manifest.json and runs denext.config's deploy.adapter (its\n" +
-    "prepare) after the build: https://denext.dev/docs/deploy#deploy-adapters\n\n" +
-    "--compile builds, then embeds the build, public/, the server modules, jobs/, services/ and the\n" +
-    "migrations into one executable that serves the app as `denext start` does (`./app`,\n" +
-    "`./app job <name>`, `./app db migrate`). It bakes the Docker image's least-privilege\n" +
-    "--allow-* plus denext.config's compile.permissions, and embeds no .env file: the binary\n" +
-    "reads its environment at run time. --sign (or compile.sign) code-signs it, and notarizes a\n" +
-    "macOS binary when notary credentials are set. Docs: https://denext.dev/docs/deployment-targets",
   run: async (ctx) => {
     applyRawFlag(ctx);
     const compile = ctx.flags.compile === true;
@@ -262,26 +197,8 @@ function exportPlatform(flag: unknown): Platform {
 }
 
 export const exportCommand: CommandSpec = {
-  name: "export",
-  envTier: "production",
-  summary: "Static export (SSG) to out/",
-  loadsModules: true,
+  ...commandMeta("export"),
   locks: (ctx) => ({ projectDir: projectDir(ctx), buildDir: "exclusive", outputDirs: ["out"] }),
-  positionals: [{ name: "dir", help: "Project directory (default: .)" }],
-  flags: [{
-    name: "sourcemaps",
-    type: "string",
-    valueName: "hidden",
-    help: "hidden: build source maps, keep them out of out/ (moved to .denext/sourcemaps for a " +
-      "crash reporter's upload; also DENEXT_SOURCEMAPS=hidden)",
-  }, {
-    name: "platform",
-    type: "string",
-    valueName: "<target>",
-    help: "The target whose platform files (Button.ios.tsx, .android, .mobile, .macos/.windows/" +
-      ".linux, .desktop, .web) the export resolves: web (default), ios, android, macos, windows, " +
-      "linux (also DENEXT_PLATFORM)",
-  }],
   run: async (ctx) => {
     const sourcemaps = ctx.flags.sourcemaps;
     if (sourcemaps !== undefined && sourcemaps !== "hidden") {
@@ -318,12 +235,7 @@ function markDevelopment(): void {
 }
 
 export const startCommand: CommandSpec = {
-  name: "start",
-  envTier: "production",
-  summary: "Serve a production build",
-  loadsModules: true,
-  flags: SERVE_FLAGS,
-  positionals: [{ name: "dir", help: "Project directory (default: .)" }],
+  ...commandMeta("start"),
   run: async (ctx) => {
     markProduction();
     const dir = projectDir(ctx);

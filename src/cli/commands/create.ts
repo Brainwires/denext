@@ -21,6 +21,7 @@ import {
 import { applyUpgrade } from "../../build/upgrade.ts";
 import { multiSelect } from "../../build/multi-select.ts";
 import { applyJailExceptions } from "../../build/jail-scripts.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** One scaffold-time feature toggle: the option it sets, its flag, and its label. */
 export interface ScaffoldFeature {
@@ -80,31 +81,6 @@ export const FEATURES: readonly ScaffoldFeature[] = [
     key: "monorepo",
     flag: "monorepo",
     label: "Monorepo: a Deno workspace with apps/web + shared packages/ui and packages/shared",
-  },
-];
-
-const SCAFFOLD_FLAGS = [
-  ...FEATURES.map((f) => ({
-    name: f.flag,
-    type: "boolean" as const,
-    help: f.label,
-  })),
-  {
-    name: "template",
-    type: "string" as const,
-    valueName: "<name>",
-    help: `Starter template (${SCAFFOLD_TEMPLATES.join(" | ")}; default: default)`,
-  },
-  {
-    name: "no-vscode",
-    type: "boolean" as const,
-    help: "Don't write .vscode/settings.json + extensions.json (Deno LSP)",
-  },
-  {
-    name: "yes",
-    alias: "y",
-    type: "boolean" as const,
-    help: "Skip prompts, use flags/defaults",
   },
 ];
 
@@ -287,21 +263,11 @@ const LUSTRE_NOTE =
   "  downloads the compiler, then Lustre from Hex.";
 
 export const createCommand: CommandSpec = {
-  name: "create",
-  summary: "Scaffold a new app",
-  usage: "Scaffolds a denext app. Deno's `deno create` (a project from a template):\n" +
-    "`denext deno create`.",
-  flags: SCAFFOLD_FLAGS,
-  positionals: [{ name: "dir", help: "New app directory", required: true }],
+  ...commandMeta("create"),
   run: (ctx) => runCreate(ctx, "create"),
 };
 
 export const initCommand: CommandSpec = {
-  name: "init",
-  summary: "Scaffold into the current directory",
-  usage: "Scaffolds a denext app into an existing directory. Deno's `deno init`:\n" +
-    "`denext deno init`.",
-  flags: SCAFFOLD_FLAGS,
-  positionals: [{ name: "dir", help: "Existing directory (default: .)" }],
+  ...commandMeta("init"),
   run: (ctx) => runCreate(ctx, "init"),
 };

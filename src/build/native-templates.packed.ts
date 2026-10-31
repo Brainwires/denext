@@ -53,6 +53,21 @@ export const NATIVE_TEMPLATES = packedRecords(
       "CONTEXT_MENU_ANDROID_FILES": ["DenextContextMenuPlugin.java"],
       "CONTEXT_MENU_IOS_FILES": ["DenextContextMenuPlugin.swift"],
     },
+    "desktopPackageScripts": {
+      "DESKTOP_PACKAGE_SCRIPTS": ["package-macos.ts", "package-linux.ts", "package-windows.ts"],
+    },
+    "fastlane": {
+      "FASTLANE_TEMPLATES": ["Appfile", "Matchfile", "Gemfile", ".gitignore", "Fastfile"],
+    },
+    "mainActivity": {
+      "MAIN_ACTIVITY_BLOCKS": [
+        "RendererRecovery.java",
+        "MemoryWarning.java",
+        "BridgeOriginGuard.java",
+        "ExportRoutes.java",
+      ],
+    },
+    "nativeModule": { "NATIVE_MODULE_TEMPLATES": ["Plugin.swift", "Plugin.kt", "Native.ts"] },
     "nativeViews": {
       "NATIVE_MAP_ANDROID_FILES": ["DenextOsmMapFactory.java"],
       "NATIVE_MAP_IOS_FILES": ["DenextMapViewFactory.swift"],
@@ -100,6 +115,16 @@ export const NATIVE_TEMPLATES = packedRecords(
         "DenextTransferWorker.java",
       ],
       "TRANSFER_IOS_FILES": ["DenextTransferManager.swift", "DenextTransferPlugin.swift"],
+    },
+    "widgetSources": {
+      "WIDGET_SOURCE_TEMPLATES": [
+        "Widget.swift",
+        "ConfigurableWidget.swift",
+        "LiveActivities.swift",
+        "LiveActivity.swift",
+        "Widget.java",
+        "widget_layout.xml",
+      ],
     },
     "widget": {
       "LIVE_ACTIVITY_PLUGIN_IOS_FILES": ["DenextLiveActivityPlugin.swift"],

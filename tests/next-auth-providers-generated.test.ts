@@ -23,6 +23,7 @@ import {
   patchDenoJson,
   Unexpressible,
 } from "../scripts/gen-auth-providers.ts";
+import { docLintModules } from "../scripts/doc-lint.ts";
 import { translateConfig } from "../src/compat/next-auth/config.ts";
 import { mapProfile } from "../src/compat/next-auth/providers/generated.ts";
 import { NEXT_AUTH_PROVIDER_MODULES } from "../src/compat/next-auth/providers/list.ts";
@@ -92,13 +93,13 @@ Deno.test("generated providers: the manifest covers exactly the pinned @auth/cor
 Deno.test("generated providers: every module, export and doc-lint entry is in place", async () => {
   const denoJson = JSON.parse(await Deno.readTextFile(join(ROOT, "deno.json"))) as {
     exports: Record<string, string>;
-    tasks: Record<string, string>;
   };
+  const docLint = docLintModules(denoJson.exports);
   for (const id of providerModules(manifest)) {
     const path = `${PROVIDERS_DIR}/${id}.ts`;
     await Deno.stat(join(ROOT, path));
     assertEquals(denoJson.exports[`./next-auth/providers/${id}`], `./${path}`);
-    assert(denoJson.tasks["doc-lint"].includes(` ${path} `), `doc-lint misses ${path}`);
+    assert(docLint.includes(path), `doc-lint misses ${path}`);
   }
   for (const id of Object.keys(manifest.unsupported)) {
     assertEquals(denoJson.exports[`./next-auth/providers/${id}`], undefined);
@@ -746,4 +747,17 @@ Deno.test("gen:auth-providers: token parameters are checked against Auth.js's cu
     client_key: "{clientId}",
   });
   await assertRejects(() => extract("tiktok", tiktok("app_key")), Error, "custom fetch adds");
+});
+
+Deno.test("doc-lint: the provider modules come from the exports, after the providers index", async () => {
+  const { DOC_LINT_MODULES, PROVIDERS_AFTER } = await import("../scripts/doc-lint.ts");
+  const modules = docLintModules({
+    ".": "./mod.ts",
+    "./next-auth/providers": `./${PROVIDERS_AFTER}`,
+    "./next-auth/providers/github": "./src/compat/next-auth/providers/github.ts",
+  });
+  const at = modules.indexOf(PROVIDERS_AFTER);
+  assertEquals(modules[at + 1], "src/compat/next-auth/providers/github.ts");
+  assertEquals(modules.length, DOC_LINT_MODULES.length + 1);
+  assert(!DOC_LINT_MODULES.some((m) => /providers\/(?!index)[\w-]+\.ts$/.test(m)), "listed twice");
 });

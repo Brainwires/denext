@@ -51,3 +51,27 @@ Deno.test("render: the generated module's table reads back the rows it was given
   assertThrows(() => render([["Bad|Name", "serif", 1, 1, 1, 1, 1]]), Error, "unsafe family");
   assertThrows(() => render([["X", "cursive", 1, 1, 1, 1, 1]]), Error, "unknown category");
 });
+
+Deno.test("render: rows share their family's prefix and repeated metrics with the line before", async () => {
+  const rows = toTuples({
+    a: entry("Zen Kaku Gothic Antique", { descent: -288, unitsPerEm: 2048 }),
+    b: entry("Zen Kaku Gothic New", { descent: -288, unitsPerEm: 2048 }),
+    c: entry("Zen Maru Gothic", { category: "display", ascent: 1160 }),
+    d: entry("42dot Sans", { lineGap: 37 }),
+    e: entry("4", { xWidthAvg: 0 }),
+  });
+  const text = render(rows);
+  // "Zen Kaku Gothic New" repeats its predecessor's nine-character prefix (the most one digit
+  // says) and its metrics, so its line is the rest of its name alone.
+  assertEquals(text.split("\n").filter((l) => l.startsWith("9Gothic New")), ["9Gothic New"]);
+  const dir = await Deno.makeTempDir();
+  try {
+    const file = `${dir}/metrics.ts`;
+    await Deno.writeTextFile(file, text);
+    const { FONT_METRICS } = await import(toFileUrl(file).href);
+    assertEquals(FONT_METRICS, rows);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  assertThrows(() => render([["X", "serif", 1000, 900.5, -300, 0, 500]]), Error, "non-integer");
+});

@@ -13,21 +13,10 @@
 import type { CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs } from "../shared.ts";
 import { runDenoPassthrough } from "./deno-toolchain.ts";
+import { commandMeta } from "../command-meta.ts";
 
 export const taskCommand: CommandSpec = {
-  name: "task",
-  summary: "Run a deno.json / package.json task on denext's Deno (deno task)",
-  passthrough: true,
-  usage: "Runs `deno task` on denext's Deno toolchain, every argument verbatim:\n" +
-    "  denext task                   List the project's tasks\n" +
-    "  denext task check             Run the `check` task\n" +
-    "  denext task test --filter x   Extra arguments go to the task\n" +
-    "Every `deno` the task runs — its own `deno …` steps and any a script it starts spawns — is\n" +
-    "the same Deno. Background and scheduled jobs (jobs/) are `denext job`.",
-  positionals: [
-    { name: "name", help: "The task (default: list them)" },
-    { name: "args", help: "Arguments for the task", variadic: true },
-  ],
+  ...commandMeta("task"),
   run: (ctx) =>
     runDenoPassthrough(["task", ...denoGlobalArgs(ctx), ...ctx.rest], commandCwd(ctx), true),
 };

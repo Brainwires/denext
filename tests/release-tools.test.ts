@@ -316,8 +316,17 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   // published yet, or not past Deno's minimum dependency age. The 4.10-f train (19.73 MiB) packed
   // the `denext ui` assets, the dev page scripts, the scaffolded desktop packaging scripts and the
   // expo / React Native manifests in-package (scripts/gen-packed-texts.ts, tests/packed-texts.test.ts)
-  // → 19.59 MiB; the guard stays at 19.75 MiB for the trains merging after it. Raise it only with
-  // the reason.
+  // → 19.59 MiB; the guard stays at 19.75 MiB for the trains merging after it. The 4.11.1 trains
+  // (19.747 MiB) moved the fastlane files, the widget / Live Activity / native-module sources, the
+  // composed MainActivity's blocks and the scaffolded desktop packaging scripts into the
+  // docs-corpus pack (holes filled by `fillTemplate`), packed the fallow init texts (the coverage
+  // converter is read from scripts/coverage-to-istanbul.ts, no longer pasted), front-coded the font
+  // metrics, moved the doc-lint list to scripts/doc-lint.ts and stopped publishing MISSION.md and
+  // POLICIES.md → 19.65 MiB; 0.25 MiB above that is past 19.75, so the guard stays. The CLI verbs'
+  // help text stopped shipping twice (plain in src/cli/commands/*.ts and packed in
+  // src/cli/command-meta.packed.ts): the readable copy moved to the unpublished
+  // src/cli/commands/meta/ → 19.55 MiB; 0.25 MiB above that is still past 19.75, so the guard
+  // stays. Raise it only with the reason.
   const files = await publishedFiles();
   if (!files) return; // not a git checkout: nothing to measure
   const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
@@ -330,6 +339,7 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
       "src/build/native-templates/ota.ts",
       "src/compat/next/font/google-families.ts",
       "src/plugin/catalog.json",
+      "src/cli/commands/meta/desktop.ts",
     ]
   ) assert(!files.has(file), `${file} is published again`);
   for (

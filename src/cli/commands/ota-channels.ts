@@ -2,62 +2,13 @@
 // `createOtaHandler({ channels })` serves OTA releases from (src/build/ota-channels.ts).
 
 import { resolve } from "@std/path";
-import type { CommandContext, FlagSpec } from "../command.ts";
+import type { CommandContext } from "../command.ts";
 import {
   DEFAULT_OTA_CHANNELS_FILE,
   promoteOtaRelease,
   setOtaChannel,
 } from "../../build/ota-channels.ts";
 import type { OtaChannelsFile } from "../../server/ota-rollout.ts";
-
-/** The flags `ota promote` / `ota channel` add to the `ota` verb (`--force` is shared). */
-export const OTA_CHANNEL_FLAGS: FlagSpec[] = [
-  {
-    name: "channel",
-    type: "string",
-    valueName: "<name>",
-    help: "promote: the source channel (its stable release is promoted)",
-  },
-  {
-    name: "release",
-    type: "string",
-    valueName: "<dir>",
-    help: "promote: the source export directory (instead of --channel)",
-  },
-  {
-    name: "to",
-    type: "string",
-    valueName: "<name>",
-    help: "promote: the target channel",
-  },
-  {
-    name: "percent",
-    type: "number",
-    valueName: "<n>",
-    help: "promote: the share of devices that get it (default 100 = the stable release; 0 halts)",
-  },
-  {
-    name: "halt",
-    type: "boolean",
-    help: "promote: stop the target channel's staged rollout (its stable release stays)",
-  },
-  {
-    name: "file",
-    type: "string",
-    valueName: "<file>",
-    help: `promote, channel: the channels file (default: ${DEFAULT_OTA_CHANNELS_FILE})`,
-  },
-];
-
-/** The `ota` usage lines for the two actions. */
-export const OTA_CHANNEL_USAGE = "  denext ota channel beta releases/2026-09-27\n" +
-  "                              Point channel beta at an export (ota-channels.json, --file)\n" +
-  "  denext ota promote --channel beta --to production --percent 20\n" +
-  "                              Roll beta's release out to 20% of production's devices\n" +
-  "  denext ota promote --channel beta --to production\n" +
-  "                              Make it production's release (100%; ends the rollout)\n" +
-  "  denext ota promote --to production --halt\n" +
-  "                              Stop production's rollout; its stable release stays\n";
 
 /** Print `message` to stderr and exit 1. */
 function fail(message: string): never {
