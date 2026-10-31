@@ -6788,7 +6788,8 @@
   ],
   "denext/standalone": [
     "runStandalone:function",
-    "standaloneArgv:function"
+    "standaloneArgv:function",
+    "standaloneVerb:function"
   ],
   "denext/deploy": [
     "DEPLOY_MANIFEST_FILE:variable",

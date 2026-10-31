@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **A compiled app's `job` and `db` run past the server's `start.limits`** (takes effect with
+  denext's Deno 3.0.0-denext.8, once denext pins it). The main module `denext build --compile`
+  generates calls `Deno.disarmResourceLimits()` before it dispatches `./app job <name>` or
+  `./app db migrate` (the runtime honours it only from the main module's own top level), so a long
+  job or migration is no longer ended by the server's `--max-memory` / `--max-cpu-time` /
+  `--max-time`; `./app` and `./app start` keep them. On an older runtime, which has no such
+  function, those verbs run under the limits and print the notice as before.
 - **`desktop.permissions: "strict"`: a packaged desktop app's read and environment grants scoped**
   (opt-in; takes effect with Deno Desktop runtime 3.0.0-denext.8, once denext pins it, in an app
   with `desktop.app.identifier`; the default is unchanged, and an older runtime bakes it with a

@@ -38,6 +38,8 @@ import {
   type ReexecToolchainDeps,
 } from "../src/cli/self-exec.ts";
 import { entrySource } from "../src/build/compile-app.ts";
+import { standaloneVerb } from "../src/standalone/mod.ts";
+import { makeTempDirUntilExit } from "./helpers/temp.ts";
 import { inChild } from "./helpers/isolated.ts";
 import type { DenoToolchainChoice } from "../src/build/deno-toolchain.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
@@ -393,12 +395,17 @@ Deno.test("resource limits: a compiled binary bakes them in and says so on `job`
   // them), so its `job` and `db` run under them too: the generated entry names them, and those
   // verbs print a notice.
   const entry = entrySource("file:///p/.denext/compile/main.ts", "file:///p/", false, FLAGS);
-  assertStringIncludes(entry, `Deno.args, { limitsBaked: ${JSON.stringify(FLAGS)} });`);
+  assertStringIncludes(
+    entry,
+    `Deno.args, { limitsBaked: ${JSON.stringify(FLAGS)}, limitsLifted });`,
+  );
   assertStringIncludes(
     entrySource("file:///p/.denext/compile/main.ts", "file:///p/", true, ["--max-time=60"]),
-    'Deno.args, { idleTrimBaked: true, limitsBaked: ["--max-time=60"] });',
+    'Deno.args, { idleTrimBaked: true, limitsBaked: ["--max-time=60"], limitsLifted });',
   );
-  assert(!entrySource("file:///p/.denext/compile/main.ts", "file:///p/").includes("limitsBaked"));
+  const plain = entrySource("file:///p/.denext/compile/main.ts", "file:///p/");
+  assert(!plain.includes("limitsBaked"), plain);
+  assert(!plain.includes("disarmResourceLimits"), plain);
   for (const verb of ["job", "db"]) {
     const notice = bakedLimitsNotice("app", verb, ["--max-time=60"]);
     assert(notice !== null);
@@ -408,6 +415,75 @@ Deno.test("resource limits: a compiled binary bakes them in and says so on `job`
   }
   assertEquals(bakedLimitsNotice("app", "start", ["--max-time=60"]), null);
   assertEquals(bakedLimitsNotice("app", "job", []), null);
+});
+
+Deno.test("resource limits: the compiled entry lifts them for `job` and `db` where the runtime can", async () => {
+  // Runtime 3.0.0-denext.8's Deno.disarmResourceLimits() works only from the main module's own top
+  // level, so the generated entry calls it before dispatching; a stub stands in for the runtime
+  // function and for denext/standalone (the real standaloneVerb).
+  const dir = makeTempDirUntilExit("denext-disarm-");
+  const source = entrySource(
+    toFileUrl(join(dir, "main.ts")).href,
+    toFileUrl(dir + "/").href,
+    false,
+    ["--max-time=60"],
+  ).replace(/from "[^"]+";/, 'from "./standalone.ts";');
+  await Deno.writeTextFile(join(dir, "main.ts"), source);
+  await Deno.writeTextFile(
+    join(dir, "standalone.ts"),
+    [
+      // The real one is src/standalone/mod.ts's (tested below); this stand-in keeps the child light.
+      "export const standaloneVerb = (args: string[]) =>",
+      '  args.includes("--help") ? undefined : args.find((a) => ["start", "job", "db"].includes(a)) ?? "start";',
+      'const mode = Deno.env.get("DISARM");',
+      'if (mode) Object.defineProperty(Deno, "disarmResourceLimits", { value: () => {',
+      '  console.log("disarm");',
+      '  if (mode === "throw") throw new Error("NotCapable");',
+      '  return mode === "true";',
+      "} });",
+      "export function runStandalone(_url: URL, args: string[], options: unknown) {",
+      "  console.log(JSON.stringify({ args, options }));",
+      "}",
+    ].join("\n"),
+  );
+  const run = async (args: string[], disarm?: string) => {
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", "--no-lock", join(dir, "main.ts"), ...args],
+      env: disarm ? { DISARM: disarm } : {},
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+    const text = new TextDecoder().decode(out.stdout);
+    assert(out.success, new TextDecoder().decode(out.stderr));
+    const lines = text.trim().split("\n");
+    return { disarmed: lines.includes("disarm"), options: JSON.parse(lines.at(-1)!).options };
+  };
+  for (const verb of [["job", "cleanup"], ["db", "migrate"], ["--cwd", ".", "job", "x"]]) {
+    const lifted = await run(verb, "true");
+    assertEquals(lifted.disarmed, true, verb.join(" "));
+    assertEquals(lifted.options, { limitsBaked: ["--max-time=60"], limitsLifted: true });
+  }
+  // The server (and help) keeps them; nothing is called.
+  for (const args of [[], ["start", "--port", "1"], ["--port", "1"], ["--help"]]) {
+    const kept = await run(args, "true");
+    assertEquals(kept.disarmed, false, args.join(" "));
+    assertEquals(kept.options.limitsLifted, false);
+  }
+  // An older runtime (no function), or one that refuses: the limits stay and the verb says so.
+  assertEquals((await run(["job", "x"])).options.limitsLifted, false);
+  for (const disarm of ["false", "throw"]) {
+    const refused = await run(["job", "x"], disarm);
+    assertEquals([refused.disarmed, refused.options.limitsLifted], [true, false]);
+  }
+});
+
+Deno.test("standaloneVerb: the verb runStandalone dispatches", () => {
+  assertEquals(standaloneVerb([]), "start");
+  assertEquals(standaloneVerb(["--port", "8080"]), "start");
+  assertEquals(standaloneVerb(["job", "cleanup"]), "job");
+  assertEquals(standaloneVerb(["db", "migrate"]), "db");
+  assertEquals(standaloneVerb(["--cwd", ".", "job", "x"]), "job");
+  assertEquals(standaloneVerb(["--help"]), undefined);
 });
 
 Deno.test("resource limits: the Docker server image runs its start command under them", async () => {
