@@ -103,6 +103,15 @@ assertEquals(screen.getByRole("button").textContent, "Count: 1");`}
         <code>getByTestId</code>, and their <code>query*</code>/<code>getAll*</code> variants.
       </p>
       <p>
+        SVG and MathML render as in a browser: <code>&lt;svg&gt;</code>{" "}
+        and its content are created in the SVG namespace (a{" "}
+        <code>&lt;foreignObject&gt;</code>&apos;s children are HTML again), with case-kept tag names
+        such as <code>linearGradient</code>, so a queried element reports <code>namespaceURI</code>,
+        {" "}
+        <code>localName</code> and <code>getAttributeNS</code>{" "}
+        and events fire on SVG elements like any other.
+      </p>
+      <p>
         For state that settles <em>after</em> an async effect, use the async <code>findBy*</code>
         {" "}
         queries (or <code>waitFor</code>){" "}
