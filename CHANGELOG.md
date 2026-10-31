@@ -43,6 +43,11 @@ and this project adheres to
 - **examples/hangar and examples/companion ship app icons** (`desktop.app.icons` for macOS, Linux
   and Windows) instead of the generic one, and Hangar's page windows open with their own titles
   ("Hangar — Images"), cascaded from the library window instead of exactly over it.
+- **examples/hangar reads its saved settings from the app's data folder whichever side asks
+  first.** `desktop.ts` reached the VM backend for the tray without the data folder, so when the
+  tray got there before a page the settings were read from the working directory and the saved
+  ones were ignored for the whole launch. It now passes `resolveDesktopCapabilities`'s
+  `appSupportDir`, and the settings file refuses a folder that is not absolute.
 
 ## [4.11.2] - 2026-10-31
 

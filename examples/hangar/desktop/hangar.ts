@@ -5,45 +5,28 @@
 // (`lib/deno-host.ts`). Errors reach the page as a code and a message without absolute paths.
 
 import { defineDesktopExtension, DesktopCapError } from "denext/desktop";
-import { join } from "@std/path/posix";
 import { denoHost } from "../lib/deno-host.ts";
 import type { HangarWindows } from "../lib/tray-driver.ts";
-import {
-  createHangar,
-  defaultSettings,
-  type Hangar,
-  HangarError,
-  parseSettings,
-} from "../lib/hangar.ts";
+import { createHangar, type Hangar, HangarError, parseSettings } from "../lib/hangar.ts";
+import { loadSettings, saveSettings } from "../lib/settings-file.ts";
 
-/** The settings file, in the app's data folder. */
-const SETTINGS_FILE = "hangar-settings.json";
+const host = denoHost();
 
 let instance: Promise<Hangar> | undefined;
 
-/** The backend, created once with the saved settings. */
+/** The backend, created once with the settings saved in `appSupportDir`. */
 function hangar(appSupportDir: string): Promise<Hangar> {
-  instance ??= (async () => {
-    const host = denoHost();
-    const base = defaultSettings(host.home, host.os);
-    let saved: unknown = {};
-    try {
-      saved = JSON.parse(await Deno.readTextFile(join(appSupportDir, SETTINGS_FILE)));
-    } catch { /* first launch, or an unreadable file: the defaults */ }
-    let settings = base;
-    try {
-      settings = parseSettings(saved, base);
-    } catch { /* a hand-edited bad value: the defaults */ }
-    return createHangar(host, settings);
-  })();
+  instance ??= loadSettings(host, appSupportDir).then((settings) => createHangar(host, settings));
   return instance;
 }
 
 /**
  * The backend for desktop.ts (the tray driver), the same instance the pages reach. `appSupportDir`
- * is the one the bridge hands the methods (`runDesktop({ appSupportDir })`).
+ * is the app's data folder, the one the bridge hands the methods: `resolveDesktopCapabilities`'s
+ * `appSupportDir`. Whichever asks first creates the backend, so desktop.ts must pass it too, or the
+ * saved settings would be read from the working directory.
  */
-export function hangarBackend(appSupportDir = ""): Promise<Hangar> {
+export function hangarBackend(appSupportDir: string): Promise<Hangar> {
   return hangar(appSupportDir);
 }
 
@@ -171,11 +154,7 @@ export default defineDesktopExtension({
       handler: (raw: unknown, ctx: { appSupportDir: string }) =>
         call(ctx.appSupportDir, async (h) => {
           const next = parseSettings(raw, h.settings());
-          await Deno.mkdir(ctx.appSupportDir, { recursive: true });
-          await Deno.writeTextFile(
-            join(ctx.appSupportDir, SETTINGS_FILE),
-            JSON.stringify(next, null, 2) + "\n",
-          );
+          await saveSettings(host, ctx.appSupportDir, next);
           h.setSettings(next);
           return next;
         }),

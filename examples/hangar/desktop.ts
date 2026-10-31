@@ -14,18 +14,18 @@ import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
 import { hangarBackend, setHangarWindows } from "./desktop/hangar.ts";
 import { createHangarWindows, driveTray } from "./lib/tray-driver.ts";
 
-const app = await runDesktop({
-  importMetaUrl: import.meta.url,
-  ...(await resolveDesktopCapabilities(config, { base: import.meta.url })),
-});
+const caps = await resolveDesktopCapabilities(config, { base: import.meta.url });
+const app = await runDesktop({ importMetaUrl: import.meta.url, ...caps });
+// The app's data folder (the OS app-support directory), the one the bridge hands the extension's
+// methods: the tray driver may reach the backend first, and the backend reads its settings there.
+const backend = () => hangarBackend(caps.appSupportDir);
 
 const windows = createHangarWindows(app);
 setHangarWindows(windows);
 if (app.tray) {
   driveTray(app.tray, windows, {
-    overview: async () => (await hangarBackend()).overview(),
-    start: async (id) =>
-      (await hangarBackend()).start(id, { headless: true, allowOverBudget: false }),
-    shutdown: async (id) => (await hangarBackend()).shutdown(id),
+    overview: async () => (await backend()).overview(),
+    start: async (id) => (await backend()).start(id, { headless: true, allowOverBudget: false }),
+    shutdown: async (id) => (await backend()).shutdown(id),
   });
 }

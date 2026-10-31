@@ -31,6 +31,12 @@ import {
 import { parseImageInfo, sizeBytes } from "../examples/hangar/lib/images.ts";
 import { readVmFile, scanLibrary } from "../examples/hangar/lib/library.ts";
 import {
+  loadSettings,
+  saveSettings,
+  SETTINGS_FILE,
+  settingsPath,
+} from "../examples/hangar/lib/settings-file.ts";
+import {
   isQemuSystem,
   matchInstances,
   parsePidFile,
@@ -693,6 +699,45 @@ Deno.test("hangar settings: defaults and validation", () => {
   assertThrows(() => parseSettings({ ramBudgetPercent: 5 }, base), HangarError);
   assertThrows(() => parseSettings({ libraryRoot: "relative" }, base), HangarError);
   assertThrows(() => parseSettings({ libraryRoot: "/a/../b" }, base), HangarError);
+});
+
+Deno.test("hangar settings file: only in an absolute data folder, never the working directory", () => {
+  assertEquals(settingsPath("/data/hangar"), `/data/hangar/${SETTINGS_FILE}`);
+  assertEquals(
+    settingsPath("C:\\Users\\u\\AppData\\Roaming\\hangar").endsWith(SETTINGS_FILE),
+    true,
+  );
+  // An entry that never got the folder (`hangarBackend()` with none) read and wrote `./`.
+  assertThrows(() => settingsPath(""), HangarError, "no app data folder");
+  assertThrows(() => settingsPath("relative/dir"), HangarError, "no app data folder");
+});
+
+Deno.test("hangar settings file: the saved settings over the defaults, written on save", async () => {
+  const host = new FakeHost();
+  const dir = "/home/u/Library/Application Support/hangar";
+  assertEquals(await loadSettings(host, dir), defaultSettings(host.home, host.os));
+  host.file(
+    `${dir}/${SETTINGS_FILE}`,
+    JSON.stringify({ libraryRoot: "/vms", ramBudgetPercent: 50 }),
+  );
+  const saved = await loadSettings(host, dir);
+  assertEquals(saved.libraryRoot, "/vms");
+  assertEquals(saved.ramBudgetPercent, 50);
+  // Not JSON, or a hand-edited bad value: the defaults.
+  host.file(`${dir}/${SETTINGS_FILE}`, "{");
+  assertEquals(await loadSettings(host, dir), defaultSettings(host.home, host.os));
+  host.file(`${dir}/${SETTINGS_FILE}`, JSON.stringify({ libraryRoot: "relative" }));
+  assertEquals(await loadSettings(host, dir), defaultSettings(host.home, host.os));
+  await assertRejects(() => loadSettings(host, ""), HangarError);
+
+  const fresh = new FakeHost();
+  const next = { ...defaultSettings(fresh.home, fresh.os), shutdownTimeoutSeconds: 90 };
+  await saveSettings(fresh, dir, next);
+  assert(fresh.dirs.has(dir));
+  assertEquals(JSON.parse(fresh.files.get(`${dir}/${SETTINGS_FILE}`)!), next);
+  assertEquals(await loadSettings(fresh, dir), next);
+  await assertRejects(() => saveSettings(fresh, "", next), HangarError);
+  assertEquals(fresh.files.has(SETTINGS_FILE), false);
 });
 
 Deno.test("hangar format: sizes, budget, tooltip, quick actions", () => {
