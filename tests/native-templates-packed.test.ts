@@ -3,18 +3,26 @@
 // published). Every record must decode byte-for-byte to its source, key order included, and
 // the published modules must hand out those same texts.
 
-import { assert, assertEquals, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { dirname, join } from "@std/path";
 import { templateGroups } from "../scripts/gen-native-templates.ts";
 import { packTexts } from "../scripts/lib/pack-texts.ts";
 import { NATIVE_TEMPLATES } from "../src/build/native-templates.packed.ts";
-import { packedRecords } from "../src/build/packed-text.ts";
+import { fillTemplate, packedRecords } from "../src/build/packed-text.ts";
 import { OTA_ANDROID_FILES, OTA_IOS_FILES } from "../src/build/ota-native-templates.ts";
 import { NATIVE_VIEWS_IOS_FILES } from "../src/build/native-views-native-templates.ts";
 import { WIDGETS_ANDROID_FILES } from "../src/build/widget-native-templates.ts";
 import * as otaSource from "../src/build/native-templates/ota.ts";
 import * as nativeViewsSource from "../src/build/native-templates/native-views.ts";
 import * as widgetSource from "../src/build/native-templates/widget.ts";
+import { FASTLANE_TEMPLATES } from "../src/build/native-templates/fastlane.ts";
+import { WIDGET_SOURCE_TEMPLATES } from "../src/build/native-templates/widget-sources.ts";
+import { NATIVE_MODULE_TEMPLATES } from "../src/build/native-templates/native-module.ts";
+import { MAIN_ACTIVITY_BLOCKS } from "../src/build/native-templates/main-activity.ts";
+import * as fastlane from "../src/build/fastlane-templates.ts";
+import * as widgets from "../src/build/widget-native-templates.ts";
+import * as nativeModule from "../src/build/native-module-native-templates.ts";
+import { mainActivitySource } from "../src/build/mobile-native-install.ts";
 
 Deno.test("packed native templates: every record decodes to its source (run `deno task gen:native-templates`)", async () => {
   const sources = await templateGroups();
@@ -152,4 +160,70 @@ Deno.test("packed native templates: a vendored @denext/denext reads the docs-cor
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("fillTemplate: fills every hole once, as is, and refuses a hole or a value left over", () => {
+  assertEquals(fillTemplate("a {{=x}} b {{=y}} {{=x}}", { x: "1", y: "2" }), "a 1 b 2 1");
+  // A value is text: replacement patterns and hole-like text stay as they are.
+  assertEquals(fillTemplate("<{{=x}}>", { x: "$& $1 {{=x}}" }), "<$& $1 {{=x}}>");
+  assertEquals(fillTemplate("no holes", {}), "no holes");
+  // Only `{{=name}}` is a hole: GitHub's `${{ … }}` and Swift's `\\(…)` are text.
+  assertEquals(fillTemplate("${{ github.ref }} {{ x }}", {}), "${{ github.ref }} {{ x }}");
+  assertThrows(() => fillTemplate("{{=x}}", {}), Error, "{{=x}} has no value");
+  assertThrows(() => fillTemplate("x", { x: "1" }), Error, "no hole {{=x}}");
+  // An inherited key is no value.
+  assertThrows(() => fillTemplate("{{=toString}}", {}), Error, "has no value");
+});
+
+Deno.test("packed native templates: the templated modules fill every hole from the pack", async () => {
+  const noHoles = (text: string, what: string) =>
+    assert(!/\{\{=/.test(text), `${what} has a hole left`);
+  // fastlane: the app id as a Ruby string literal, the pinned release, the static files.
+  const appfile = fastlane.appfileTemplate('com.example."app"');
+  assertStringIncludes(appfile, 'app_identifier("com.example.\\"app\\"")');
+  assertStringIncludes(
+    fastlane.matchfileTemplate("com.example.app"),
+    'app_identifier(["com.example.app"])',
+  );
+  assertStringIncludes(fastlane.gemfileTemplate(), `"~> ${fastlane.FASTLANE_VERSION}"`);
+  assertEquals(fastlane.gitignoreTemplate(), FASTLANE_TEMPLATES[".gitignore"]);
+  assertEquals(fastlane.fastfileTemplate(), FASTLANE_TEMPLATES.Fastfile);
+  for (const text of [appfile, fastlane.gemfileTemplate()]) noHoles(text, "a fastlane file");
+  // Widgets and Live Activities.
+  const params = [{ name: "period", values: ["day", "week"] }];
+  const widgetTexts = [
+    widgets.widgetSource("OrderStatus"),
+    widgets.configurableWidgetSource("OrderStatus", params),
+    widgets.liveActivitiesSource(["Delivery", "Timer"]),
+    widgets.liveActivitySource("Delivery"),
+    widgets.androidWidgetSource("OrderStatus", "com.example.app"),
+  ];
+  for (const text of widgetTexts) noHoles(text, "a widget source");
+  assertStringIncludes(widgetTexts[0], "struct OrderStatusWidget: Widget {");
+  assertStringIncludes(widgetTexts[1], "enum OrderStatusPeriodOption: String, AppEnum {");
+  assertStringIncludes(widgetTexts[1], '"period": "day",');
+  assertStringIncludes(
+    widgetTexts[2],
+    'case "Timer": return TimerLiveActivity.dynamicIsland(context)',
+  );
+  assertStringIncludes(widgetTexts[4], "import com.example.app.R;");
+  assertStringIncludes(widgetTexts[4], "R.layout.denext_widget_order_status");
+  assertEquals(widgets.androidWidgetLayout(), WIDGET_SOURCE_TEMPLATES["widget_layout.xml"]);
+  // Native modules.
+  for (
+    const fn of [nativeModule.swiftPlugin, nativeModule.kotlinPlugin, nativeModule.typescriptClient]
+  ) {
+    const text = fn("Scanner");
+    noHoles(text, fn.name);
+    assertStringIncludes(text, "Scanner");
+  }
+  assertStringIncludes(
+    nativeModule.kotlinPlugin("Scanner"),
+    `package ${nativeModule.NATIVE_MODULES_PACKAGE}\n`,
+  );
+  assertEquals(Object.keys(NATIVE_MODULE_TEMPLATES), ["Plugin.swift", "Plugin.kt", "Native.ts"]);
+  // The composed MainActivity ends with the packed blocks, in order.
+  const activity = await mainActivitySource("com.example.app", new Set());
+  const blocks = Object.values(MAIN_ACTIVITY_BLOCKS);
+  assert(activity.endsWith(blocks.join("")), "MainActivity ends with the packed blocks");
 });

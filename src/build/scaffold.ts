@@ -15,11 +15,7 @@ import { VERSION } from "../../mod.ts";
 import { reactCompatImportMap } from "./react-specifiers.ts";
 import { FALLOW_GITIGNORE, fallowFiles, fallowTasks } from "./fallow-template.ts";
 import { markdownTable, wrapProse } from "./scaffold-markdown.ts";
-import {
-  LINUX_PACKAGE_SCRIPT,
-  MACOS_PACKAGE_SCRIPT,
-  WINDOWS_PACKAGE_SCRIPT,
-} from "./desktop-package-scripts.packed.ts";
+import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
 import {
   addTsgoLspSetting,
   DENO_UNSTABLE_SETTING,
@@ -867,9 +863,10 @@ function desktopScaffoldFiles(): ScaffoldFile[] {
       content: desktopRuntimeConfigText({ desktop: SCAFFOLD_DESKTOP_CONFIG }),
     },
     { path: "icons/README.md", content: desktopIcons() },
-    { path: "scripts/package-macos.ts", content: MACOS_PACKAGE_SCRIPT },
-    { path: "scripts/package-linux.ts", content: LINUX_PACKAGE_SCRIPT },
-    { path: "scripts/package-windows.ts", content: WINDOWS_PACKAGE_SCRIPT },
+    // The packaging scripts ship in the docs-corpus pack (native-templates/desktop-package-scripts.ts).
+    ...Object.entries(NATIVE_TEMPLATES.desktopPackageScripts.DESKTOP_PACKAGE_SCRIPTS).map((
+      [file, content],
+    ) => ({ path: `scripts/${file}`, content })),
   ];
 }
 

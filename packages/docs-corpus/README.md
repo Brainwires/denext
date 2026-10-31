@@ -13,8 +13,9 @@ JSR caps a package at 20 MiB.
 import { CORPUS_BROTLI_BASE64, CORPUS_SOURCE_HASH } from "@denext/docs-corpus";
 ```
 
-It also carries, for the same reason, the native templates `denext mobile add` writes
-(`./native-templates`, Brotli-compressed). A published `@denext/denext` loads them from here; denext
+It also carries, for the same reason, the native templates `denext mobile add` writes and the
+desktop packaging scripts `denext create --desktop` scaffolds (`./native-templates`,
+Brotli-compressed). A published `@denext/denext` loads them from here; denext
 run from a checkout of its repository reads the checkout's own copy instead.
 
 ## Versioning

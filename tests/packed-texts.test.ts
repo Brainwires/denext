@@ -8,6 +8,8 @@ import { fromFileUrl, join } from "@std/path";
 import { PACKED_MODULES, render } from "../scripts/gen-packed-texts.ts";
 import { publishedFiles } from "./_published-files.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
+import { fallowFiles } from "../src/build/fallow-template.ts";
+import * as fallowTexts from "../src/build/fallow-texts.ts";
 import { SPA_DEV_RELOAD } from "../src/build/spa/dev-reload-script.ts";
 import { consoleCaptureScript } from "../src/build/dev-server/console-capture-script.ts";
 import { DEV_LOG_PATH } from "../src/build/dev-server/state.ts";
@@ -47,11 +49,21 @@ Deno.test("packed texts: the manifests' public modules export the hand-written d
 });
 
 Deno.test("packed texts: the consumers read the packed copies", async () => {
+  // The packaging scripts ship in the docs-corpus pack (native-templates/desktop-package-scripts.ts).
   const files = scaffoldFiles({ dir: ".", desktop: true });
   const content = (path: string) => files.find((f) => f.path === path)?.content;
   assertEquals(content("scripts/package-macos.ts"), packageScripts.MACOS_PACKAGE_SCRIPT);
   assertEquals(content("scripts/package-linux.ts"), packageScripts.LINUX_PACKAGE_SCRIPT);
   assertEquals(content("scripts/package-windows.ts"), packageScripts.WINDOWS_PACKAGE_SCRIPT);
+  // The fallow setup's files, and its coverage converter: denext's own script, byte for byte.
+  const fallow = (path: string) => fallowFiles().find((f) => f.path === path)?.content;
+  assertEquals(fallow("fallow.toml"), fallowTexts.FALLOW_TOML);
+  assertEquals(fallow(".githooks/pre-commit"), fallowTexts.PRE_COMMIT_HOOK);
+  assertEquals(fallow("AGENTS.md"), fallowTexts.AGENTS_MD);
+  assertEquals(
+    fallow("scripts/coverage-to-istanbul.ts"),
+    await Deno.readTextFile(join(ROOT, "scripts/coverage-to-istanbul.ts")),
+  );
   // The SPA dev reload script is headed by the same capture the App Router one is.
   assert(SPA_DEV_RELOAD.startsWith(consoleCaptureScript(DEV_LOG_PATH)), "SPA capture");
   for (
@@ -61,7 +73,7 @@ Deno.test("packed texts: the consumers read the packed copies", async () => {
       ["src/build/dev-server/handler.ts", "./dev-scripts.packed.ts"],
       ["src/build/dev-server.ts", "./dev-server/dev-scripts.packed.ts"],
       ["src/build/spa/dev-reload-script.ts", "../dev-server/dev-scripts.packed.ts"],
-      ["src/build/scaffold.ts", "./desktop-package-scripts.packed.ts"],
+      ["src/build/fallow-template.ts", "./fallow-texts.packed.ts"],
       ["src/expo/manifest.ts", "./manifest-data.packed.ts"],
       ["src/react-native-compat/manifest.ts", "./manifest-data.packed.ts"],
     ]
