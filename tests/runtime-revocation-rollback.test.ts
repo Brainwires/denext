@@ -147,7 +147,13 @@ async function world(withRollback = true): Promise<World> {
         }),
       );
     },
-    env: (vars = {}) => (k) => ({ [REVOCATION_KEYS_FILE_ENV]: keysFile, ...vars })[k],
+    // No provenance check: the fixture archives carry no attestation (and `gh` stays unrun).
+    env: (vars = {}) => (k) =>
+      ({
+        [REVOCATION_KEYS_FILE_ENV]: keysFile,
+        DENEXT_DESKTOP_RUNTIME_ATTEST: "0",
+        ...vars,
+      })[k],
     close: async () => {
       await server.shutdown();
       await Deno.remove(cacheRoot, { recursive: true });

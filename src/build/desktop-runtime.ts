@@ -134,8 +134,32 @@ const RUNTIME_ENV = "DENEXT_DESKTOP_RUNTIME";
 const RUNTIME_DIR_ENV = "DENEXT_DESKTOP_RUNTIME_DIR";
 /** `1` → re-hash every cached file before use. */
 export const DESKTOP_RUNTIME_VERIFY_ENV = "DENEXT_DESKTOP_RUNTIME_VERIFY";
-/** `1` → `gh attestation verify` a freshly downloaded archive. */
+/**
+ * `1` → `gh attestation verify` every freshly downloaded archive (a missing or signed-out `gh`
+ * fails); `0` → never; unset → whenever `gh` is signed in ({@linkcode desktopRuntimeAttestMode}).
+ */
 export const DESKTOP_RUNTIME_ATTEST_ENV = "DENEXT_DESKTOP_RUNTIME_ATTEST";
+
+/**
+ * Whether a fresh runtime download is checked for its build provenance: `true` (required),
+ * `false` (off), or `"auto"` — checked when the GitHub CLI is signed in, and said so when it is
+ * not (the SHA-256 pin is enforced either way).
+ */
+export type DesktopRuntimeAttestMode = boolean | "auto";
+
+/**
+ * The provenance mode {@linkcode DESKTOP_RUNTIME_ATTEST_ENV} selects: `1` / `true` required,
+ * `0` / `false` off, anything else (unset included) `"auto"`.
+ *
+ * @param value The variable's value.
+ * @returns The mode.
+ */
+export function desktopRuntimeAttestMode(value: string | undefined): DesktopRuntimeAttestMode {
+  const v = value?.trim().toLowerCase();
+  if (v === "1" || v === "true") return true;
+  if (v === "0" || v === "false") return false;
+  return "auto";
+}
 
 /** The marker a verified cache entry carries (at its root, beside the runtime lib). */
 export const RUNTIME_MARKER = ".denext-runtime.json";
@@ -464,7 +488,38 @@ export function runtimeAttestationArgs(archive: string, repository: string, tag:
   ];
 }
 
-/** `gh attestation verify` the archive (opt-in provenance check), pinned to the release's build. */
+/**
+ * Whether the GitHub CLI is installed and signed in to github.com (`gh auth status`, output
+ * captured): what an `"auto"` provenance check needs. A missing `gh` is `false`.
+ *
+ * @param run Runs `gh` (default: captured, quiet).
+ * @returns Whether `gh attestation verify` can run.
+ */
+export async function ghSignedIn(run: CaptureRunner = capture): Promise<boolean> {
+  try {
+    return (await run("gh", ["auth", "status", "--hostname", "github.com"])).code === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether this fresh download is attested: always under `true`, never under `false`, and under
+ * `"auto"` when `gh` is signed in — else one line says the provenance was not checked.
+ */
+async function shouldAttest(plan: InstallPlan): Promise<boolean> {
+  const mode = plan.opts.attest ?? false;
+  if (mode !== "auto") return mode;
+  if (await ghSignedIn(plan.opts.capture ?? capture)) return true;
+  plan.log(
+    "  denext: the runtime's build provenance was not checked (the GitHub CLI is not installed or " +
+      "not signed in; the SHA-256 pin was). `gh auth login` checks it on the next download; " +
+      `${DESKTOP_RUNTIME_ATTEST_ENV}=0 silences this.`,
+  );
+  return false;
+}
+
+/** `gh attestation verify` the archive (the provenance check), pinned to the release's build. */
 async function attest(
   archive: string,
   pin: { readonly repository: string; readonly tag: string },
@@ -658,8 +713,12 @@ export interface EnsureDesktopRuntimeOptions {
   readonly cacheRoot?: string;
   /** Re-hash every cached file instead of the cheap size check. */
   readonly verify?: boolean;
-  /** `gh attestation verify` a downloaded archive (a cached one not attested is re-fetched). */
-  readonly attest?: boolean;
+  /**
+   * `gh attestation verify` a downloaded archive: `true` requires it (a cached one not attested is
+   * re-fetched), `"auto"` runs it when `gh` is signed in (a cached tree is kept as it is), `false`
+   * (the default) never.
+   */
+  readonly attest?: DesktopRuntimeAttestMode;
   /** Progress output (default `console.error`). */
   readonly log?: (line: string) => void;
   /** Test seams. */
@@ -688,7 +747,12 @@ interface InstallPlan {
 }
 
 /** Extract the verified archive into `staged`, check its layout, re-sign on macOS, and mark it. */
-async function stageRuntime(plan: InstallPlan, archive: string, staged: string): Promise<void> {
+async function stageRuntime(
+  plan: InstallPlan,
+  archive: string,
+  staged: string,
+  attested: boolean,
+): Promise<void> {
   const { artifact, runtimeLib, pin, opts } = plan;
   const result = await extractArchive(archive, artifact.format, staged);
   await Deno.remove(archive);
@@ -712,7 +776,7 @@ async function stageRuntime(plan: InstallPlan, archive: string, staged: string):
     target: opts.target,
     backend: opts.backend,
     archive: { file: artifact.file, sha256: artifact.sha256, size: artifact.size },
-    attested: opts.attest === true,
+    attested,
     files,
     symlinks: result.symlinks,
   };
@@ -742,9 +806,10 @@ async function installRuntime(plan: InstallPlan): Promise<void> {
         `${opts.backend}, ${(artifact.size / 1024 / 1024).toFixed(1)} MB)…`,
     );
     await downloadVerified(artifact, archive, opts.fetch ?? fetch, plan.log);
-    if (opts.attest) await attest(archive, pin, opts.run ?? defaultRunner);
+    const attested = await shouldAttest(plan);
+    if (attested) await attest(archive, pin, opts.run ?? defaultRunner);
     const staged = join(tmp, "runtime");
-    await stageRuntime(plan, archive, staged);
+    await stageRuntime(plan, archive, staged, attested);
     await installAtomically(staged, dir, versionDir, plan.acceptable);
     if (!await verifiedRuntime(dir, pin, artifact)) {
       throw new Error(`denext: the Deno Desktop runtime at ${dir} did not verify after install`);
@@ -786,7 +851,7 @@ async function ensureDesktopRuntimeInTask(
     // Verified (re-hashed when `full`) and, when provenance is asked for, attested.
     acceptable: async () => {
       const m = await verifiedRuntime(dir, pin, artifact, full);
-      return m !== null && (!options.attest || m.attested);
+      return m !== null && (options.attest !== true || m.attested);
     },
   };
   const resolved = async (cached: boolean) => {
@@ -815,7 +880,7 @@ async function ensureDesktopRuntimeInTask(
   if (await readMarker(dir)) {
     plan.log(
       `  denext: the cached Deno Desktop runtime at ${dir} failed verification` +
-        `${options.attest ? " (or has no provenance check)" : ""}; re-downloading.`,
+        `${options.attest === true ? " (or has no provenance check)" : ""}; re-downloading.`,
     );
   }
   await installRuntime(plan);
@@ -951,6 +1016,8 @@ export interface DesktopRuntimeEnvOptions {
   readonly cacheRoot?: string;
   readonly fetch?: typeof fetch;
   readonly run?: RuntimeCommandRunner;
+  /** Runs `gh auth status` for the default provenance check (and the macOS re-sign's tools). */
+  readonly capture?: CaptureRunner;
   /** What `deno --version` says (a bare version: one with no `denext … (Brainwires)` line). */
   readonly denoVersion?: (deno: string) => Promise<string | DenoIdentity>;
   readonly log?: (line: string) => void;
@@ -1369,7 +1436,8 @@ function fallbackHint(version: string): string {
  * Resolve the env one `deno desktop` invocation needs to run on denext's pinned runtime (and
  * download / verify it on first use). Honors `DENEXT_DESKTOP_RUNTIME=stock` (no env, a warning),
  * `DENEXT_DESKTOP_RUNTIME_DIR` (a local build, unverified, a warning),
- * `DENEXT_DESKTOP_RUNTIME_VERIFY=1` and `DENEXT_DESKTOP_RUNTIME_ATTEST=1`. Fails when `deno` is
+ * `DENEXT_DESKTOP_RUNTIME_VERIFY=1` and `DENEXT_DESKTOP_RUNTIME_ATTEST` (unset: a fresh download
+ * is attested when `gh` is signed in). Fails when `deno` is
  * not the runtime's exact Deno version (or, with `onDenoMismatch: "stock"`, warns and selects the
  * stock runtime). A target whose backend binary the host's `deno desktop` would look up under
  * another executable suffix (Windows from macOS / Linux, Linux from Windows) gets a cross-host
@@ -1419,9 +1487,10 @@ export async function resolveDesktopRuntimeEnv(
     pin,
     cacheRoot: options.cacheRoot,
     verify: env(DESKTOP_RUNTIME_VERIFY_ENV) === "1",
-    attest: env(DESKTOP_RUNTIME_ATTEST_ENV) === "1",
+    attest: desktopRuntimeAttestMode(env(DESKTOP_RUNTIME_ATTEST_ENV)),
     fetch: options.fetch,
     run: options.run,
+    ...(options.capture ? { capture: options.capture } : {}),
     log,
   });
   const rename = crossHostBackendRename(options.hostOs ?? Deno.build.os, target, backend);

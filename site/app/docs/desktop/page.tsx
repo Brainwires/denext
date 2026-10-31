@@ -3305,9 +3305,11 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           cache and no network the build stops and says so.
         </li>
         <li>
-          <strong>Provenance, optionally.</strong> <code>--attest-runtime</code> also runs{" "}
+          <strong>Provenance.</strong> A fresh download is also checked with{" "}
           <code>gh attestation verify</code>{" "}
-          on a fresh download (it needs the GitHub CLI; the SHA-256 pin is enforced either way).
+          whenever the GitHub CLI is signed in, and the build says so when it is not (the SHA-256
+          pin is enforced either way). <code>--attest-runtime</code> makes the check required;{" "}
+          <code>DENEXT_DESKTOP_RUNTIME_ATTEST=0</code> turns it off.
         </li>
         <li>
           <strong>Targets.</strong>{" "}
