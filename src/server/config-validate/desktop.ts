@@ -11,6 +11,7 @@ import {
   parseDesktopAppOrigin,
 } from "../../desktop/app-origin.ts";
 import { desktopDenoFlagError } from "../../desktop/deno-flags.ts";
+import { permissionListError } from "../../desktop/permission-entries.ts";
 import { desktopTrayProblem } from "../../desktop/tray-config.ts";
 import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
@@ -284,11 +285,19 @@ function validateDesktopSidecars(sidecars: unknown, spaProxy: unknown, fail: Fai
   }
 }
 
+/** `desktop.update.hosts`: each entry one host of the baked `--allow-net`. */
+function validateUpdateHosts(hosts: unknown, fail: Fail): void {
+  const error = hosts === undefined ? null : permissionListError("net", hosts);
+  if (error) fail("desktop.update.hosts", error);
+}
+
 /**
- * `desktop.update.autoConfirm`: a boolean; `desktop.update.ui`: a feed URL and a public key (the
- * other `desktop.update` keys are checked at package).
+ * `desktop.update.autoConfirm`: a boolean; `desktop.update.hosts`: network hosts baked into the
+ * binary's `--allow-net`, each one value (`permissionListError`); `desktop.update.ui`: a feed URL
+ * and a public key (the other `desktop.update` keys are checked at package).
  */
 function validateDesktopUpdate(update: unknown, fail: Fail): void {
+  validateUpdateHosts((update as { hosts?: unknown } | undefined)?.hosts, fail);
   const autoConfirm = (update as { autoConfirm?: unknown } | undefined)?.autoConfirm;
   if (autoConfirm !== undefined && typeof autoConfirm !== "boolean") {
     fail("desktop.update.autoConfirm", "must be a boolean");

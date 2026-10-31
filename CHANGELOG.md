@@ -8,6 +8,13 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **`desktop.update.hosts` entries are checked like every other baked permission list.** The
+  config validator and the package scripts' flag derivation refuse an entry that is not one host
+  (`"cdn.example.net,0.0.0.0"` would have baked two, a URL or an empty string is no host) and a
+  value that is not an array of strings, instead of folding it into the binary's network grant.
+
 ## [4.11.2] - 2026-10-31
 
 ### Changed
