@@ -165,11 +165,16 @@ Deno.test("processTree: a process that finished reads as gone, and the listing n
 });
 
 Deno.test("renderTree: a recycled pid held by a look-alike process reads as gone", () => {
-  const list = [
-    "  900     1 43:00 00:09 Sl   deno test --parallel tests/",
-    "  901   900 00:01 00:00 S    deno info --json x",
-    "  950     1 00:01 00:00 S    deno eval ok",
-  ].join("\n");
+  // The listing in this OS's processListCommand shape (ps columns, or Win32_Process's tab rows).
+  const list = ([
+    [900, 1, "deno test --parallel tests/"],
+    [901, 900, "deno info --json x"],
+    [950, 1, "deno eval ok"],
+  ] as const).map(([pid, ppid, command]) =>
+    Deno.build.os === "windows"
+      ? `${pid}\t${ppid}\tstarted 20261031 cpu 0.1s threads 4 handles 90\t${command}`
+      : `  ${pid}  ${String(ppid).padStart(4)} 00:01 00:00 S    ${command}`
+  ).join("\n");
   const gone = "(pid 900 and its descendants are gone)";
   // The id now belongs to the long-running test run: not the child, nor are its children.
   assertEquals(renderTree(list, 900, "/bin/sleep"), gone);
