@@ -1027,3 +1027,173 @@ Deno.test("live views: a view resumed on another instance stops the copy parked 
   instanceA.hub.dispose();
   instanceB.hub.dispose();
 });
+
+// ── One connection's mounts, in arrival order ────────────────────────────────
+
+/** `authorize` gates for `test-gated`, by the props' `start`: a mount waits on its gate. */
+const gates = new Map<number, PromiseWithResolvers<boolean>>();
+const authorized: number[] = [];
+
+defineLiveView<Model, Msg, { start: number }>({
+  id: "test-gated",
+  init: (props) => [{ n: props.start, pad: "" }],
+  update,
+  view,
+  authorize: (props) => {
+    authorized.push(props.start);
+    return gates.get(props.start)?.promise ?? true;
+  },
+});
+
+/** Hold `test-gated` mounts of these `start`s at `authorize` until the test resolves them. */
+function gate(...starts: number[]): Map<number, PromiseWithResolvers<boolean>> {
+  gates.clear();
+  authorized.length = 0;
+  for (const s of starts) gates.set(s, Promise.withResolvers<boolean>());
+  return gates;
+}
+
+const tick = (ms = 10) => new Promise((r) => setTimeout(r, ms));
+
+/** Mount `test-gated` with `start` under view id `vid`; `done` settles when the mount does. */
+async function gatedMount(
+  hub: Any,
+  c: Conn,
+  start: number,
+  vid: string,
+): Promise<{ done: Promise<void> }> {
+  const frame = await mountFrame("test-gated", { start }, { vid });
+  return { done: hub.mount(c, frame) };
+}
+
+Deno.test("live views: one connection's mounts are placed in arrival order, the cap in order", async () => {
+  // The first mount's authorize is slow, the second's immediate: the first sent still takes the
+  // connection's only slot, and the second is refused at the cap after it.
+  const g = gate(1);
+  const { hub, conn } = fakeHub({ maxViewsPerConnection: 1 });
+  const c = conn("ok");
+  const first = (await gatedMount(hub, c, 1, "v1")).done;
+  const second = (await gatedMount(hub, c, 2, "v2")).done;
+  await tick();
+  assertEquals(authorized, [1], "the second mount waits behind the first");
+  g.get(1)!.resolve(true);
+  await Promise.all([first, second]);
+  assertEquals([...c.views.keys()], ["v1"]);
+  await tick();
+  assertEquals(c.frames.filter(isType("view-render")).map((f) => f.vid), ["v1"]);
+  assertEquals(c.frames.filter(isError("limit")).map((f) => f.subId), ["v2"]);
+  hub.dispose();
+
+  // With room for all three, their first renders still go out in the order they were sent.
+  const g2 = gate(1, 2);
+  const many = fakeHub({ maxViewsPerConnection: 4 });
+  const d = many.conn("ok");
+  const mounts = [
+    (await gatedMount(many.hub, d, 1, "a")).done,
+    (await gatedMount(many.hub, d, 2, "b")).done,
+    (await gatedMount(many.hub, d, 3, "c")).done,
+  ];
+  g2.get(2)!.resolve(true);
+  await tick();
+  assertEquals(d.views.size, 0, "nothing overtakes the held first mount");
+  g2.get(1)!.resolve(true);
+  await Promise.all(mounts);
+  assertEquals([...d.views.keys()], ["a", "b", "c"]);
+  assertEquals(authorized, [1, 2, 3]);
+  many.hub.dispose();
+});
+
+Deno.test("live views: an unmount or a close cancels the mounts still waiting or running", async () => {
+  const g = gate(1);
+  const { hub, conn } = fakeHub();
+  const c = conn("ok");
+  const running = (await gatedMount(hub, c, 1, "v1")).done;
+  const waiting = (await gatedMount(hub, c, 2, "v2")).done;
+  await tick();
+  hub.unmount(c, "v2"); // still queued: never runs
+  hub.unmount(c, "v1"); // at authorize: placed nothing once it settles
+  g.get(1)!.resolve(true);
+  await Promise.all([running, waiting]);
+  assertEquals(authorized, [1]);
+  assertEquals([c.views.size, c.frames.length, hub.inspect().length], [0, 0, 0]);
+  // A mount sent after the unmount is not cancelled by it.
+  await mounted(hub, c, 3, "v1");
+  assertEquals([...c.views.keys()], ["v1"]);
+  hub.dispose();
+
+  // The socket closes with a mount at authorize and another queued: neither is placed or parked.
+  const g2 = gate(1);
+  const d = conn("ok");
+  const a = (await gatedMount(hub, d, 1, "v1")).done;
+  const b = (await gatedMount(hub, d, 2, "v2")).done;
+  await tick();
+  d.closed = true;
+  hub.drop(d);
+  g2.get(1)!.resolve(true);
+  await Promise.all([a, b]);
+  assertEquals(authorized, [1]);
+  assertEquals([d.views.size, d.frames.length, hub.parked()], [0, 0, 0]);
+  hub.dispose();
+});
+
+Deno.test("live views: a slow authorize delays only its own connection's later mounts", async () => {
+  const g = gate(1);
+  const { hub, conn } = fakeHub();
+  const slow = conn("ok");
+  const other = conn("ok");
+  const held = (await gatedMount(hub, slow, 1, "v1")).done;
+  await tick();
+  // Another connection mounts at once while the first is held.
+  await mounted(hub, other, 2, "v1");
+  assertEquals([slow.views.size, other.views.size], [0, 1]);
+  g.get(1)!.resolve(true);
+  await held;
+  assertEquals(slow.views.size, 1);
+  hub.dispose();
+});
+
+Deno.test("live views: a mount past renderTimeoutSeconds is refused and frees the queue", async () => {
+  const g = gate(1);
+  const { hub, conn } = fakeHub({ renderTimeoutSeconds: 0.05 });
+  const c = conn("ok");
+  const stuck = (await gatedMount(hub, c, 1, "v1")).done;
+  const after = (await gatedMount(hub, c, 2, "v2")).done;
+  await Promise.all([stuck, after]);
+  const timedOut = c.frames.find(isError("failed"));
+  assertEquals([timedOut?.subId, timedOut?.reason], ["v1", "view mount timed out"]);
+  assertEquals([...c.views.keys()], ["v2"], "the next mount ran");
+  // Its authorize settling late places nothing.
+  g.get(1)!.resolve(true);
+  await tick();
+  assertEquals([...c.views.keys()], ["v2"]);
+  hub.dispose();
+});
+
+Deno.test("live views: frames without a usable view id, and stop paths, are no-ops", async () => {
+  // Payload fields that do not fit are refused, whatever the field.
+  assertEquals(checkEventPayload({ checked: "yes" }), null);
+  assertEquals(checkEventPayload({ form: "q=1" }), null);
+  const wide = Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`f${i}`, "x"]));
+  assertEquals(checkEventPayload({ form: wide }), null);
+
+  const { hub, conn } = fakeHub();
+  const c = conn("ok");
+  await mounted(hub, c);
+  hub.event(c, { type: "view-event", rev: 0, h: 0 });
+  hub.unmount(c, 1);
+  hub.resync(c, null);
+  c.recoverViews = new Set(["not-held"]);
+  hub.replayPending(c);
+  assertEquals([c.views.size, c.frames.filter(isError("bad-message")).length], [1, 0]);
+  // A discarded connection's views stop without parking.
+  hub.discard(c);
+  assertEquals([c.views.size, hub.parked(), hub.inspect().length], [0, 0, 0]);
+  // dispose stops the parked views too.
+  const d = conn("ok");
+  await mounted(hub, d);
+  d.closed = true;
+  hub.drop(d);
+  assertEquals(hub.parked(), 1);
+  hub.dispose();
+  assertEquals(hub.parked(), 0);
+});
