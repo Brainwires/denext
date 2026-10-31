@@ -260,6 +260,19 @@ export {
   type PreparedDesktopPackage,
   prepareDesktopPackage,
 } from "./desktop-package-script.ts";
+// scripts/package-windows.ts: the tree manifest of every file that is not a PE image, embedded in
+// the .exe before signing so its Authenticode signature covers the whole app.
+export {
+  DESKTOP_TREE_RESOURCE,
+  type DesktopTreeFile,
+  type DesktopTreeManifest,
+  desktopTreeManifest,
+  type DesktopTreeManifestProblem,
+  desktopTreeManifestProblem,
+  embedDesktopTreeManifest,
+  readDesktopTreeManifest,
+  stampDesktopTreeManifest,
+} from "./desktop-tree-manifest.ts";
 // scripts/package-windows.ts: the app-local VC++ runtime, only the DLLs the target arch imports,
 // each checked to be the target's machine type.
 export {

@@ -30,6 +30,7 @@ import {
   stampDenoJsonVersion,
 } from "./desktop-installers.ts";
 import { peVersionWords, stampPeResources } from "./pe-resources.ts";
+import { stampDesktopTreeManifest } from "./desktop-tree-manifest.ts";
 import {
   DEFAULT_TIMESTAMP_URL,
   signtoolArgs,
@@ -594,7 +595,8 @@ export async function desktopWithAppVersion<T>(
  * least-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to
  * answer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first
  * existing icon, then
- * the webview backend's `laufey-launch.json` beside the executable.
+ * the webview backend's `laufey-launch.json` beside the executable, and on Windows the signed tree
+ * manifest in the executable ({@linkcode stampDesktopTreeManifest}; sign after this).
  *
  * @param entryUrl `import.meta.url` of the script.
  * @param os The target OS.
@@ -618,6 +620,13 @@ export async function buildDesktopBundle(
     );
   }
   await writeLaufeyLaunchConfig(entryUrl, os, o.out);
+  if (os === "windows") {
+    // The last file written: the tree manifest of every file that is not a PE image goes into
+    // the .exe before the package script signs it, so the .exe's Authenticode signature covers
+    // laufey-launch.json, CEF's resources and sidecar JS too, and the runtime refuses an update
+    // whose files differ from it. Only PE images (the VC++ runtime's DLLs) may be added after.
+    await stampDesktopTreeManifest(o.out, `${basename(o.out)}.exe`);
+  }
   return o.out;
 }
 

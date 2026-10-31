@@ -98,7 +98,7 @@ async function publishFromFlags(flags: Record<string, unknown>, dir: string): Pr
   });
   const notarization = await macNotarizationWarning(resolve(dir, artifact));
   const expiring = r.previousExpiresAt ? appUpdateExpiryWarning(r.previousExpiresAt) : null;
-  for (const warning of [notarization, expiring]) {
+  for (const warning of [notarization, expiring, r.treeWarning]) {
     if (warning) console.error(`denext desktop publish-update: warning: ${warning}`);
   }
   console.log(

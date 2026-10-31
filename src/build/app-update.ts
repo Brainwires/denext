@@ -28,6 +28,7 @@ import { basename, join } from "@std/path";
 import { fromBase64, otaPublicKeyOf, parseOtaPublicKey, toBase64 } from "./ota-signing.ts";
 import { checkArtifactVersion } from "./app-update-version.ts";
 import { runToExitText } from "./exited-output.ts";
+import { windowsTreeManifestWarning } from "./desktop-tree-manifest.ts";
 
 /** What the signature covers before the signed string (the runtime's `SIGNATURE_DOMAIN`). */
 const APP_UPDATE_SIGNATURE_DOMAIN = "denext-app-update-v1\n";
@@ -522,6 +523,11 @@ export interface PublishAppUpdateResult {
    * signing key (see {@linkcode appUpdateExpiryWarning}).
    */
   readonly previousExpiresAt?: string;
+  /**
+   * A Windows app whose executable carries no signed tree manifest (see
+   * {@linkcode windowsTreeManifestWarning}).
+   */
+  readonly treeWarning?: string;
 }
 
 /** An existing `app-update.json`, parsed but not verified. */
@@ -728,6 +734,7 @@ export async function publishAppUpdate(
   const platform = o.platform ?? await appUpdatePlatformKey(o.artifact);
   if (!isAppUpdatePlatform(platform)) throw new Error(`unsupported platform key ${platform}`);
   await checkArtifactVersion(o.artifact, platform, o.version);
+  const treeWarning = await windowsTreeManifestWarning(o.artifact, platform);
   const manifest = join(o.outDir, APP_UPDATE_MANIFEST_FILE);
   // Another platform of the SAME release keeps its entry (and its notes / minVersion unless
   // given) — only once that manifest verifies against this signing key. Read before packing, so a
@@ -769,6 +776,7 @@ export async function publishAppUpdate(
     platforms: Object.keys(payload.platforms).sort(),
     ...fresh,
     ...(previousExpiresAt !== undefined ? { previousExpiresAt } : {}),
+    ...(treeWarning !== undefined ? { treeWarning } : {}),
   };
 }
 

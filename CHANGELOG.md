@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Security
+
+- **A Windows app's files that are not PE images are now under its Authenticode signature for
+  full-app updates** (5.0-gate review A, M2). The runtime verified the signature of every `.exe` /
+  `.dll` / `.node` of a staged update, but `laufey-launch.json` (the window's bridge origins and
+  inspectable policy), CEF's `.pak` / `icudtl.dat` / snapshot files, sidecar JavaScript and
+  `.deno-desktop-app` were protected by the update key alone. The Windows package build
+  (`buildDesktopBundle`, which `scripts/package-windows.ts` calls) now writes a tree manifest of
+  those files (path, size, SHA-256) into the `.exe` as the `RT_RCDATA` resource `DENEXT_TREE`
+  before the script signs it (`stampDesktopTreeManifest` from `denext/desktop`, pure TypeScript,
+  any host), and the runtime refuses an update whose files differ from it, that holds a symlink,
+  or that drops the manifest an installed app has (Deno Desktop runtime 3.0.0-denext.8; fork item
+  196). Existing package scripts pick it up unchanged. `denext desktop publish-update` refuses a
+  Windows bundle changed after its manifest was written and warns about one without a manifest;
+  an installed app that has none still accepts its first update without one.
+
 ## [4.11.2] - 2026-10-31
 
 ### Changed
