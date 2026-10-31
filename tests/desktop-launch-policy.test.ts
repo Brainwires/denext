@@ -4,9 +4,14 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
-import { compareDenoVersions } from "../src/build/deno-version.ts";
+import {
+  compareDenoVersions,
+  FIRST_DESKTOP_CACHE_TOKEN_RUNTIME,
+  supportsDesktopCacheToken,
+} from "../src/build/deno-version.ts";
 import { desktopBridgeOrigins } from "../src/build/desktop-app-config.ts";
 import {
+  desktopCacheTokenRuntime,
   desktopPasskeyRpIds,
   FIRST_STRICT_LAUNCH_RUNTIME,
   isDesktopProject,
@@ -239,4 +244,21 @@ Deno.test("desktop doctor CLI: projectLaunchPolicy reads the project's config an
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+Deno.test("desktopCacheTokenRuntime: the pinned runtime from 3.0.0-denext.8, never stock or a local build", () => {
+  assertEquals(FIRST_DESKTOP_CACHE_TOKEN_RUNTIME, "3.0.0-denext.8");
+  assertEquals(supportsDesktopCacheToken("3.0.0-denext.8"), true);
+  assertEquals(supportsDesktopCacheToken("3.0.0-denext.7"), false);
+  assertEquals(supportsDesktopCacheToken("nope"), false);
+  assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8"), true);
+  assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.7"), false);
+  assertEquals(
+    desktopCacheTokenRuntime(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-denext.8"),
+    false,
+  );
+  assertEquals(
+    desktopCacheTokenRuntime(env({ DENEXT_DESKTOP_RUNTIME_DIR: "/x" }), "3.0.0-denext.8"),
+    false,
+  );
 });

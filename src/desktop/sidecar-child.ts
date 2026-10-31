@@ -14,8 +14,10 @@
  *   launch as a headless worker (no window, no web engine, no single-instance check) only for its
  *   own parent: denext's pinned runtime admits it with the per-launch worker token it hands the
  *   app's own forks that have an IPC channel, and only for a module the app embeds. Under the Deno
- *   CLI (an app run with `deno run`), the command is `deno run` with the permissions the app was
- *   granted unscoped.
+ *   CLI (an app run with `deno run`), the command is `deno run` with the app's own Deno flags
+ *   (`process.execArgv`, on denext's Deno from `FIRST_EXEC_ARGV_RUNTIME`: scoped grants, unstable
+ *   features, `--config` and the rest), or on an older Deno the permissions the app was granted
+ *   unscoped.
  * - The child runs the entry, whose `runDesktop` sees the variable before anything else
  *   ({@linkcode readSidecarChildLaunch}), removes it (a grandchild does not inherit it), and instead
  *   of serving a window runs the sidecar's module ({@linkcode runSidecarChild}): `process.argv` is
@@ -32,6 +34,8 @@
  */
 
 import { dirname, fromFileUrl, join } from "@std/path";
+import process from "node:process";
+import { currentDenoIdentity, supportsExecArgv } from "../build/deno-version.ts";
 import {
   SIDECAR_CHILD_ARGC_ENV,
   SIDECAR_CHILD_ENV,
@@ -82,6 +86,14 @@ export interface SidecarChildBaseOptions {
   /** The Deno CLI's `--allow-*` flags (not used by a compiled app, whose flags are baked). */
   readonly permissionFlags?: readonly string[];
   /**
+   * The Deno CLI's `process.execArgv`. denext's Deno from `FIRST_EXEC_ARGV_RUNTIME`
+   * (`denextVersion`) fills it with the run's Deno flags, so a non-empty list is passed in place of
+   * `permissionFlags`; not used by a compiled app (whose list is empty) or an older Deno.
+   */
+  readonly execArgv?: readonly string[];
+  /** The Deno's `Deno.build.denext` (denext's Deno only), which says whether `execArgv` is filled. */
+  readonly denextVersion?: string;
+  /**
    * Whether the runtime authorizes a fork of its own executable without `--allow-run`
    * ({@linkcode runtimeAuthorizesSelfFork}); only a compiled app's runtime can.
    */
@@ -90,8 +102,9 @@ export interface SidecarChildBaseOptions {
 
 /**
  * How the sidecar `name` starts a child of the app: `<execPath> run <entry> …args` for a compiled
- * app (the runtime's headless-worker shape), `<deno> run <permission flags> <entry> …args` for the
- * Deno CLI, with {@linkcode SIDECAR_CHILD_ENV} set to the name.
+ * app (the runtime's headless-worker shape), `<deno> run <execArgv> <entry> …args` for the Deno CLI
+ * that fills `process.execArgv` (denext's from `FIRST_EXEC_ARGV_RUNTIME`), else
+ * `<deno> run <permission flags> <entry> …args`, with {@linkcode SIDECAR_CHILD_ENV} set to the name.
  *
  * @param options The sidecar, the entry and the executable.
  * @returns The base every `childCommand(args)` extends, or why there is none.
@@ -103,7 +116,7 @@ export function sidecarChildBase(options: SidecarChildBaseOptions): SidecarChild
         "runDesktop({ importMetaUrl: import.meta.url })",
     };
   }
-  const flags = options.standalone ? [] : [...(options.permissionFlags ?? [])];
+  const flags = options.standalone ? [] : cliChildFlags(options);
   return {
     name: options.name,
     command: options.execPath,
@@ -112,6 +125,14 @@ export function sidecarChildBase(options: SidecarChildBaseOptions): SidecarChild
     argcEnv: SIDECAR_CHILD_ARGC_ENV,
     selfForkAuthorized: options.standalone && options.selfForkAuthorized === true,
   };
+}
+
+/** A Deno CLI child's flags: the parent's `execArgv` where the Deno fills it, else its grants. */
+function cliChildFlags(options: SidecarChildBaseOptions): string[] {
+  const execArgv = options.execArgv ?? [];
+  return execArgv.length > 0 && supportsExecArgv(options.denextVersion ?? "")
+    ? [...execArgv]
+    : [...(options.permissionFlags ?? [])];
 }
 
 /** The variable denext's pinned runtime hands the forks it authorizes (their per-launch token). */
@@ -166,6 +187,11 @@ export function cliPermissionFlags(
   return flags;
 }
 
+/** `{ denextVersion }` when this is denext's Deno, else nothing. */
+function denextVersionOf(version: string | undefined): { denextVersion?: string } {
+  return version === undefined ? {} : { denextVersion: version };
+}
+
 /** Whether this process is a compiled binary (a packaged or `denext desktop run` app). */
 function isStandalone(): boolean {
   return (Deno.build as { standalone?: boolean }).standalone === true;
@@ -178,7 +204,7 @@ function entryPathOf(importMetaUrl: string | undefined): string | undefined {
 
 /**
  * {@linkcode sidecarChildBase} for this process: its executable, whether it is compiled, and (for
- * the Deno CLI) its unscoped permissions.
+ * the Deno CLI) its Deno flags (`process.execArgv`) and unscoped permissions.
  *
  * @param name The sidecar's name.
  * @param importMetaUrl The app entry's `import.meta.url`.
@@ -192,9 +218,11 @@ export function parentChildBase(name: string, importMetaUrl: string | undefined)
     execPath: Deno.execPath(),
     standalone,
     ...(entryPath !== undefined ? { entryPath } : {}),
-    ...(standalone
-      ? { selfForkAuthorized: runtimeAuthorizesSelfFork() }
-      : { permissionFlags: cliPermissionFlags() }),
+    ...(standalone ? { selfForkAuthorized: runtimeAuthorizesSelfFork() } : {
+      permissionFlags: cliPermissionFlags(),
+      execArgv: process.execArgv,
+      ...denextVersionOf(currentDenoIdentity().denext),
+    }),
   });
 }
 

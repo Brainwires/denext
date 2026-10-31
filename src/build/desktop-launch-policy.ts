@@ -10,6 +10,7 @@ import { join } from "@std/path";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 import {
   compareDenoVersions,
+  supportsDesktopCacheToken,
   supportsInitialOverlay,
   supportsOverlayTray,
 } from "./deno-version.ts";
@@ -40,6 +41,20 @@ const processEnv: EnvGet = (key) => {
 };
 
 /**
+ * Whether this process builds on denext's pinned runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a
+ * local `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown version) and its `version` has a feature.
+ */
+function pinnedRuntimeHas(
+  env: EnvGet,
+  version: string,
+  supports: (version: string) => boolean,
+): boolean {
+  const mode = (env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase();
+  if (mode === "stock" || env("DENEXT_DESKTOP_RUNTIME_DIR")) return false;
+  return supports(version);
+}
+
+/**
  * Whether the Deno Desktop runtime `version` reads the launch file's `"strictPolicy"` (from
  * {@linkcode FIRST_STRICT_LAUNCH_RUNTIME}). A version that does not parse does not.
  *
@@ -64,9 +79,7 @@ export function strictLaunchRuntime(
   env: EnvGet = processEnv,
   version: string = pinJson.version,
 ): boolean {
-  const mode = (env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase();
-  if (mode === "stock" || env("DENEXT_DESKTOP_RUNTIME_DIR")) return false;
-  return supportsStrictLaunch(version);
+  return pinnedRuntimeHas(env, version, supportsStrictLaunch);
 }
 
 /**
@@ -84,9 +97,7 @@ export function activationPolicyRuntime(
   env: EnvGet = processEnv,
   version: string = pinJson.version,
 ): boolean {
-  const mode = (env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase();
-  if (mode === "stock" || env("DENEXT_DESKTOP_RUNTIME_DIR")) return false;
-  return supportsOverlayTray(version);
+  return pinnedRuntimeHas(env, version, supportsOverlayTray);
 }
 
 /**
@@ -104,9 +115,25 @@ export function initialOverlayRuntime(
   env: EnvGet = processEnv,
   version: string = pinJson.version,
 ): boolean {
-  const mode = (env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase();
-  if (mode === "stock" || env("DENEXT_DESKTOP_RUNTIME_DIR")) return false;
-  return supportsInitialOverlay(version);
+  return pinnedRuntimeHas(env, version, supportsInitialOverlay);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime that
+ * expands `$DENO_DESKTOP_CACHE` in a baked permission to the app's cache folder: denext's pinned
+ * runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of
+ * unknown version) from `FIRST_DESKTOP_CACHE_TOKEN_RUNTIME` (`3.0.0-denext.8`). An older runtime
+ * would read the token as a relative path, so a program sidecar keeps its unscoped `--allow-run`.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether to bake `$DENO_DESKTOP_CACHE` grants.
+ */
+export function desktopCacheTokenRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsDesktopCacheToken);
 }
 
 /**

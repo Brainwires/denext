@@ -3223,7 +3223,16 @@ export default defineDesktopExtension({
         <li>
           <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}
           <code>PATH</code>, or a file of the project (<code>"./bin/server"</code>), which is
-          embedded and run from a copy in the app&apos;s cache folder. It gets the sidecar&apos;s
+          embedded and run from a copy in the app&apos;s cache folder (
+          <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
+          <code>--allow-run</code> and a broad{" "}
+          <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
+          machine. From Deno Desktop runtime 3.0.0-denext.8 (once denext pins it), an app with{" "}
+          <code>desktop.app.identifier</code> is baked{" "}
+          <code>--allow-run=$DENO_DESKTOP_CACHE/sidecars/&lt;name&gt;/&lt;file&gt;</code>{" "}
+          instead, and the matching <code>--allow-write</code>{" "}
+          (scoped to that folder when nothing else writes): the runtime expands the token at launch
+          to the app&apos;s cache folder, keyed by the identifier. It gets the sidecar&apos;s
           variables, and one JSON line on stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
           as the app runs, so a program that exits on end-of-file never outlives it.
@@ -3362,7 +3371,10 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
           and in a packaged app on macOS, Windows and Linux; under <code>deno run desktop.ts</code>
           {" "}
           the child is <code>deno run</code>{" "}
-          with the permissions the app holds unscoped. An unmodified{" "}
+          with the app&apos;s own Deno flags (<code>process.execArgv</code>: scoped grants,{" "}
+          <code>--unstable-*</code>,{" "}
+          <code>--config</code>, …) on denext&apos;s Deno from 3.0.0-denext.8, or the permissions
+          the app holds unscoped on an older one. An unmodified{" "}
           <code>spawn(process.execPath, …)</code>{" "}
           without an IPC channel starts a second copy of the app instead: use{" "}
           <code>spawnSelf</code>.

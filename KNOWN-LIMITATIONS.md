@@ -730,7 +730,12 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Permissions:** a packaged app keeps `--allow-read` / `--allow-env` unscoped, and a picked path
   needs unscoped read/write (permissions bake at build time); FFI, Node-API addons and spawned OS
   tools are full trust; the bridge token is readable by any script in the page, so keep the
-  strict CSP and enable only the capabilities you use.
+  strict CSP and enable only the capabilities you use. A program sidecar shipped in the app
+  (`run: { exec: "./bin/…" }`) is baked an unscoped `--allow-run` and a broad `--allow-write`
+  (its copy in the app's cache folder has a per-user path); runtime 3.0.0-denext.8 scopes both to
+  that copy when the app sets `desktop.app.identifier`, from the denext release that pins it. Under
+  `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets only
+  the permissions the app holds unscoped (no scoped grants, `--unstable-*` or `--config`).
 - **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime
   writes through `/usr/bin/security`, which any program of the same user can read back) an app
   without a provisioning profile that grants a keychain access group keeps its items in the login
