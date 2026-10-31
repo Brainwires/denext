@@ -8,6 +8,7 @@ import "./commands/analyze.ts";
 import "./commands/audit.ts";
 import "./commands/commands.ts";
 import "./commands/completions.ts";
+import "./commands/crash-report.ts";
 import "./commands/create.ts";
 import "./commands/dashboard.ts";
 import "./commands/db-admin.ts";

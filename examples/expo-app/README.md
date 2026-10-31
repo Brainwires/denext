@@ -59,8 +59,8 @@ npm install --legacy-peer-deps
 deno run -A --node-modules-dir=none ../../cli.ts migrate --from expo .
 # deno.json: the jsr: denext imports pointed at this checkout (../../…)
 
-npm install --save-exact @capacitor/core@8.5.2 @capacitor/ios@8.5.2
-npm install --save-exact -D @capacitor/cli@8.5.2
+npm install --save-exact @capacitor/core@8.6.0 @capacitor/ios@8.6.0
+npm install --save-exact -D @capacitor/cli@8.6.0
 denext task export && npx cap add ios
 deno run -A --node-modules-dir=none ../../cli.ts mobile add haptics device splash browser \
   deep-links system-bars storage keyboard dialog share --scheme helloworld

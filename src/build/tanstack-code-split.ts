@@ -121,13 +121,31 @@ function isAppSource(path: string, roots: readonly string[]): boolean {
     roots.some((root) => path.startsWith(root.endsWith(SEPARATOR) ? root : root + SEPARATOR));
 }
 
-/** `dir` with symlinks resolved (esbuild reports modules by real path), or `dir` itself. */
-function realDir(dir: string): string {
+/**
+ * `path` as the file system names it — symlinks resolved and, on Windows, 8.3 short names
+ * (`C:\Users\LONGNA~1\…`) expanded to their long form — or `path` itself when it can't be
+ * resolved.
+ */
+function realPathOf(path: string): string {
   try {
-    return Deno.realPathSync(dir);
+    return Deno.realPathSync(path);
   } catch {
-    return dir;
+    return path;
   }
+}
+
+/**
+ * A memo of {@link realPathOf} over the modules of one build. esbuild resolves symlinks but keeps
+ * an 8.3 short name as it was reached, while the route generator keys its route map by the real
+ * path, so both sides of every comparison go through the real path.
+ */
+function realPathMemo(): (path: string) => string {
+  const memo = new Map<string, string>();
+  return (path) => {
+    let real = memo.get(path);
+    if (real === undefined) memo.set(path, real = realPathOf(path));
+    return real;
+  };
 }
 
 /** `path`'s text, or null when it cannot be read (the next loader then reports it). */
@@ -142,19 +160,22 @@ async function readSource(path: string): Promise<string | null> {
 /**
  * The `onLoad` answer for one module: a TanStack virtual module (`?tsr-split=…`) always, a route
  * file the splitter rewrote, and null (the next `onLoad` loads it; denext's own source
- * transforms run there) for anything else.
+ * transforms run there) for anything else. `real` names a module by its real path.
  */
 async function loadRouteModule(
   plugins: readonly VitePluginLike[],
   args: esbuild.OnLoadArgs,
   roots: readonly string[],
   after: SourceTransform | undefined,
+  real: (path: string) => string,
 ): Promise<esbuild.OnLoadResult | null> {
   const virtual = isVirtual(args);
-  if (!virtual && !isAppSource(args.path, roots)) return null;
+  // The splitter matches a module to its route by the real path (see realPathMemo).
+  const path = real(args.path);
+  if (!virtual && !isAppSource(path, roots)) return null;
   const source = await readSource(args.path);
   if (source === null) return null;
-  const split = await runTransforms(plugins, source, virtual ? args.path + args.suffix : args.path);
+  const split = await runTransforms(plugins, source, virtual ? path + args.suffix : path);
   if (split === null && !virtual) return null;
   return {
     contents: await withAfter(after, split ?? source, args.path),
@@ -201,7 +222,7 @@ async function loadTanstackRouterPlugins(
   if (options.generatedRouteTree) settings.generatedRouteTree = options.generatedRouteTree;
   // The generator keys its route map by path under `root`; esbuild names modules by their real
   // path, so the root is the real one (a project reached through a symlink, macOS's /var → /private/var).
-  const root = realDir(projectDir);
+  const root = realPathOf(projectDir);
   // Its scratch files go under the project, not the working directory (see generatorTmpDir).
   const tmpDir = await generatorTmpDir(root);
   if (tmpDir) settings.tmpDir = tmpDir;
@@ -234,7 +255,8 @@ export function tanstackCodeSplitPlugin(
     name: "denext-tanstack-code-split",
     async setup(build) {
       const plugins = await loadTanstackRouterPlugins(projectDir, options);
-      const roots = [projectDir, realDir(projectDir)];
+      const roots = [realPathOf(projectDir)];
+      const real = realPathMemo();
       // `/abs/route.tsx?tsr-split=component` → the file, with the query kept as its suffix.
       build.onResolve({ filter: VIRTUAL_QUERY }, (args) => {
         const at = args.path.indexOf("?");
@@ -242,7 +264,10 @@ export function tanstackCodeSplitPlugin(
         if (!file.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(file)) return null;
         return { path: file, suffix: args.path.slice(at) };
       });
-      build.onLoad({ filter: SCRIPT }, (args) => loadRouteModule(plugins, args, roots, after));
+      build.onLoad(
+        { filter: SCRIPT },
+        (args) => loadRouteModule(plugins, args, roots, after, real),
+      );
     },
   };
 }

@@ -77,8 +77,13 @@ function revocationOf(
   };
 }
 
-/** The binary `toolchain path` / `link` name: the pinned one (installed), or a refusal. */
-async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
+/**
+ * The binary `toolchain path` / `link` / `crash-report test` name: the pinned one (installed), or
+ * a refusal.
+ *
+ * @returns The `deno` and its marker (a version, `path`, or empty for stock Deno).
+ */
+export async function toolchainBinary(): Promise<{ deno: string; marker: string }> {
   const raw = toolchainEnvValue();
   if (raw.toLowerCase() === "stock") {
     console.error(`denext: ${TOOLCHAIN_ENV}=stock — running stock Deno.`);

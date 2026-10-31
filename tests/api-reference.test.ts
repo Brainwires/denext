@@ -20,3 +20,18 @@ Deno.test("API reference: signatures carry real parameter names and generic type
   assert(phantom.length === 0, `phantom params:\n${phantom.slice(0, 5).join("\n")}`);
   assert(barePromise.length === 0, `bare Promise:\n${barePromise.slice(0, 5).join("\n")}`);
 });
+
+Deno.test("API reference and llms-full.txt carry no terminal escape codes", async () => {
+  // `deno doc --json` once wrote colour codes into template-literal types' `repr`
+  // (`${\u001b[0m\u001b[38;5;12mContactTypes…`), and they were committed into both files.
+  for (const path of ["../site/app/docs/api/reference.json", "../site/public/llms-full.txt"]) {
+    const text = await Deno.readTextFile(new URL(path, import.meta.url));
+    const raw = text.indexOf("\x1b");
+    const escaped = text.indexOf("\\u001b");
+    assert(raw < 0, `${path}: an ESC byte at ${raw}: ${JSON.stringify(text.slice(raw, raw + 40))}`);
+    assert(
+      escaped < 0,
+      `${path}: an escaped ESC at ${escaped}: ${text.slice(escaped, escaped + 40)}`,
+    );
+  }
+});

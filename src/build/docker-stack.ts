@@ -186,6 +186,17 @@ export const STACK_ENV: readonly StackEnvVar[] = [
     when: () => true,
   },
   {
+    name: "DENEXT_CRASH_REPORT_URL",
+    about: "Opt-in crash reports: when the server's Deno panics it sends one JSON report " +
+      "here — an https:// endpoint, or a file:///absolute/path.jsonl inside the container. " +
+      "http:// is refused. Read when the process starts, never baked into the image; it often " +
+      "carries an ingest token. Check it with denext crash-report test. Empty: off.",
+    example: "",
+    required: false,
+    app: true,
+    when: () => true,
+  },
+  {
     name: "DENEXT_PUBLISHABLE_KEY",
     about: "@denext/backend supabase: the publishable (anon) API key, sb_publishable_….",
     generate: BACKEND_KEYS,

@@ -213,6 +213,24 @@ export function supportsPatchedDependencies(version: string): boolean {
   return compareDenoVersions(version, FIRST_PATCHED_DEPENDENCIES_RUNTIME) >= 0;
 }
 
+/**
+ * The first release of denext's Deno that sends opt-in crash reports from the CLI and `denort`
+ * (`DENEXT_CRASH_REPORT_URL`, `DENEXT_CRASH_REPORT_APP`, `DENEXT_CRASH_REPORT_SELFTEST`;
+ * Brainwires/deno DENEXT.md item 180).
+ */
+export const FIRST_CRASH_REPORT_RUNTIME = "3.0.0-denext.5";
+
+/**
+ * Whether denext's Deno of `version` sends crash reports (from
+ * {@linkcode FIRST_CRASH_REPORT_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A version of denext's Deno.
+ * @returns Whether it reads `DENEXT_CRASH_REPORT_URL`.
+ */
+export function supportsCrashReports(version: string): boolean {
+  return compareDenoVersions(version, FIRST_CRASH_REPORT_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

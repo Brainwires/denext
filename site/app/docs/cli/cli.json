@@ -260,6 +260,21 @@
       ]
     },
     {
+      "name": "crash-report",
+      "summary": "Check opt-in crash reports end to end (test)",
+      "usage": "denext crash-report [action]",
+      "description": "test: run denext's Deno toolchain with DENEXT_CRASH_REPORT_SELFTEST=1, which panics on\npurpose just after start-up and sends one report (kind \"selftest\") to\nDENEXT_CRASH_REPORT_URL (an https:// endpoint or a file:///absolute/path.jsonl). For a\nfile it shows the line written; an endpoint's answer is not read, so look for the report\nthere. Exits 1 when the URL is unset or refused, the runtime has no crash reports, or no\nreport was written. The URL's value is never printed.",
+      "flags": [],
+      "positionals": [
+        {
+          "name": "action",
+          "required": false,
+          "variadic": false,
+          "description": "test"
+        }
+      ]
+    },
+    {
       "name": "create",
       "summary": "Scaffold a new app",
       "usage": "denext create <dir> [options]",

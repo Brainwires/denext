@@ -52,7 +52,11 @@ export interface BoundedDenoResult {
 export interface BoundedDenoOptions {
   /** The working directory. */
   readonly cwd?: string;
-  /** Extra environment (a `DENO_LOG` here replaces {@linkcode DENO_CHILD_LOG}). */
+  /**
+   * Extra environment (a `DENO_LOG` here replaces {@linkcode DENO_CHILD_LOG}). Every child runs
+   * with `NO_COLOR=1`: `deno doc --json` otherwise writes ANSI colour codes into a type's `repr`
+   * even with its stdout piped.
+   */
   readonly env?: Record<string, string>;
   /** Each attempt's deadline in ms (default 120 s, or `DENEXT_CHILD_DEADLINE_MS`). */
   readonly deadlineMs?: number;
@@ -122,7 +126,7 @@ export async function boundedDeno(
             {
               args: [...args],
               cwd: options.cwd,
-              env: { DENO_LOG: DENO_CHILD_LOG, ...options.env },
+              env: { DENO_LOG: DENO_CHILD_LOG, NO_COLOR: "1", ...options.env },
               stdin: "null",
               stdout: "piped",
               stderr: "piped",

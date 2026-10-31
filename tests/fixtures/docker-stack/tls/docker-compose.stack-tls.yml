@@ -24,6 +24,7 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgres://${POSTGRES_APP_USER:-denext_app}:${POSTGRES_APP_PASSWORD:?set it in .env (see .env.example)}@db:5432/${POSTGRES_DB:-denext}
       DENEXT_ACTION_ID_SECRET: ${DENEXT_ACTION_ID_SECRET:-}
+      DENEXT_CRASH_REPORT_URL: ${DENEXT_CRASH_REPORT_URL:-}
       SITE_CERT: ${SITE_CERT:?set it in .env (see .env.example)}
       SITE_KEY: ${SITE_KEY:?set it in .env (see .env.example)}
       ORG_CERT: ${ORG_CERT:?set it in .env (see .env.example)}
@@ -56,6 +57,7 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_APP_USER:-denext_app}:${POSTGRES_APP_PASSWORD:?set it in .env (see .env.example)}@db:5432/${POSTGRES_DB:-denext}
       DENEXT_ACTION_ID_SECRET: ${DENEXT_ACTION_ID_SECRET:-}
+      DENEXT_CRASH_REPORT_URL: ${DENEXT_CRASH_REPORT_URL:-}
     depends_on:
       db-init:
         condition: service_completed_successfully
@@ -116,6 +118,7 @@ services:
     environment:
       DATABASE_URL: postgres://${POSTGRES_APP_USER:-denext_app}:${POSTGRES_APP_PASSWORD:?set it in .env (see .env.example)}@db:5432/${POSTGRES_DB:-denext}
       DENEXT_ACTION_ID_SECRET: ${DENEXT_ACTION_ID_SECRET:-}
+      DENEXT_CRASH_REPORT_URL: ${DENEXT_CRASH_REPORT_URL:-}
       DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
       DASHBOARD_APP_URL: http://web:3000
     healthcheck:
