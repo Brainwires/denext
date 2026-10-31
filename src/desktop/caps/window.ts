@@ -216,6 +216,13 @@ export interface WindowControllerOptions {
   readonly now?: () => number;
   /** The OS (tests; default the running one). */
   readonly os?: string;
+  /**
+   * The window was created as a layer-shell `overlay` (the main window with
+   * `desktop.window.overlay` on a runtime that reads it, the tray panel, an `overlay: true`
+   * window). Where the runtime has layer-shell such a window is placeable on Wayland: its position
+   * becomes the layer surface's margins, so `setPosition` is reported. Default: not one.
+   */
+  readonly overlay?: boolean;
 }
 
 /** What {@linkcode createWindowController} returns. */
@@ -313,8 +320,26 @@ function stateOf(win: BrowserWindowLike): Record<string, unknown> {
   };
 }
 
-/** What the window can do: the runtime's `windowCapabilities()`, else what the stock API has. */
+/**
+ * What the window can do: the runtime's `windowCapabilities()`, else what the stock API has. The
+ * runtime's report is app-wide and says `setPosition: false` on Wayland, where an ordinary window
+ * can't be placed; a layer-shell surface can (its position is the surface's margins), so a window
+ * created as an `overlay` reports `setPosition` where the runtime has `layerShell`.
+ */
 async function capabilitiesOf(
+  win: BrowserWindowLike | undefined,
+  api: DesktopAppApi | undefined,
+  overlay = false,
+): Promise<Record<string, boolean | string | null>> {
+  const caps = await reportedCapabilities(win, api);
+  if (overlay && caps.layerShell === true && typeof win?.setPosition === "function") {
+    caps.setPosition = true;
+  }
+  return caps;
+}
+
+/** The runtime's `windowCapabilities()` over what the stock API shows, plus denext's own. */
+async function reportedCapabilities(
   win: BrowserWindowLike | undefined,
   api: DesktopAppApi | undefined,
 ): Promise<Record<string, boolean | string | null>> {
@@ -756,7 +781,7 @@ function shareError(err: unknown): unknown {
 function windowStateMethods(s: WindowState): DesktopCapability["methods"] {
   const { win, api } = s;
   return {
-    capabilities: { handler: () => capabilitiesOf(win, api) },
+    capabilities: { handler: () => capabilitiesOf(win, api, s.options.overlay === true) },
     titleBarPreferences: {
       handler: () => titleBarPreferencesOf(api, s.options.os ?? Deno.build.os),
     },

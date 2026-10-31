@@ -132,7 +132,11 @@ export interface WindowCapabilities {
   readonly vibrancy: boolean;
   /** `normalBounds` tracks the bounds to return to. */
   readonly normalBounds: boolean;
-  /** {@linkcode setWindowPosition} / `setWindowBounds` can move the window (not on Wayland). */
+  /**
+   * {@linkcode setWindowPosition} / `setWindowBounds` can move the window: not on Wayland, except
+   * a window created as a layer-shell `overlay` where `layerShell` holds (its position is
+   * the layer surface's offset from the top-left of the display's area outside panels).
+   */
   readonly setPosition: boolean;
   /** {@linkcode onFileDrop} fires. */
   readonly fileDrop: boolean;
@@ -423,7 +427,11 @@ export async function setWindowSize(width: number, height: number): Promise<void
 }
 
 /**
- * Move the window's frame (see the module docs for the units).
+ * Move the window's frame (see the module docs for the units). On Wayland only a layer-shell
+ * `overlay` window moves (`setPosition` in {@linkcode windowCapabilities}): its position is its
+ * offset from the top-left corner of its display's area outside the panels that reserve space, as
+ * layer-shell margins; GDK reports the whole display as the work area there, so keep a margin
+ * from the edges a panel may be on.
  *
  * @param x Screen x of the frame's top-left corner.
  * @param y Screen y.

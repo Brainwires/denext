@@ -66,10 +66,11 @@ under Loopy instead.
 - `lib/window-setup.ts` + `lib/click-through.ts` — `denext/desktop/window`: `windowCapabilities()`
   first; a transparent background where the window is transparent; clicks through everywhere but
   Loopy, its bubble and its buttons (`setHitRegion` over their rectangles, else
-  `setIgnoreMouseEvents(true, { forward: true })` toggled over them, else nothing); where windows
-  can be placed (not Wayland), the bottom-right corner of the primary display's work area
-  (`getScreens()`); `makeWindowDraggable` on Loopy. Each step is skipped where it's unsupported, and
-  off desktop all of them are.
+  `setIgnoreMouseEvents(true, { forward: true })` toggled over them, else nothing); where the window
+  can be placed (`setPosition`: not on Wayland, except as a layer-shell overlay), the bottom-right
+  corner of the primary display's work area (`getScreens()`, `lib/placement.ts`);
+  `makeWindowDraggable` on Loopy. Each step is skipped where it's unsupported, and off desktop all
+  of them are.
 - `desktop.ts` + `inbox/` — after `runDesktop`, a second `Deno.serve` on `127.0.0.1` (port 47833,
   `LOOPY_PORT`, or a free one when it's taken) serves `POST /api/loopy/say` and pushes each message
   to the page with the runtime's `emit`. A button press comes back on the window's own origin
@@ -117,10 +118,12 @@ every workspace, left off the taskbar or kept from taking the focus:
 - **KDE Plasma and wlroots compositors** (Sway, Hyprland, …), with `libgtk-layer-shell0` installed
   (Kubuntu does not install it by default) and runtime 3.0.0-denext.7 or later: `overlay: true`
   makes Loopy a layer-shell surface, so it is on top, on every workspace, off the task manager and
-  never focused. It opens in the top-left corner (Loopy places itself only where
-  `windowCapabilities().setPosition` says windows can be placed). Before 3.0.0-denext.7 KWin also
-  draws a title bar around the frameless window, and Loopy opens at 800 × 600 on every Linux
-  desktop.
+  never focused. A layer surface can be placed (`windowCapabilities().setPosition` says so for it),
+  so Loopy goes to the bottom-right corner. GDK reports the whole display as the work area on
+  Wayland, so Loopy keeps 64 px clear of every edge (`WAYLAND_PANEL_INSET` in `lib/placement.ts`),
+  room for a taskbar it can't see, and counts its position from the display's top-left (a layer
+  surface's margins). Before 3.0.0-denext.7 Loopy is an ordinary window there, opens where KWin puts
+  it with a title bar around it, and at 800 × 600 on every Linux desktop.
 - **GNOME** (Mutter has no layer-shell): an ordinary window, where Mutter puts it, focused when it
   opens, under the windows you raise, on one workspace and in the dock.
 

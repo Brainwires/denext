@@ -24553,8 +24553,8 @@
           "slug": "setWindowPosition",
           "kind": "function",
           "signature": "setWindowPosition(x: number, y: number): Promise<void>",
-          "doc": "Move the window's frame (see the module docs for the units).",
-          "docFull": "Move the window's frame (see the module docs for the units).",
+          "doc": "Move the window's frame (see the module docs for the units). On Wayland only a layer-shell overlay window moves (setPosition in windowCapabilities): its position is its offset from the top-left corner of its display's area outside the panels that reserve space, as layer-shell margins; GDK reports the whole display as the work area there, so keep a margin from the edges a panel may be on.",
+          "docFull": "Move the window's frame (see the module docs for the units). On Wayland only a layer-shell\n`overlay` window moves (`setPosition` in {@linkcode windowCapabilities}): its position is its\noffset from the top-left corner of its display's area outside the panels that reserve space, as\nlayer-shell margins; GDK reports the whole display as the work area there, so keep a margin\nfrom the edges a panel may be on.",
           "params": [
             {
               "name": "x",

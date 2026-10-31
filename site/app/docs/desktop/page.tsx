@@ -2526,6 +2526,15 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
         is, opening at the click. GNOME has no layer-shell: there the window is an ordinary one the
         compositor places.
       </p>
+      <p>
+        A layer surface can be placed: <code>windowCapabilities().setPosition</code>{" "}
+        is true for an overlay window where <code>layerShell</code> is, and{" "}
+        <code>setWindowPosition(x, y)</code>{" "}
+        sets its offset from the top-left of the display&apos;s area outside the panels (the layer
+        surface&apos;s margins). GDK reports the whole display as the work area on Wayland, so keep
+        clear of the edges a taskbar may be on: a tray panel opened at a click keeps 64 px from each
+        edge of a display whose work area is the whole display.
+      </p>
       <h3 id="desktop-multi-window">More windows</h3>
       <p>
         <code>openWindow</code> opens another window of the app on one of its pages (Electron&apos;s

@@ -94,6 +94,8 @@ the menu has "Show panel"), and stock GNOME needs the AppIndicator extension (wi
 the main window is shown instead). On Wayland the panel stays on top, out of the task manager and
 where it is put only as a layer-shell surface: KDE Plasma and wlroots compositors with
 `libgtk-layer-shell0` installed, runtime 3.0.0-denext.7 or later; on GNOME it is an ordinary window.
-Before 3.0.0-denext.7 the panel opens at 800 × 600 on Linux (with a title bar on KDE). On a runtime
-before 3.0.0-denext.6 the Dock icon shows for a moment at launch and the tray's clicks carry no
-detail.
+GDK reports the whole display as the work area on Wayland, so the panel opened at a click keeps 64
+px clear of the display's edges (room for a taskbar denext can't see; a reported work area is used
+as it is). Before 3.0.0-denext.7 the panel opens at 800 × 600 on Linux (with a title bar on KDE). On
+a runtime before 3.0.0-denext.6 the Dock icon shows for a moment at launch and the tray's clicks
+carry no detail.

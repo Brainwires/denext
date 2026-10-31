@@ -209,3 +209,46 @@ export function placeTrayPanel(
     y: clamp(y, area.y, area.y + area.height - size.height),
   };
 }
+
+/**
+ * How far in from a display's edges a tray panel stays on Linux Wayland when the display's work
+ * area is unknown: GDK reports the whole display as the work area there, so a panel placed at a
+ * click in a bottom taskbar would reach into it (KDE Plasma's default panel is 44 px, plus its
+ * floating gap). Kept clear of a panel of up to this size on any edge.
+ */
+export const WAYLAND_PANEL_INSET = 64;
+
+/** Whether the work area is the whole display (nothing known about the panels on it). */
+function wholeDisplay(screen: PlacementScreen): boolean {
+  const b = screen.bounds;
+  const a = screen.workArea;
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+}
+
+/**
+ * The displays a tray panel is placed in. Where `guessPanels` (Linux Wayland, unless the runtime
+ * anchors a layer surface to the edge nearest its position, `layerShellEdgeAnchor`) a display
+ * whose work area is the whole display gets {@linkcode WAYLAND_PANEL_INSET} taken off each edge
+ * (at most a quarter of its size), so the panel keeps clear of a taskbar the session can't report.
+ * A work area the session does report is kept as it is.
+ *
+ * @param screens The displays (`Deno.desktop.screens()`).
+ * @param guessPanels Whether to keep clear of panels the session can't report.
+ * @returns The displays to place in.
+ */
+export function panelPlacementScreens(
+  screens: readonly PlacementScreen[],
+  guessPanels: boolean,
+): PlacementScreen[] {
+  if (!guessPanels) return [...screens];
+  return screens.map((s) => {
+    if (!wholeDisplay(s)) return s;
+    const b = s.bounds;
+    const dx = Math.min(WAYLAND_PANEL_INSET, Math.floor(b.width / 4));
+    const dy = Math.min(WAYLAND_PANEL_INSET, Math.floor(b.height / 4));
+    return {
+      ...s,
+      workArea: { x: b.x + dx, y: b.y + dy, width: b.width - 2 * dx, height: b.height - 2 * dy },
+    };
+  });
+}
