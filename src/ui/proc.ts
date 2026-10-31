@@ -9,6 +9,7 @@
 import { denoExecutable, frameworkFileUrl } from "../build/bundle.ts";
 import { isStandaloneBinary, nearestConfig, pinnedDenextCli } from "../cli/self-exec.ts";
 import { cliNpmModeArgs } from "../build/pnpm-workspace.ts";
+import { runsFromCheckout } from "../build/checkout-file.ts";
 import { drainUntilExit } from "../build/exited-output.ts";
 import { childExitGraceMs } from "../build/serial-child.ts";
 import { parseJsonDocument } from "./child-json.ts";
@@ -142,14 +143,17 @@ export function cliInvocation(options: CliInvocationOptions = {}): string[] {
 /**
  * The `--config` a CLI child needs to read the project's config: a remote CLI module discovers
  * none (an https URL) or the WORKING directory's (`jsr:`), which need not be the project. A local
- * checkout's `cli.ts` keeps discovering its own, as the process that spawned it did.
+ * checkout's `cli.ts` keeps discovering its own, as the process that spawned it did. A copy of the
+ * published package reached by path (under `vendor/jsr.io/` or `node_modules/`) has no config of
+ * its own: from there the child would discover whichever `deno.json` lies above the copy (a
+ * workspace root rather than the member), so it is told the project's too.
  *
  * @param module The child's CLI module ({@linkcode cliModule}).
  * @param dir The project the child acts on, when known.
  * @returns `["--config", <the project's deno.json>]`, or `[]`.
  */
 export function cliConfigArgs(module: string, dir: string | undefined): string[] {
-  if (dir === undefined || module.startsWith("file:")) return [];
+  if (dir === undefined || runsFromCheckout(module)) return [];
   const config = nearestConfig(dir);
   return config === null ? [] : ["--config", config];
 }

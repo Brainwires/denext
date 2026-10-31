@@ -3,7 +3,7 @@
 
 import { assertEquals } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
-import { checkoutFile } from "../src/build/checkout-file.ts";
+import { checkoutFile, runsFromCheckout } from "../src/build/checkout-file.ts";
 
 const CORPUS = "../../packages/docs-corpus/mod.ts";
 
@@ -89,4 +89,14 @@ Deno.test("checkoutFile: when the disk cannot tell, the location decides", async
       null,
     ]);
   });
+});
+
+Deno.test("runsFromCheckout: a checkout's file: module, not a published, vendored or npm-compat copy", () => {
+  assertEquals(runsFromCheckout("file:///work/denext/cli.ts"), true);
+  assertEquals(runsFromCheckout("file:///C:/work/denext/src/build/x.ts"), true);
+  assertEquals(runsFromCheckout("https://jsr.io/@denext/denext/9.9.9/cli.ts"), false);
+  assertEquals(runsFromCheckout("jsr:@denext/denext@9.9.9/cli"), false);
+  assertEquals(runsFromCheckout("file:///app/vendor/jsr.io/@denext/denext/9.9.9/cli.ts"), false);
+  assertEquals(runsFromCheckout("file:///C:/app/vendor/jsr.io/@denext/denext/9.9.9/"), false);
+  assertEquals(runsFromCheckout("file:///app/node_modules/@jsr/denext__denext/cli.js"), false);
 });

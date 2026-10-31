@@ -41,6 +41,15 @@ and this project adheres to
   that a vendored copy does not have, and failed. A module now reads the sibling package by path
   only when it runs from a real checkout (not under `vendor/jsr.io/` or `node_modules/`, and the
   file is there), and imports `@denext/docs-corpus` otherwise, as from JSR.
+- **A copy of denext reached by path is no longer taken for a checkout elsewhere either.** Three
+  more places read a `file:` framework URL as "a denext checkout", which a copy of the published
+  package under `vendor/jsr.io/…` (mapped by path) or JSR's npm compatibility layer
+  (`node_modules/`) is too. `denext build --compile` read the framework's repository `deno.json`
+  for its import map, which a copy does not carry; the CLI re-ran itself with a framework+app
+  config merged from that same missing file for a project with `npm:` imports; and `denext ui`
+  started its verb children without the project's `--config`, so a child discovered the config
+  above the copy (a workspace root rather than the member). All three now ask the same location
+  check the docs corpus uses, and treat a copy as the published package.
 - **Tailwind builds run on macOS 27 on Apple Silicon.** The pinned Tailwind v4.3.0 standalone
   binary for `macos-arm64` was killed at launch (exit 137, `Tailwind compile failed (137)`): it is
   a Bun-compiled executable whose ad-hoc code signature carries a wrong hash for the last page
