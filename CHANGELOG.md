@@ -17,6 +17,18 @@ and this project adheres to
   The package scripts now also set `LSUIElement` in the bundle's `Info.plist` (on the pinned
   runtime, which still switches to a Dock icon with `setActivationPolicy("regular")` for a full
   window).
+- **`alwaysOnTop: "status" | "pop-up-menu" | "screen-saver"` takes effect on macOS.** On runtime
+  3.0.0-denext.6 a window's `setAlwaysOnTop` is still the runtime's native method, which drops the
+  level, so `desktop.window.alwaysOnTop` and `setAlwaysOnTop(true, level)` from
+  `denext/desktop/window` left every window at the floating level (CGWindow layer 3 instead of 25
+  for `"status"`). denext now also sets the level through the runtime's own window-level op.
+- **A macOS tray with a menu and no panel opens the menu on a plain left click**, as an Electron
+  tray does (it opened only on a right or Control click). A panel, or a click handler in
+  `desktop.ts` (`runDesktop({ tray: { onClick } })`, the handle's `onClick`), keeps the left click;
+  Windows and Linux are unchanged.
+- **examples/hangar and examples/companion ship app icons** (`desktop.app.icons` for macOS, Linux
+  and Windows) instead of the generic one, and Hangar's page windows open with their own titles
+  ("Hangar — Images"), cascaded from the library window instead of exactly over it.
 
 ## [4.11.1] - 2026-10-31
 
