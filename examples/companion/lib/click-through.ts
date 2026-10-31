@@ -2,6 +2,16 @@
 // click-catching rectangles of Loopy, its bubble and its buttons. Pure (no denext or DOM APIs), so
 // it is unit-tested.
 
+/**
+ * The attribute that marks an element as catching clicks: Loopy itself, its bubble and its buttons.
+ * Only these take the mouse; the rest of the transparent window (the empty space above Loopy where
+ * no bubble is shown, the room beside it) lets clicks through to the window behind.
+ */
+export const HIT_ATTRIBUTE = "data-loopy-hit";
+
+/** The selector for {@linkcode HIT_ATTRIBUTE}. */
+export const HIT_SELECTOR = `[${HIT_ATTRIBUTE}]`;
+
 /** A rectangle in page CSS pixels. */
 export interface HitRect {
   readonly x: number;

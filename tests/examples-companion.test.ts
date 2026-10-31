@@ -28,7 +28,13 @@ import {
   SayError,
 } from "../examples/companion/lib/messages.ts";
 import { cornerPosition, primaryScreen } from "../examples/companion/lib/placement.ts";
-import { clickThroughPlan, hitRects, insideAny } from "../examples/companion/lib/click-through.ts";
+import {
+  clickThroughPlan,
+  HIT_ATTRIBUTE,
+  HIT_SELECTOR,
+  hitRects,
+  insideAny,
+} from "../examples/companion/lib/click-through.ts";
 import {
   readAloudOn,
   saveReadAloud,
@@ -289,6 +295,19 @@ Deno.test("loopy overlay: the click-catching rectangles, rounded outwards; empty
   assertEquals(insideAny(rects, 10, 20), true);
   assertEquals(insideAny(rects, 51, 20), false, "the right edge is outside");
   assertEquals(insideAny([], 0, 0), false);
+});
+
+// Found live on KDE Plasma: the hit region was the bubble's whole row and Loopy's whole row, so
+// the empty space above and beside Loopy caught clicks. Only Loopy, a shown bubble and the buttons
+// carry the mark (the page's markup is checked in tests/integration/example-companion.test.ts).
+Deno.test("loopy overlay: a shown bubble is marked as catching clicks", async () => {
+  assertEquals(HIT_SELECTOR, `[${HIT_ATTRIBUTE}]`);
+  const bubble = await renderToString(h(SpeechBubble, {
+    message: message(),
+    onAction: () => {},
+    onClose: () => {},
+  }));
+  assertMatch(bubble, new RegExp(`<div class="bubble"[^>]*${HIT_ATTRIBUTE}=`));
 });
 
 // ---------------------------------------------------------------- components

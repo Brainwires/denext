@@ -5,7 +5,7 @@
 // `denext/desktop/*`, which only the example's import map names. The unit tests are
 // tests/examples-companion.test.ts.
 
-import { assert, assertMatch, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { walk } from "@std/fs";
 import { runBounded } from "../helpers/bounded-command.ts";
@@ -24,6 +24,12 @@ Deno.test("examples/companion: exports Loopy's page, its client bundle and its s
   assertStringIncludes(html, "<title>Loopy</title>");
   assertMatch(html, /<svg class="loopy" data-state="hidden"[^>]*aria-label="Loopy"/);
   assertStringIncludes(html, 'href="/styles.css"');
+  // Only Loopy and its buttons catch clicks before a bubble opens; the empty bubble row and the
+  // room beside Loopy let them through (lib/window-setup.ts follows the marked elements).
+  const marked = [...html.matchAll(/<(\w+)([^>]*)>/g)]
+    .filter(([, , attrs]) => attrs.includes("data-loopy-hit"))
+    .map(([, tag, attrs]) => `${tag}.${/class="([^"]*)"/.exec(attrs)?.[1] ?? ""}`);
+  assertEquals(marked, ["div.squash", "nav.controls"]);
   const css = await Deno.readTextFile(join(outDir, "styles.css"));
   for (const state of ["appear", "blink", "think", "point", "celebrate", "dismiss"]) {
     assertStringIncludes(css, `[data-state="${state}"]`, `a ${state} move`);

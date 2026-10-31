@@ -84,16 +84,16 @@ function dragRegion(el: HTMLElement | null): () => void {
 function useDesktop(
   dispatch: Dispatch<CompanionEvent>,
   stageRef: RefObject<HTMLDivElement | null>,
-  catcherRefs: readonly RefObject<HTMLElement | null>[],
+  rootRef: RefObject<HTMLElement | null>,
 ): boolean {
   const [desktop, setDesktop] = useState(false);
   useEffect(() => {
     let alive = true;
     let unfollow = () => {};
     const enqueue = (message: LoopyMessage) => dispatch({ type: "enqueue", message });
-    // Clicks go through the transparent window everywhere but Loopy, its bubble and its buttons.
-    const catchers = catcherRefs.flatMap((r) => (r.current ? [r.current] : []));
-    setupWindow(catchers).then((setup) => {
+    // Clicks go through the transparent window everywhere but Loopy, its bubble and its buttons
+    // (the elements marked `data-loopy-hit` under the page's root, followed as they come and go).
+    setupWindow(rootRef.current).then((setup) => {
       if (!alive) return setup.stop();
       unfollow = setup.stop;
       setDesktop(setup.desktop);
@@ -152,14 +152,13 @@ function useReadAloud(message: LoopyMessage | undefined): [boolean, (on: boolean
 
 /** The speech bubble for the message on screen, if any. */
 function BubbleSlot(
-  { message, onFinish, slotRef }: {
+  { message, onFinish }: {
     message: LoopyMessage | undefined;
     onFinish: (message: LoopyMessage, actionId: string | null) => void;
-    slotRef: RefObject<HTMLDivElement>;
   },
 ) {
   return (
-    <div class="bubble-slot" ref={slotRef}>
+    <div class="bubble-slot">
       {message && (
         <SpeechBubble
           key={message.id}
@@ -188,18 +187,17 @@ function VoiceToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) =>
 
 /** Fold up / Call Loopy, the read-aloud toggle, and Quit on desktop. */
 function Controls(
-  { shown, desktop, readAloud, onReadAloud, onFold, onCall, navRef }: {
+  { shown, desktop, readAloud, onReadAloud, onFold, onCall }: {
     shown: boolean;
     desktop: boolean;
     readAloud: boolean;
     onReadAloud: (on: boolean) => void;
     onFold: () => void;
     onCall: () => void;
-    navRef: RefObject<HTMLElement>;
   },
 ) {
   return (
-    <nav class="controls" ref={navRef}>
+    <nav class="controls" data-loopy-hit="">
       <button type="button" onClick={shown ? onFold : onCall}>
         {shown ? "Fold up" : "Call Loopy"}
       </button>
@@ -227,9 +225,8 @@ export function Companion() {
   const [model, dispatch] = useReducer(companionReducer, INITIAL_COMPANION);
   const stageRef = useRef<HTMLDivElement>(null);
   const squashRef = useRef<HTMLDivElement>(null);
-  const slotRef = useRef<HTMLDivElement>(null);
-  const navRef = useRef<HTMLElement>(null);
-  const desktop = useDesktop(dispatch, stageRef, [stageRef, slotRef, navRef]);
+  const rootRef = useRef<HTMLElement>(null);
+  const desktop = useDesktop(dispatch, stageRef, rootRef);
   useTimedMoves(model.loopy, dispatch);
   const current = model.queue[0];
   const [readAloud, setReadAloud] = useReadAloud(current);
@@ -250,10 +247,10 @@ export function Companion() {
   };
 
   return (
-    <main class={`companion${desktop ? " is-desktop" : ""}`}>
-      <BubbleSlot message={current} onFinish={finish} slotRef={slotRef} />
+    <main class={`companion${desktop ? " is-desktop" : ""}`} ref={rootRef}>
+      <BubbleSlot message={current} onFinish={finish} />
       <div class="stage" ref={stageRef}>
-        <div class="squash" ref={squashRef}>
+        <div class="squash" ref={squashRef} data-loopy-hit="">
           <Loopy state={model.loopy.state} />
           {shown && <button type="button" class="poke" aria-label="Poke Loopy" onClick={poke} />}
         </div>
@@ -265,7 +262,6 @@ export function Companion() {
         onReadAloud={setReadAloud}
         onFold={foldUp}
         onCall={() => dispatch({ type: "show" })}
-        navRef={navRef}
       />
       {!desktop && <Demo onSay={enqueue} />}
     </main>
