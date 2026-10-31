@@ -691,7 +691,7 @@ The window: `denext/desktop/window` (no `desktop add`) — `maximizeWindow` / `m
 `setTitleBarStyle` / `setWindowButtonPosition` / `setWindowBackdrop` (Mica / Acrylic / vibrancy),
 `makeWindowDraggable(el)` for a hidden title bar (a double click does the user's title-bar action),
 `getTitleBarPreferences()` / `onTitleBarPreferencesChange` (the user's button side and order,
-double-click action, colour scheme — for an app-drawn title bar), `onCloseRequested(() => boolean)` (cancelable close),
+double-click action, colour scheme — for an app-drawn title bar), `onCloseRequested(({ reason }) => boolean)` (cancelable close; `reason` is `"close"` or `"quit"`, so a close-to-tray guard lets a quit through), `onBeforeQuit`,
 `closeWindow` / `quitApp`, `onFileDrop` (read-only picked handles) and
 `startFileDrag([{ directory: "cache", path } | { directory: { picked } }])`; first-window config is
 `desktop.window` / `titleBar` / `backdrop` / `minSize` / `maxSize`. All but size, position, title and
@@ -3103,7 +3103,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/desktop/window`
 
-- `type CloseRequestHandler = () => boolean | void | Promise<boolean | void>` — A close-request handler: return (or resolve) false to keep the window open.
+- `type BeforeQuitHandler = () => boolean | void | Promise<boolean | void>` — A before-quit handler: return (or resolve) false to keep the app running.
+- `type CloseReason = close | quit` — Why the window is asked to close: the user closed it, or the app is quitting.
+- `interface CloseRequestEvent` — What an onCloseRequested handler is told about the close.
+- `type CloseRequestHandler = (event: CloseRequestEvent) => boolean | void | Promise<boolean | void>` — A close-request handler: return (or resolve) false to keep the window open. A handler written as () => boolean still works; the event says why the window is closing.
 - `closeWindow(): Promise<void>` — Close the window now, without asking the onCloseRequested handlers. The app quits once its last window is gone, unless it is kept alive (desktop.app.keepAlive, a tray).
 - `currentWindowId(): Promise<string>` — The id of the window this page is in ("main" for the window the app started with, and where the runtime cannot tell windows apart).
 - `interface DesktopBridgeError` — A failed desktop bridge call. Narrow with isDesktopBridgeError.
@@ -3125,7 +3128,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `makeWindowDraggable(element: DraggableElement): () => void` — Make element a window drag region — what a page needs once the title bar is hidden (desktop.titleBar: "hidden"): pressing and dragging it moves the window, like the OS title bar, and a double click does what a double click on a title bar does for this user (TitleBarPreferences.doubleClick: maximize / restore, minimize, or nothing). Interactive children (buttons, links, inputs, [data-no-window-drag]) keep working.
 - `maximizeWindow(): Promise<void>` — Maximize the window (zoom on macOS). @returns Once requested (the OS may animate it).
 - `minimizeWindow(): Promise<void>` — Minimize the window. @returns Once requested.
-- `onCloseRequested(handler: CloseRequestHandler): () => void` — Ask before the window closes (its close button, Cmd+W / Alt+F4, or quitApp). While a handler is registered the runtime holds every close and calls the handlers; the window closes unless one returns (or resolves) false. A page that stops answering cannot keep the window open: a close requested again after 5 seconds without an answer goes through. Quitting from the macOS app menu (Cmd+Q) is not asked. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called and the window closes.
+- `onBeforeQuit(handler: BeforeQuitHandler): () => void` — Ask before the app quits (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu), like Electron's before-quit: the quit goes on unless a handler returns (or resolves) false. Plain closes of this window are not held. The before-quit handlers run before the onCloseRequested ones (which get reason: "quit"); a refusal here asks no close handler. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role is not asked. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called.
+- `onCloseRequested(handler: CloseRequestHandler): () => void` — Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu). The handler gets a CloseRequestEvent whose reason says which ("close" or "quit"), like Electron's before-quit + close pair: a close-to-tray window hides on a close and lets a quit through. While a handler is registered the runtime holds every close and calls the handlers; the window closes (or the quit goes on) unless one returns (or resolves) false. A page that stops answering cannot keep the window open: a close requested again after 5 seconds without an answer goes through. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role ends the app at once and is not asked. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called and the window closes.
 - `onDisplayChanged(handler: (screens: WindowScreen[]) => void): () => void` — Call handler with the displays whenever one is added, removed, rearranged or rescaled.
 - `onFileDrop(handler: (drop: FileDrop) => void): () => void` — Call handler when files or folders are dropped on the window, with a READ-ONLY handle for each (the dropped item is untrusted input: the page reads it through the handle, never by path). The page still gets its own DOM dragenter / dragover / drop events (with File objects, for a hover style); this is where the native handles are. Needs denext's pinned runtime (fileDrop in windowCapabilities).
 - `onTitleBarPreferencesChange(handler: (preferences: TitleBarPreferences) => void): () => void` — Call handler with the new preferences whenever the user changes them (moves the window buttons, picks another double-click action, colour scheme or accent colour). Needs runtime 2.9.7-denext.12; earlier the handler is never called.
@@ -3134,7 +3138,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `onWindowStateChange(handler: (state: WindowState) => void): () => void` — Call handler with the window's state whenever it is maximized, unmaximized, minimized, restored, or enters or leaves fullscreen.
 - `openWindow(options: OpenWindowOptions): Promise<DesktopWindowHandle>` — Open another window of the app on one of its pages (Electron's new BrowserWindow() + loadURL, Tauri's WebviewWindow): a settings window, a document, a frameless overlay. Its page is a page of the same app, with the same desktop capabilities (or the capabilities subset), and its denext/desktop/window calls act on itself. The app stays up while any window is open. At most 8 windows at once besides the main one and the tray panel.
 - `interface OpenWindowOptions` — The options of a window to open (openWindow).
-- `quitApp(): Promise<boolean>` — Quit the app, like Electron's app.quit(): the onCloseRequested handlers are asked first, so a guarded close keeps it running.
+- `quitApp(): Promise<boolean>` — Quit the app, like Electron's app.quit(): the onBeforeQuit handlers and then the onCloseRequested ones (with reason: "quit") of every guarded window are asked first, so a handler that answers false keeps it running.
 - `restoreWindow(): Promise<void>` — Bring the window back from minimized. @returns Once requested.
 - `setAlwaysOnTop(alwaysOnTop: boolean, level?: WindowLevel): Promise<void>` — Keep the window above other windows.
 - `setFullScreen(fullscreen: boolean): Promise<void>` — Enter or leave fullscreen.

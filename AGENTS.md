@@ -687,7 +687,7 @@ The window: `denext/desktop/window` (no `desktop add`) — `maximizeWindow` / `m
 `setTitleBarStyle` / `setWindowButtonPosition` / `setWindowBackdrop` (Mica / Acrylic / vibrancy),
 `makeWindowDraggable(el)` for a hidden title bar (a double click does the user's title-bar action),
 `getTitleBarPreferences()` / `onTitleBarPreferencesChange` (the user's button side and order,
-double-click action, colour scheme — for an app-drawn title bar), `onCloseRequested(() => boolean)` (cancelable close),
+double-click action, colour scheme — for an app-drawn title bar), `onCloseRequested(({ reason }) => boolean)` (cancelable close; `reason` is `"close"` or `"quit"`, so a close-to-tray guard lets a quit through), `onBeforeQuit`,
 `closeWindow` / `quitApp`, `onFileDrop` (read-only picked handles) and
 `startFileDrag([{ directory: "cache", path } | { directory: { picked } }])`; first-window config is
 `desktop.window` / `titleBar` / `backdrop` / `minSize` / `maxSize`. All but size, position, title and

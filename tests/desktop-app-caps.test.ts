@@ -754,6 +754,54 @@ Deno.test("app: trays — create, update, clicks and menu clicks, destroyed on a
   assertEquals(await codeOf(call(cap, "destroyTray", { id })), "validation");
 });
 
+Deno.test("app: a Windows tray menu draws the quit role as a Quit item that quits the app", async () => {
+  // Live test (Windows 11 Arm64): `{ role: "quit" }` in a tray menu was an empty row that did
+  // nothing (the runtime's Windows tray menu has no roles).
+  FakeTray.made = [];
+  let quits = 0;
+  const ctl = createAppController({
+    window: new EventTarget(),
+    api: { quit: () => (quits++, true) },
+    emit: () => {},
+    Tray: FakeTray,
+    os: "windows",
+  });
+  ctl.install();
+  const menu = [
+    { id: "show", label: "Show" },
+    "separator",
+    { role: "about" },
+    { label: "More", children: [{ role: "hide" }, { role: "Quit" }] },
+    { role: "quit" },
+  ];
+  const { id } = await call(ctl.capability, "createTray", { icon: PNG, menu }) as { id: string };
+  const tray = FakeTray.made[0];
+  const quitItem = { item: { label: "Quit", id: "denext:role:quit", enabled: true } };
+  assertEquals(tray.menu, [
+    { item: { label: "Show", id: "show", enabled: true } },
+    "separator",
+    { submenu: { label: "More", items: [quitItem] } },
+    quitItem,
+  ]);
+  click(tray, "denext:role:quit");
+  assertEquals(quits, 1);
+  assertEquals(await call(ctl.capability, "take"), [], "the page never hears it");
+  // An update keeps it so; the backend tray too.
+  await call(ctl.capability, "updateTray", { id, menu: [{ role: "quit" }] });
+  assertEquals(tray.menu, [quitItem]);
+  const backend = await ctl.createBackendTray({ icon: PNG, menu: [{ role: "quit" }] });
+  assert(!("reason" in backend));
+  assertEquals(FakeTray.made[1].menu, [quitItem]);
+  backend.update({ menu: [{ role: "about" }, { role: "quit" }] });
+  assertEquals(FakeTray.made[1].menu, [quitItem]);
+  click(FakeTray.made[1], "denext:role:quit");
+  assertEquals(quits, 2);
+  // Elsewhere the roles go to the runtime as they are.
+  const mac = appController("darwin");
+  await call(mac.cap, "createTray", { icon: PNG, menu: [{ role: "quit" }] });
+  assertEquals(FakeTray.made[0].menu, [{ role: { role: "quit" } }]);
+});
+
 Deno.test("app: badge, bounce and the Dock menu (macOS only)", async () => {
   const mac = appController("darwin");
   await call(mac.cap, "setBadge", { text: "3" });

@@ -2155,6 +2155,9 @@
     "startClerkMobileBrowserSignIn:function"
   ],
   "denext/desktop/window": [
+    "BeforeQuitHandler:typeAlias",
+    "CloseReason:typeAlias",
+    "CloseRequestEvent:interface",
     "CloseRequestHandler:typeAlias",
     "DesktopBridgeError:interface",
     "DesktopErrorCode:typeAlias",
@@ -2191,6 +2194,7 @@
     "makeWindowDraggable:function",
     "maximizeWindow:function",
     "minimizeWindow:function",
+    "onBeforeQuit:function",
     "onCloseRequested:function",
     "onDisplayChanged:function",
     "onFileDrop:function",

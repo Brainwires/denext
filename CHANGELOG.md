@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **A close handler knows whether the app is quitting, and `onBeforeQuit` asks before a quit.**
+  `onCloseRequested` handlers (`denext/desktop/window`) get an event whose `reason` is `"close"`
+  (the close button, Cmd+W / Alt+F4) or `"quit"` (`quitApp()`, `Deno.desktop.quit()`, a Windows
+  tray menu's Quit), Electron's `before-quit` + `close` pair: a close-to-tray window hides on a
+  close and lets a quit through, and the app quits once every guarded window lets it go (each is
+  asked once). A handler written as `() => boolean` keeps working. `onBeforeQuit(handler)` is
+  Electron's `before-quit`: asked on a quit only, before the close handlers, `false` keeps the app
+  running.
+
 ### Fixed
 
 - **Live views mount in the order a connection sends them.** A `defineLiveView` (or
@@ -18,6 +29,20 @@ and this project adheres to
   unmount or a closing socket cancels the mounts still waiting or running, and one mount holds
   the queue for at most `live.limits.renderTimeoutSeconds` before it is answered `failed`. The
   wire protocol is unchanged.
+
+- **A tray app's Quit no longer leaves it running when its main window closes to the tray.** A
+  close-to-tray guard refused every close, the quit's too, so Quit did nothing on Windows; the
+  guard now sees `reason: "quit"` and lets it go (the Hangar example does).
+
+- **A tray menu's `{ role: "quit" }` quits the app on Windows.** Windows' tray menu drew a role as
+  an empty row that did nothing, so a tray app's "Quit" was blank and dead there. On Windows the
+  quit role is now a "Quit" item that quits the app (`app.quit()`'s path: a guarded close still
+  holds it), and the roles only macOS has (`about`, `hide`, ...) are left out of a tray menu.
+- **`setActivationPolicy` shows and hides the main window's taskbar entry on Windows and Linux.**
+  `desktop.app.activationPolicy: "accessory"` hides the main window's taskbar entry at launch
+  there, but `setActivationPolicy("regular")` answered `false`, so a tray app's main window opened
+  with no taskbar entry. `"regular"` now shows it and `"accessory"` / `"prohibited"` hide it, from
+  `desktop.ts` (`app.setActivationPolicy`) and from a page (`denext/desktop/app`).
 
 ## [4.11.4] - 2026-10-31
 

@@ -2,8 +2,9 @@
  * The page's control over its own Deno Desktop window (`denext/desktop/window`): maximize,
  * minimize, fullscreen and their events, size and size limits, the displays, the title bar and
  * backdrop, the user's title bar preferences ({@linkcode getTitleBarPreferences}), a cancelable
- * close, quitting, files dragged in ({@linkcode onFileDrop}) and out
- * ({@linkcode startFileDrag}), and the OS share sheet ({@linkcode shareFromWindow}).
+ * close that knows whether the app is quitting, quitting ({@linkcode onBeforeQuit}), files dragged
+ * in ({@linkcode onFileDrop}) and out ({@linkcode startFileDrag}), and the OS share sheet
+ * ({@linkcode shareFromWindow}).
  *
  * Each call goes through the desktop runtime's `window` capability, which `runDesktop` registers
  * for every app (no `denext desktop add` needed). The basics (size, position, title, show / hide)
@@ -725,39 +726,117 @@ export function onDisplayChanged(handler: (screens: WindowScreen[]) => void): ()
   });
 }
 
-/** A close-request handler: return (or resolve) `false` to keep the window open. */
-export type CloseRequestHandler = () => boolean | void | Promise<boolean | void>;
+/** Why the window is asked to close: the user closed it, or the app is quitting. */
+export type CloseReason = "close" | "quit";
 
-/** The page's close handlers (the runtime guards the close while there is one). */
+/** What an {@linkcode onCloseRequested} handler is told about the close. */
+export interface CloseRequestEvent {
+  /**
+   * `"close"`: the window's close button, Cmd+W / Alt+F4. `"quit"`: the app is quitting
+   * ({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows tray menu), Electron's
+   * `before-quit` then `close`: a close-to-tray guard lets this one through.
+   */
+  readonly reason: CloseReason;
+}
+
+/**
+ * A close-request handler: return (or resolve) `false` to keep the window open. A handler written
+ * as `() => boolean` still works; the event says why the window is closing.
+ */
+export type CloseRequestHandler = (
+  event: CloseRequestEvent,
+) => boolean | void | Promise<boolean | void>;
+
+/** A before-quit handler: return (or resolve) `false` to keep the app running. */
+export type BeforeQuitHandler = () => boolean | void | Promise<boolean | void>;
+
+/** The page's close handlers (the runtime guards every close while there is one). */
 const closeHandlers = new Set<CloseRequestHandler>();
+/** The page's before-quit handlers (the runtime guards quits while there is one). */
+const quitHandlers = new Set<BeforeQuitHandler>();
 /** The close-request subscription, while there are handlers. */
 let closeSubscription: (() => void) | undefined;
+/** The guard the runtime was last asked for: off, quits only, or every close. */
+let guardMode: "off" | "quit" | "all" = "off";
 
-/** Ask every handler; the window closes unless one answers `false`. */
+/** Ask `handlers` in turn; `false` when one answers `false` (or throws). */
+async function askHandlers(
+  handlers: Iterable<() => boolean | void | Promise<boolean | void>>,
+  what: string,
+): Promise<boolean> {
+  let go = true;
+  for (const handler of [...handlers]) {
+    try {
+      if ((await handler()) === false) go = false;
+    } catch (err) {
+      console.error(`denext: an ${what} handler threw; keeping the window open`, err);
+      go = false;
+    }
+  }
+  return go;
+}
+
+/** Ask the handlers; the window closes (or the app quits) unless one answers `false`. */
 async function answerCloseRequest(data: unknown): Promise<void> {
   const id = (data as { id?: unknown } | null)?.id;
   if (typeof id !== "string") return;
   // The acknowledgement proves the page is alive; a replayed (stale) request is not current.
-  const ack = await desktopRpc<{ current?: unknown }>(CAP, "closeAck", { id }).catch(() => null);
+  const ack = await desktopRpc<{ current?: unknown; reason?: unknown }>(CAP, "closeAck", { id })
+    .catch(() => null);
   if (ack?.current !== true) return;
-  let close = true;
-  for (const handler of [...closeHandlers]) {
-    try {
-      if ((await handler()) === false) close = false;
-    } catch (err) {
-      console.error("denext: an onCloseRequested handler threw; keeping the window open", err);
-      close = false;
-    }
+  const event: CloseRequestEvent = { reason: ack.reason === "quit" ? "quit" : "close" };
+  // Electron's order: `before-quit` first, and a refusal there asks no window.
+  let close = event.reason === "quit" ? await askHandlers(quitHandlers, "onBeforeQuit") : true;
+  if (close) {
+    close = await askHandlers(
+      [...closeHandlers].map((handler) => () => handler(event)),
+      "onCloseRequested",
+    );
   }
   await desktopRpc(CAP, "closeRespond", { id, close }).catch(() => {});
 }
 
+/** Ask the runtime for the guard the registered handlers need (and follow its requests). */
+function syncCloseGuard(): void {
+  const mode = closeHandlers.size > 0 ? "all" : quitHandlers.size > 0 ? "quit" : "off";
+  if (mode === guardMode) return;
+  guardMode = mode;
+  if (mode === "off") {
+    closeSubscription?.();
+    closeSubscription = undefined;
+    desktopRpc(CAP, "setCloseGuard", { enabled: false }).catch(() => {});
+    return;
+  }
+  closeSubscription ??= subscribeDesktopEvent(CAP, "closeRequested", (data) => {
+    void answerCloseRequest(data);
+  });
+  const args = mode === "quit" ? { enabled: true, quitOnly: true } : { enabled: true };
+  desktopRpc(CAP, "setCloseGuard", args).catch(() => {});
+}
+
+/** Add `handler` to `set` and return its once-only removal, keeping the guard in step. */
+function registerGuardHandler<T>(set: Set<T>, handler: T): () => void {
+  set.add(handler);
+  syncCloseGuard();
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    set.delete(handler);
+    syncCloseGuard();
+  };
+}
+
 /**
- * Ask before the window closes (its close button, Cmd+W / Alt+F4, or {@linkcode quitApp}). While a
- * handler is registered the runtime holds every close and calls the handlers; the window closes
- * unless one returns (or resolves) `false`. A page that stops answering cannot keep the window
- * open: a close requested again after 5 seconds without an answer goes through. Quitting from the
- * macOS app menu (Cmd+Q) is not asked. Needs denext's pinned runtime (`closeGuard` in
+ * Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting
+ * ({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows tray menu). The handler
+ * gets a {@linkcode CloseRequestEvent} whose `reason` says which (`"close"` or `"quit"`), like
+ * Electron's `before-quit` + `close` pair: a close-to-tray window hides on a close and lets a quit
+ * through. While a handler is registered the runtime holds every close and calls the handlers; the
+ * window closes (or the quit goes on) unless one returns (or resolves) `false`. A page that stops
+ * answering cannot keep the window open: a close requested again after 5 seconds without an answer
+ * goes through. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role ends the
+ * app at once and is not asked. Needs denext's pinned runtime (`closeGuard` in
  * {@linkcode windowCapabilities}); elsewhere the handler is never called and the window closes.
  *
  * @param handler Return `false` to keep the window open (e.g. after a "Discard changes?" prompt).
@@ -766,27 +845,40 @@ async function answerCloseRequest(data: unknown): Promise<void> {
  * ```ts
  * import { onCloseRequested } from "denext/desktop/window";
  *
- * onCloseRequested(async () => !hasUnsavedChanges() || await confirmDiscard());
+ * // Close to the tray, but let the app quit.
+ * onCloseRequested(({ reason }) => {
+ *   if (reason === "quit") return true;
+ *   void hideWindow();
+ *   return false;
+ * });
  * ```
  */
 export function onCloseRequested(handler: CloseRequestHandler): () => void {
-  closeHandlers.add(handler);
-  if (closeHandlers.size === 1) {
-    closeSubscription = subscribeDesktopEvent(CAP, "closeRequested", (data) => {
-      void answerCloseRequest(data);
-    });
-    desktopRpc(CAP, "setCloseGuard", { enabled: true }).catch(() => {});
-  }
-  let active = true;
-  return () => {
-    if (!active) return;
-    active = false;
-    closeHandlers.delete(handler);
-    if (closeHandlers.size > 0) return;
-    closeSubscription?.();
-    closeSubscription = undefined;
-    desktopRpc(CAP, "setCloseGuard", { enabled: false }).catch(() => {});
-  };
+  return registerGuardHandler(closeHandlers, handler);
+}
+
+/**
+ * Ask before the app quits ({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows
+ * tray menu), like Electron's `before-quit`: the quit goes on unless a handler returns (or
+ * resolves) `false`. Plain closes of this window are not held. The before-quit handlers run before
+ * the {@linkcode onCloseRequested} ones (which get `reason: "quit"`); a refusal here asks no close
+ * handler. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role is not asked.
+ * Needs denext's pinned runtime (`closeGuard` in {@linkcode windowCapabilities}); elsewhere the
+ * handler is never called.
+ *
+ * @param handler Return `false` to keep the app running.
+ * @returns A function that unregisters the handler.
+ * @example
+ * ```ts
+ * import { onBeforeQuit } from "denext/desktop/window";
+ *
+ * onBeforeQuit(async () => {
+ *   await saveDraft();
+ * });
+ * ```
+ */
+export function onBeforeQuit(handler: BeforeQuitHandler): () => void {
+  return registerGuardHandler(quitHandlers, handler);
 }
 
 /**
@@ -800,10 +892,12 @@ export async function closeWindow(): Promise<void> {
 }
 
 /**
- * Quit the app, like Electron's `app.quit()`: the {@linkcode onCloseRequested} handlers are asked
- * first, so a guarded close keeps it running.
+ * Quit the app, like Electron's `app.quit()`: the {@linkcode onBeforeQuit} handlers and then the
+ * {@linkcode onCloseRequested} ones (with `reason: "quit"`) of every guarded window are asked
+ * first, so a handler that answers `false` keeps it running.
  *
- * @returns `true` when the app is quitting, `false` when the close is held (the handlers decide).
+ * @returns `true` when the app is quitting at once, `false` when a guarded window holds the quit
+ *   (its handlers decide; the app quits once they let it go).
  */
 export async function quitApp(): Promise<boolean> {
   const out = await desktopRpc<{ quitting?: unknown }>(CAP, "quit", {});
