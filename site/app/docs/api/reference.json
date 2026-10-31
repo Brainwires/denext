@@ -50388,7 +50388,7 @@
           "kind": "variable",
           "signature": "EXPO_SHIMS: Readonly<Record<string, ExpoShim>>",
           "doc": "Every expo-* package React Native mode aliases, by package name. A key with a subpath (expo-file-system/legacy) is a shim for that subpath of the package; its entrypoint is the package's shim name plus the subpath (denext/expo/file-system/legacy). A scoped package is shimmed per subpath only (@expo/ui/swift-ui → denext/expo/ui/swift-ui).",
-          "docFull": "Every `expo-*` package React Native mode aliases, by package name. A key with a subpath\n(`expo-file-system/legacy`) is a shim for that subpath of the package; its entrypoint is\nthe package's shim name plus the subpath (`denext/expo/file-system/legacy`). A scoped\npackage is shimmed per subpath only (`@expo/ui/swift-ui` → `denext/expo/ui/swift-ui`).",
+          "docFull": "Every `expo-*` package React Native mode aliases, by package name. A key with a subpath\n(`expo-file-system/legacy`) is a shim for that subpath of the package; its entrypoint is the\npackage's shim name plus the subpath (`denext/expo/file-system/legacy`). A scoped package is\nshimmed per subpath only (`@expo/ui/swift-ui` → `denext/expo/ui/swift-ui`).",
           "params": [],
           "returns": "",
           "examples": [],
