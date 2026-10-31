@@ -8,6 +8,16 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **Capacitor 8.6.0.** `denext create --capacitor`, `denext migrate --enable-capacitor` and
+  `--from expo` pin `@capacitor/core`, `cli`, `ios` and `android` to `8.6.0` (was `8.5.2`), now
+  that it has cleared Deno's two-day dependency-age hold; the Capacitor examples move with them
+  (`package.json`, `deno.lock`, `package-lock.json` and the iOS Swift package pin). Its
+  `@capacitor/cli` takes `xcode` 4, which drops `uuid` 7.0.3
+  ([GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq), moderate) from
+  `examples/clerk`, `mobile`, `native-views` and `expo-app`.
+
 ### Fixed
 
 - **Tailwind builds run on macOS 27 on Apple Silicon.** The pinned Tailwind v4.3.0 standalone
@@ -19,12 +29,14 @@ and this project adheres to
   the binary's ad-hoc signature before caching it, the change `codesign --force --sign -` would
   make, done in place so the result is pinned as well; a binary an older denext cached is
   verified against the release pin and repaired on its next use, with no new download.
+
 - **The migration beds keep a dependency-age hold on npm.** They ran every command with
   `DENEXT_MIN_DEP_AGE=0`, so a bed's build could resolve an npm release published minutes before
   and fail on a tarball the registry did not serve yet (`tslib` 2.9.1). The migrated app's
   `deno.json` now carries `minimumDependencyAge: { age: "P1D", exclude: ["jsr:@denext/*"] }`: a
   day's hold on everything but the `@denext` packages a release has just published, which the
   checkout under test pins.
+
 - **`denext mcp`'s docs search works from a checkout in the day after a release.** Run from a
   checkout of the denext repository outside its workspace (CI running the checkout's CLI from
   another directory, an app that links a checkout by path), `denext_search_docs`,
@@ -45,15 +57,13 @@ and this project adheres to
   is parsed into the same namespaces, an SVG element closing with `/>`. Events fire on SVG
   elements like any other.
 
-### Changed
-
-- **Capacitor 8.6.0.** `denext create --capacitor`, `denext migrate --enable-capacitor` and
-  `--from expo` pin `@capacitor/core`, `cli`, `ios` and `android` to `8.6.0` (was `8.5.2`), now
-  that it has cleared Deno's two-day dependency-age hold; the Capacitor examples move with them
-  (`package.json`, `deno.lock`, `package-lock.json` and the iOS Swift package pin). Its
-  `@capacitor/cli` takes `xcode` 4, which drops `uuid` 7.0.3
-  ([GHSA-w5hq-g745-h8pq](https://github.com/advisories/GHSA-w5hq-g745-h8pq), moderate) from
-  `examples/clerk`, `mobile`, `native-views` and `expo-app`.
+- **TanStack Router route splitting works on a project reached through a Windows 8.3 short path.**
+  With `spa.tanstackRouter: { autoCodeSplitting: true }`, a project opened as
+  `C:\Users\LONGNA~1\…` (a short-name `TEMP`, or a working directory a tool handed over in that
+  form) built with every route in the startup chunk: esbuild names each module by the path it was
+  reached through, while the route generator keys its routes by the real, long path, so no route
+  file matched. Every module is now compared, and handed to the splitter, by its real path (8.3
+  names expanded, symlinks resolved), on both sides.
 
 ## [4.10.4] - 2026-10-31
 
