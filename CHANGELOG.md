@@ -10,6 +10,12 @@ and this project adheres to
 
 ### Fixed
 
+- **An empty `APPDATA` (or `HOME`, `XDG_DATA_HOME`, ...) no longer puts a desktop app's data in a
+  relative folder.** The per-user folder lookup (the `fs` / `sqlite` roots, the updater's data
+  dir) treated an empty or whitespace-only variable as set, so Windows resolved the data root to
+  `<id>`; such a value now counts as unset and falls back (`~\AppData\Roaming`,
+  `~/.local/share`), as the runtime's `$DENO_DESKTOP_DATA` does. The lookup also no longer tries a
+  lowercase spelling the runtime does not read (the updater's proxy variables still do).
 - **`desktop.update.hosts` entries are checked like every other baked permission list.** The
   config validator and the package scripts' flag derivation refuse an entry that is not one host
   (`"cdn.example.net,0.0.0.0"` would have baked two, a URL or an empty string is no host) and a
