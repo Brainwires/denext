@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Crash reports from denext's side.** Runtime `3.0.0-denext.5` sends opt-in crash reports
+  (`DENEXT_CRASH_REPORT_URL`); denext now wires them up. The generated Docker stack lists
+  `DENEXT_CRASH_REPORT_URL` (empty) in `.env.example` and passes it to the app and migration
+  containers. `denext doctor` warns when the variable is set to a URL the runtime ignores
+  (`http:`, a `file://` URL with a host, not a URL) or when the running Deno sends no reports
+  (stock Deno, or a runtime older than `3.0.0-denext.5`). The new `denext crash-report test` runs
+  the toolchain's self-test (`DENEXT_CRASH_REPORT_SELFTEST=1`), which panics on purpose and sends
+  one report, and shows the line written to a `file:` URL. denext's CLI hops hand
+  `DENEXT_CRASH_REPORT_APP=denext@<version>` to the Deno they re-run on, unless it is already set.
+  None of these print the URL's value, which may carry an ingest token. Guide:
+  [Crash reports](https://denext.dev/docs/deployment-targets#crash-reports).
+
 ### Changed
 
 - **Capacitor 8.6.0.** `denext create --capacitor`, `denext migrate --enable-capacitor` and
