@@ -29,7 +29,18 @@ function has(tool: string, args: string[]): boolean {
 
 /** Run `cmd` to completion; a failure throws with its output. */
 async function run(cmd: string, args: string[], cwd?: string): Promise<string> {
-  const out = await new Deno.Command(cmd, { args, cwd, stdout: "piped", stderr: "piped" }).output();
+  // swift build clones its packages with git; a pre-push hook's GIT_* would point those at this repo.
+  const env = Object.fromEntries(
+    Object.entries(Deno.env.toObject()).filter(([name]) => !name.startsWith("GIT_")),
+  );
+  const out = await new Deno.Command(cmd, {
+    args,
+    cwd,
+    env,
+    clearEnv: true,
+    stdout: "piped",
+    stderr: "piped",
+  }).output();
   const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
   if (!out.success) throw new Error(`${cmd} ${args.join(" ")} failed:\n${text}`);
   return text;
