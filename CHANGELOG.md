@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.7] - 2026-11-01
+
 ## [4.11.6] - 2026-11-01
 
 ### Changed
@@ -17,6 +19,8 @@ and this project adheres to
 
 ### Fixed
 
+- **examples/hangar finds its VM library on Windows.** Windows sets no `HOME`, so the library folder
+  fell back to `/VMs`; it now defaults to `%USERPROFILE%\VMs`.
 - **`desktop.window.overlay` and tray panels work on Linux Wayland.** On KDE Plasma and wlroots
   compositors with gtk-layer-shell, the window an app starts with can now be a layer-shell overlay
   (on top, on every workspace, off the task manager, unfocused), and a tray panel is one too,
@@ -30,6 +34,16 @@ and this project adheres to
   and spun at 100% CPU; `libdenort.so` now binds its own symbols to itself.
 - **`deno doc --json` and `--html` carry no ANSI color escapes** on denext's Deno, whether or not
   `NO_COLOR` is set.
+- **`denext dev --lan` on a machine with several networks binds the one with the default route.**
+  It picked by interface name, so a Mac online over Wi-Fi (`en1`) that had another network on its
+  Ethernet (`en0`) printed a URL no phone on the Wi-Fi could open. `denext mobile dev --lan` and
+  `denext desktop dev --lan` pick the same way. A VPN holding the default route is passed over, and
+  the name order remains the fallback.
+- **`denext dev` no longer reloads or restarts its first render for files written before it
+  started.** On macOS a new file watch replays recent history, and the project-wide watcher (SPA
+  mode's too) took that as a platform file or folder being created: a new generation in the middle
+  of the first render could leave a page without its islands' script, and an open page reloaded for
+  nothing.
 
 ### Security
 
@@ -20567,7 +20581,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.6...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.7...development
+[4.11.7]: https://jsr.io/@denext/denext@4.11.7
 [4.11.6]: https://jsr.io/@denext/denext@4.11.6
 [4.11.5]: https://jsr.io/@denext/denext@4.11.5
 [4.11.4]: https://jsr.io/@denext/denext@4.11.4

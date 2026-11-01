@@ -6,8 +6,8 @@
     ".": "./mod.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^4.11.6",
-    "@denext/denext/plugin-kit": "jsr:@denext/denext@^4.11.6/plugin-kit",
+    "@denext/denext": "jsr:@denext/denext@^4.11.7",
+    "@denext/denext/plugin-kit": "jsr:@denext/denext@^4.11.7/plugin-kit",
     "@std/path": "jsr:@std/path@^1.0.0"
   },
   "denext": {

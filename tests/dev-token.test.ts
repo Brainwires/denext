@@ -242,13 +242,49 @@ Deno.test("desktop dev proxy: the token in the dev URL goes upstream as a header
   assertEquals(devProxyTokenHeaders("http://localhost:3000"), {});
 });
 
-const LAN = (() => {
+/**
+ * An address of this machine a socket really reaches: the one `--lan` picks, else any other
+ * non-loopback IPv4. An interface having an address says nothing about that: with the macOS
+ * firewall's "Block all incoming connections" the kernel completes the handshake and then closes
+ * the connection, on every address, whatever the bind (a machine that refuses its LAN peers).
+ */
+async function reachableLanAddress(): Promise<string | null> {
+  let candidates: string[];
   try {
-    return pickLanAddress();
+    const all = Deno.networkInterfaces().filter((i) => i.family === "IPv4").map((i) => i.address)
+      .filter((a) => !a.startsWith("127.") && !a.startsWith("169.254."));
+    candidates = [...new Set([pickLanAddress(), ...all].filter((a) => a !== null))];
   } catch {
     return null;
   }
-})();
+  const server = Deno.serve(
+    { hostname: "0.0.0.0", port: 0, onListen: () => {} },
+    () => new Response("ok"),
+  );
+  try {
+    const port = (server.addr as Deno.NetAddr).port;
+    for (const address of candidates) {
+      try {
+        const res = await fetch(`http://${address}:${port}/`, {
+          signal: AbortSignal.timeout(2000),
+        });
+        await res.body?.cancel();
+        return address;
+      } catch { /* refused here: try the next */ }
+    }
+    return null;
+  } finally {
+    await server.shutdown();
+  }
+}
+
+const LAN = await reachableLanAddress();
+if (LAN === null) {
+  console.warn(
+    "tests/dev-token.test.ts: skipping the two LAN socket tests: no non-loopback address of this " +
+      "machine accepts a connection (no network, or a firewall blocking all incoming).",
+  );
+}
 
 Deno.test({
   name:

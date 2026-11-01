@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.11.6**; 4.x patch and minor releases are cut from
+> The current release is denext **4.11.7**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 >
 > Two parts: **Before 5.0** is the work the 5.0 gate waits on (an item stays here until its branch
