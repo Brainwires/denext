@@ -1,7 +1,7 @@
 // How the CLI re-runs ITSELF in a child `deno run` (the CSS import-map re-exec and the
 // server-side-npm re-exec), for a local checkout, a JSR / https install, or a compiled binary.
 
-import { dirname, fromFileUrl, join, relative, resolve } from "@std/path";
+import { dirname, fromFileUrl, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
 import { workspaceSelects } from "../build/workspace-globs.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { type DenoToolchainChoice, TOOLCHAIN_ACTIVE_ENV } from "../build/deno-toolchain.ts";
@@ -74,6 +74,49 @@ interface DenoConfig {
   workspace?: unknown;
 }
 
+/** The most of a config or import map the pin lookup reads, in bytes. */
+const MAX_CONFIG_BYTES = 8 * 1024 * 1024;
+
+/**
+ * `path`'s text when it is a regular file of a sane size, else null. A repository names these
+ * paths: `/dev/zero` would never finish reading and a FIFO would never start.
+ */
+function readRegularFile(path: string): string | null {
+  try {
+    const info = Deno.statSync(path);
+    return info.isFile && info.size <= MAX_CONFIG_BYTES ? Deno.readTextFileSync(path) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the import map at `path` belongs to the project of the config in `configDir`: every
+ * symlink resolved, it lies in the repository holding that config (the directory with `.git`),
+ * or under the config's own directory outside a repository. A repository's `deno.json` may name
+ * any path, and the pin lookup runs in this process before anything is trusted.
+ */
+function importMapIsContained(configDir: string, path: string): boolean {
+  let root = configDir;
+  for (let at = configDir, i = 0; i < WORKSPACE_WALK_LIMIT; i++) {
+    if (isGitRoot(at)) {
+      root = at;
+      break;
+    }
+    const parent = dirname(at);
+    if (parent === at) break;
+    at = parent;
+  }
+  try {
+    const real = Deno.realPathSync(path);
+    const from = Deno.realPathSync(root);
+    const rel = relative(from, real);
+    return rel !== ".." && !rel.startsWith(`..${SEPARATOR}`) && !isAbsolute(rel);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Read and parse `dir`'s `deno.json` (else `deno.jsonc`) — comments and trailing commas
  * allowed in either, as Deno allows them. `undefined` when there is no config, `null` when it
@@ -82,12 +125,8 @@ interface DenoConfig {
 function readConfig(dir: string): { config: DenoConfig; path: string } | null | undefined {
   for (const name of CONFIG_NAMES) {
     const path = join(dir, name);
-    let source: string;
-    try {
-      source = Deno.readTextFileSync(path);
-    } catch {
-      continue;
-    }
+    const source = readRegularFile(path);
+    if (source === null) continue;
     try {
       const data = parseJsonc(source);
       return typeof data === "object" && data !== null
@@ -126,9 +165,12 @@ function pinOfConfig(config: DenoConfig, configPath: string): string | null {
   const own = denextImport(config.imports);
   if (own !== null) return own;
   if (typeof config.importMap !== "string") return null;
+  const path = resolve(dirname(configPath), config.importMap);
+  if (!importMapIsContained(dirname(configPath), path)) return null;
+  const source = readRegularFile(path);
+  if (source === null) return null;
   try {
-    const map = parseJsonc(Deno.readTextFileSync(resolve(dirname(configPath), config.importMap)));
-    return denextImport((map as { imports?: unknown } | null)?.imports);
+    return denextImport((parseJsonc(source) as { imports?: unknown } | null)?.imports);
   } catch {
     return null; // a missing or malformed import map pins nothing
   }

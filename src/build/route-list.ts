@@ -7,7 +7,7 @@
 // the routes never runs project code and works without a dev server or a build.
 
 import { relative } from "@std/path";
-import { resolveProject } from "./paths.ts";
+import { resolveProjectLayout } from "./paths.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import type { Segment } from "../router/segments.ts";
 
@@ -81,7 +81,7 @@ async function methodsOf(file: string): Promise<string[]> {
  * @returns Its pages and API routes.
  */
 export async function collectRoutes(dir: string): Promise<RouteList> {
-  const paths = await resolveProject(dir);
+  const paths = await resolveProjectLayout(dir);
   const manifest = await scanRoutes(paths.appDir);
   const rel = (file: string) => relative(paths.projectDir, file).replaceAll("\\", "/");
   return {

@@ -15,6 +15,23 @@ and this project adheres to
 
 ### Security
 
+- **Inspecting a project no longer runs its `denext.config.*`.** `denext routes`, `denext info`,
+  `denext generate` (`--dry-run` included), `denext desktop doctor`, `denext desktop add` and the
+  `denext_list_routes`, `denext_route_map`, `denext_generate` and codebase MCP tools imported the
+  config with every permission the CLI held, although `routes` said it ran no project code. So did
+  `denext ui`'s Generate preview and Setup scaffold, in the UI's own process, which the docs said
+  never happens. They now read the project's files: `info` reports `mode` as the config writes it
+  (`unknown` when code computes it), and `desktop doctor` checks the launch policy from a `desktop`
+  key written as data, with a warning when code computes it.
+- **The docs' `deno run jsr:@denext/denext/cli migrate` commands take `--no-config`.** Deno applies
+  the working directory's `deno.json`, `package.json` and `.npmrc` to that CLI before any of its code
+  runs, so on a hostile repository the documented `migrate --check` line ran the repository's module
+  in the CLI with `--allow-run`, and a `.npmrc` chose the registry for the CLI's npm dependencies. An
+  installed `denext` isn't affected. The security guide now lists which verbs run a project's code.
+- **The pin lookup of a compiled `denext` stays in the repository.** It followed a `deno.json`'s
+  `importMap` to any path on the machine, in the parent process. A map outside the repository (by a
+  relative path, an absolute one or a link) now pins nothing, and a device or FIFO named as a config
+  or map, which hung the CLI, is ignored.
 - **The `next.config.*` evaluator no longer acts on the project's `deno.json`.** `denext migrate`,
   `denext migrate --check` and `denext ui`'s Next config panel evaluate an untrusted project's config
   in a sandboxed child, but Deno read the project's `deno.json` (or one in a directory above it) for

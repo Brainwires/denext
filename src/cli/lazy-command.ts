@@ -10,13 +10,21 @@
 import type { CommandRegistry, CommandSpec } from "./command.ts";
 
 /** The data half of a {@linkcode CommandSpec} (everything but its functions and `source`). */
-export type CommandMeta = Omit<CommandSpec, "run" | "moduleDir" | "locks" | "source">;
+export type CommandMeta = Omit<
+  CommandSpec,
+  "run" | "moduleDir" | "inspectsOnly" | "locks" | "source"
+>;
 
 /** Load the full spec of a verb (bound to `registry` where the verb enumerates it). */
 export type CommandLoader = (registry: CommandRegistry) => Promise<CommandSpec>;
 
 /** The spec keys that are functions, filled in only by the loaded implementation. */
-export const COMMAND_FUNCTION_KEYS: readonly string[] = ["run", "moduleDir", "locks"];
+export const COMMAND_FUNCTION_KEYS: readonly string[] = [
+  "run",
+  "moduleDir",
+  "inspectsOnly",
+  "locks",
+];
 
 /** The spec keys the table carries, in the order it writes them. */
 export const COMMAND_META_KEYS: readonly (keyof CommandMeta)[] = [
