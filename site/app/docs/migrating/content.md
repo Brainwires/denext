@@ -67,8 +67,14 @@ never finishes is killed after 15 seconds (`DENEXT_NEXT_EVAL_TIMEOUT_MS` changes
 evaluator is also killed when the `migrate` that started it dies:
 
 ```sh
-deno run --allow-read --allow-env --allow-run --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
+deno run --no-config --allow-read --allow-env --allow-run --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
 ```
+
+`--no-config` matters on a repository you don't trust: `deno run` applies the working directory's
+`deno.json`, `package.json` and `.npmrc` to the CLI itself before any of its code runs, so without
+the flag a repository's import map or registry can replace a module of the CLI, which then holds
+the permissions you granted (`--allow-run` starts any program). An installed `denext` doesn't read
+them. See [Running denext on a repository you don't trust](/docs/security#untrusted-repositories).
 
 [Fixed in denext](/docs/fixed) lists problems on Next.js, React, Vite and React Native stacks
 that denext handles, each with the test that proves it.
@@ -174,7 +180,7 @@ confirmation prompt), or run the standalone `denext codemod` later.
 > [!NOTE]
 > Migrating a project that already has `node_modules` installed (most real
 > apps) with the CLI run through `deno run`? Add `--node-modules-dir=none` to it:
-> `deno run --node-modules-dir=none -A jsr:@denext/denext/cli migrate`. Without
+> `deno run --no-config --node-modules-dir=none -A jsr:@denext/denext/cli migrate`. Without
 > it, Deno runs in manual-`node_modules` mode and can't resolve the CLI's own
 > build dependencies. (Your app's `node_modules` is untouched either way — the
 > compat layer still loads your npm React libraries from it.) In a pnpm

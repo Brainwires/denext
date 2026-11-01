@@ -103,7 +103,10 @@ curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
         With Deno 2.9+ installed, every command on this page also works without the binary — replace
         {" "}
         <code>denext</code> with <code>deno run -A jsr:@denext/denext/cli</code>, and{" "}
-        <code>denext task</code> with <code>deno task</code>.
+        <code>denext task</code> with <code>deno task</code>. Deno applies the working directory's
+        {" "}
+        <code>deno.json</code> to that CLI, so add <code>--no-config</code>{" "}
+        on a repository you don't trust.
       </p>
       <p>
         The installer downloads the release archive for your platform (<code>

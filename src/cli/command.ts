@@ -178,6 +178,12 @@ export interface CommandSpec {
    */
   readonly moduleDir?: (ctx: CommandContext) => string;
   /**
+   * Whether this invocation of a {@linkcode loadsModules} verb loads no user modules (an action
+   * that only inspects the project), so it runs without `.env` loading and the re-execs, which
+   * import the project's config.
+   */
+  readonly inspectsOnly?: (ctx: CommandContext) => boolean;
+  /**
    * The project directories this invocation writes or reads, locked Cargo-style for the whole
    * of {@linkcode run} (OS file locks in `.denext/`; a second invocation prints `Blocking
    * waiting for file lock on build directory .denext` and waits). Return `undefined` for an
