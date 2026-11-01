@@ -722,7 +722,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   and drops; keep-awake holds and global shortcuts are released only by the main window's reload.
   A runtime without window bindings treats every page as the main window's.
 - **Window and menu features differ per OS and backend** (title-bar styles and the Dock menu are
-  macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held before runtime 3.0.0-denext.8 (from it, a quit is held only up to a deadline, and macOS takes no input while a session end is pending); a badge is a
+  macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held before runtime 3.0.0-denext.8 (from it, a quit is held only up to a deadline, macOS takes no input while a session end is pending, and macOS ignores an accessory app's refusal of a logout); a badge is a
   window-title prefix on Windows, and on Linux too unless a dock reads launcher badges). Ask
   `windowCapabilities()` and `appCapabilities()`.
 - **macOS can hand your deep-link scheme to another app;** denext requires PKCE S256 and an exact

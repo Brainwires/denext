@@ -1058,7 +1058,7 @@ function windowCloseAndDragMethods(s: WindowState): DesktopCapability["methods"]
         s.pending = undefined;
         if (a.close !== true) {
           // A refused quit is over: the next one asks every page again. A session end the OS
-          // is still holding for this answer stops too (runtime 3.0.0-denext.8; a no-op once
+          // is still holding for this answer is asked to stop too (runtime 3.0.0-denext.8; a no-op once
           // the runtime's deadline passed, or when no session end is held).
           if (pending.reason === "quit") {
             quitStateOf(s.api).approved.clear();

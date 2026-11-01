@@ -687,7 +687,7 @@ The window: `denext/desktop/window` (no `desktop add`) — `maximizeWindow` / `m
 `setTitleBarStyle` / `setWindowButtonPosition` / `setWindowBackdrop` (Mica / Acrylic / vibrancy),
 `makeWindowDraggable(el)` for a hidden title bar (a double click does the user's title-bar action),
 `getTitleBarPreferences()` / `onTitleBarPreferencesChange` (the user's button side and order,
-double-click action, colour scheme — for an app-drawn title bar), `onCloseRequested(({ reason }) => boolean)` (cancelable close; `reason` is `"close"` or `"quit"`, so a close-to-tray guard lets a quit through), `onBeforeQuit` (from runtime 3.0.0-denext.8 both are asked about the OS's quits too: Cmd+Q, a logout, Windows's session end, bounded by a deadline; macOS takes no input while a session end is pending),
+double-click action, colour scheme — for an app-drawn title bar), `onCloseRequested(({ reason }) => boolean)` (cancelable close; `reason` is `"close"` or `"quit"`, so a close-to-tray guard lets a quit through), `onBeforeQuit` (from runtime 3.0.0-denext.8 both are asked about the OS's quits too: Cmd+Q, a logout, Windows's session end, bounded by a deadline; macOS takes no input while a session end is pending, and a refused session end is a request: macOS ignores an accessory app's),
 `closeWindow` / `quitApp`, `onFileDrop` (read-only picked handles) and
 `startFileDrag([{ directory: "cache", path } | { directory: { picked } }])`; first-window config is
 `desktop.window` / `titleBar` / `backdrop` / `minSize` / `maxSize`. All but size, position, title and

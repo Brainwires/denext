@@ -2438,11 +2438,13 @@ onCloseRequested(({ reason }) => {
           with{" "}
           <code>reason: "quit"</code>: Cmd+Q, the Dock&apos;s Quit and a logout on macOS, the
           session ending on Windows. A handler that refuses a session end asks the OS to stop it,
-          which the OS may not honour: a logout macOS has already committed to ends the session
-          anyway. The OS is never held for long: an unanswered quit goes ahead after 5 seconds, a
-          session end after 10 (macOS) or 4 (Windows). While a session end is pending macOS takes no
-          input for the app, so a prompt can&apos;t be answered: decide without asking the user. On
-          an older runtime Cmd+Q ends the app at once. A reload drops the hold.
+          which the OS may not honour: on macOS 26 a logout stopped for an app with a Dock icon,
+          with an alert that offers to try again, and went on anyway for an accessory app (a real
+          Windows logoff is untested). The OS is never held for long: an unanswered quit goes ahead
+          after 5 seconds, a session end after 10 (macOS) or 4 (Windows). While a session end is
+          pending macOS takes no input for the app, so a prompt can&apos;t be answered: decide
+          without asking the user. On an older runtime Cmd+Q ends the app at once. A reload drops
+          the hold.
         </li>
         <li>
           <strong>Before quitting</strong>: <code>onBeforeQuit(handler)</code> is Electron&apos;s
