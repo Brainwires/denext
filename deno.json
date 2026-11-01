@@ -1,6 +1,6 @@
 {
   "name": "@denext/denext",
-  "version": "4.11.9",
+  "version": "4.11.10",
   "license": "MIT",
   "workspace": [
     "./packages/photon",
@@ -438,7 +438,7 @@
     "effect": "npm:effect@^3.22.0",
     "@prisma/driver-adapter-utils": "npm:@prisma/driver-adapter-utils@7.10.1",
     "@denext/lightningcss": "jsr:@denext/lightningcss@^1.0.0-rc.72",
-    "@denext/docs-corpus": "jsr:@denext/docs-corpus@4.11.9",
+    "@denext/docs-corpus": "jsr:@denext/docs-corpus@4.11.10",
     "sass": "npm:sass@^1.80.0",
     "@mdx-js/mdx": "npm:@mdx-js/mdx@^3",
     "@tanstack/router-plugin": "npm:@tanstack/router-plugin@1.168.42",
