@@ -9,11 +9,14 @@
 // workspace (never through a symlink that leads out of it), read env, query the machine's
 // CPU / memory / OS release — never write, spawn, or reach the network. It runs in the app's
 // own directory so the config's npm plugin imports (`@next/mdx`, …) resolve from the app's
-// node_modules, not from denext's module graph. Array args only, never a shell.
+// node_modules, not from denext's module graph. Deno never reads the project's deno.json for it
+// (eval-config-isolation.ts): that file acts outside the permissions. Array args only, never a
+// shell.
 
 import { resolve, toFileUrl } from "@std/path";
 import { denoExecutable } from "./bundle.ts";
 import { allowReadFlags, containedReadGrants, containmentRoot } from "./contained-read.ts";
+import { configIsolation } from "./eval-config-isolation.ts";
 import { exitedOutput, type StderrMode } from "./exited-output.ts";
 
 /** The evaluation deadline when neither the caller nor the environment sets one. */
@@ -276,7 +279,7 @@ function evalEnv(): Record<string, string> {
 /**
  * Evaluate an app's `next.config.*` with a caller-supplied program in a bounded,
  * least-privilege `deno run -` subprocess (read access to `<dir>`, or to its workspace when it
- * is a member of one, minus any symlink that leads out; `--allow-env`;
+ * is a member of one, minus any symlink that leads out; no deno.json or lockfile; `--allow-env`;
  * `--allow-sys=cpus,osRelease,systemMemoryInfo`; no prompt, no write/run/net, no downloads, and
  * an environment cleared down to Next's own public variables). A side-effectful config — a watcher, a DB connect, an unresolved
  * top-level await — would otherwise hang the caller forever: at the deadline the child is
@@ -306,7 +309,8 @@ export async function evalNextConfigProgram(
   }
   const file = await canonical(resolve(options.dir, options.file));
   // A workspace member reads its workspace (pnpm's store, sibling packages), never past it.
-  const grants = await containedReadGrants(await containmentRoot(dir), dir);
+  const root = await containmentRoot(dir);
+  const grants = await containedReadGrants(root, dir);
   if (!grants.ok) {
     return { ok: false, reason: `couldn't grant the project read access safely: ${grants.reason}` };
   }
@@ -320,6 +324,7 @@ export async function evalNextConfigProgram(
   // stdout carries the result; stderr is discarded unless the evaluation fails, then the
   // evaluator runs once more with it piped for the error text (see quietThenExplain: a quiet
   // stderr pipe held for a child's whole life starves other children's reads on Windows).
+  const isolation = await configIsolation(dir, root);
   const evaluate = async (
     stderr: StderrMode,
   ): Promise<Deno.CommandOutput | NextConfigEvalResult> => {
@@ -340,6 +345,9 @@ export async function evalNextConfigProgram(
           "--no-remote",
           "--cached-only",
           "--node-modules-dir=manual",
+          // The project's deno.json acts before any permission applies, and its `lock` (or the
+          // project's own deno.lock) would be written with no --allow-write.
+          ...isolation.flags,
           // The project and nothing a symlink in it leads to elsewhere (contained-read.ts).
           ...readFlags,
           "--allow-env",
@@ -386,18 +394,22 @@ export async function evalNextConfigProgram(
       return err as Error;
     }
   };
-  const first = await evaluate("null");
-  if ("ok" in first) return first;
-  const result = read(first);
-  if (!(result instanceof Error)) return result;
-  // Past the deadline there is no time left to run it again for its stderr.
-  if (signal.aborted) return { ok: false, reason: `timed out after ${timeoutMs} ms` };
-  const again = await evaluate("piped");
-  if ("ok" in again) return again;
-  const second = read(again);
-  if (!(second instanceof Error)) return second;
-  const why = signal.aborted
-    ? `timed out after ${timeoutMs} ms`
-    : `${second.message} (exit code ${again.code})`;
-  return failure(why, again.stderr);
+  try {
+    const first = await evaluate("null");
+    if ("ok" in first) return first;
+    const result = read(first);
+    if (!(result instanceof Error)) return result;
+    // Past the deadline there is no time left to run it again for its stderr.
+    if (signal.aborted) return { ok: false, reason: `timed out after ${timeoutMs} ms` };
+    const again = await evaluate("piped");
+    if ("ok" in again) return again;
+    const second = read(again);
+    if (!(second instanceof Error)) return second;
+    const why = signal.aborted
+      ? `timed out after ${timeoutMs} ms`
+      : `${second.message} (exit code ${again.code})`;
+    return failure(why, again.stderr);
+  } finally {
+    await isolation.dispose();
+  }
 }

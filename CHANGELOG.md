@@ -8,7 +8,54 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.9] - 2026-11-01
+
+### Changed
+
+- **`examples/native` uses Capacitor 8.6.0**, the version `denext create --capacitor` pins. Its
+  `package.json` and `deno.json` still named Capacitor 7.
+
+### Security
+
+- **The `next.config.*` evaluator no longer acts on the project's `deno.json`.** `denext migrate`,
+  `denext migrate --check` and `denext ui`'s Next config panel evaluate an untrusted project's config
+  in a sandboxed child, but Deno read the project's `deno.json` (or one in a directory above it) for
+  that child outside the permissions. Its `importMap` and `links` read import-map and package files
+  from outside the project and handed their values to `import.meta.resolve`, where a config could
+  copy them into a field migrate writes to `denext.config.ts`. Its `lock` rewrote any existing valid
+  lockfile on the machine, dropping that file's `specifiers` and `workspace` entries, even under
+  `migrate --check`, and its `unstable` list turned on APIs such as `Deno.openKv`. A project's own
+  `deno.lock` was rewritten the same way. The child now runs with `--no-lock`, and for a project with
+  a `deno.json` with `--no-config` and a generated import map holding its `imports`, `scopes`, a
+  contained `importMap` and its workspace's members, so a config keeps resolving its aliases and
+  `node_modules`. A `package.json` project keeps its Node-style resolution. A config that needed
+  another `deno.json` key to evaluate no longer gets it.
+
+## [4.11.8] - 2026-11-01
+
+### Security
+
+- **Runtime revocation is on.** denext now carries the public keys of the signed revoked-runtimes
+  list, so a broken Deno toolchain or Deno Desktop runtime can be revoked after release: commands
+  move to the rollback runtime and the ship verbs refuse the revoked one. Until the first list is
+  published, `denext toolchain status` reports that there is none and nothing changes.
+
 ## [4.11.7] - 2026-11-01
+
+### Fixed
+
+- **`denext dev --lan` on a machine with several networks binds the one with the default route.**
+  It picked by interface name, so a Mac online over Wi-Fi (`en1`) that had another network on its
+  Ethernet (`en0`) printed a URL no phone on the Wi-Fi could open. `denext mobile dev --lan` and
+  `denext desktop dev --lan` pick the same way. A VPN holding the default route is passed over, and
+  the name order remains the fallback.
+- **`denext dev` no longer reloads or restarts its first render for files written before it
+  started.** On macOS a new file watch replays recent history, and the project-wide watcher (SPA
+  mode's too) took that as a platform file or folder being created: a new generation in the middle
+  of the first render could leave a page without its islands' script, and an open page reloaded for
+  nothing.
+- **examples/hangar finds its VM library on Windows.** Windows sets no `HOME`, so the library folder
+  fell back to `/VMs`; it now defaults to `%USERPROFILE%\VMs`.
 
 ## [4.11.6] - 2026-11-01
 
@@ -19,8 +66,6 @@ and this project adheres to
 
 ### Fixed
 
-- **examples/hangar finds its VM library on Windows.** Windows sets no `HOME`, so the library folder
-  fell back to `/VMs`; it now defaults to `%USERPROFILE%\VMs`.
 - **`desktop.window.overlay` and tray panels work on Linux Wayland.** On KDE Plasma and wlroots
   compositors with gtk-layer-shell, the window an app starts with can now be a layer-shell overlay
   (on top, on every workspace, off the task manager, unfocused), and a tray panel is one too,
@@ -34,16 +79,6 @@ and this project adheres to
   and spun at 100% CPU; `libdenort.so` now binds its own symbols to itself.
 - **`deno doc --json` and `--html` carry no ANSI color escapes** on denext's Deno, whether or not
   `NO_COLOR` is set.
-- **`denext dev --lan` on a machine with several networks binds the one with the default route.**
-  It picked by interface name, so a Mac online over Wi-Fi (`en1`) that had another network on its
-  Ethernet (`en0`) printed a URL no phone on the Wi-Fi could open. `denext mobile dev --lan` and
-  `denext desktop dev --lan` pick the same way. A VPN holding the default route is passed over, and
-  the name order remains the fallback.
-- **`denext dev` no longer reloads or restarts its first render for files written before it
-  started.** On macOS a new file watch replays recent history, and the project-wide watcher (SPA
-  mode's too) took that as a platform file or folder being created: a new generation in the middle
-  of the first render could leave a page without its islands' script, and an open page reloaded for
-  nothing.
 
 ### Security
 
@@ -20581,7 +20616,9 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.7...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.9...development
+[4.11.9]: https://jsr.io/@denext/denext@4.11.9
+[4.11.8]: https://jsr.io/@denext/denext@4.11.8
 [4.11.7]: https://jsr.io/@denext/denext@4.11.7
 [4.11.6]: https://jsr.io/@denext/denext@4.11.6
 [4.11.5]: https://jsr.io/@denext/denext@4.11.5

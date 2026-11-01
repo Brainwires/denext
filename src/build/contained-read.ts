@@ -37,7 +37,7 @@ interface FoundLink {
 }
 
 /** Whether `path` is `root` or lies under it (both canonical). */
-function inside(root: string, path: string): boolean {
+export function inside(root: string, path: string): boolean {
   return path === root || path.startsWith(root.endsWith(SEPARATOR) ? root : root + SEPARATOR);
 }
 

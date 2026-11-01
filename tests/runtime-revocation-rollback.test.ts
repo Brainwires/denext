@@ -289,10 +289,10 @@ Deno.test("the list is not consulted for a pin override or a given pin; the tool
       w.cacheRoot,
     );
     assertEquals(none.revocation, undefined);
-    // No key configured (the production state today): the selection reports nothing.
+    // No key configured: the selection reports nothing.
     const off = await selectToolchainPin(
       w.pin,
-      () => undefined,
+      (k) => k === REVOCATION_KEYS_FILE_ENV ? "/nonexistent" : undefined,
       { revocations: { fetch: noFetch } },
       TARGET,
       w.cacheRoot,

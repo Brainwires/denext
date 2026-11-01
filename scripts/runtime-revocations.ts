@@ -331,9 +331,11 @@ async function publishWeb(deps: RevocationsDeps, text: string): Promise<void> {
   try {
     await Deno.mkdir(join(tmp, "runtime"));
     await Deno.writeTextFile(join(tmp, "runtime", "revocations.json"), text);
+    // The modes travel with -p: macOS's openrsync has no --chmod.
+    await Deno.chmod(join(tmp, "runtime"), 0o755);
+    await Deno.chmod(join(tmp, "runtime", "revocations.json"), 0o644);
     const res = await deps.run("rsync", [
-      "-rt",
-      "--chmod=D755,F644",
+      "-rtp",
       `${join(tmp, "runtime")}/`,
       `${root.replace(/\/+$/, "")}/runtime/`,
     ]);
