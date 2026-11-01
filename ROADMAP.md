@@ -16,31 +16,23 @@
 
 ## Runtime fork (Brainwires/deno, `3.0.0-denext.N`)
 
-- **The CJS `require()` read bypass under BYONM** (a fork regression): fix it in `3.0.0-denext.4` and
-  publish an advisory with it.
-- **Runtime update and install checks:** a Windows update covers only PE files; the verify-then-swap
-  race; revocation that fails soft; the macOS code-signing requirement. The Windows PE coverage is
-  the Medium one; ship them with `denext.4`.
-- **Tag and pin `3.0.0-denext.3`.** It carries V8 15.2.124.45 (two exploited-in-the-wild CVEs) and the
-  merged fork items for sloppy hints, desktop bind calls and idle-trim wake-ups. Publish the V8
-  advisory with the pin.
+- **Runtime update and install checks, landing in `3.0.0-denext.8`:** a Windows update covering the
+  loose files beside its PE files; the verify-then-swap race; revocation that fails closed; the
+  macOS Developer ID requirement. Merged on the fork's integration branch; pin the release.
 - **V8 on Extended Stable 15.6, and the staleness-gate rework.** 15.2 gets no more fixes, so the next
   exploited V8 bug would be unfixable there; the patch-bump dispatch workflow and the Extended Stable
   plus patch-age rule come with it. If it can't fit the 5.0 date it becomes the first dated 5.x item,
   and the release notes say so.
 - **A CEF 156 build with Chrome's fixes from 156.0.8078.73 on.** Runtime `3.0.0-denext.7` moved CEF
-  to 156 (Chromium 156.0.8078.48); the next runtime takes the newer build. The bump cadence is a 5.x
-  item.
-- **Embed the expected `denort` SHA-256 in the CLI.** Today the download checks `SHA256SUMS` only.
-- **`.deno/npm-compat` out of the project root** (in `denext.4`): the runtime's type-check keeps its
-  copy of the `@jsr/*` packages outside the project; then delete the KNOWN-LIMITATIONS entry.
-- **Document** the blocking-pool cap (other holders of the pool) and that compiled binaries honour
-  `DENO_LEGACY_ABORT` / `DENO_UNSTABLE_IDLE_TRIM`.
+  to 156 (Chromium 156.0.8078.48); the next runtime takes the newer build, whose re-bump is not merged
+  yet. The bump cadence is a 5.x item.
+- **The expected `denort` SHA-256 embedded in the CLI, landing in `3.0.0-denext.8`.** Today the
+  download checks `SHA256SUMS` only.
+- **`.deno/npm-compat` out of the project root, landing in `3.0.0-denext.8`:** the runtime's
+  type-check keeps its copy of the `@jsr/*` packages outside the project; delete the
+  KNOWN-LIMITATIONS entry with the pin.
+- **The blocking-pool cap documented (other holders of the pool), landing in `3.0.0-denext.8`.**
 - **A one-commit re-pin runbook** (the pin, the symbols, the revert) before 5.0.
-
-## Capacitor
-
-- **Capacitor 8.6.0** (the pin and the examples; it clears the package-age hold on 10-30).
 
 ## Breaking changes for 5.0
 
@@ -179,9 +171,6 @@ seeded fallback. No Deno has the hook below yet.
 
 ## Server and CLI features
 
-- **The 4.10 set** (the runtime items are merged in the fork, waiting on the `denext.3` pin):
-  `HTMLRewriter`, `resolveCertificate`, the cookie jar and `patchedDependencies`. _Why 5.x: new
-  features; they ship after the pin._
 - **A compiled binary disarms baked limits for `job` / `db`** (depends on `compile.limits`). _Why
   5.x: follows `compile.limits`._
 - **TypeScript 7.1 stable swap** and the `ts7-lsp-default` setting. _Why 5.x: date-driven (about
@@ -199,7 +188,6 @@ seeded fallback. No Deno has the hook below yet.
 - **V8 cadence:** the next major (16.0, about 12-15) and patch bumps, once the Extended Stable line
   exists. _Why 5.x: recurring._
 - **CEF bump cadence** after the one 5.0 bump. _Why 5.x: no owner yet._
-- **Crash reporting for the server and runtime rollback / revocation.** _Why 5.x: new tooling._
 - **Bit-level reproducible runtime builds** (floating setup-deno / brew / apt, rust-cache on tags).
   _Why 5.x: Low._
 - **The Windows CI Deno children hang, root cause** (an npm_installer flag lock and a cache_db
@@ -211,6 +199,6 @@ seeded fallback. No Deno has the hook below yet.
 - **Upstream carries:** the npm side-effects cache, deterministic mode (seeded `randomInt` /
   `randomFillSync` first: a correctness bug under `--seed`, and cheap), the `deno compile` `--`
   warning, native image operations. _Why 5.x: separate runtime features._
-- **`SafeSet` copy-constructor hang, Jest cross-realm rows, the Windows `cmd.exe` branch, and the 15
-  Linux-only enabled node tests that need a macOS / Windows check.** _Why 5.x: Small, no user
-  report._
+- **Jest cross-realm rows, the Windows `cmd.exe` branch, and the 15 Linux-only enabled node tests
+  that need a macOS / Windows check.** _Why 5.x: Small, no user report._ The `SafeSet`
+  copy-constructor hang is fixed, landing in `3.0.0-denext.8`.

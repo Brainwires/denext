@@ -8,6 +8,27 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **`examples/native` uses Capacitor 8.6.0**, the version `denext create --capacitor` pins. Its
+  `package.json` and `deno.json` still named Capacitor 7.
+
+### Security
+
+- **The `next.config.*` evaluator no longer acts on the project's `deno.json`.** `denext migrate`,
+  `denext migrate --check` and `denext ui`'s Next config panel evaluate an untrusted project's config
+  in a sandboxed child, but Deno read the project's `deno.json` (or one in a directory above it) for
+  that child outside the permissions. Its `importMap` and `links` read import-map and package files
+  from outside the project and handed their values to `import.meta.resolve`, where a config could
+  copy them into a field migrate writes to `denext.config.ts`. Its `lock` rewrote any existing valid
+  lockfile on the machine, dropping that file's `specifiers` and `workspace` entries, even under
+  `migrate --check`, and its `unstable` list turned on APIs such as `Deno.openKv`. A project's own
+  `deno.lock` was rewritten the same way. The child now runs with `--no-lock`, and for a project with
+  a `deno.json` with `--no-config` and a generated import map holding its `imports`, `scopes`, a
+  contained `importMap` and its workspace's members, so a config keeps resolving its aliases and
+  `node_modules`. A `package.json` project keeps its Node-style resolution. A config that needed
+  another `deno.json` key to evaluate no longer gets it.
+
 ## [4.11.8] - 2026-11-01
 
 ### Security

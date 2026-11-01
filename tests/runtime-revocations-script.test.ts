@@ -368,8 +368,11 @@ Deno.test("floor raises the compiled-in minimum sequence to the published list's
     const file = join(dir, "keys.ts");
     // The real module declares it in the shape `floor` rewrites.
     const real = await Deno.readTextFile(new URL(`../${KEYS_MODULE}`, import.meta.url));
-    await Deno.writeTextFile(file, real);
-    assertEquals(minSequenceIn(real), 0);
+    assert(minSequenceIn(real) >= 0);
+    // From a floor of 0 whatever a past release raised it to.
+    const unraised = real.replace(/(MIN_SEQUENCE: number = )\d+/, (_, head) => `${head}0`);
+    await Deno.writeTextFile(file, unraised);
+    assertEquals(minSequenceIn(unraised), 0);
     const list = freshRevocationList([], NOW);
     await publishedWith(f, list);
     await main(["floor", "--file", file], f.deps);
@@ -388,8 +391,8 @@ Deno.test("floor raises the compiled-in minimum sequence to the published list's
     await main(["floor", "--file", file], keyless.deps);
     assertStringIncludes(keyless.logged.at(-1)!, "floor stays");
     // The rewrite is exact; a module without the constant is refused.
-    assertEquals(minSequenceIn(withMinSequence(real, 42)), 42);
-    assertEquals(withMinSequence(real, 42).replace(/= 42;/, "= 0;"), real);
+    assertEquals(minSequenceIn(withMinSequence(unraised, 42)), 42);
+    assertEquals(withMinSequence(unraised, 42).replace(/= 42;/, "= 0;"), unraised);
     assertThrowsMessage(
       () => minSequenceIn("export const X = 1;"),
       "RUNTIME_REVOCATION_MIN_SEQUENCE",

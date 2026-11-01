@@ -21,7 +21,8 @@ export interface WorkspaceImports {
   readonly scopes: Record<string, Record<string, string>>;
 }
 
-const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
+/** The config file names Deno looks for, in its order. */
+export const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
 
 /** A config file's object, or `null` (absent, unreadable, not a JSON(C) object). */
 function readObject(path: string): Record<string, unknown> | null {
@@ -81,7 +82,10 @@ function allMemberDirs(root: string, members: readonly string[]): string[] {
 }
 
 /** A config's `imports` with `./` / `../` values made absolute `file:` URLs (prefixes keep `/`). */
-function absoluteImports(config: Record<string, unknown>, dir: string): Record<string, string> {
+export function absoluteImports(
+  config: Record<string, unknown>,
+  dir: string,
+): Record<string, string> {
   const out: Record<string, string> = {};
   const imports = config.imports;
   if (!imports || typeof imports !== "object") return out;

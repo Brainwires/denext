@@ -50,7 +50,8 @@ import { toBase64 } from "../src/build/ota-signing.ts";
 
 const LINUX = "x86_64-unknown-linux-gnu";
 const MAC = "aarch64-apple-darwin";
-const NOW = Date.parse("2026-10-30T00:00:00Z");
+// Far ahead of the real clock, so these lists stay above the floor each release compiles in.
+const NOW = Date.parse("2036-01-01T00:00:00Z");
 const DAY = 24 * 3600_000;
 
 /** A fresh P-256 key pair: the private key and the base64 SPKI public key. */
@@ -238,7 +239,7 @@ Deno.test("signRevocationList refuses an invalid payload; freshRevocationList da
     RevocationListError,
   );
   const first = listAt([], NOW);
-  assertEquals(first.issuedAt, "2026-10-30T00:00:00.000Z");
+  assertEquals(first.issuedAt, "2036-01-01T00:00:00.000Z");
   assertEquals(Date.parse(first.expiresAt) - NOW, 21 * DAY);
   assertEquals(REVOCATION_DEFAULT_EXPIRY_DAYS, 21);
   assertEquals(first.sequence, NOW / 1000);
@@ -681,7 +682,8 @@ Deno.test("loadRuntimeRevocations: a list below the compiled-in floor is never t
     assertEquals((await loadRuntimeRevocations(above)).list, null);
     assertEquals((await loadRuntimeRevocations({ ...above, mode: "cache-only" })).list, null);
     // The default is the floor compiled into this release.
-    assertEquals(RUNTIME_REVOCATION_MIN_SEQUENCE, 0);
+    assert(Number.isSafeInteger(RUNTIME_REVOCATION_MIN_SEQUENCE));
+    assert(RUNTIME_REVOCATION_MIN_SEQUENCE >= 0);
   } finally {
     await srv.close();
     await Deno.remove(dir, { recursive: true });
