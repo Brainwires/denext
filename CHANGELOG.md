@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **A packaged Linux `.deb` / `.rpm` for the CEF backend now declares every library the runtime
+  links.** `libcups`, `libnspr4`, `libnssutil3`, `libsmime3`, `libatk-bridge-2.0` and `libXi` were
+  linked directly with no dependency, and installed only because other packages pulled them in, so a
+  distro that splits GTK's dependencies could leave an app unable to start. The `.deb` names the
+  packages (`libcups2`, `libnspr4`, `libnss3`, `libatk-bridge2.0-0`, `libxi6`, which Ubuntu 24.04+
+  and Debian 13 provide from their `t64` builds) and the `.rpm` requires the sonames.
+
 ## [4.11.9] - 2026-11-01
 
 ### Changed
