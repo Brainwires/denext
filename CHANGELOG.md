@@ -29,6 +29,8 @@ and this project adheres to
 
 ### Fixed
 
+- **examples/hangar finds its VM library on Windows.** Windows sets no `HOME`, so the library folder
+  fell back to `/VMs`; it now defaults to `%USERPROFILE%\VMs`.
 - **`desktop.window.overlay` and tray panels work on Linux Wayland.** On KDE Plasma and wlroots
   compositors with gtk-layer-shell, the window an app starts with can now be a layer-shell overlay
   (on top, on every workspace, off the task manager, unfocused), and a tray panel is one too,

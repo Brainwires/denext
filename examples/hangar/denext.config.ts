@@ -60,7 +60,7 @@ export default {
       write: ["~/VMs"],
       // The RAM budget reads the host's memory.
       sys: ["systemMemoryInfo"],
-      env: ["HOME"],
+      env: ["HOME", "USERPROFILE"],
     },
   },
 } satisfies DenextConfig;

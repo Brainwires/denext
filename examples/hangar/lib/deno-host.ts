@@ -1,7 +1,14 @@
 // The real `Host`: Deno's process, file and socket APIs. Used only by the desktop extension, in the
 // app's Deno process; the tests never load it.
 
-import type { DirEntry, Host, ProcessInfo, QmpSession, RunResult } from "./host.ts";
+import {
+  type DirEntry,
+  homeFolder,
+  type Host,
+  type ProcessInfo,
+  type QmpSession,
+  type RunResult,
+} from "./host.ts";
 import { parsePs, PS_ARGS, psProgram } from "./processes.ts";
 import { openQmpSession } from "./qmp.ts";
 
@@ -42,7 +49,7 @@ async function qmp(socketPath: string, timeoutMs: number): Promise<QmpSession> {
 /** The machine Hangar runs on. */
 export function denoHost(): Host {
   return {
-    home: Deno.env.get("HOME") ?? "/",
+    home: homeFolder(Deno.build.os, (name) => Deno.env.get(name)),
     os: Deno.build.os,
     run,
     spawnDetached(program, args, options) {
