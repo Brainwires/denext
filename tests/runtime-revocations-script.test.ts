@@ -84,7 +84,7 @@ function fake(over: Partial<RevocationsDeps> = {}, compiled?: string[]): Promise
   const gh = { branch: null as string | null, mirror: [] as Fake["mirror"] };
   const ghRun = fakeGh(gh);
   const rsync = async (args: string[]): Promise<RunResult> => {
-    web.push(await Deno.readTextFile(join(args[2].replace(/\/$/, ""), "revocations.json")));
+    web.push(await Deno.readTextFile(join(args.at(-2)!.replace(/\/$/, ""), "revocations.json")));
     return ok();
   };
   const run = (cmd: string, args: string[], stdin?: string): Promise<RunResult> => {
