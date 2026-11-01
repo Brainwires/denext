@@ -3546,8 +3546,9 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           pointing at a 2.9.8 binary for <code>run</code> / <code>dev</code>).{" "}
           <code>denext desktop run</code> and <code>dev</code>{" "}
           warn and open the window on the stock runtime instead. Every download error ends with the
-          two ways out: <code>DENEXT_DESKTOP_RUNTIME_DIR</code> or{" "}
-          <code>DENEXT_DESKTOP_RUNTIME=stock</code>.
+          two ways out: <code>DENEXT_DESKTOP_RUNTIME_DIR</code> or, on a stock Deno CLI (<code>
+            DENEXT_DENO=stock
+          </code>), <code>DENEXT_DESKTOP_RUNTIME=stock</code>.
         </li>
         <li>
           <strong>Downloaded once, verified before use.</strong>{" "}
@@ -3606,8 +3607,10 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         </li>
       </ul>
       <Code lang="sh">
-        {`DENEXT_DESKTOP_RUNTIME=stock denext desktop package   # the stock runtime (no app origin,
-                                                      # deep links or single instance)
+        {`DENEXT_DENO=stock DENEXT_DESKTOP_RUNTIME=stock denext desktop package
+                                                      # the stock runtime, on a stock Deno CLI
+                                                      # (no app origin, deep links or single
+                                                      # instance); denext's Deno refuses it
 DENEXT_DESKTOP_RUNTIME_DIR=~/src/deno-runtime denext desktop run   # a local runtime build,
                                                       # unverified (runtime development)`}
       </Code>
@@ -3764,7 +3767,7 @@ const socket = new WebSocket(desktopWebSocketUrl("/api/events"));`}
         and the package scripts use by default. A packaged app with an origin and an identifier
         keeps its <code>localStorage</code>{" "}
         across launches (checked on macOS, Linux and Windows with the webview backend). Under{" "}
-        <code>DENEXT_DESKTOP_RUNTIME=stock</code>{" "}
+        <code>DENEXT_DESKTOP_RUNTIME=stock</code> (on a stock Deno CLI){" "}
         the stock runtime ignores the origin and serves the window on a loopback port (the desktop
         entry logs that the origin is not in effect). Nothing breaks either way: the security gates
         detect which runtime they are under.

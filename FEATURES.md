@@ -685,7 +685,7 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   extracted safely and cached for offline use, with optional `gh attestation`
   provenance pinned to the release workflow and tag; `deno task
   desktop:pin-runtime <tag>` writes a new pin; `DENEXT_DESKTOP_RUNTIME=stock`
-  opts out. It carries a **stable app origin** (`desktop.app.origin`, so
+  opts out on a stock Deno CLI (`DENEXT_DENO=stock`). It carries a **stable app origin** (`desktop.app.origin`, so
   storage and server allow-lists survive relaunch) that the window **stays on** (a top-level
   navigation elsewhere opens in the user's browser unless
   `desktop.app.allowedNavigationOrigins` lists it), **deep links and opened

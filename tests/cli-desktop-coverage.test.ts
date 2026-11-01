@@ -284,7 +284,56 @@ async function withEnv<T>(vars: Record<string, string | undefined>, fn: () => Pr
   }
 }
 
-const STOCK = { DENEXT_DESKTOP_RUNTIME: "stock" };
+const STOCK_MODE = { DENEXT_DESKTOP_RUNTIME: "stock" };
+
+// A stand-in local runtime, so a window's build reaches `deno desktop` with no download on any host.
+// `deno desktop` type-checks the entry first, and these tests' entries fail there.
+const localRuntimeDir = await Deno.makeTempDir({ prefix: "denext_desktop_local_runtime_" });
+await Deno.mkdir(join(localRuntimeDir, "laufey"));
+await Deno.writeTextFile(
+  join(
+    localRuntimeDir,
+    Deno.build.os === "windows"
+      ? "denort.dll"
+      : Deno.build.os === "darwin"
+      ? "libdenort.dylib"
+      : "libdenort.so",
+  ),
+  "",
+);
+globalThis.addEventListener("unload", () => {
+  Deno.removeSync(localRuntimeDir, { recursive: true });
+});
+const LOCAL_RUNTIME = { DENEXT_DESKTOP_RUNTIME_DIR: localRuntimeDir };
+
+const onDenextDeno = Boolean((Deno.build as { denext?: string }).denext);
+
+Deno.test({
+  name:
+    "desktop run / package: DENEXT_DESKTOP_RUNTIME=stock on denext's Deno stops before any work",
+  ignore: !onDenextDeno,
+  fn: async () => {
+    const dir = await tempDir("denext_desktop_stock_refused_");
+    try {
+      await Deno.writeTextFile(join(dir, "desktop.ts"), "export {};\n");
+      await Deno.mkdir(join(dir, "scripts"));
+      await Deno.writeTextFile(
+        join(dir, "scripts", `package-${Deno.build.os === "darwin" ? "macos" : Deno.build.os}.ts`),
+        'console.log("the script ran");\n',
+      );
+      for (const verb of ["run", "package"]) {
+        const r = await withEnv(STOCK_MODE, () => runVerb([verb], dir));
+        assertEquals(r.code, 1, r.err);
+        assertStringIncludes(r.err, `denext desktop ${verb}: denext: DENEXT_DESKTOP_RUNTIME=stock`);
+        assertStringIncludes(r.err, "DENEXT_DENO=stock");
+        assert(!r.out.includes("exporting SPA"), r.out);
+        assert(!r.out.includes("the script ran"), r.out);
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});
 
 Deno.test("desktop build exports the SPA to out/", async () => {
   const dir = await tempDir("denext_desktop_build_");
@@ -305,7 +354,7 @@ Deno.test("desktop run: a failing export stops before any window is opened", asy
     await Deno.writeTextFile(join(dir, "desktop.ts"), "throw new Error('must not run');\n");
     await Deno.mkdir(join(dir, "app"));
     await Deno.writeTextFile(join(dir, "app", "page.ts"), 'throw new Error("page boom");\n');
-    const r = await withEnv(STOCK, () => runVerb(["run"], dir));
+    const r = await withEnv(LOCAL_RUNTIME, () => runVerb(["run"], dir));
     assert(r.thrown instanceof Error);
     assertStringIncludes(r.thrown.message, "denext: desktop export failed — page boom");
     assertStringIncludes(r.out, "exporting SPA");
@@ -324,11 +373,11 @@ Deno.test("desktop run / dev: a bad desktop.app config fails with the verb's pre
       join(dir, "denext.config.ts"),
       'export default { desktop: { app: { origin: "not a url" } } };\n',
     );
-    const run = await withEnv(STOCK, () => runVerb(["run"], dir));
+    const run = await withEnv(LOCAL_RUNTIME, () => runVerb(["run"], dir));
     assertEquals(run.code, 1);
     assertStringIncludes(run.err, "denext desktop run: ");
     assertStringIncludes(run.err, "desktop.app.origin");
-    const dev = await withEnv(STOCK, () => runVerb(["dev"], dir));
+    const dev = await withEnv(LOCAL_RUNTIME, () => runVerb(["dev"], dir));
     assertEquals(dev.code, 1);
     assertStringIncludes(dev.err, "denext desktop dev: ");
     assertStringIncludes(dev.err, "desktop.app.origin");
@@ -363,7 +412,7 @@ Deno.test("desktop dev: a desktop.preload that does not bundle fails before the 
       join(dir, "denext.config.ts"),
       'export default { desktop: { preload: "./missing-preload.ts" } };\n',
     );
-    const r = await withEnv(STOCK, () => runVerb(["dev"], dir, { port: 47_311 }));
+    const r = await withEnv(LOCAL_RUNTIME, () => runVerb(["dev"], dir, { port: 47_311 }));
     assertEquals(r.code, 1);
     assertStringIncludes(r.err, "denext desktop dev:");
     assertStringIncludes(r.err, "missing-preload.ts");
@@ -574,7 +623,7 @@ Deno.test({
       // window opens: the session ends with the verb's error, leaving the attached server up.
       await Deno.writeTextFile(join(dir, "desktop.ts"), 'const n: number = "not a number";\n');
       const r = await withEnv(
-        STOCK,
+        LOCAL_RUNTIME,
         () => runVerb(["dev"], dir, { host: "127.0.0.1", port: server.addr.port }),
       );
       assertEquals(r.code, 1, r.err);
@@ -595,7 +644,7 @@ Deno.test({
         'export default { desktop: { preload: "./preload.ts" } };\n',
       );
       const p = await withEnv(
-        STOCK,
+        LOCAL_RUNTIME,
         () => runVerb(["dev"], withPreload, { host: "127.0.0.1", port: server.addr.port }),
       );
       assertEquals(p.code, 1, p.err);
@@ -749,7 +798,7 @@ Deno.test("desktop doctor is dispatched with the dir positional and --json", asy
   const exit = stubExit();
   let code = 0;
   try {
-    await withEnv(STOCK, async () => {
+    await withEnv(STOCK_MODE, async () => {
       try {
         await desktopCommand.run(makeCtx({ positionals: ["doctor", dir], global: { json: true } }));
       } catch (e) {

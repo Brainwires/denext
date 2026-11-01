@@ -157,7 +157,8 @@ export function resolveDesktopTrust(
         reason: `this Deno Desktop runtime is older than ${DESKTOP_RELAY_MARKING_RUNTIME} (it ` +
           "does not mark requests from its WebSocket relay, so they can't be told from the " +
           "page's). Rebuild with the runtime denext pins (unset DENORT_DESKTOP_BIN, " +
-          "LAUFEY_DEV_DIR and DENEXT_DESKTOP_RUNTIME_DIR), or set DENEXT_DESKTOP_RUNTIME=stock",
+          "LAUFEY_DEV_DIR and DENEXT_DESKTOP_RUNTIME_DIR), or, on a stock Deno CLI " +
+          "(DENEXT_DENO=stock), set DENEXT_DESKTOP_RUNTIME=stock",
       },
     };
   }

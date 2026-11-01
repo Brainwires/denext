@@ -50,7 +50,8 @@
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
  * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
  * Deno version it was built for (`deno upgrade --version 2.9.8`).
- *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead, on a stock Deno CLI only
+ *                                    (DENEXT_DENO=stock; none of the above works)
  *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
  *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
  *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)

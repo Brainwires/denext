@@ -41,7 +41,7 @@ token. It needs a LAN IPv4 address and, on Linux, a session with a Secret Servic
 | `--no-signing`        | Windows: skip the signing and trusted-update phases                                                                                                                                  |
 | `--backend <b>`       | Package for `webview` or `cef` instead of `deno.json`'s `desktop.backend` (written for the packaging, then restored); with `--no-package`, the build in `dist/` must be that backend |
 | `--runtime-dir <dir>` | Package with a local runtime build (`DENEXT_DESKTOP_RUNTIME_DIR`: `libdenort` plus `laufey/`, unverified)                                                                            |
-| `--stock-runtime`     | Package with the stock Deno Desktop runtime (`DENEXT_DESKTOP_RUNTIME=stock`)                                                                                                         |
+| `--stock-runtime`     | Package with the stock Deno Desktop runtime (`DENEXT_DESKTOP_RUNTIME=stock`; needs a stock Deno CLI, `DENEXT_DENO=stock`)                                                            |
 | `--results <file>`    | Also write the results document to `<file>`                                                                                                                                          |
 | `--json`              | Print only the results document on stdout (the progress goes to stderr)                                                                                                              |
 

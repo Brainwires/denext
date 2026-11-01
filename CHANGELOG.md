@@ -35,6 +35,14 @@ and this project adheres to
 
 ### Changed
 
+- **`DENEXT_DESKTOP_RUNTIME=stock` needs a stock Deno CLI, and denext now says so.** On denext's
+  Deno it stops before anything is built (`desktop run` / `dev` / `package` and the package scripts),
+  naming the fix: unset it, or set `DENEXT_DENO=stock` with a stock `deno`. That combination could
+  not start an app (a stock runtime can't read what denext's Deno compiles), and from Deno Desktop
+  runtime 3.0.0-denext.8 `deno desktop` refuses it. `denext desktop doctor` reports it as an error,
+  `desktop run` / `dev` no longer fall back to the stock runtime on a denext Deno of another
+  release, and the download, no-pinned-build and version-mismatch messages offer the opt-out only
+  with that condition. On a stock Deno CLI nothing changes.
 - **A packaged desktop app's writes to its own folders are scoped to those folders** (takes effect
   with Deno Desktop runtime 3.0.0-denext.8, once denext pins it; gated on
   `FIRST_DESKTOP_DATA_TOKEN_RUNTIME`, so nothing changes on an older runtime). In an app with

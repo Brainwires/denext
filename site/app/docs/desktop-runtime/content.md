@@ -972,7 +972,8 @@ backend comes from `desktop.backend` in `deno.json` (`webview` by default, or `c
 **Deno 2.9.8 exactly.** `deno desktop` embeds the runtime, so the runtime and the CLI must be the
 same Deno version. Packaging with any other version stops before the build with the fix:
 `deno upgrade --version 2.9.8`. `denext desktop run` and `dev` instead warn and build the window
-on the stock runtime (point `DENO_BIN` at a 2.9.8 binary to keep the pinned one).
+on the stock runtime (point `DENO_BIN` at a 2.9.8 binary to keep the pinned one). That applies to
+a stock Deno; denext's own Deno builds only on denext's runtime.
 
 **Cross-OS packaging.** 2.9.8's CLI looks a `LAUFEY_DEV_DIR` backend up under the host's
 executable name (`laufey_webview.exe` on Windows, `laufey_webview` elsewhere), then copies the
@@ -986,14 +987,14 @@ any difference. macOS apps package on a Mac.
 **`denext doctor`** reports the pinned runtime version, whether it is cached and verified on this
 machine, and whether `deno` is the version it needs.
 
-| Variable                           | Effect                                                                    |
-| ---------------------------------- | ------------------------------------------------------------------------- |
-| `DENEXT_DESKTOP_RUNTIME=pinned`    | The default: denext's runtime, downloaded and verified.                   |
-| `DENEXT_DESKTOP_RUNTIME=stock`     | The stock Deno Desktop runtime (see [Opting out](#opting-out)).           |
-| `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` | A local runtime build, checked for its layout only (runtime work).        |
-| `DENEXT_DESKTOP_RUNTIME_VERIFY=1`  | Re-hash every cached file before use (`--verify-runtime`).                |
-| `DENEXT_DESKTOP_RUNTIME_ATTEST=1`  | Require `gh attestation verify` of a fresh download (`--attest-runtime`). |
-| `DENEXT_DESKTOP_RUNTIME_ATTEST=0`  | Never run it (unset: run it when `gh` is signed in, else say so).         |
+| Variable                           | Effect                                                                           |
+| ---------------------------------- | -------------------------------------------------------------------------------- |
+| `DENEXT_DESKTOP_RUNTIME=pinned`    | The default: denext's runtime, downloaded and verified.                          |
+| `DENEXT_DESKTOP_RUNTIME=stock`     | The stock Deno Desktop runtime, on a stock Deno CLI ([Opting out](#opting-out)). |
+| `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` | A local runtime build, checked for its layout only (runtime work).               |
+| `DENEXT_DESKTOP_RUNTIME_VERIFY=1`  | Re-hash every cached file before use (`--verify-runtime`).                       |
+| `DENEXT_DESKTOP_RUNTIME_ATTEST=1`  | Require `gh attestation verify` of a fresh download (`--attest-runtime`).        |
+| `DENEXT_DESKTOP_RUNTIME_ATTEST=0`  | Never run it (unset: run it when `gh` is signed in, else say so).                |
 
 The provenance check accepts only an attestation from the runtime repository's release workflow
 (`.github/workflows/denext_runtime.yml`) built from the pinned tag, on a GitHub-hosted runner.
@@ -1030,8 +1031,12 @@ certificate. The webview backend keeps `<App>.exe` (its host) and `<App>.dll` (t
 
 ## Opting out
 
-`DENEXT_DESKTOP_RUNTIME=stock` builds with the stock Deno Desktop runtime. Your app still builds,
-packages and runs; what the stock runtime lacks degrades instead of breaking:
+`DENEXT_DESKTOP_RUNTIME=stock` builds with the stock Deno Desktop runtime. It needs a stock Deno
+CLI: set `DENEXT_DENO=stock` too, with a stock `deno` on PATH (or `DENO_BIN` at one). denext's own
+Deno refuses it, in denext before anything is built, because a stock runtime exits at startup on
+what that Deno compiles; `denext desktop doctor` reports the combination as an error.
+
+Your app still builds, packages and runs; what the stock runtime lacks degrades instead of breaking:
 
 - The app is served from a loopback origin that changes each launch, so browser storage starts
   empty every time. Use the `secure-store`, `fs` and `sqlite` capabilities for anything that must

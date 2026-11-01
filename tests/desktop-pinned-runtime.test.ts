@@ -13,6 +13,7 @@ import {
 } from "@std/assert";
 import { join } from "@std/path";
 import {
+  assertStockRuntimeUsable,
   crossHostBackendRename,
   denoCacheDir,
   denoVersionMismatchMessage,
@@ -20,6 +21,7 @@ import {
   desktopRuntimeDir,
   DesktopRuntimeDownloadError,
   type DesktopRuntimePin,
+  desktopRuntimeStatus,
   desktopRuntimeTarget,
   ensureDesktopRuntime,
   ghSignedIn,
@@ -275,6 +277,7 @@ Deno.test("ensureDesktopRuntime gives up on a stalled download: no headers, or n
 /** Every download failure ends with the same way out: a local runtime dir, or the stock runtime. */
 function assertDownloadHint(message: string): void {
   assertStringIncludes(message, "DENEXT_DESKTOP_RUNTIME_DIR=<an unpacked runtime>");
+  assertStringIncludes(message, "on a stock Deno CLI (DENEXT_DENO=stock), set");
   assertStringIncludes(message, "DENEXT_DESKTOP_RUNTIME=stock to use the stock runtime (");
 }
 
@@ -883,13 +886,51 @@ Deno.test("resolveDesktopRuntimeEnv: a deno version mismatch fails with the inst
   }
 });
 
-Deno.test("resolveDesktopRuntimeEnv: DENEXT_DESKTOP_RUNTIME=stock → no env, a warning, no checks", async () => {
+Deno.test("resolveDesktopRuntimeEnv: DENEXT_DESKTOP_RUNTIME=stock on denext's Deno stops, naming DENEXT_DENO=stock", async () => {
+  const logs: string[] = [];
+  const err = await assertRejects(
+    () =>
+      resolveDesktopRuntimeEnv({
+        projectDir: ".",
+        target: TARGET,
+        deno: "the-deno",
+        env: envOf({ DENEXT_DESKTOP_RUNTIME: "stock" }),
+        denoVersion: () => Promise.resolve({ deno: "3.0.0-denext.8", denext: "3.0.0-denext.8" }),
+        log: (l) => logs.push(l),
+      }),
+    Error,
+  );
+  assertStringIncludes(err.message, "needs a stock Deno CLI");
+  assertStringIncludes(err.message, "`the-deno` is denext's Deno (3.0.0-denext.8)");
+  assertStringIncludes(err.message, "DENEXT_DENO=stock");
+  assertStringIncludes(err.message, "Unset DENEXT_DESKTOP_RUNTIME");
+  assertEquals(logs, [], "nothing claims to build on the stock runtime");
+});
+
+Deno.test("assertStockRuntimeUsable: only the stock mode on denext's Deno is refused", async () => {
+  const denext = () => Promise.resolve({ deno: "3.0.0-denext.8", denext: "3.0.0-denext.8" });
+  const stock = envOf({ DENEXT_DESKTOP_RUNTIME: "stock" });
+  await assertRejects(() => assertStockRuntimeUsable({ env: stock, denoVersion: denext }));
+  await assertStockRuntimeUsable({ env: envOf({}), denoVersion: denext });
+  await assertStockRuntimeUsable({
+    env: envOf({ DENEXT_DESKTOP_RUNTIME: "pinned" }),
+    denoVersion: denext,
+  });
+  await assertStockRuntimeUsable({ env: stock, denoVersion: () => Promise.resolve("2.9.8") });
+  // A `deno` that can't be asked: the build itself reports that.
+  await assertStockRuntimeUsable({
+    env: stock,
+    denoVersion: () => Promise.reject(new Error("no deno")),
+  });
+});
+
+Deno.test("resolveDesktopRuntimeEnv: DENEXT_DESKTOP_RUNTIME=stock on a stock Deno → no env, a warning, no checks", async () => {
   const logs: string[] = [];
   const r = await resolveDesktopRuntimeEnv({
     projectDir: ".",
     target: TARGET,
     env: envOf({ DENEXT_DESKTOP_RUNTIME: "stock" }),
-    denoVersion: () => Promise.reject(new Error("must not be called")),
+    denoVersion: () => Promise.resolve("2.9.8"),
     log: (l) => logs.push(l),
   });
   assertEquals(r, { mode: "stock", env: {} });
@@ -903,6 +944,7 @@ Deno.test("resolveDesktopRuntimeEnv: DENEXT_DESKTOP_RUNTIME=stock → no env, a 
     projectDir: ".",
     target: TARGET,
     env: envOf({ DENEXT_DESKTOP_RUNTIME: "stock", DENEXT_NO_DEPRECATION_WARNINGS: "1" }),
+    denoVersion: () => Promise.resolve("2.9.8"),
     log: (l) => hushed.push(l),
   });
   assertStringIncludes(hushed.join("\n"), "STOCK Deno Desktop runtime");
@@ -1280,6 +1322,54 @@ Deno.test("renameRetrying: retries a Windows PermissionDenied with backoff, noth
   }
 });
 
+Deno.test("resolveDesktopRuntimeEnv: onDenoMismatch stock on denext's Deno of another release fails", async () => {
+  const f = await fixture(await fixtureArchive());
+  try {
+    const logs: string[] = [];
+    const err = await assertRejects(
+      () =>
+        resolveDesktopRuntimeEnv({
+          projectDir: ".",
+          target: TARGET,
+          hostOs: "linux",
+          pin: f.pin,
+          cacheRoot: f.cacheRoot,
+          env: envOf({}),
+          denoVersion: () => Promise.resolve({ deno: "2.9.6-denext.3", denext: "2.9.6-denext.3" }),
+          onDenoMismatch: "stock",
+          log: (l) => logs.push(l),
+        }),
+      Error,
+    );
+    assertStringIncludes(err.message, "is built for Deno 9.9.9");
+    assertStringIncludes(err.message, "on a stock Deno CLI (DENEXT_DENO=stock)");
+    assert(!logs.join("\n").includes("STOCK runtime"), logs.join("\n"));
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test("desktopRuntimeStatus: the stock mode is a problem on denext's Deno, not on a stock one", async () => {
+  const env = envOf({ DENEXT_DESKTOP_RUNTIME: "stock" });
+  const refused = await desktopRuntimeStatus({
+    projectDir: ".",
+    target: TARGET,
+    env,
+    denoVersion: () => Promise.resolve({ deno: "3.0.0-denext.8", denext: "3.0.0-denext.8" }),
+  });
+  assertEquals([refused.mode, refused.ok], ["stock", false]);
+  assertEquals(refused.deno.denext, "3.0.0-denext.8");
+  assertStringIncludes(refused.detail, "DENEXT_DENO=stock");
+  const fine = await desktopRuntimeStatus({
+    projectDir: ".",
+    target: TARGET,
+    env,
+    denoVersion: () => Promise.resolve("2.9.8"),
+  });
+  assertEquals([fine.mode, fine.ok, fine.deno.found], ["stock", true, "2.9.8"]);
+  assertStringIncludes(fine.detail, "the stock runtime (");
+});
+
 Deno.test("resolveDesktopRuntimeEnv: an unpinned target names the stock opt-out", async () => {
   const f = await fixture(await fixtureArchive());
   try {
@@ -1298,6 +1388,7 @@ Deno.test("resolveDesktopRuntimeEnv: an unpinned target names the stock opt-out"
       Error,
     );
     assertStringIncludes(err.message, "has no webview build for aarch64-unknown-linux-gnu");
+    assertStringIncludes(err.message, "on a stock Deno CLI (DENEXT_DENO=stock)");
   } finally {
     await f.close();
   }
@@ -1310,7 +1401,7 @@ Deno.test("projectDesktopBackend reads deno.json desktop.backend", async () => {
     await Deno.writeTextFile(join(dir, "deno.json"), '{ "desktop": { "backend": "cef" } }');
     assertEquals(await projectDesktopBackend(dir), "cef");
     await Deno.writeTextFile(join(dir, "deno.json"), '{ "desktop": { "backend": "raw" } }');
-    await assertRejects(() => projectDesktopBackend(dir), Error, "stock");
+    await assertRejects(() => projectDesktopBackend(dir), Error, "(DENEXT_DENO=stock)");
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

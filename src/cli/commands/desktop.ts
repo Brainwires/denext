@@ -47,6 +47,7 @@ import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
 import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
 import {
+  assertStockRuntimeUsable,
   DESKTOP_RUNTIME_ATTEST_ENV,
   DESKTOP_RUNTIME_PIN,
   DESKTOP_RUNTIME_VERIFY_ENV,
@@ -196,7 +197,8 @@ async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWi
   await syncDesktopAppConfigAt(dir, config);
   // The window builds on denext's Deno toolchain (this verb re-ran on it), which always matches the
   // runtime. Only a Deno the user chose explicitly (DENEXT_DENO=stock / <path>, DENO_BIN) may be
-  // another version: then an unpackaged window falls back to the stock runtime with a warning.
+  // another version: then an unpackaged window falls back to the stock runtime with a warning (if
+  // that Deno is stock; denext's own builds only on denext's runtime).
   // Packaging stays strict.
   const runtime = await resolveDesktopRuntimeEnv({
     projectDir: dir,
@@ -535,9 +537,11 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
     Deno.exit(1);
   }
   console.log(`\n  denext desktop — packaging (${targetOs})  ▸  ${dir}\n`);
-  // The script reads `desktop.denoFlags` itself; check them first.
+  // The script reads `desktop.denoFlags` itself, and would refuse the stock runtime only after its
+  // export; check them first.
   try {
     desktopDenoFlags((await resolveProject(dir)).config);
+    await assertStockRuntimeUsable({ deno: denoExecutable() });
   } catch (err) {
     fail(`denext desktop package: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -624,8 +628,8 @@ export function packageScriptWarnings(
   const out: string[] = [];
   if (!age.runtime) {
     out.push(
-      `  ⚠ scripts/${name} predates denext 3.1: it builds with the stock Deno Desktop runtime ` +
-        "and none of the default installers.\n" +
+      `  ⚠ scripts/${name} predates denext 3.1: it names no runtime (the stock one on a stock ` +
+        "Deno CLI; denext's Deno refuses that) and builds none of the default installers.\n" +
         "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
         "(the old file is kept as a .bak).",
     );

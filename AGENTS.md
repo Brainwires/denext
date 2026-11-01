@@ -713,11 +713,11 @@ navigation anywhere else (a link, a script, a redirect, `window.open`) opens an 
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
 `denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.6 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
-`DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
+`DENEXT_DESKTOP_RUNTIME=stock` opts out on a stock Deno CLI only (`DENEXT_DENO=stock`; denext's Deno refuses it, because a stock runtime can't run what it compiles), and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
 `dev` build on denext's Deno toolchain, which always matches; only under an explicit
-`DENEXT_DENO=stock | <path>` or `DENO_BIN` of another version do they warn and use the stock runtime;
+`DENEXT_DENO=stock | <path>` or `DENO_BIN` at a stock Deno of another version do they warn and use the stock runtime;
 `package` refuses. A default installer that can't be built (missing tool, WiX other than 5,
 a version MSI/Debian can't express) is skipped with a warning; an asked-for one fails.
 `DENEXT_LOCK_TIMEOUT=<seconds>` bounds a build-lock wait. `runDesktop` resolves to `{ window, trust, emit, sidecar }`: `emit(cap, event, data)` pushes an OS event the page receives with `onDesktopEvent(cap, event, fn)` from `denext/desktop/client` (kept until the page subscribes).
