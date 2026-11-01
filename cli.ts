@@ -265,9 +265,10 @@ async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> 
     "./unknown-verb.ts",
   );
   const dir = cwdFromArgs(Deno.args);
+  const verb = outcome.unknownVerb;
   const action = await afterPinHandOff(
     () => deferDiscoveryToPinned(dir),
-    () => unknownVerbAction(Deno.args, outcome.unknownVerb!, dir),
+    () => unknownVerbAction(Deno.args, verb, dir),
   );
   if (action === "unknown") return outcome;
   if (action === "help") return { ...outcome, hint: UNLISTED_VERB_HELP };
