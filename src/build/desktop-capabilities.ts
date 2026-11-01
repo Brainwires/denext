@@ -930,7 +930,7 @@ export function sidecarRunWriteWarnings(
   const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
   const sidecars = configSidecars(cfg);
   if (sidecars.length === 0) return [];
-  const bake = sidecarProgramBake(cfg, options);
+  const bake = sidecarProgramBake(cfg, os, options);
   const extra = mergePermissionSets(
     checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
     sidecarPermissionSet(sidecars, os, bake.cacheScope, bake.integrityDir),
@@ -994,15 +994,27 @@ function sidecarCacheScope(cfg: DesktopFlagConfig, options: DesktopBuildFlagOpti
   return (options.cacheScope ?? desktopCacheTokenRuntime()) && hasIdentifier(cfg);
 }
 
-/** How a copied program sidecar's grants are baked for `options`. */
+/**
+ * How a copied program sidecar's grants are baked for `options`. An unscoped `--allow-run` from
+ * anywhere (`extraPermissions`, a capability, another sidecar) has no value to record a hash in, and
+ * the app could run anything anyway, so the program then keeps its copy and write grant.
+ */
 function sidecarProgramBake(
   cfg: DesktopFlagConfig,
+  os: DesktopOs,
   options: DesktopBuildFlagOptions,
 ): SidecarProgramBake {
   const cacheScope = sidecarCacheScope(cfg, options);
-  const integrity = cacheScope && options.projectDir !== undefined &&
-    (options.sidecarIntegrity ?? desktopSidecarIntegrityRuntime());
-  return { cacheScope, ...(integrity ? { integrityDir: options.projectDir } : {}) };
+  const integrityDir = cacheScope && (options.sidecarIntegrity ?? desktopSidecarIntegrityRuntime())
+    ? options.projectDir
+    : undefined;
+  if (integrityDir === undefined) return { cacheScope };
+  const extra = mergePermissionSets(
+    checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
+    sidecarPermissionSet(configSidecars(cfg), os, cacheScope, integrityDir),
+  );
+  const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
+  return bakeableSets(capFlags, extra).run.has("*") ? { cacheScope } : { cacheScope, integrityDir };
 }
 
 /** Whether `desktop.app.identifier` is set (the runtime keys both folders by it). */
@@ -1129,7 +1141,7 @@ export function desktopBuildFlags(
 ): string[] {
   const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
   // `desktop.extraPermissions` and what the sidecars need, baked the same way.
-  const bake = sidecarProgramBake(cfg, options);
+  const bake = sidecarProgramBake(cfg, os, options);
   const extra = mergePermissionSets(
     checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
     sidecarPermissionSet(configSidecars(cfg), os, bake.cacheScope, bake.integrityDir),

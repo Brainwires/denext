@@ -668,6 +668,21 @@ Deno.test("a recorded program: the run grant carries the file's hash, with no wr
     assertEquals(flags.filter((f) => f.startsWith("--allow-write")), []);
     assertEquals(sidecarRunWriteWarnings(config, "linux", on), []);
 
+    // An unscoped run has no value to record in: the copy and its write grant stay, so it still starts.
+    const wide = desktopBuildFlags(
+      {
+        desktop: { ...config.desktop, extraPermissions: { run: ["*"] } },
+      },
+      "linux",
+      on,
+    );
+    assertEquals(wide.includes("--allow-run"), true);
+    assertEquals(
+      wide.includes("--allow-write=$DENO_DESKTOP_CACHE/sidecars/server"),
+      true,
+      wide.join(" "),
+    );
+
     // A runtime before the check: the copy in the cache folder, its write grant and the warning.
     const off = { cacheScope: true, sidecarIntegrity: false, projectDir: root };
     assertEquals(
