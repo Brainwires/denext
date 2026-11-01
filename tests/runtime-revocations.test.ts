@@ -103,9 +103,13 @@ async function refused(p: Promise<unknown>): Promise<string> {
   return err.code;
 }
 
-Deno.test("no production key is compiled in yet: both slots are empty, so the check is off", () => {
+Deno.test("the compiled-in keys are the filled slots, and the active slot is filled", () => {
   assertEquals(RUNTIME_REVOCATION_PUBLIC_KEYS.length, 2);
-  assertEquals(revocationKeys(() => undefined), []);
+  assertEquals(RUNTIME_REVOCATION_PUBLIC_KEYS[0] !== "", true);
+  assertEquals(
+    revocationKeys(() => undefined),
+    RUNTIME_REVOCATION_PUBLIC_KEYS.filter((k) => k !== ""),
+  );
 });
 
 Deno.test("verifyRevocationDocument: a list signed by either key verifies, as signed", async () => {
