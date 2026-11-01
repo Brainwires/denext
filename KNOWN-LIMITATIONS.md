@@ -733,7 +733,13 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   strict CSP and enable only the capabilities you use. A program sidecar shipped in the app
   (`run: { exec: "./bin/…" }`) is baked an unscoped `--allow-run` and a broad `--allow-write`
   (its copy in the app's cache folder has a per-user path); runtime 3.0.0-denext.8 scopes both to
-  that copy when the app sets `desktop.app.identifier`, from the denext release that pins it. Under
+  that copy when the app sets `desktop.app.identifier`, from the denext release that pins it; that
+  scope limits what runs by name, since the app can write the copy, and the package run warns.
+  Runtime 3.0.0-denext.9 lifts that: the run grant records the program's SHA-256, no write grant is
+  baked, the runtime writes the file from the binary and refuses other bytes at every spawn. What
+  remains on macOS and Linux: another program of the same user that changes the file between the
+  check and the exec can run for a moment before the child is killed (`outputSync()` has no kill),
+  and an unscoped write grant could change a binary that is not signed. Under
   `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets only
   the permissions the app holds unscoped (no scoped grants, `--unstable-*` or `--config`).
 - **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime

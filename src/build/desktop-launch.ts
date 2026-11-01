@@ -293,6 +293,7 @@ export async function desktopLaunchBuildPlan(
   );
   const args = desktopLaunchBuildArgs({
     permissionFlags: desktopBuildFlags(input.config, input.os, {
+      projectDir: input.projectDir,
       // The split network grant needs the pinned runtime (a non-empty runtime env) at 3.0.0-rc.2+.
       netSplit: Boolean(input.runtimeEnv?.DENORT_DESKTOP_BIN) &&
         (input.netSplit ?? desktopNetSplit)(),

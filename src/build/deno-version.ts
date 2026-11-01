@@ -332,6 +332,25 @@ export function supportsDesktopDataToken(version: string): boolean {
   return compareDenoVersions(version, FIRST_DESKTOP_DATA_TOKEN_RUNTIME) >= 0;
 }
 
+/**
+ * The first Deno Desktop runtime that keeps a program the app carries to the bytes it was packaged
+ * with: a baked `--allow-run` value `$DENO_DESKTOP_CACHE/…#sha256=<hex>#embedded=<path>` runs only
+ * those bytes, written from the binary and checked at every spawn, and the program's folder is
+ * denied to the app's writes (Brainwires/deno DENEXT.md item 215).
+ */
+export const FIRST_SIDECAR_INTEGRITY_RUNTIME = "3.0.0-denext.9";
+
+/**
+ * Whether the Deno Desktop runtime `version` checks a program sidecar's recorded hash at spawn
+ * (from {@linkcode FIRST_SIDECAR_INTEGRITY_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether a program sidecar's grant may record its hash.
+ */
+export function supportsSidecarIntegrity(version: string): boolean {
+  return compareDenoVersions(version, FIRST_SIDECAR_INTEGRITY_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

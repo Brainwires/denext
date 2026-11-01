@@ -372,6 +372,79 @@ Deno.test("resolveSidecarProgram: the copy is reused while unchanged and replace
   }
 });
 
+Deno.test("resolveSidecarProgram: where the runtime keeps the program it is not copied, and no write is tried", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-sidecar-kept-" });
+  try {
+    await Deno.mkdir(join(dir, "bin"));
+    await Deno.writeTextFile(join(dir, "bin", "srv"), "packaged");
+    const baseUrl = toFileUrl(join(dir, "desktop.ts")).href;
+    const cache = join(dir, "cache");
+    const digest = new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode("packaged")),
+    );
+    const sha256 = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+    const kept = join(cache, "sidecars", "s", sha256, "srv");
+    const query = Deno.permissions.query;
+    const asked: unknown[] = [];
+    Deno.permissions.query = ((desc: Deno.WritePermissionDescriptor) => {
+      asked.push(desc.path);
+      return Promise.resolve({ state: "denied" } as Deno.PermissionStatus);
+    }) as typeof Deno.permissions.query;
+    try {
+      assertEquals(await resolveSidecarProgram("./bin/srv", "s", baseUrl, cache, true), kept);
+    } finally {
+      Deno.permissions.query = query;
+    }
+    assertEquals(asked, [kept]);
+    assertEquals(await Deno.stat(cache).then(() => true, () => false), false, "nothing written");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("a program the runtime refuses at spawn: a crash for the supervisor, and the restart runs what the runtime wrote again", async () => {
+  // What Deno Desktop runtime 3.0.0-denext.9 does with a program swapped after packaging: the first
+  // spawn throws NotCapable (and removes the file), the next one runs the packaged bytes. The
+  // refusal itself is tested in Brainwires/deno (.github/denext-runtime/e2e/areas/sidecarint.ts).
+  let spawns = 0;
+  let exit!: (status: Deno.CommandStatus) => void;
+  const status = new Promise<Deno.CommandStatus>((r) => exit = r);
+  class SwappedOnce {
+    spawn() {
+      if (++spawns === 1) {
+        throw new Deno.errors.NotCapable(
+          "Refusing to run /c/sidecars/s/h/srv: its contents differ",
+        );
+      }
+      return {
+        pid: 7,
+        status,
+        stdin: new WritableStream<Uint8Array>(),
+        stdout: new ReadableStream<Uint8Array>({ start: (c) => c.close() }),
+        stderr: new ReadableStream<Uint8Array>({ start: (c) => c.close() }),
+        kill: () => exit({ success: true, code: 0, signal: null }),
+      };
+    }
+  }
+  const launch = execSidecarLauncher({
+    program: "/c/sidecars/s/h/srv",
+    Command: SwappedOnce as unknown as typeof Deno.Command,
+  });
+  const s = createSidecarSupervisor({
+    definition: base({
+      name: "s",
+      run: { exec: "./bin/srv" },
+      restart: { backoffMs: 1 },
+    }),
+    launch,
+  });
+  s.start();
+  await until(() => s.status.state === "ready");
+  assertEquals(spawns, 2);
+  assertEquals(s.status.pid, 7);
+  await s.stop();
+});
+
 // ── host with its own launchers ──────────────────────────────────────────────────────────────
 
 Deno.test("host: a real worker on an auto port and a real program, logs to a rotated file", async () => {

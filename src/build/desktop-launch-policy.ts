@@ -14,6 +14,7 @@ import {
   supportsDesktopDataToken,
   supportsInitialOverlay,
   supportsOverlayTray,
+  supportsSidecarIntegrity,
 } from "./deno-version.ts";
 import { readJson } from "./json-edit.ts";
 
@@ -135,6 +136,25 @@ export function desktopCacheTokenRuntime(
   version: string = pinJson.version,
 ): boolean {
   return pinnedRuntimeHas(env, version, supportsDesktopCacheToken);
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime that
+ * checks a program sidecar's recorded hash at spawn: denext's pinned runtime (not
+ * `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown version)
+ * from `FIRST_SIDECAR_INTEGRITY_RUNTIME` (`3.0.0-denext.9`). An older runtime would read the recorded
+ * value as a path, so there a program sidecar keeps its copy in the cache folder under a write
+ * grant, and the package run warns.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns Whether to bake a program sidecar's hash into its run grant.
+ */
+export function desktopSidecarIntegrityRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsSidecarIntegrity);
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   desktopSidecarIncludeArgs,
   sidecarCacheProgram,
   sidecarPermissionSet,
+  sidecarRecordedProgram,
   sidecarRunWriteWarnings,
 } from "../src/build/desktop-capabilities.ts";
 import { desktopCacheTokenRuntime } from "../src/build/desktop-launch-policy.ts";
@@ -632,6 +633,78 @@ Deno.test("bundleDesktopSidecars: the host's OS by default, a sidecar with nothi
     assertMatch(
       logs.join("\n"),
       /sidecar plain: bundled into \.deno-desktop\/sidecars\/plain \([\d.]+ MB\)/,
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a recorded program: the run grant carries the file's hash, with no write grant and no warning", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-integrity-" });
+  try {
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "server"), "packaged");
+    // The SHA-256 of "packaged".
+    const sha256 = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("packaged"))
+      .then((d) => Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join(""));
+    const value =
+      `$DENO_DESKTOP_CACHE/sidecars/server/${sha256}/server#sha256=${sha256}#embedded=bin/server`;
+    assertEquals(sidecarRecordedProgram("server", "./bin/server", root), value);
+    // Nothing a permission list or the value's own markers could misread; no file, no value.
+    assertEquals(sidecarRecordedProgram("a,b", "./bin/server", root), undefined);
+    assertEquals(sidecarRecordedProgram("a#b", "./bin/server", root), undefined);
+    assertEquals(sidecarRecordedProgram("server", "./bin/a#b", root), undefined);
+    assertEquals(sidecarRecordedProgram("server", "./bin/missing", root), undefined);
+
+    const config = {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    };
+    const on = { cacheScope: true, sidecarIntegrity: true, projectDir: root };
+    const flags = desktopBuildFlags(config, "linux", on);
+    assertEquals(flags.filter((f) => f.startsWith("--allow-run")), [`--allow-run=${value}`]);
+    assertEquals(flags.filter((f) => f.startsWith("--allow-write")), []);
+    assertEquals(sidecarRunWriteWarnings(config, "linux", on), []);
+
+    // A runtime before the check: the copy in the cache folder, its write grant and the warning.
+    const off = { cacheScope: true, sidecarIntegrity: false, projectDir: root };
+    assertEquals(
+      desktopBuildFlags(config, "linux", off).filter((f) => f.includes("sidecars/server")),
+      [
+        "--allow-write=$DENO_DESKTOP_CACHE/sidecars/server",
+        "--allow-run=$DENO_DESKTOP_CACHE/sidecars/server/server",
+      ],
+    );
+    assertEquals(sidecarRunWriteWarnings(config, "linux", off).length, 1);
+    // ... and so is a program that cannot be hashed, or no project directory to read it in.
+    assertEquals(
+      sidecarRunWriteWarnings(
+        {
+          desktop: {
+            app: { identifier: "com.example.app" },
+            sidecars: [{ name: "server", run: { exec: "./bin/missing" } }],
+          },
+        },
+        "linux",
+        on,
+      ).length,
+      1,
+    );
+    assertEquals(
+      sidecarRunWriteWarnings(config, "linux", { cacheScope: true, sidecarIntegrity: true }).length,
+      1,
+    );
+    // Without the cache token nothing is recorded, whatever the runtime.
+    assertEquals(
+      desktopBuildFlags(config, "linux", {
+        cacheScope: false,
+        sidecarIntegrity: true,
+        projectDir: root,
+      })
+        .includes("--allow-run"),
+      true,
     );
   } finally {
     await Deno.remove(root, { recursive: true });

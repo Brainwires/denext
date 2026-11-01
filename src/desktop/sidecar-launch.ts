@@ -381,10 +381,31 @@ export function execSidecarLauncher(options: ExecLauncherOptions): SidecarLaunch
 }
 
 /**
+ * The path the runtime keeps a program at (`sidecarRecordedProgram`'s layout), when the app's
+ * writes are denied there; else `undefined`.
+ */
+async function runtimeKeptProgram(
+  cacheDir: string,
+  name: string,
+  file: string,
+  bytes: Uint8Array<ArrayBuffer>,
+): Promise<string | undefined> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  const sha256 = Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
+  const path = join(cacheDir, "sidecars", name, sha256, file);
+  return (await Deno.permissions.query({ name: "write", path })).state === "denied"
+    ? path
+    : undefined;
+}
+
+/**
  * Where a program sidecar runs from. An absolute path or a bare name (looked up on `PATH`) is used
  * as written. A project-relative path is the project's file in an unpackaged run; in a packaged app
- * it is embedded in the binary, so it is copied out (once per content) to
- * `<cacheDir>/sidecars/<name>/` and made executable.
+ * it is embedded in the binary. A runtime that checks the program at spawn keeps it itself, in a
+ * folder named by the hash and denied to the app's writes (Brainwires/deno DENEXT.md item 215), so
+ * this only returns that path: the denial is what says so, since a grant packaged for a runtime
+ * without the check leaves that folder writable. Otherwise the program is copied out (once per
+ * content) to `<cacheDir>/sidecars/<name>/` and made executable.
  *
  * @param exec The configured program.
  * @param name The sidecar's name.
@@ -403,8 +424,10 @@ export async function resolveSidecarProgram(
   if (isAbsolute(exec) || !/[\\/]/.test(exec) || !base) return exec;
   const sourcePath = fromFileUrl(new URL(exec, base));
   if (!standalone || !cacheDir) return sourcePath;
-  const target = join(cacheDir, "sidecars", name, basename(sourcePath));
   const bytes = await Deno.readFile(sourcePath);
+  const kept = await runtimeKeptProgram(cacheDir, name, basename(sourcePath), bytes);
+  if (kept) return kept;
+  const target = join(cacheDir, "sidecars", name, basename(sourcePath));
   const current = await Deno.readFile(target).catch(() => null);
   if (!current || current.length !== bytes.length || !current.every((b, i) => b === bytes[i])) {
     await Deno.mkdir(dirname(target), { recursive: true });

@@ -8,8 +8,10 @@ import {
   compareDenoVersions,
   FIRST_DESKTOP_CACHE_TOKEN_RUNTIME,
   FIRST_DESKTOP_DATA_TOKEN_RUNTIME,
+  FIRST_SIDECAR_INTEGRITY_RUNTIME,
   supportsDesktopCacheToken,
   supportsDesktopDataToken,
+  supportsSidecarIntegrity,
 } from "../src/build/deno-version.ts";
 import { desktopBridgeOrigins } from "../src/build/desktop-app-config.ts";
 import {
@@ -254,6 +256,10 @@ Deno.test("desktopCacheTokenRuntime: the pinned runtime from 3.0.0-denext.8, nev
   assertEquals(supportsDesktopCacheToken("3.0.0-denext.8"), true);
   assertEquals(supportsDesktopCacheToken("3.0.0-denext.7"), false);
   assertEquals(supportsDesktopCacheToken("nope"), false);
+  assertEquals(FIRST_SIDECAR_INTEGRITY_RUNTIME, "3.0.0-denext.9");
+  assertEquals(supportsSidecarIntegrity("3.0.0-denext.9"), true);
+  assertEquals(supportsSidecarIntegrity("3.0.0-denext.8"), false);
+  assertEquals(supportsSidecarIntegrity("nope"), false);
   assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8"), true);
   assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.7"), false);
   assertEquals(

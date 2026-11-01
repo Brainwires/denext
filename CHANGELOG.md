@@ -10,6 +10,14 @@ and this project adheres to
 
 ### Added
 
+- **A program sidecar runs only as it was packaged** (takes effect with Deno Desktop runtime
+  3.0.0-denext.9, once denext pins it, in an app with `desktop.app.identifier`). A project-file
+  `run: { exec }` is hashed at packaging and baked as
+  `--allow-run=$DENO_DESKTOP_CACHE/sidecars/<name>/<sha256>/<file>#sha256=<sha256>#embedded=<path>`,
+  with no write grant. The runtime writes the file from the binary, denies its folder to the app's
+  writes, and checks the hash in every spawn, so the app's own code can no longer write the program
+  and then run it. A file that differs is refused with `NotCapable` and removed; the next start
+  writes it again. An older runtime keeps the copy, its write grant and the package-run warning.
 - **`openWindow({ backgroundThrottling })`** (and `windows.open` in `desktop.ts`), Electron's
   `webPreferences.backgroundThrottling`, passed to `Deno.BrowserWindow` at creation (takes effect
   with Deno Desktop runtime 3.0.0-denext.8; an older one ignores it). `true` (the default) keeps a

@@ -3267,7 +3267,22 @@ export default defineDesktopExtension({
           <code>--allow-run=$DENO_DESKTOP_CACHE/sidecars/&lt;name&gt;/&lt;file&gt;</code>{" "}
           instead, and the matching <code>--allow-write</code>{" "}
           (scoped to that folder when nothing else writes): the runtime expands the token at launch
-          to the app&apos;s cache folder, keyed by the identifier. It gets the sidecar&apos;s
+          to the app&apos;s cache folder, keyed by the identifier. That scope limits what runs by
+          name only: under the write grant the app&apos;s own code can replace the program, and the
+          package run warns. From runtime 3.0.0-denext.9 (once denext pins it) the program&apos;s
+          SHA-256, taken at packaging, is baked into the run grant, and the runtime keeps the file
+          itself: it writes it from the binary to{" "}
+          <code>sidecars/&lt;name&gt;/&lt;sha256&gt;/&lt;file&gt;</code>, denies that folder to the
+          app&apos;s writes (no write grant is baked for it) and checks the hash at every spawn, in
+          the spawn itself, so <code>new Deno.Command(path)</code>{" "}
+          in the app gets the same answer. A file that differs is refused with{" "}
+          <code>NotCapable</code>{" "}
+          and removed, and the next start (the supervisor&apos;s restart) writes it again. A limit
+          stays on macOS and Linux: another program of the same user that changes the file in the
+          microseconds between the check and the exec can run for a moment before the runtime sees
+          it and kills the child (<code>outputSync()</code>{" "}
+          has no such kill); on Windows the file is locked for the spawn. The hash covers that one
+          file, not what the program loads or runs in turn. The program gets the sidecar&apos;s
           variables, and one JSON line on stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
           as the app runs, so a program that exits on end-of-file never outlives it.
@@ -3508,7 +3523,8 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         <code>permissions</code> is baked into the package like{" "}
         <code>desktop.extraPermissions</code>, and a program of the project bakes an unscoped{" "}
         <code>--allow-run</code>{" "}
-        (it runs from the cache folder, whose path is only known on the user&apos;s machine).
+        (it runs from the cache folder, whose path is only known on the user&apos;s machine), unless
+        the runtime can scope it as above.
       </p>
 
       <h2 id="desktop-runtime">The denext Deno Desktop runtime</h2>

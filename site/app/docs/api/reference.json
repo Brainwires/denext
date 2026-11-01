@@ -20768,8 +20768,8 @@
           "slug": "buildDesktopBundle",
           "kind": "function",
           "signature": "buildDesktopBundle(entryUrl: string, os: linux | windows, o: DesktopBundleOptions): Promise<string>",
-          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable.",
-          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable.",
+          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable).",
+          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable, and on Windows the tree\nmanifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and\nversion; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it\nsigns the executable).",
           "params": [
             {
               "name": "entryUrl",
@@ -21063,6 +21063,18 @@
           "signature": "DESKTOP_INSTALLER_FORMATS: object",
           "doc": "Every installer format, by the OS it is built for.",
           "docFull": "Every installer format, by the OS it is built for.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DESKTOP_TREE_RESOURCE",
+          "slug": "DESKTOP_TREE_RESOURCE",
+          "kind": "variable",
+          "signature": "DESKTOP_TREE_RESOURCE: DENEXT_TREE",
+          "doc": "The RT_RCDATA resource name the manifest is stored under.",
+          "docFull": "The `RT_RCDATA` resource name the manifest is stored under.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -21970,7 +21982,7 @@
           "kind": "function",
           "signature": "desktopSignWindows(files: typeOperator, deps?: DesktopSignWindowsDeps): Promise<boolean>",
           "doc": "Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD), else the certificate store's DENEXT_WINDOWS_CERT_THUMBPRINT, timestamped by DENEXT_SIGN_TIMESTAMP_URL, batched a few dozen files per signtool sign call. Without a certificate nothing is signed and a warning says so. With one but without signtool (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the script's --no-sign builds unsigned on purpose. The password, which signtool takes only as /p, never reaches its command line: a password-protected .pfx is imported into the user's certificate store for the run and signed with by thumbprint (withSigntoolCertificate).",
-          "docFull": "Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password\n`DENEXT_WINDOWS_CERT_PASSWORD`), else the certificate store's `DENEXT_WINDOWS_CERT_THUMBPRINT`,\ntimestamped by `DENEXT_SIGN_TIMESTAMP_URL`, batched a few dozen files per `signtool sign` call.\nWithout a certificate nothing is signed and a warning says so. With one but without `signtool`\n(off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the\nscript's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as\n`/p`, never reaches its command line: a password-protected `.pfx` is imported into the user's\ncertificate store for the run and signed with by thumbprint ({@linkcode withSigntoolCertificate}).",
+          "docFull": "Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password\n`DENEXT_WINDOWS_CERT_PASSWORD`), else the certificate store's `DENEXT_WINDOWS_CERT_THUMBPRINT`,\ntimestamped by `DENEXT_SIGN_TIMESTAMP_URL`, batched a few dozen files per `signtool sign` call.\nWithout a certificate nothing is signed and a warning says so. With one but without `signtool`\n(off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the\nscript's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as\n`/p`, never reaches its command line: a password-protected `.pfx` is imported into the user's\ncertificate store for the run and signed with by thumbprint ({@linkcode withSigntoolCertificate}).\n\nAn executable among `files` that carries a tree manifest ({@linkcode stampDesktopTreeManifest})\nis signed last: every other file is signed first, the manifest is written again so it lists the\nother PE images as signed, and then the executable is signed, whatever order the caller listed\nthe files in. (The manifest lists every file of the bundle but the executable, DLLs included;\nsigning a DLL after the manifest was written would make the installed app refuse the update.)",
           "params": [
             {
               "name": "files",
@@ -22118,6 +22130,104 @@
           "signature": "interface DesktopTrayUpdate",
           "doc": "What update changes on the backend tray (null removes the tooltip / menu / dark icon).",
           "docFull": "What `update` changes on the backend tray (`null` removes the tooltip / menu / dark icon).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTreeFile",
+          "slug": "DesktopTreeFile",
+          "kind": "interface",
+          "signature": "interface DesktopTreeFile",
+          "doc": "One listed file: its path relative to the bundle directory (/-separated), size and SHA-256.",
+          "docFull": "One listed file: its path relative to the bundle directory (`/`-separated), size and SHA-256.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTreeIdentity",
+          "slug": "DesktopTreeIdentity",
+          "kind": "interface",
+          "signature": "interface DesktopTreeIdentity",
+          "doc": "The app a manifest is written for: the runtime refuses a manifest for another app or version.",
+          "docFull": "The app a manifest is written for: the runtime refuses a manifest for another app or version.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopTreeManifest",
+          "slug": "desktopTreeManifest-fn",
+          "kind": "function",
+          "signature": "desktopTreeManifest(dir: string, exe: string, identity: DesktopTreeIdentity): Promise<DesktopTreeManifest>",
+          "doc": "The manifest of a Windows bundle directory for identity: every regular file but the executable exe (the manifest's carrier, which cannot hold its own hash: its signature is its check), PE images included, sorted by path.",
+          "docFull": "The manifest of a Windows bundle directory for `identity`: every regular file but the executable\n`exe` (the manifest's carrier, which cannot hold its own hash: its signature is its check), PE\nimages included, sorted by path.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            },
+            {
+              "name": "exe",
+              "doc": "The executable's name inside it (<App>.exe)."
+            },
+            {
+              "name": "identity",
+              "doc": "The app and version the manifest is for."
+            }
+          ],
+          "returns": "The manifest.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTreeManifest",
+          "slug": "DesktopTreeManifest-iface",
+          "kind": "interface",
+          "signature": "interface DesktopTreeManifest",
+          "doc": "The manifest's JSON shape (version 1).",
+          "docFull": "The manifest's JSON shape (version 1).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "desktopTreeManifestProblem",
+          "slug": "desktopTreeManifestProblem-fn",
+          "kind": "function",
+          "signature": "desktopTreeManifestProblem(dir: string, exe: string, identity?: DesktopTreeIdentity): Promise<DesktopTreeManifestProblem | undefined>",
+          "doc": "Why a Windows bundle's files no longer match its executable's tree manifest (the runtime would refuse it as an update), or why the manifest is not for identity when one is given, or undefined when all is well. A bundle whose executable carries no manifest is reported with unlisted: true: its other files would be protected by the update key alone, and an installed app that has a manifest refuses it.",
+          "docFull": "Why a Windows bundle's files no longer match its executable's tree manifest (the runtime would\nrefuse it as an update), or why the manifest is not for `identity` when one is given, or\n`undefined` when all is well. A bundle whose executable carries no manifest is reported with\n`unlisted: true`: its other files would be protected by the update key alone, and an installed\napp that has a manifest refuses it.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            },
+            {
+              "name": "exe",
+              "doc": "The executable's name inside it."
+            },
+            {
+              "name": "identity",
+              "doc": "The app and version the manifest must be for (when known)."
+            }
+          ],
+          "returns": "The problem, if any.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTreeManifestProblem",
+          "slug": "DesktopTreeManifestProblem-iface",
+          "kind": "interface",
+          "signature": "interface DesktopTreeManifestProblem",
+          "doc": "Why a bundle's files don't match its executable's tree manifest.",
+          "docFull": "Why a bundle's files don't match its executable's tree manifest.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -22296,6 +22406,27 @@
             }
           ],
           "returns": "What build returned.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "embedDesktopTreeManifest",
+          "slug": "embedDesktopTreeManifest",
+          "kind": "function",
+          "signature": "embedDesktopTreeManifest(pe: Uint8Array, manifest: DesktopTreeManifest): Uint8Array",
+          "doc": "pe with manifest as its RT_RCDATA DENEXT_TREE resource (replacing one it has), every other resource kept. Any Authenticode signature is dropped: sign after this.",
+          "docFull": "`pe` with `manifest` as its `RT_RCDATA` `DENEXT_TREE` resource (replacing one it has), every\nother resource kept. Any Authenticode signature is dropped: sign after this.",
+          "params": [
+            {
+              "name": "pe",
+              "doc": "The executable's bytes."
+            },
+            {
+              "name": "manifest",
+              "doc": "The manifest to embed."
+            }
+          ],
+          "returns": "The new executable's bytes.",
           "examples": [],
           "denextOnly": true
         },
@@ -22623,6 +22754,23 @@
           "denextOnly": true
         },
         {
+          "name": "readDesktopTreeManifest",
+          "slug": "readDesktopTreeManifest",
+          "kind": "function",
+          "signature": "readDesktopTreeManifest(pe: Uint8Array): DesktopTreeManifest | null",
+          "doc": "The DENEXT_TREE manifest an executable carries, or null when it has none.",
+          "docFull": "The `DENEXT_TREE` manifest an executable carries, or `null` when it has none.",
+          "params": [
+            {
+              "name": "pe",
+              "doc": "The executable's bytes."
+            }
+          ],
+          "returns": "The manifest.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "ResolvedDesktop",
           "slug": "ResolvedDesktop",
           "kind": "interface",
@@ -22892,6 +23040,31 @@
           "docFull": "The seams of {@linkcode withSigntoolCertificate} (tests pass fakes).",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "stampDesktopTreeManifest",
+          "slug": "stampDesktopTreeManifest",
+          "kind": "function",
+          "signature": "stampDesktopTreeManifest(dir: string, exe: string, identity: DesktopTreeIdentity): Promise<DesktopTreeManifest>",
+          "doc": "Write the tree manifest of a finished Windows bundle into its executable. Run it once nothing else will be written into the bundle (after the VC++ runtime and laufey-launch.json) and once every other PE image is signed as it ships (the manifest lists their bytes), and before the executable is signed: its Authenticode signature then covers every file of the app. desktopSignWindows runs it again between signing the DLLs and the executable, so a bundle stamped before signing (as buildDesktopBundle does) ends up right whatever the order.",
+          "docFull": "Write the tree manifest of a finished Windows bundle into its executable. Run it once nothing\nelse will be written into the bundle (after the VC++ runtime and `laufey-launch.json`) and once\nevery other PE image is signed as it ships (the manifest lists their bytes), and before the\nexecutable is signed: its Authenticode signature then covers every file of the app.\n`desktopSignWindows` runs it again between signing the DLLs and the executable, so a bundle\nstamped before signing (as `buildDesktopBundle` does) ends up right whatever the order.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            },
+            {
+              "name": "exe",
+              "doc": "The executable's name inside it (<App>.exe)."
+            },
+            {
+              "name": "identity",
+              "doc": "The app and version the manifest is for."
+            }
+          ],
+          "returns": "The manifest written.",
           "examples": [],
           "denextOnly": true
         },
