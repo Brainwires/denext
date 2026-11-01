@@ -23,4 +23,4 @@ export const RUNTIME_REVOCATION_PUBLIC_KEYS: readonly [active: string, backup: s
  * list's sequence before the release commit (`deno task revocations floor`); `0` until a list is
  * published.
  */
-export const RUNTIME_REVOCATION_MIN_SEQUENCE: number = 0;
+export const RUNTIME_REVOCATION_MIN_SEQUENCE: number = 1793556074;
