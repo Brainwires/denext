@@ -15,6 +15,15 @@ and this project adheres to
 
 ### Security
 
+- **A mistyped or unknown verb no longer runs a `denext.config.*` that can't add verbs.** `denext
+  biuld`, `denext foo --help`, and `denext openapi lint`, `content list`, `functions list` or
+  `storage ls` without their plugin imported the config with every permission the CLI held. The CLI
+  now reads the config's text first and imports it only if it declares `commands` or `plugins`, or
+  hides them (a spread, a computed key, a variable as the default export, a wrapper other than
+  `defineConfig`, a re-export). `<verb> --help` imports nothing unless the last `denext commands`
+  listing names the verb; it reports the name and points at `denext commands`, so a project verb's
+  or a plugin verb's help now needs that listing. This is not a full fix: a hostile config that
+  declares `commands` still runs on any unknown verb, as the security guide says.
 - **Inspecting a project no longer runs its `denext.config.*`.** `denext routes`, `denext info`,
   `denext generate` (`--dry-run` included), `denext desktop doctor`, `denext desktop add` and the
   `denext_list_routes`, `denext_route_map`, `denext_generate` and codebase MCP tools imported the

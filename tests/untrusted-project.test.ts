@@ -143,7 +143,12 @@ Deno.test("resolveProjectLayout is resolveProject's layout, and only resolveProj
 Deno.test("readStaticConfig: data has a value, code doesn't, and no config is a null file", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-static-config-" });
   try {
-    assertEquals(await readStaticConfig(dir), { file: null, readable: true, keys: {} });
+    assertEquals(await readStaticConfig(dir), {
+      file: null,
+      readable: true,
+      keys: {},
+      hidesKeys: false,
+    });
     const path = join(dir, "denext.config.ts");
     await Deno.writeTextFile(path, 'export default { mode: "spa", desktop: makeIt() };\n');
     const config = await readStaticConfig(dir);
@@ -184,6 +189,104 @@ Deno.test("projectLaunchPolicy: a computed desktop key is a gap, and it isn't ru
     const [gap] = (await projectLaunchPolicy(dir))!;
     assertStringIncludes(gap.message, "could not be loaded");
     assertEquals(await ran(), false);
+  } finally {
+    await cleanup(dir, marker);
+  }
+});
+
+// An unknown verb imports the config only when its text says it could add verbs.
+for (
+  const args of [
+    ["biuld"],
+    ["foo", "--help"],
+    ["foo", "-h"],
+    ["openapi", "lint"],
+    ["content", "list"],
+    ["functions", "list"],
+    ["storage", "ls"],
+    ["openapi", "lint", "--help"],
+  ]
+) {
+  Deno.test(`denext ${args.join(" ")}: a config with no verbs doesn't run`, async () => {
+    const { dir, marker, ran } = await hostile();
+    try {
+      const { code, out } = await cli(dir, ...args);
+      assertEquals(code, 1, out);
+      assertStringIncludes(out, `unknown command "${args[0]}"`);
+      assertEquals(await ran(), false, "the config ran");
+    } finally {
+      await cleanup(dir, marker);
+    }
+  });
+}
+
+Deno.test("denext --cwd <dir> biuld: the static read is of that directory", async () => {
+  const { dir, marker, ran } = await hostile();
+  const other = await hostile(
+    'export default { commands: [{ name: "seed", summary: "s", run() {} }] };\n',
+  );
+  try {
+    const plain = await cli(other.dir, "--cwd", dir, "biuld");
+    assertStringIncludes(plain.out, "Did you mean `denext build`?");
+    assertEquals(await ran(), false, "the plain project's config ran");
+    assertEquals(await other.ran(), false, "the caller's directory's config ran");
+    const declared = await cli(dir, "--cwd", other.dir, "seed");
+    assertEquals(declared.code, 0, declared.out);
+    assertEquals(await ran(), false, "the caller's directory's config ran");
+  } finally {
+    await cleanup(dir, marker);
+    await cleanup(other.dir, other.marker);
+  }
+});
+
+Deno.test("an unknown verb's --help points at `denext commands`, and works once it has run", async () => {
+  const { dir, marker, ran } = await hostile(
+    'export default { commands: [{ name: "seed", summary: "Load it", run() {} }] };\n',
+  );
+  try {
+    const typo = await cli(dir, "biuld", "--help");
+    assertEquals(typo.code, 1, typo.out);
+    assertStringIncludes(typo.out, "Did you mean `denext build`?");
+    assertStringIncludes(typo.out, "`denext commands`");
+    const before = await cli(dir, "seed", "--help");
+    assertEquals(before.code, 1, before.out);
+    assertStringIncludes(before.out, "`denext commands`");
+    assertEquals(await ran(), false, "--help ran a config that declares commands");
+
+    const home = await Deno.makeTempDir({ prefix: "denext-hostile-home-" });
+    try {
+      // One HOME's listing key isn't another's, so the listing and its reader share the machine's.
+      const env = { DENO_DIR: denoCacheDir(), HOME: home, USERPROFILE: home, NO_COLOR: "1" };
+      const run = (...args: string[]) =>
+        new Deno.Command(Deno.execPath(), {
+          args: ["run", "-A", CLI, ...args],
+          cwd: dir,
+          env,
+          stdin: "null",
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+      assertEquals((await run("commands", "--json")).code, 0);
+      assert(await ran(), "`denext commands` is the explicit discovery");
+      const after = await run("seed", "--help");
+      assertEquals(after.code, 0, new TextDecoder().decode(after.stderr));
+      assertStringIncludes(new TextDecoder().decode(after.stdout), "Load it");
+    } finally {
+      await Deno.remove(home, { recursive: true }).catch(() => {});
+    }
+  } finally {
+    await cleanup(dir, marker);
+  }
+});
+
+Deno.test("a config that declares commands still runs on an unknown verb: this is no sandbox", async () => {
+  const { dir, marker, ran } = await hostile(
+    'export default { commands: [{ name: "seed", summary: "s", run() {} }] };\n',
+  );
+  try {
+    const typo = await cli(dir, "biuld");
+    assertEquals(typo.code, 1, typo.out);
+    assert(await ran(), "the documented limit changed: update /docs/security");
   } finally {
     await cleanup(dir, marker);
   }

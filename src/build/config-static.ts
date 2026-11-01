@@ -4,7 +4,7 @@
 
 import { join } from "@std/path";
 import { CONFIG_FILES } from "./config-files.ts";
-import { type ConfigKeyInfo, readConfigModel } from "./config-edit.ts";
+import { type ConfigKeyInfo, configMayHideKeys, readConfigModel } from "./config-edit.ts";
 
 /** What the project's config says without being run. */
 export interface StaticConfig {
@@ -14,14 +14,25 @@ export interface StaticConfig {
   readonly readable: boolean;
   /** Its top-level keys. */
   readonly keys: Readonly<Record<string, ConfigKeyInfo>>;
+  /** Whether code in the file can supply keys beyond {@linkcode StaticConfig.keys}. */
+  readonly hidesKeys: boolean;
 }
+
+/** The largest config file read as text; a bigger one counts as unreadable. */
+const MAX_CONFIG_BYTES = 8 * 1024 * 1024;
 
 /** The first config file in `dir`, as the loader would pick it, with its text. */
 async function configSource(dir: string): Promise<{ file: string; source: string | null } | null> {
   for (const file of CONFIG_FILES) {
     const info = await Deno.lstat(join(dir, file)).catch(() => null);
     if (info === null) continue;
-    return { file, source: await Deno.readTextFile(join(dir, file)).catch(() => null) };
+    // Only a regular file is read: a FIFO or device under the config's name would block or never end.
+    const target = await Deno.stat(join(dir, file)).catch(() => null);
+    const regular = target !== null && target.isFile && target.size <= MAX_CONFIG_BYTES;
+    return {
+      file,
+      source: regular ? await Deno.readTextFile(join(dir, file)).catch(() => null) : null,
+    };
   }
   return null;
 }
@@ -34,12 +45,13 @@ async function configSource(dir: string): Promise<{ file: string; source: string
  */
 export async function readStaticConfig(dir: string): Promise<StaticConfig> {
   const found = await configSource(dir);
-  if (found === null) return { file: null, readable: true, keys: {} };
+  if (found === null) return { file: null, readable: true, keys: {}, hidesKeys: false };
   const model = found.source === null
     ? null
     : await readConfigModel(found.source).catch(() => null);
   if (model === null || model.form === "unsupported") {
-    return { file: found.file, readable: false, keys: {} };
+    return { file: found.file, readable: false, keys: {}, hidesKeys: true };
   }
-  return { file: found.file, readable: true, keys: model.keys };
+  const hidesKeys = await configMayHideKeys(found.source!).catch(() => true);
+  return { file: found.file, readable: true, keys: model.keys, hidesKeys };
 }

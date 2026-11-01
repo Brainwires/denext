@@ -1202,7 +1202,9 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `mobile dev|build`,
   project verbs) re-run themselves on denext's pinned Deno build (a `3.0.0-rc.N` release built from Deno
   2.9.8: `Deno.SQL`, Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
-  `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced (every API, flag
+  `<DENO_DIR>/denext-deno/` on first need (`migration`, `db` and `gen` run project code too, as they
+  import `denext.config.*`, but under `deno run` stay on the Deno that started them and hand the
+  toolchain to their children); the `deno` on PATH is never replaced (every API, flag
   and env var it adds over Deno 2.9.8, by version: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
   opts out (deprecated: denext 5.0 drops stock Deno; every stock path — `DENEXT_DENO=stock`,
   `DENEXT_DESKTOP_RUNTIME=stock`, the npm esbuild, `createTestApp()` under a stock `deno test` —
@@ -1243,7 +1245,9 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
   bench`), and `denext main.ts` / `denext https://…/x.ts` is `deno run`. Precedence: denext's
   built-in verbs, then the project's own (`commands:` / plugins), then Deno's. A script or a Deno
-  verb never imports `denext.config.ts` first (only a name that may be a project verb does); a
+  verb never imports `denext.config.ts` first (only a name that may be a project verb does: one
+  the fresh listing holds, or, unless it is `<name> --help`, any name when the config's text declares
+  or could hide `commands` / `plugins`; this narrows typos, a hostile config still runs by declaring them); a
   project verb may not be named `run`, `x`, `eval`, `serve`, `compile`, `install`, `uninstall`,
   `upgrade` or `task` (refused), and one named after another Deno verb (`bench`, `doc`, …) runs
   in its place only once `denext commands` has listed it (`.denext/commands.json`, matching the

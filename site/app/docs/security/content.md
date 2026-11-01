@@ -265,13 +265,20 @@ An installed `denext` (the compiled binary, or
 verb runs its code. These run none of it: `--help`, `completions`, `migrate` and `migrate --check`
 (a `next.config.*` is evaluated in the sandboxed child), `routes`, `info`, `generate`, `codemod`,
 `audit`, `upgrade --check` / `--dry-run`, `mobile doctor` / `inspect` / `fingerprint` / `privacy`,
-`desktop doctor`, `desktop add`, and the `denext_list_routes`, `denext_route_map`,
+`desktop doctor`, `desktop add`, `<unknown verb> --help`, and the `denext_list_routes`, `denext_route_map`,
 `denext_generate`, `denext_codemod` and codebase MCP tools. These run it, with every permission the
 CLI holds: `dev`, `build`, `export`, `start`, `test`, `check`, `doctor` (it renders every route, as
 does `denext_doctor`), `commands`, `job` (`--list` too), `db`, `migration`, `gen`, `deploy`
 (`prepare --dry-run` too), `analyze`, `profile`, `denext_render`, `denext ui`'s Commands, Doctor and
-Tasks panels, and **a verb denext doesn't know**, including a mistyped one, since it may be one
-the project defines. `deno run jsr:@denext/denext/cli …` is different: Deno applies the working
+Tasks panels, and **a verb denext doesn't know, including a mistyped one, when the config might
+define it**: denext reads the config's text first, and imports it unless it can see there are no
+`commands` or `plugins`. A spread, a variable as the default export or a wrapper other than
+`defineConfig` hides the keys, so those import too, since a project's real verb must not silently
+stop working. That read decides when a typo is worth looking up. It is no protection: a hostile
+config only has to declare `commands: []` to run on `denext biuld`, so in a repository you haven't
+reviewed, type only the verbs listed above as running none of it. A verb named by the listing the
+last `denext commands` wrote on this machine counts as known, and its `--help` imports the config.
+`deno run jsr:@denext/denext/cli …` is different: Deno applies the working
 directory's `deno.json`, `package.json` and `.npmrc` to the CLI itself before any of its code runs,
 so on such a repository add `--no-config` to it. Its `imports` can replace a module of the CLI,
 under the permissions you granted.
