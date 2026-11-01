@@ -1062,9 +1062,10 @@ freed ([GHSA-mvh6-5whv-26gw](https://github.com/Brainwires/deno/security/advisor
 with `TerminateProcess`, so it can no longer spin in its teardown instead of exiting; the panic
 banner names the subcommand and the argument count instead of printing the command line; and
 `DENEXT_CRASH_REPORT_URL` turns on opt-in crash reports from the CLI and compiled programs.
-`3.0.0-denext.6` (the build denext pins today) is a Deno Desktop release: beyond `deno desktop`
+`3.0.0-denext.6` is a Deno Desktop release: beyond `deno desktop`
 reading deno.json's `desktop.app.activationPolicy`, the CLI is unchanged, and the runtime adds overlay windows, tray events with their detail, the macOS activation policy and the
-OS's text to speech ([Our Deno Desktop runtime](/docs/desktop-runtime#overlay-windows-tray-events-and-the-activation-policy)). The
+OS's text to speech ([Our Deno Desktop runtime](/docs/desktop-runtime#overlay-windows-tray-events-and-the-activation-policy)).
+`3.0.0-denext.7` (the build denext pins today) is a Deno Desktop release as well: CEF 156 ([GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)), the overlay on Linux Wayland and a Linux runtime library that binds its own symbols; for the CLI, `deno doc --json` and `--html` no longer carry ANSI color escapes. The
 [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases

@@ -104,7 +104,7 @@ the token (401); a body over 16 KiB is a 413.
 
 ## Where it works
 
-On denext's pinned Deno Desktop runtime (3.0.0-denext.6): the transparent, frameless overlay on
+On denext's pinned Deno Desktop runtime (3.0.0-denext.7): the transparent, frameless overlay on
 macOS, Linux and Windows' WebView2 (the CEF backend paints it opaque); clicks passing through
 everywhere but Loopy, its bubble and its buttons (`setHitRegion`); no Dock icon on macOS from the
 first frame; the tray; every animation; reading aloud; the inbox and `--wait` replies; the Claude
