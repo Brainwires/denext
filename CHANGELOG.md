@@ -44,6 +44,16 @@ and this project adheres to
   and spun at 100% CPU; `libdenort.so` now binds its own symbols to itself.
 - **`deno doc --json` and `--html` carry no ANSI color escapes** on denext's Deno, whether or not
   `NO_COLOR` is set.
+- **`denext dev --lan` on a machine with several networks binds the one with the default route.**
+  It picked by interface name, so a Mac online over Wi-Fi (`en1`) that had another network on its
+  Ethernet (`en0`) printed a URL no phone on the Wi-Fi could open. `denext mobile dev --lan` and
+  `denext desktop dev --lan` pick the same way. A VPN holding the default route is passed over, and
+  the name order remains the fallback.
+- **`denext dev` no longer reloads or restarts its first render for files written before it
+  started.** On macOS a new file watch replays recent history, and the project-wide watcher (SPA
+  mode's too) took that as a platform file or folder being created: a new generation in the middle
+  of the first render could leave a page without its islands' script, and an open page reloaded for
+  nothing.
 
 ## [4.11.5] - 2026-11-01
 

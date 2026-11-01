@@ -113,7 +113,11 @@ let package = Package(
 )
 `,
       );
-      await run("swift", ["build", "--package-path", dir, "-c", "debug"]);
+      // The package's framework lands beside the executable, which the app's Xcode build embeds.
+      // Only the Swift Build engine's plain `swift build` leaves that folder off the rpath (dyld:
+      // `Library not loaded: @rpath/SQLCipher.framework/…`), so the harness names it itself.
+      const rpath = ["-Xlinker", "-rpath", "-Xlinker", "@executable_path"];
+      await run("swift", ["build", "--package-path", dir, "-c", "debug", ...rpath]);
       const bin = (await run("swift", ["build", "--package-path", dir, "--show-bin-path"])).trim()
         .split("\n").at(-1)!;
       const work = join(dir, "work");

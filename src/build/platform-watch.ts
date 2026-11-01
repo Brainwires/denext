@@ -9,6 +9,7 @@
 // folder comes or goes, so `node_modules`, dot-folders and build output are never watched.
 // Given `onEdit`, it also reports every changed path (content edits included) outside the
 // folders a scan skips at any depth, so an edit to `components/X.tsx` reaches the dev loop.
+// Neither report includes what a new watch replays of the writes made before it opened.
 
 import { join, relative, resolve } from "@std/path";
 import { isScannedDir } from "./platform-extensions.ts";
@@ -18,6 +19,46 @@ const STRUCTURAL: ReadonlySet<Deno.FsEvent["kind"]> = new Set(["create", "remove
 
 /** The event kinds that change a file: its contents, or whether it exists. */
 const CHANGES: ReadonlySet<Deno.FsEvent["kind"]> = new Set([...STRUCTURAL, "modify"]);
+
+/** How long after the watchers start an event can still be a replay of a write made before. */
+const STARTUP_REPLAY_MS = 2000;
+
+/**
+ * Whether `path`'s change event is a replay of a write made before the watchers started, not an
+ * edit: macOS's FSEvents delivers the recent history of a folder to a new watch, so the files a
+ * scaffold or a checkout wrote just before `denext dev` arrived as edits — a config "changed"
+ * note, a new generation in the middle of the first render (its actions forgotten while it
+ * tagged them, its island routes recrawled), copies of untouched modules, a reload for a page
+ * nothing changed. Within {@linkcode STARTUP_REPLAY_MS} of the start, an event for a file last
+ * modified no later than the start's millisecond is dropped (a write made just before the watch
+ * opens can share that millisecond; no edit made after it realistically does); later events, and
+ * one for a file that is gone, always count (an extracted archive keeps old mtimes on purpose).
+ *
+ * @param path The event's path.
+ * @param startedAt When the watchers started (epoch ms).
+ * @param now The time the event arrived (epoch ms).
+ * @param mtimeOf The file's modification time (epoch ms), or null when it can't be read.
+ * @returns Whether to drop the event.
+ */
+export function startupReplay(
+  path: string,
+  startedAt: number,
+  now: number,
+  mtimeOf: (path: string) => number | null = statMtime,
+): boolean {
+  if (now - startedAt > STARTUP_REPLAY_MS) return false;
+  const mtime = mtimeOf(path);
+  return mtime !== null && mtime <= startedAt;
+}
+
+/** `path`'s modification time (epoch ms), or null when it is gone or has none. */
+function statMtime(path: string): number | null {
+  try {
+    return Deno.statSync(path).mtime?.getTime() ?? null;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Whether `path` lies in the project under `roots` (its root as given and as its real path)
@@ -88,10 +129,14 @@ export function watchProjectStructure(
   } catch { /* no root */ }
   const structure = debounced(onChange);
   const edits = onEdit ? debounced(onEdit) : null;
+  // Before the watches open: a file written before this instant did not change anything.
+  const startedAt = Date.now();
   const report = (event: Deno.FsEvent) => {
-    if (STRUCTURAL.has(event.kind)) structure.report(event.paths);
+    const now = Date.now();
+    const paths = event.paths.filter((p) => !startupReplay(p, startedAt, now));
+    if (STRUCTURAL.has(event.kind)) structure.report(paths);
     if (edits && CHANGES.has(event.kind)) {
-      edits.report(event.paths.filter((p) => inScannedTree(roots, p)));
+      edits.report(paths.filter((p) => inScannedTree(roots, p)));
     }
   };
   let folders: Deno.FsWatcher | null = null;

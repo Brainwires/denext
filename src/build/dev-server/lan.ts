@@ -24,6 +24,9 @@ export interface LanInterface {
 /** Interface names that are the machine's primary Wi-Fi / Ethernet on macOS and Linux. */
 const PREFERRED = /^(en0|eth0|wlan\d*|wlp\S*|enp\S*)$/;
 
+/** Tunnel interfaces: a VPN's default route is not the network a phone beside the machine is on. */
+const TUNNEL = /^(utun|tun|tap|wg|ppp|ipsec|tailscale|zt)/i;
+
 /** Hostnames that mean "every interface" when bound. */
 const WILDCARD_HOSTS = new Set(["0.0.0.0", "::", "[::]"]);
 
@@ -37,18 +40,66 @@ function isLanIpv4(iface: LanInterface): boolean {
 }
 
 /**
- * The address `denext dev --lan` binds: the machine's LAN IPv4 — the primary interface's
- * (`en0`, `eth0`, `wlan*`) when it has one, else the first other non-loopback, non-link-local
- * IPv4 in the order the OS lists them.
+ * The interface a default-route listing names.
+ *
+ * @param os The OS the listing comes from (`Deno.build.os`).
+ * @param listing The output of `route -n get default` (macOS, BSD), `ip -4 route show default`
+ *   (Linux) or `route print -4 0.0.0.0` (Windows, which names the interface by its address).
+ * @returns The interface name (on Windows its address), or `null` when it lists no default route.
+ */
+export function parseDefaultRoute(os: string, listing: string): string | null {
+  if (os === "linux") return listing.match(/^default\b.*?\bdev\s+(\S+)/m)?.[1] ?? null;
+  if (os !== "windows") return listing.match(/^\s*interface:\s*(\S+)/m)?.[1] ?? null;
+  // Network, netmask, gateway, interface address, metric: the lowest metric carries the traffic.
+  const routes = [...listing.matchAll(/^\s*0\.0\.0\.0\s+0\.0\.0\.0\s+\S+\s+(\S+)\s+(\d+)\s*$/gm)];
+  routes.sort((a, b) => Number(a[2]) - Number(b[2]));
+  return routes[0]?.[1] ?? null;
+}
+
+/** The OS's own answer to which interface has the default route; `null` when it can't be asked. */
+function defaultRouteInterface(): string | null {
+  const os = Deno.build.os;
+  const [command, ...args] = os === "linux"
+    ? ["ip", "-4", "route", "show", "default"]
+    : os === "windows"
+    ? ["route", "print", "-4", "0.0.0.0"]
+    : ["/sbin/route", "-n", "get", "default"];
+  try {
+    // Never a permission prompt: without --allow-run the name heuristic decides.
+    if (Deno.permissions.querySync({ name: "run", command }).state !== "granted") return null;
+    const { stdout } = new Deno.Command(command, {
+      args,
+      stdin: "null",
+      stdout: "piped",
+      stderr: "null",
+    }).outputSync();
+    return parseDefaultRoute(os, new TextDecoder().decode(stdout));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The address `denext dev --lan` binds: the machine's LAN IPv4 — the one on the interface with the
+ * default route (a multi-homed machine's `en0` may be a lab or VM network no phone is on), unless
+ * that is a tunnel; else the primary interface's by name (`en0`, `eth0`, `wlan*`); else the first
+ * other non-loopback, non-link-local IPv4 in the order the OS lists them.
  *
  * @param interfaces The machine's interfaces (default: `Deno.networkInterfaces()`).
+ * @param defaultRoute The default route's interface, by name or address (default: the OS's answer).
  * @returns The address, or `null` when the machine has no LAN IPv4.
  */
 export function pickLanAddress(
   interfaces: readonly LanInterface[] = Deno.networkInterfaces(),
+  defaultRoute: () => string | null = defaultRouteInterface,
 ): string | null {
   const candidates = interfaces.filter(isLanIpv4);
-  return (candidates.find((i) => PREFERRED.test(i.name)) ?? candidates[0])?.address ?? null;
+  const route = defaultRoute();
+  const routed = candidates.find((i) =>
+    (i.name === route || i.address === route) && !TUNNEL.test(i.name)
+  );
+  return (routed ?? candidates.find((i) => PREFERRED.test(i.name)) ?? candidates[0])?.address ??
+    null;
 }
 
 /**

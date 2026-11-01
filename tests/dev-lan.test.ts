@@ -11,6 +11,7 @@ import {
   effectiveDevOrigins,
   lanBanner,
   type LanInterface,
+  parseDefaultRoute,
   pickLanAddress,
 } from "../src/build/dev-server/lan.ts";
 import { devOriginAllowed } from "../src/build/dev-server.ts";
@@ -89,6 +90,7 @@ const iface = (name: string, address: string, family = "IPv4"): LanInterface => 
 });
 
 Deno.test("pickLanAddress prefers the primary interface and skips loopback / link-local", () => {
+  const noRoute = () => null;
   assertEquals(
     pickLanAddress([
       iface("lo0", "127.0.0.1"),
@@ -96,19 +98,69 @@ Deno.test("pickLanAddress prefers the primary interface and skips loopback / lin
       iface("en5", "169.254.10.1"),
       iface("en0", "fe80::1", "IPv6"),
       iface("en0", "192.168.1.5"),
-    ]),
+    ], noRoute),
     "192.168.1.5",
   );
   // No preferred name: the first usable IPv4 in OS order.
   assertEquals(
-    pickLanAddress([iface("lo", "127.0.0.1"), iface("bridge100", "172.20.10.2")]),
+    pickLanAddress([iface("lo", "127.0.0.1"), iface("bridge100", "172.20.10.2")], noRoute),
     "172.20.10.2",
   );
   assertEquals(
-    pickLanAddress([iface("wlan0", "10.0.0.7"), iface("docker0", "172.17.0.1")]),
+    pickLanAddress([iface("wlan0", "10.0.0.7"), iface("docker0", "172.17.0.1")], noRoute),
     "10.0.0.7",
   );
-  assertEquals(pickLanAddress([iface("lo0", "127.0.0.1"), iface("en0", "::1", "IPv6")]), null);
+  assertEquals(
+    pickLanAddress([iface("lo0", "127.0.0.1"), iface("en0", "::1", "IPv6")], noRoute),
+    null,
+  );
+});
+
+Deno.test("pickLanAddress on a multi-homed machine: the default route's network, never a tunnel", () => {
+  // A Mac mini routing a lab network on its Ethernet (en0), online over Wi-Fi (en1).
+  const homed = [
+    iface("en0", "192.168.2.1"),
+    iface("en1", "192.168.1.37"),
+    iface("utun2", "100.91.179.79"),
+  ];
+  assertEquals(pickLanAddress(homed, () => "en1"), "192.168.1.37");
+  // Windows names the route's interface by its address.
+  assertEquals(pickLanAddress(homed, () => "192.168.1.37"), "192.168.1.37");
+  // A VPN holding the default route is not the phone's network: the name heuristic decides.
+  assertEquals(pickLanAddress(homed, () => "utun2"), "192.168.2.1");
+  // A route on an interface without a usable IPv4 changes nothing.
+  assertEquals(pickLanAddress(homed, () => "en9"), "192.168.2.1");
+});
+
+Deno.test("parseDefaultRoute reads each OS's listing", () => {
+  assertEquals(
+    parseDefaultRoute(
+      "darwin",
+      "   route to: default\ndestination: default\n    gateway: 192.168.1.1\n  interface: en1\n",
+    ),
+    "en1",
+  );
+  assertEquals(parseDefaultRoute("darwin", "route: route has not been found\n"), null);
+  assertEquals(
+    parseDefaultRoute(
+      "linux",
+      "default via 10.0.0.1 dev wlp3s0 proto dhcp metric 600\n" +
+        "default via 10.9.0.1 dev eth1 metric 700\n",
+    ),
+    "wlp3s0",
+  );
+  assertEquals(parseDefaultRoute("linux", ""), null);
+  assertEquals(
+    parseDefaultRoute(
+      "windows",
+      "Active Routes:\nNetwork Destination        Netmask          Gateway       Interface  Metric\n" +
+        "          0.0.0.0          0.0.0.0     10.0.0.1      10.0.0.7     55\n" +
+        "          0.0.0.0          0.0.0.0  192.168.1.1  192.168.1.20     25\n" +
+        "Persistent Routes:\n  None\n",
+    ),
+    "192.168.1.20",
+  );
+  assertEquals(parseDefaultRoute("windows", "Active Routes:\n"), null);
 });
 
 Deno.test("boundHostOrigins: an explicit bind allows what it binds, loopback adds nothing", () => {
