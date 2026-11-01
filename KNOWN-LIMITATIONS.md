@@ -684,6 +684,10 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   in an overlay costs its size per request (the bundled export still streams). Where the OS reports
   no inode or change time the file is hashed on every read. `denext desktop package` reads the
   floor sequence from `out/_denext/ota.json`, the default export folder.
+- **`resolveDesktopUiDir` checks a UI overlay once, at launch.** It returns a folder, so a server
+  you build yourself over that folder reads files without the per-file check: one changed after
+  launch is served as it is. `runDesktop` is not affected. A hand-built server should use
+  `openDesktopUi` and read through its overlay's `read`.
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move

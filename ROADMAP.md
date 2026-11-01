@@ -190,8 +190,6 @@ seeded fallback. No Deno has the hook below yet.
 - **CEF bump cadence** after the one 5.0 bump. _Why 5.x: no owner yet._
 - **Bit-level reproducible runtime builds** (floating setup-deno / brew / apt, rust-cache on tags).
   _Why 5.x: Low._
-- **The Windows CI Deno children hang, root cause** (an npm_installer flag lock and a cache_db
-  mutex). _Why 5.x unless it recurs._
 - **Node compatibility, continuing:** `node:test`, `async_hooks`, TLS, CLI flags, HTTP edge cases,
   the ESM loader, `worker_threads`, `fs`, `crypto`, `stream/iter`, `child_process`, the compile
   cache, `repl` / inspector, Node 26 experimental APIs (per-cluster counts in the fork's gap list).

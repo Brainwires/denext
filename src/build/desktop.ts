@@ -511,7 +511,7 @@ export interface RunDesktopOptions {
   ) => Response | null | undefined | Promise<Response | null | undefined>;
   /**
    * Enable the SIGNED UI self-updater. When present, the served directory is resolved through
-   * {@link resolveDesktopUiDir} — the verified overlay in the app-support dir if one is active
+   * {@link openDesktopUi} — the verified overlay in the app-support dir if one is active
    * and healthy, else the bundled export — and {@link desktopBooted} confirms the launch after
    * the server is up (the boot watchdog rolls back a UI that fails to boot). Omit it to keep the
    * existing behavior (serve the bundled export only).
