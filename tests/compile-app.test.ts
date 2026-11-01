@@ -22,6 +22,7 @@ import type { DenoToolchainPin } from "../src/build/deno-toolchain.ts";
 import { runStandalone, standaloneArgv } from "../src/standalone/mod.ts";
 import { runtimeStateDir, standaloneState } from "../src/server/standalone.ts";
 import { removeTempDir } from "./helpers/temp.ts";
+import { inChild } from "./helpers/isolated.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 
@@ -159,6 +160,7 @@ Deno.test("runStandalone: records the embedded project and the state dir, then d
   const slot = Symbol.for("denext.standalone");
   const logs: string[] = [];
   const log = console.log;
+  const error = console.error;
   console.log = (...a: unknown[]) => void logs.push(a.join(" "));
   try {
     for (const k of env) Deno.env.delete(k);
@@ -176,10 +178,57 @@ Deno.test("runStandalone: records the embedded project and the state dir, then d
     assertEquals(Deno.env.get("NODE_ENV"), "production");
     await runStandalone(toFileUrl(dir), ["job", "--list"]);
     assertStringIncludes(logs.join("\n"), "1 job(s)");
+    // Baked start.limits: `job` says it runs under them, unless the entry lifted them.
+    const errors: string[] = [];
+    console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+    const limits = { limitsBaked: ["--max-time=60"] };
+    await runStandalone(toFileUrl(dir), ["job", "--list"], limits);
+    assertStringIncludes(errors.join("\n"), "enforces the start.limits");
+    errors.length = 0;
+    await runStandalone(toFileUrl(dir), ["job", "--list"], { ...limits, limitsLifted: true });
+    assertEquals(errors.filter((e) => e.includes("start.limits")), []);
   } finally {
     console.log = log;
+    console.error = error;
     delete (globalThis as Record<symbol, unknown>)[slot];
     env.forEach((k, i) => saved[i] === undefined ? Deno.env.delete(k) : Deno.env.set(k, saved[i]!));
+    await removeTempDir(dir);
+  }
+});
+
+Deno.test("runStandalone: a bad command line exits 2; start serves the embedded project", async () => {
+  // Its own process: `start` installs the shutdown signal handlers and both paths end the process.
+  const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_standalone_" }));
+  try {
+    const { value: result } = await inChild<
+      { exits: number[]; usage: boolean; started: string }
+    >({
+      imports: 'import { runStandalone } from "@repo/src/standalone/mod.ts";',
+      env: { DENEXT_STATE_DIR: join(dir, "state") },
+      cwd: dir,
+      body: `
+        const exits: number[] = [];
+        Deno.exit = ((code?: number): never => {
+          exits.push(code ?? 0);
+          throw new Error("exit");
+        }) as typeof Deno.exit;
+        const errors: string[] = [];
+        console.error = (...a: unknown[]) => void errors.push(a.join(" "));
+        await runStandalone(${JSON.stringify(toFileUrl(dir + "/").href)}, ["start", "--nope"])
+          .catch(() => {});
+        // No build in the project: the server refuses to start, after the start verb ran.
+        const started = await runStandalone(${JSON.stringify(toFileUrl(dir + "/").href)}, [
+          "start",
+          "--port",
+          "0",
+        ]).then(() => "served", (err) => String(err));
+        return { exits, usage: errors.join("\\n").includes("job <name>"), started };
+      `,
+    });
+    assertEquals(result.exits, [2]);
+    assertEquals(result.usage, true);
+    assert(result.started !== "served", result.started);
+  } finally {
     await removeTempDir(dir);
   }
 });

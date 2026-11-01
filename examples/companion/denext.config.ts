@@ -11,6 +11,12 @@ export default {
       // Keys the OS data folder (where the inbox file lives) and the window's storage.
       identifier: "dev.denext.loopy",
       name: "Loopy",
+      // The app icon on each OS (icons/: original art, 1024 px; the .ico holds 16 to 256 px).
+      icons: {
+        macos: "./icons/macos.png",
+        linux: "./icons/linux.png",
+        windows: "./icons/windows.ico",
+      },
       // A companion, not an app you switch to: the accessory activation policy, so no Dock icon or
       // menu bar from the first frame (runtime 3.0.0-denext.6; the tray brings Loopy back).
       activationPolicy: "accessory",

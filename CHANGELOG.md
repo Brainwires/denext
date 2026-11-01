@@ -8,7 +8,43 @@ and this project adheres to
 
 ## [Unreleased]
 
-### Security
+### Added
+
+- **`openWindow({ backgroundThrottling })`** (and `windows.open` in `desktop.ts`), Electron's
+  `webPreferences.backgroundThrottling`, passed to `Deno.BrowserWindow` at creation (takes effect
+  with Deno Desktop runtime 3.0.0-denext.8; an older one ignores it). `true` (the default) keeps a
+  hidden window's page running with its timers slowed; `false` keeps them at their rate, for a
+  hidden window that does background work. With that runtime a hidden page on macOS is throttled
+  instead of frozen, so a tray app's hidden pages handle menu items and events again.
+- **A compiled app's `job` and `db` run past the server's `start.limits`** (takes effect with
+  denext's Deno 3.0.0-denext.8, once denext pins it). The main module `denext build --compile`
+  generates calls `Deno.disarmResourceLimits(import.meta)` before it dispatches `./app job <name>`
+  or `./app db migrate` (the runtime takes only the main module's own `import.meta`), so a long
+  job or migration is no longer ended by the server's `--max-memory` / `--max-cpu-time` /
+  `--max-time`; `./app` and `./app start` keep them. On an older runtime, which has no such
+  function, those verbs run under the limits and print the notice as before.
+- **`desktop.permissions: "strict"`: a packaged desktop app's read and environment grants scoped**
+  (opt-in; takes effect with Deno Desktop runtime 3.0.0-denext.8, once denext pins it, in an app
+  with `desktop.app.identifier`; the default is unchanged, and an older runtime bakes it with a
+  notice). `--allow-read` covers the app's data and cache folders, the capabilities' folders and
+  `desktop.extraPermissions.read` (unscoped again for a picked path: `dialogs`, `$DOCUMENTS`);
+  `--allow-env` covers the variables denext's desktop runtime reads plus
+  `desktop.permissions.env` (`{ mode: "strict", env: [...] }`) and `desktop.extraPermissions.env`.
+  A program sidecar (`run.exec`) or `loginShellEnv` hands its child the whole environment, so the
+  config validator and the package scripts refuse strict mode with either.
+
+### Changed
+
+- **A packaged desktop app's writes to its own folders are scoped to those folders** (takes effect
+  with Deno Desktop runtime 3.0.0-denext.8, once denext pins it; gated on
+  `FIRST_DESKTOP_DATA_TOKEN_RUNTIME`, so nothing changes on an older runtime). In an app with
+  `desktop.app.identifier`, the package scripts bake the `fs` / `sqlite` / `updates` capabilities'
+  folders, a sidecar's log file and the UI overlay's `ui-updates` as `$DENO_DESKTOP_DATA[/…]` and
+  `$DENO_DESKTOP_CACHE`, which the runtime expands at launch to the app's data and cache folders,
+  instead of an unscoped `--allow-write`; `$APPDATA/…` / `$CACHE/…` and absolute paths in
+  `desktop.extraPermissions.write` are kept scoped too. A write with no folder token (a picked path
+  under `dialogs`, `$DOCUMENTS`, a relative path) keeps the unscoped grant. Code that writes
+  anywhere else needs the path in `desktop.extraPermissions.writ### Security
 
 - **A Windows app's files are all under its Authenticode signature for full-app updates, and the
   signature is bound to the app and version** (5.0-gate review A, M2; the runtime denext.8 audit,
@@ -25,7 +61,7 @@ and this project adheres to
   its caller lists the files in, so existing package scripts pick it up unchanged. The runtime
   refuses an update whose manifest is for another app or version, whose files differ from it (a
   DLL from another build too), that holds a symlink, or that drops the manifest an installed app
-  has (Deno Desktop runtime 3.0.0-denext.8; fork items 202 and 211). An app without
+  has (Deno Desktop runtime 3.0.0-denext.8; fork items 202 and 212). An app without
   `desktop.app.identifier` gets no manifest (the updater needs an identifier anyway).
   `denext desktop publish-update` refuses a Windows bundle changed after its manifest was written
   or whose manifest is for another app or version, and warns about one without a manifest; an
@@ -40,6 +76,70 @@ and this project adheres to
   grant that a baked write grant covers, exact, by a folder above it, or unscoped); it does not
   refuse the combination, which every project-file program sidecar is, and which a capability that
   writes (`fs`, the updater's UI overlay) makes of every sidecar.
+
+e`.
+
+## [4.11.4] - 2026-10-31
+
+### Fixed
+
+- **An empty `APPDATA` (or `HOME`, `XDG_DATA_HOME`, ...) no longer puts a desktop app's data in a
+  relative folder.** The per-user folder lookup (the `fs` / `sqlite` roots, the updater's data
+  dir) treated an empty or whitespace-only variable as set, so Windows resolved the data root to
+  `<id>`; such a value now counts as unset and falls back (`~\AppData\Roaming`,
+  `~/.local/share`), as the runtime's `$DENO_DESKTOP_DATA` does. The lookup also no longer tries a
+  lowercase spelling the runtime does not read (the updater's proxy variables still do).
+- **`desktop.update.hosts` entries are checked like every other baked permission list.** The
+  config validator and the package scripts' flag derivation refuse an entry that is not one host
+  (`"cdn.example.net,0.0.0.0"` would have baked two, a URL or an empty string is no host) and a
+  value that is not an array of strings, instead of folding it into the binary's network grant.
+- **A Windows desktop package signs every file the full-app update check treats as a program.**
+  The packaging step picked the files to Authenticode-sign with a narrower PE test than the
+  runtime's update check (it skipped a header offset under 64 bytes or past 64 MiB), so such a
+  file shipped unsigned and every update of the app was refused. Both now use the same rule.
+
+## [4.11.3] - 2026-10-31
+
+### Added
+
+- **`DesktopRuntime.windows` refs report `visible`, `getBounds()` and `onClosed(handler)`**, so
+  `desktop.ts` can manage the app's windows (one window per page, cascading, a Dock icon only while
+  a full window shows) without a page.
+- **A warning when a backend tray's menu item is chosen while no window shows and `desktop.ts` has
+  no `onMenuItem` handler** (once per launch): only hidden pages could act on it then.
+
+### Fixed
+
+- **A tray-first app's menu items work while every window is hidden.** A window that does not show
+  may have its page suspended (WKWebView suspends a page that is not on screen on macOS), so a tray
+  menu item handled by a hidden window's page did nothing until that window showed again
+  (examples/hangar's "Open Hangar" and "Images" on macOS). examples/hangar now answers its tray
+  (menu items, double click, tooltip) and opens its windows from `desktop.ts`, in the app's process;
+  the `getTray()` and `runDesktop({ tray: { onMenuItem } })` docs say where such clicks belong.
+- **No Dock tile at launch for a macOS menu-bar app.** `desktop.app.activationPolicy: "accessory"`
+  (or `desktop.app.dock: false`) reached the runtime only through `laufey-launch.json`, which is
+  read after LaunchServices has already put the app in the Dock: a packaged accessory app showed a
+  Dock tile for about 600 ms at every launch (examples/companion and examples/hangar, macOS 26).
+  The package scripts now also set `LSUIElement` in the bundle's `Info.plist` (on the pinned
+  runtime, which still switches to a Dock icon with `setActivationPolicy("regular")` for a full
+  window).
+- **`alwaysOnTop: "status" | "pop-up-menu" | "screen-saver"` takes effect on macOS.** On runtime
+  3.0.0-denext.6 a window's `setAlwaysOnTop` is still the runtime's native method, which drops the
+  level, so `desktop.window.alwaysOnTop` and `setAlwaysOnTop(true, level)` from
+  `denext/desktop/window` left every window at the floating level (CGWindow layer 3 instead of 25
+  for `"status"`). denext now also sets the level through the runtime's own window-level op.
+- **A macOS tray with a menu and no panel opens the menu on a plain left click**, as an Electron
+  tray does (it opened only on a right or Control click). A panel, or a click handler in
+  `desktop.ts` (`runDesktop({ tray: { onClick } })`, the handle's `onClick`), keeps the left click;
+  Windows and Linux are unchanged.
+- **examples/hangar and examples/companion ship app icons** (`desktop.app.icons` for macOS, Linux
+  and Windows) instead of the generic one, and Hangar's page windows open with their own titles
+  ("Hangar — Images"), cascaded from the library window instead of exactly over it.
+- **examples/hangar reads its saved settings from the app's data folder whichever side asks
+  first.** `desktop.ts` reached the VM backend for the tray without the data folder, so when the
+  tray got there before a page the settings were read from the working directory and the saved
+  ones were ignored for the whole launch. It now passes `resolveDesktopCapabilities`'s
+  `appSupportDir`, and the settings file refuses a folder that is not absolute.
 
 ## [4.11.2] - 2026-10-31
 
@@ -20465,7 +20565,9 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.2...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.4...development
+[4.11.4]: https://jsr.io/@denext/denext@4.11.4
+[4.11.3]: https://jsr.io/@denext/denext@4.11.3
 [4.11.2]: https://jsr.io/@denext/denext@4.11.2
 [4.11.1]: https://jsr.io/@denext/denext@4.11.1
 [4.11.0]: https://jsr.io/@denext/denext@4.11.0

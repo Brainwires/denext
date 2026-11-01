@@ -119,10 +119,13 @@ export const STEPS: readonly RegenStep[] = [
     phase: 1,
   },
   {
+    // Reads the native-templates pack (the scaffold's package scripts live there), which
+    // gen:native-templates rewrites in phase 1: run in the same phase, the copy took the old pack
+    // and a second regen was needed.
     name: "the desktop scaffold's package scripts → examples/{native,rn-desktop}/scripts/",
     run: writePackageScripts,
     outputs: PACKAGE_SCRIPT_EXAMPLES.flatMap((e) => PACKAGE_SCRIPTS.map((s) => `${e}/${s}`)),
-    phase: 1,
+    phase: 2,
   },
   {
     // Reads the root deno.lock, which no step writes.

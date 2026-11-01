@@ -313,6 +313,25 @@ export function supportsDesktopCacheToken(version: string): boolean {
   return compareDenoVersions(version, FIRST_DESKTOP_CACHE_TOKEN_RUNTIME) >= 0;
 }
 
+/**
+ * The first Deno Desktop runtime that expands `$DENO_DESKTOP_DATA` at the start of a baked
+ * `--allow-read` / `--allow-write` / `--allow-run` value (and the matching `--deny-*`) to the
+ * app's data folder, `desktopAppDirs(<desktop.app.identifier>).data` (Brainwires/deno DENEXT.md
+ * item 191). An allow entry it cannot expand is dropped, never widened.
+ */
+export const FIRST_DESKTOP_DATA_TOKEN_RUNTIME = "3.0.0-denext.8";
+
+/**
+ * Whether the Deno Desktop runtime `version` expands `$DENO_DESKTOP_DATA` in baked permissions
+ * (from {@linkcode FIRST_DESKTOP_DATA_TOKEN_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether the app-folder grants may be baked as `$DENO_DESKTOP_DATA` paths.
+ */
+export function supportsDesktopDataToken(version: string): boolean {
+  return compareDenoVersions(version, FIRST_DESKTOP_DATA_TOKEN_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

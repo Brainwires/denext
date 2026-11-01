@@ -340,6 +340,37 @@ const FUTURE_METHODS = new Set<keyof ConfigurableWindow>([
   "setVisibleOnAllWorkspaces",
 ]);
 
+/**
+ * laufey's `LAUFEY_WINDOW_LEVEL_*` codes for the levels above `"floating"` (the runtime's
+ * `window_level_code`).
+ */
+const LEVEL_CODES: Readonly<Record<string, number>> = {
+  status: 2,
+  "pop-up-menu": 3,
+  "screen-saver": 4,
+};
+
+/** The runtime's private window-level op on a `BrowserWindow` (3.0.0-denext.6 and later). */
+const PRIVATE_WINDOW_LEVEL = Symbol.for("Deno_privateDesktopWindowLevel");
+
+/**
+ * Raise a window that `setAlwaysOnTop(true, level)` has put on top to `level` through the
+ * runtime's own level op. The runtime defines `setAlwaysOnTop(flag, level)` in JS over its native
+ * op, but on macOS (3.0.0-denext.6) the window's prototype still holds the native one, which drops
+ * the level: every level ended at `"floating"`. Setting the level again is harmless where the
+ * wrapper did take effect. A runtime without the op, or a level at or below `"floating"`, is left
+ * alone.
+ *
+ * @param win The `Deno.BrowserWindow` (already on top).
+ * @param level The Electron level name.
+ */
+export function applyWindowLevel(win: unknown, level: string): void {
+  const code = LEVEL_CODES[level];
+  if (code === undefined || typeof win !== "object" || win === null) return;
+  const op = (win as Record<symbol, unknown>)[PRIVATE_WINDOW_LEVEL];
+  if (typeof op === "function") op.call(win, code);
+}
+
 /** Call `window[name](...args)` when the runtime has it; `false` (and a warning) when it hasn't. */
 function tryCall(
   window: ConfigurableWindow,
@@ -486,19 +517,35 @@ export function applyWindowOverlaySettings(
   applyOverlaySettings(win as ConfigurableWindow, settings, warn);
 }
 
+/** Apply `desktop.window.alwaysOnTop`: on top (or not), then the level above floating. */
+function applyAlwaysOnTop(
+  win: ConfigurableWindow,
+  level: DesktopWindowLevel | false,
+  warn: (message: string) => void,
+): void {
+  if (level === false || level === "floating") {
+    tryCall(win, "setAlwaysOnTop", "window.alwaysOnTop", warn, level !== false);
+    return;
+  }
+  if (tryCall(win, "setAlwaysOnTop", "window.alwaysOnTop", warn, true, level) === false) return;
+  try {
+    applyWindowLevel(win, level);
+  } catch (err) {
+    warn(
+      `desktop.window.alwaysOnTop could not be applied: ${
+        err instanceof Error ? err.message : err
+      }`,
+    );
+  }
+}
+
 /** Apply `desktop.window`'s always-on-top, opacity, taskbar and workspace settings. */
 function applyOverlaySettings(
   win: ConfigurableWindow,
   settings: DesktopWindowSettings,
   warn: (message: string) => void,
 ): void {
-  const level = settings.alwaysOnTop;
-  if (level !== undefined) {
-    // The runtime ignores the level argument until it has levels (`alwaysOnTopLevels`).
-    if (level === false || level === "floating") {
-      tryCall(win, "setAlwaysOnTop", "window.alwaysOnTop", warn, level !== false);
-    } else tryCall(win, "setAlwaysOnTop", "window.alwaysOnTop", warn, true, level);
-  }
+  if (settings.alwaysOnTop !== undefined) applyAlwaysOnTop(win, settings.alwaysOnTop, warn);
   if (settings.opacity !== undefined) {
     tryCall(win, "setOpacity", "window.opacity", warn, settings.opacity);
   }

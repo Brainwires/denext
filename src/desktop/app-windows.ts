@@ -64,6 +64,15 @@ export interface DesktopWindowRef {
   close(): void;
   /** Load another page of the app (`"/settings"`). */
   navigate(path: string): void;
+  /** Whether it is showing (`true` where the runtime cannot say). */
+  readonly visible: boolean;
+  /** Where it is on screen, or `null` where the runtime cannot say (Wayland, an older runtime). */
+  getBounds(): { x: number; y: number; width: number; height: number } | null;
+  /**
+   * Call `handler` once the window has closed for good (by the user, `close()` or its page). A
+   * handler added after it closed is never called. Returns the unsubscribe.
+   */
+  onClosed(handler: () => void): () => void;
 }
 
 /** The options of a window `desktop.ts` or a page opens (`openWindow` in `denext/desktop/window`). */
@@ -102,6 +111,12 @@ export interface DesktopOpenWindowOptions {
   readonly skipTaskbar?: boolean;
   /** On every Space / virtual desktop (where the runtime can). */
   readonly visibleOnAllWorkspaces?: boolean;
+  /**
+   * `false`: its page keeps its timers' rate while the window is not on screen (Electron's
+   * `backgroundThrottling`; default `true`, throttled, never frozen). Creation time only; runtime
+   * 3.0.0-denext.8 (an older one ignores it).
+   */
+  readonly backgroundThrottling?: boolean;
   /** Show it once created (default `true`). */
   readonly show?: boolean;
   /** The capabilities its pages may call (default: all; `window` always). */
@@ -204,6 +219,8 @@ interface SetupState {
   app?: AppController;
   appUrl: (path: string) => string;
   hasTray: boolean;
+  /** `desktop.ts`'s `onClosed` handlers, by window id. */
+  readonly closedHandlers: Map<string, Set<() => void>>;
 }
 
 /** The runtime's `Deno.dock`, when present. */
@@ -285,7 +302,42 @@ function ref(st: SetupState, entry: RegisteredWindow): DesktopWindowRef {
       if (!at) return;
       w.navigate?.(st.appUrl(path));
     },
+    get visible() {
+      try {
+        return w.isVisible?.() ?? true;
+      } catch {
+        return false; // closing
+      }
+    },
+    getBounds: () => {
+      try {
+        return w.getBounds?.() ?? null;
+      } catch {
+        return null; // closing, or no position here
+      }
+    },
+    onClosed: (handler) => {
+      if (st.registry?.get(entry.id)?.window !== w) return () => {};
+      let set = st.closedHandlers.get(entry.id);
+      if (!set) st.closedHandlers.set(entry.id, set = new Set());
+      const once = () => handler();
+      set.add(once);
+      return () => void set.delete(once);
+    },
   };
+}
+
+/** Window `id` closed for good: run `desktop.ts`'s handlers for it (each once). */
+function runClosedHandlers(st: SetupState, id: string): void {
+  const set = st.closedHandlers.get(id);
+  st.closedHandlers.delete(id);
+  for (const handler of set ?? []) {
+    try {
+      handler();
+    } catch (err) {
+      st.warn(`a window's onClosed handler threw: ${err instanceof Error ? err.message : err}`);
+    }
+  }
 }
 
 /** The `DesktopRuntime.windows` API. */
@@ -323,7 +375,10 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
     appUrl: (path) => st.appUrl(path),
     emit: o.emit,
     keepAlive: () => keepAliveOf(st),
-    onClosed: (id) => st.app?.windowClosed(id),
+    onClosed: (id) => {
+      st.app?.windowClosed(id);
+      runClosedHandlers(st, id);
+    },
     ...(o.exit ? { exit: o.exit } : {}),
     controller: (window, id, closed, overlay) =>
       createWindowController({
@@ -367,6 +422,7 @@ export function setUpDesktopWindows(options: DesktopWindowsOptions): DesktopWind
     warn: options.warn ?? ((m) => console.warn(`desktop: ${m}`)),
     appUrl: (path) => path,
     hasTray: options.wantsTray,
+    closedHandlers: new Map(),
   };
   const win = typeof options.window === "object" && options.window !== null
     ? options.window as RegistryWindow

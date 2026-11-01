@@ -345,15 +345,22 @@ When the hop before the server may still re-run, the server re-runs once more to
 costs one more short-lived `deno` start and one more waiting parent process. The serving process
 removes both variables from its own environment, so nothing it starts inherits them.
 
-### Compiled binaries: `job` and `db` run under the limits too
+### Compiled binaries: `job` and `db` lift the limits
 
 `build --compile` bakes the limits into the executable, and denort reads them only from the
 binary's own metadata: it takes no `--max-*` flag at run time (every argument goes to the program)
-and no variable that lifts or changes them. So `./app job <name>` and `./app db migrate` run under
-the server's `memory`, `cpuSeconds` and `deadlineSeconds` as well, and a long migration or job past
-them ends with the limit's exit code. Those verbs print a notice naming the baked flags. Run long
-jobs and migrations with `denext job` / `denext db` from the project, or from a second binary
-compiled without `start.limits`.
+and no variable that lifts or changes them. From denext's Deno 3.0.0-denext.8, the binary's
+generated main module lifts them for `./app job <name>` and `./app db migrate` before it dispatches
+(`Deno.disarmResourceLimits(import.meta)`, which the runtime takes only with the main module's own
+`import.meta` while it evaluates, so neither the app's code, a dependency nor whoever starts the
+program can lift them).
+`./app` and `./app start` serve under them as before.
+
+On an older runtime, which has no such call, `job` and `db` run under the server's `memory`,
+`cpuSeconds` and `deadlineSeconds` as well, a long migration or job past them ends with the limit's
+exit code, and those verbs print a notice naming the baked flags. Run long jobs and migrations with
+`denext job` / `denext db` from the project, or from a second binary compiled without
+`start.limits`.
 
 These are best-effort guardrails, not a security boundary: subprocesses are neither counted nor
 stopped, a `Worker` has its own heap (cap it with `new Worker(url, { deno: { memoryMb } })`), memory

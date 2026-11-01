@@ -1,0 +1,76 @@
+// The environment variables denext's own desktop runtime modules read: the `denext/desktop` module
+// graph (`src/build/desktop.ts`) and every `src/desktop/` module. `desktop.permissions: "strict"`
+// bakes `--allow-env` scoped to this list plus the names the app declares, instead of the whole
+// environment. tests/desktop-runtime-env.test.ts scans that graph and fails when a read of a name
+// outside the list appears, or a name here is no longer read.
+
+/**
+ * Every environment variable the desktop runtime modules may read (or set), sorted. Most are
+ * read best-effort (a refused read counts as unset); listing them keeps their behaviour the same
+ * under a scoped `--allow-env`. Windows matches names case-insensitively; the lowercase proxy
+ * spellings are for the other systems.
+ */
+export const DESKTOP_RUNTIME_ENV: readonly string[] = [
+  "APPDATA",
+  "DENEXT_ALLOW_REVOKED_RUNTIME",
+  "DENEXT_APP_NAME",
+  "DENEXT_BOOT_DDL",
+  "DENEXT_CODESIGN_IDENTITY",
+  "DENEXT_DEBUG_CACHE",
+  "DENEXT_DESKTOP_DEV_LAN",
+  "DENEXT_DESKTOP_DEV_URL",
+  "DENEXT_DESKTOP_PRELOAD_FILE",
+  "DENEXT_DESKTOP_RUNTIME",
+  "DENEXT_DESKTOP_RUNTIME_ATTEST",
+  "DENEXT_DESKTOP_RUNTIME_DIR",
+  "DENEXT_DESKTOP_RUNTIME_VERIFY",
+  "DENEXT_DEV_TOKEN",
+  "DENEXT_DOWNLOAD_ATTEMPTS",
+  "DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS",
+  "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS",
+  "DENEXT_DOWNLOAD_TOTAL_TIMEOUT_MS",
+  "DENEXT_ENV",
+  "DENEXT_LOCK_TIMEOUT",
+  "DENEXT_NOTARY_ISSUER",
+  "DENEXT_NOTARY_KEY",
+  "DENEXT_NOTARY_KEY_ID",
+  "DENEXT_NOTARY_PROFILE",
+  "DENEXT_NO_DEPRECATION_WARNINGS",
+  "DENEXT_OTA_SIGNING_KEY",
+  "DENEXT_PROXY_DEBUG",
+  "DENEXT_REVOCATION_CHECK",
+  "DENEXT_REVOCATION_KEYS_FILE",
+  "DENEXT_REVOCATION_NOTICED",
+  "DENEXT_SIDECAR_CHILD",
+  "DENEXT_SIDECAR_CHILD_ARGC",
+  "DENEXT_SIGN_TIMESTAMP_URL",
+  "DENEXT_STOCK_DEPRECATION_SHOWN",
+  "DENEXT_TOOLCHAIN_ACTIVE",
+  "DENEXT_WINDOWS_CERT",
+  "DENEXT_WINDOWS_CERT_PASSWORD",
+  "DENEXT_WINDOWS_CERT_THUMBPRINT",
+  "DENO_DEPLOYMENT_ID",
+  "DENO_DESKTOP_APP_ORIGIN",
+  "DENO_DESKTOP_WORKER_TOKEN",
+  "DENO_DESKTOP_WS_URL",
+  "DENO_DIR",
+  "DENO_SERVE_ADDRESS",
+  "HOME",
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
+  "LOCALAPPDATA",
+  "NODE_ENV",
+  "NO_PROXY",
+  "PATH",
+  "PORT",
+  "SESSION_SECRET",
+  "SOURCE_DATE_EPOCH",
+  "SystemRoot",
+  "USERPROFILE",
+  "XDG_CACHE_HOME",
+  "XDG_DATA_HOME",
+  "XDG_DOCUMENTS_DIR",
+  "http_proxy",
+  "https_proxy",
+  "no_proxy",
+];

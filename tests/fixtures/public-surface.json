@@ -682,6 +682,7 @@
     "DesktopLinuxConfig:interface",
     "DesktopMacosConfig:interface",
     "DesktopPasskeysConfig:interface",
+    "DesktopPermissionsConfig:interface",
     "DesktopShellConfig:interface",
     "DesktopSidecarConfig:interface",
     "DesktopSidecarLoginShellEnvConfig:interface",
@@ -6797,7 +6798,8 @@
   ],
   "denext/standalone": [
     "runStandalone:function",
-    "standaloneArgv:function"
+    "standaloneArgv:function",
+    "standaloneVerb:function"
   ],
   "denext/deploy": [
     "DEPLOY_MANIFEST_FILE:variable",

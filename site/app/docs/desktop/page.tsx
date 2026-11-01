@@ -2569,6 +2569,18 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, �
         (its tray icons, its close guard, its drops); keep-awake holds and global shortcuts are
         released when the main window&apos;s page reloads.
       </p>
+      <p id="desktop-background-throttling">
+        A window&apos;s page keeps running while the window is hidden, minimized or covered, with
+        its timers slowed to about once a second (Electron&apos;s default). For a hidden window that
+        does the app&apos;s background work, <code>backgroundThrottling: false</code> (in{" "}
+        <code>openWindow</code> or{" "}
+        <code>windows.open</code>, at creation only) keeps its timers at their rate. Both need Deno
+        Desktop runtime 3.0.0-denext.8: before it, on macOS, the system WebView froze a page created
+        hidden about a second after it loaded (no timers, events or sockets until the window
+        showed), and an older runtime ignores the option. The Windows and Linux system WebViews and
+        the CEF backend throttle a hidden page without freezing it either way. The main window is
+        the one the runtime starts with, which is always throttled.
+      </p>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
       <p>
         <code>onFileDrop</code>{" "}
@@ -2927,16 +2939,21 @@ export default {
   },
 };
 
-// desktop.ts: the backend hears the clicks first
-const app = await runDesktop({ ...resolved, tray: { onMenuItem: (id) => { /* … */ } } });
+// desktop.ts: the backend hears the clicks first, and hears them with every window hidden
+const app = await runDesktop({
+  ...resolved,
+  tray: {
+    onMenuItem: (id) => id === "open" && app.windows.get("main")?.show(),
+    onDoubleClick: () => app.windows.open({ url: "/images" }).onClosed(() => syncDock()),
+  },
+});
 app.tray?.update({ tooltip: "2 VMs running" });
+app.tray?.on("mouseenter", () => void refreshTooltip()); // hover (macOS, Windows)
 
-// any page
+// any page (while its window shows)
 import { getTray, toggleTrayPanel } from "denext/desktop/app";
 const tray = await getTray(); // the same tray in every window; null without one
-tray?.onClick((e) => e === "doubleClick" && openWindow({ url: "/" }));
-tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Control-click: the menu
-tray?.on("mouseenter", () => void refreshTooltip()); // hover (macOS, Windows)`}
+tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Control-click: the menu`}
       </Code>
       <p>
         From runtime 3.0.0-denext.6 every tray event carries the runtime&apos;s detail (
@@ -2954,14 +2971,32 @@ tray?.on("mouseenter", () => void refreshTooltip()); // hover (macOS, Windows)`}
         {" "}
         <code>trayMiddleClick</code>, <code>trayHover</code>, <code>trayModifiers</code>,{" "}
         <code>trayPosition</code>, <code>trayPopUpMenu</code>), from the runtime&apos;s{" "}
-        <code>Deno.Tray.capabilities()</code>. The panel toggles on a plain left click only.
+        <code>Deno.Tray.capabilities()</code>. The panel toggles on a plain left click only. On
+        macOS a tray with a menu and no panel opens its menu on a plain left click as well, as an
+        Electron tray does; a click handler in <code>desktop.ts</code> (
+        <code>runDesktop({"{ tray: { onClick } }"})</code> or the handle&apos;s{" "}
+        <code>onClick</code>) takes the left click instead.
       </p>
       <p>
         Its clicks reach the backend&apos;s handlers and every window&apos;s page;{" "}
         <code>showTrayPanel</code>, <code>hideTrayPanel</code> and <code>toggleTrayPanel</code>{" "}
-        drive the panel. A page cannot destroy it. Where the session has no tray host the app gets
-        no icon, its main window is shown instead, and it is no longer kept alive by the tray.{" "}
-        <a href="/docs/examples">examples/hangar</a> is a tray-first app built this way.
+        drive the panel. A page hears them only while it runs, though: before Deno Desktop runtime
+        3.0.0-denext.8 a window that does not show may have its page suspended until it shows again
+        (WKWebView does that on macOS), so a menu item handled by a hidden main window&apos;s page
+        does nothing there. From 3.0.0-denext.8 a hidden page is only throttled (
+        <a href="#desktop-background-throttling">background throttling</a>) and keeps handling
+        events, so a tray app can rely on its hidden pages again; on an older runtime, or to act
+        with no page at all, answer the menu items and the double click in{" "}
+        <code>desktop.ts</code>, in the app&apos;s process: the handle&apos;s{" "}
+        <code>onMenuItem</code> / <code>onDoubleClick</code>, with <code>app.windows</code>{" "}
+        to open and show windows (each ref has <code>visible</code>, <code>getBounds()</code> and
+        {" "}
+        <code>onClosed()</code>) and <code>app.setActivationPolicy</code>{" "}
+        for the Dock icon. denext warns once when a menu item is chosen with no window showing and
+        no <code>onMenuItem</code> in{" "}
+        <code>desktop.ts</code>. A page cannot destroy it. Where the session has no tray host the
+        app gets no icon, its main window is shown instead, and it is no longer kept alive by the
+        tray. <a href="/docs/examples">examples/hangar</a> is a tray-first app built this way.
       </p>
       <h3 id="desktop-user-activity">Handoff and Spotlight</h3>
       <p>
@@ -3902,6 +3937,88 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           handler's stack, and the token never appear in it.
         </li>
       </ul>
+
+      <h3 id="desktop-baked-permissions">The permissions a package bakes</h3>
+      <p>
+        The package scripts derive the binary&apos;s <code>--allow-*</code>{" "}
+        flags from the config, never{" "}
+        <code>-A</code>: loopback networking, read and the environment as the baseline, plus what
+        the enabled capabilities, sidecars, the updater and <code>desktop.extraPermissions</code>
+        {" "}
+        need. The app&apos;s own folders (the <code>fs</code>, <code>sqlite</code> and{" "}
+        <code>updates</code> capabilities, a sidecar&apos;s log file, the UI overlay&apos;s{" "}
+        <code>ui-updates</code>) have a per-user path that is only known on the user&apos;s machine,
+        so a binary that writes there is baked an unscoped <code>--allow-write</code>.
+      </p>
+      <p>
+        From Deno Desktop runtime 3.0.0-denext.8 (once denext pins it), an app with{" "}
+        <code>desktop.app.identifier</code> is baked those writes as the folders themselves:{" "}
+        <code>$DENO_DESKTOP_DATA</code> (and <code>$DENO_DESKTOP_DATA/logs</code>,{" "}
+        <code>$DENO_DESKTOP_DATA/ui-updates</code>) and{" "}
+        <code>$DENO_DESKTOP_CACHE</code>, which the runtime expands at launch to the app&apos;s data
+        folder (<code>~/Library/Application Support/&lt;id&gt;</code> on macOS,{" "}
+        <code>%APPDATA%\&lt;id&gt;</code> on Windows, <code>$XDG_DATA_HOME/&lt;id&gt;</code>{" "}
+        on Linux) and cache folder. The token counts only at the start of a value, a value with a
+        {" "}
+        <code>..</code>{" "}
+        component is dropped, and with no folder to expand to the entry is dropped rather than
+        widened. In <code>desktop.extraPermissions.write</code>, <code>$APPDATA/…</code> and{" "}
+        <code>$CACHE/…</code>{" "}
+        become those tokens and an absolute path is kept as written. A write that has no token (a
+        picked path under <code>dialogs</code>, <code>$DOCUMENTS</code> in{" "}
+        <code>fs</code>, a relative path) keeps the unscoped <code>--allow-write</code>
+        . Code of the app that writes anywhere else needs that path in{" "}
+        <code>desktop.extraPermissions.write</code>.
+      </p>
+
+      <h3 id="desktop-strict-permissions">Strict permissions</h3>
+      <p>
+        By default the binary can read any file and every environment variable (
+        <code>--allow-read</code>, <code>--allow-env</code>
+        ). <code>desktop.permissions: &quot;strict&quot;</code>{" "}
+        narrows both, from Deno Desktop runtime 3.0.0-denext.8 in an app with{" "}
+        <code>desktop.app.identifier</code> (an older runtime bakes the default, and{" "}
+        <code>denext desktop package</code> says so):
+      </p>
+      <ul>
+        <li>
+          <code>--allow-read</code> covers the app&apos;s data and cache folders (
+          <code>$DENO_DESKTOP_DATA</code>, <code>$DENO_DESKTOP_CACHE</code>
+          ), the folders the capabilities read and{" "}
+          <code>desktop.extraPermissions.read</code>. The embedded files are always readable. A
+          capability that reads a path picked at run time (<code>dialogs</code>,{" "}
+          <code>$DOCUMENTS</code> in <code>fs</code>) keeps it unscoped, and so does a{" "}
+          <code>&quot;*&quot;</code> entry; a file the OS opens with the app needs one of them.
+        </li>
+        <li>
+          <code>--allow-env</code>{" "}
+          covers the variables denext&apos;s desktop runtime reads (its own settings,{" "}
+          <code>HOME</code>, <code>APPDATA</code>, <code>XDG_*</code>, the proxy variables,{" "}
+          <code>PORT</code>, …) plus the ones the app declares in{" "}
+          <code>desktop.permissions.env</code> or <code>desktop.extraPermissions.env</code>
+          . Every variable the app&apos;s own code reads, its <code>NEXT_PUBLIC_*</code>{" "}
+          ones and a module sidecar&apos;s included, must be declared: an undeclared read throws
+          {" "}
+          <code>NotCapable</code>.
+        </li>
+        <li>
+          A program sidecar (<code>run.exec</code>) and <code>loginShellEnv</code>{" "}
+          start a child with the app&apos;s whole environment, which a scoped{" "}
+          <code>--allow-env</code>{" "}
+          cannot read, so a config with either is refused in strict mode. A module sidecar&apos;s
+          {" "}
+          <code>spawnSelf()</code> copies the whole environment too; pass it an <code>env</code>
+          {" "}
+          of its own.
+        </li>
+      </ul>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  app: { identifier: "com.example.notes" },
+  permissions: { mode: "strict", env: ["NOTES_API_URL"] }, // or permissions: "strict"
+},`}
+      </Code>
 
       <h2 id="desktop-react-native">React Native on desktop</h2>
       <p>

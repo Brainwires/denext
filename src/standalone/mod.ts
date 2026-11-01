@@ -17,7 +17,7 @@
  */
 
 import { fromFileUrl, resolve } from "@std/path";
-import { CommandRegistry, type CommandSpec } from "../cli/command.ts";
+import { CommandRegistry, type CommandSpec, verbIndex } from "../cli/command.ts";
 import { installShutdown } from "../cli/shutdown.ts";
 import { jobCommand } from "../cli/commands/job.ts";
 import { dbCommand } from "../cli/commands/db.ts";
@@ -93,6 +93,21 @@ export function standaloneArgv(args: readonly string[]): string[] {
 }
 
 /**
+ * The verb a compiled app's command line runs (`start`, `job`, `db`, or `help` / `undefined` for
+ * help), as {@linkcode runStandalone} dispatches it. The generated main module reads it to lift the
+ * baked `start.limits` for `job` and `db` (`Deno.disarmResourceLimits(import.meta)`, which takes only
+ * the main module's own `import.meta`, before its evaluation ends).
+ *
+ * @param args The binary's arguments.
+ * @returns The verb, or `undefined` when none is named (help).
+ */
+export function standaloneVerb(args: readonly string[]): string | undefined {
+  const argv = standaloneArgv(args);
+  const at = verbIndex(argv);
+  return at < 0 ? undefined : argv[at];
+}
+
+/**
  * Record where a compiled app's project is embedded and where it writes, raise the production
  * signal and load the `.env` files of the working directory (production tier).
  */
@@ -116,11 +131,14 @@ async function prepareStandalone(projectDir: string): Promise<void> {
  * @param options `idleTrimBaked`: the binary was compiled with the idle trim baked in (a
  *   `DENEXT_IDLE_TRIM=0` when it runs then holds the trim off). `limitsBaked`: the `start.limits`
  *   flags baked in, which the runtime enforces on `job` and `db` too (it says so when they run).
+ *   `limitsLifted`: the main module lifted them for this run (`Deno.disarmResourceLimits(import.meta)`,
+ *   denext's Deno from 3.0.0-denext.8), so `job` / `db` print no notice.
  */
 export async function runStandalone(
   projectUrl: string | URL,
   args: readonly string[] = Deno.args,
-  options: { idleTrimBaked?: boolean; limitsBaked?: readonly string[] } = {},
+  options: { idleTrimBaked?: boolean; limitsBaked?: readonly string[]; limitsLifted?: boolean } =
+    {},
 ): Promise<void> {
   const projectDir = fromFileUrl(projectUrl).replace(/[\\/]$/, "");
   await prepareStandalone(projectDir);
@@ -133,7 +151,9 @@ export async function runStandalone(
     Deno.exit(2);
   }
   if (outcome.kind !== "run") return console.log(usage(programName()));
-  const notice = bakedLimitsNotice(programName(), outcome.command.name, options.limitsBaked ?? []);
+  const notice = options.limitsLifted === true
+    ? null
+    : bakedLimitsNotice(programName(), outcome.command.name, options.limitsBaked ?? []);
   if (notice) console.error(notice);
   // `job` and `db` find the project through `--cwd`: point it at the embedded one.
   await outcome.command.run({ ...outcome.ctx, global: { ...outcome.ctx.global, cwd: projectDir } });

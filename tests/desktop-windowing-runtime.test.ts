@@ -313,6 +313,28 @@ Deno.test("registry: open maps focusable false to noActivate, levels, hidden sta
   ]);
 });
 
+Deno.test("registry: open passes backgroundThrottling to the runtime at creation", () => {
+  const { reg } = registry();
+  reg.open({ url: "/worker", backgroundThrottling: false, show: false });
+  assertEquals(FakeWin.made.at(-1)!.options, { backgroundThrottling: false, show: false });
+  reg.open({ url: "/w", backgroundThrottling: true });
+  assertEquals(FakeWin.made.at(-1)!.options, { backgroundThrottling: true });
+  // Unset: the runtime's default (throttled, never frozen), so no key.
+  reg.open({ url: "/w" });
+  assertEquals(FakeWin.made.at(-1)!.options, {});
+  assertEquals(
+    openWindowSettings({ url: "/", backgroundThrottling: false }).backgroundThrottling,
+    false,
+  );
+  let code = "";
+  try {
+    reg.open({ url: "/x", backgroundThrottling: "no" });
+  } catch (err) {
+    code = String((err as { code?: unknown }).code);
+  }
+  assertEquals(code, "validation");
+});
+
 Deno.test("registry: open refuses other origins, bad options and a ninth window", () => {
   const { reg } = registry();
   for (
@@ -741,6 +763,61 @@ Deno.test("backend tray: runDesktop's handlers hear clicks and its own menu item
   assertEquals(tray.menu, null);
 });
 
+Deno.test("backend tray: a menu item chosen with no backend handler while no window shows warns once", async () => {
+  const t = trayContext();
+  const main = t.reg.main;
+  main.visible = false;
+  const handle = await startBackendTray({
+    ...t.base,
+    settings: { icon: "/tray.png", menu: [{ id: "open", label: "Open" }] },
+  });
+  assert(handle && !("reason" in handle));
+  const tray = FakeTray.made[0];
+  const choose = (id: string) =>
+    tray.dispatchEvent(new CustomEvent("menuclick", { detail: { id } }));
+  choose("not-ours");
+  assertEquals(t.warnings, []);
+  // A backend handler takes it: no warning.
+  const heard: string[] = [];
+  const off = handle.onMenuItem((id) => void heard.push(id));
+  choose("open");
+  assertEquals([heard, t.warnings], [["open"], []]);
+  off();
+  off(); // twice: counted once
+  // A window shows: its page runs and can take it.
+  main.visible = true;
+  choose("open");
+  assertEquals(t.warnings, []);
+  // Every window hidden and no backend handler: only a hidden page could act on it.
+  main.visible = false;
+  choose("open");
+  choose("open");
+  assertEquals(t.warnings.length, 1);
+  assertStringIncludes(t.warnings[0], 'tray menu item "open"');
+  assertStringIncludes(t.warnings[0], "app.tray.onMenuItem");
+});
+
+Deno.test("backend tray: a closing window counts as hidden; with no registry the warning is off", async () => {
+  const t = trayContext();
+  t.reg.main.isVisible = () => {
+    throw new Error("closing");
+  };
+  await startBackendTray({
+    ...t.base,
+    settings: { icon: "/tray.png", menu: [{ id: "open", label: "Open" }] },
+  });
+  FakeTray.made.at(-1)!.dispatchEvent(new CustomEvent("menuclick", { detail: { id: "open" } }));
+  assertEquals(t.warnings.length, 1);
+  const bare = trayContext();
+  await startBackendTray({
+    ...bare.base,
+    registry: undefined,
+    settings: { icon: "/tray.png", menu: [{ id: "open", label: "Open" }] },
+  });
+  FakeTray.made.at(-1)!.dispatchEvent(new CustomEvent("menuclick", { detail: { id: "open" } }));
+  assertEquals(bare.warnings, []);
+});
+
 Deno.test("backend tray: the panel is registered (token bound) before it loads, placed in the work area", async () => {
   const t = trayContext();
   const handle = await startBackendTray({
@@ -946,6 +1023,56 @@ Deno.test("setup: windows API refs act on their window; the app URL is set once 
   w.navigate("/c"); // closed: nothing
   assertEquals(win.calls.at(-1), "close");
   assertEquals(s.windows.list().map((r) => r.id), ["main"]);
+});
+
+Deno.test("setup: a windows API ref says whether it shows, where it is, and when it closed", () => {
+  const warnings: string[] = [];
+  const s = setUpDesktopWindows({
+    window: new FakeWin(),
+    BrowserWindow: FakeWin,
+    emit: () => {},
+    wantsTray: false,
+    appSettings: { keepAlive: true },
+    warn: (m) => void warnings.push(m),
+  });
+  const w = s.windows.open({ url: "/a" });
+  const win = FakeWin.made.at(-1)!;
+  assertEquals([w.visible, w.getBounds()], [true, { x: 1, y: 2, width: 300, height: 200 }]);
+  w.hide();
+  assertEquals(w.visible, false);
+  const heard: string[] = [];
+  w.onClosed(() => void heard.push("a"));
+  const off = w.onClosed(() => void heard.push("dropped"));
+  w.onClosed(() => {
+    throw new Error("boom");
+  });
+  off();
+  // The user closes it: the registry's `closed`, each handler once.
+  s.registry!.closed(w.id);
+  s.registry!.closed(w.id);
+  assertEquals(heard, ["a"]);
+  assertStringIncludes(warnings[0], "boom");
+  // Closed: a late handler is never called; a window that can't say is visible, with no bounds.
+  w.onClosed(() => void heard.push("late"));
+  assertEquals(heard, ["a"]);
+  const plain = s.windows.open({ url: "/b" });
+  const pw = FakeWin.made.at(-1)!;
+  (pw as unknown as { isVisible?: unknown }).isVisible = undefined;
+  (pw as unknown as { getBounds?: unknown }).getBounds = () => {
+    throw new Error("closing");
+  };
+  assertEquals([plain.visible, plain.getBounds()], [true, null]);
+  (pw as unknown as { isVisible?: unknown }).isVisible = () => {
+    throw new Error("closing");
+  };
+  assertEquals(plain.visible, false);
+  (pw as unknown as { getBounds?: unknown }).getBounds = undefined;
+  assertEquals(plain.getBounds(), null);
+  // The main window's handlers run when it closes for good too.
+  s.windows.get("main")!.onClosed(() => void heard.push("main"));
+  s.mainClosed();
+  assertEquals(heard, ["a", "main"]);
+  assertEquals(win.calls.includes("hide"), true);
 });
 
 Deno.test("setup: startTray with no tray host turns keep-alive back off", async () => {
