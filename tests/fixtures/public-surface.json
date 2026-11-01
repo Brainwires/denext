@@ -1966,6 +1966,7 @@
     "DesktopTraySettings:interface",
     "DesktopTrayUpdate:interface",
     "DesktopTreeFile:interface",
+    "DesktopTreeIdentity:interface",
     "DesktopTreeManifest:interface",
     "DesktopTreeManifestProblem:interface",
     "DesktopTrust:typeAlias",

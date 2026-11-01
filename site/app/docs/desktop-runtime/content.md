@@ -735,12 +735,14 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
   warns when Gatekeeper does not accept the `.app` as notarized.
 - **Windows requirements:** every PE image of the staged app (`.exe`, `.dll`, `.node`, found by
   its header) must carry the running app's Authenticode signer with a revocation check that
-  succeeded. Its other files (`laufey-launch.json`, CEF's `.pak` / `icudtl.dat` / snapshot files,
-  sidecar JavaScript) are listed with their SHA-256 in a tree manifest that the package build
-  writes into the `.exe` before signing (the `DENEXT_TREE` resource): from runtime 3.0.0-denext.8
-  on, a staged app whose files differ from it, that holds a symlink, or that has no manifest when
-  the installed app has one is refused (`os_signature`). So publish the bundle exactly as it was
-  signed; `denext desktop publish-update` refuses one changed afterwards.
+  succeeded. Every file but the `.exe` (`laufey-launch.json`, CEF's `.pak` / `icudtl.dat` /
+  snapshot files, sidecar JavaScript, and the DLLs as signed) is listed with its SHA-256 in a tree
+  manifest, with the app's identifier and version, that the package build writes into the `.exe`
+  before signing (the `DENEXT_TREE` resource; the DLLs are signed first, the `.exe` last): from
+  runtime 3.0.0-denext.8 on, a staged app whose manifest is for another app or version, whose
+  files differ from it, that holds a symlink, or that has no manifest when the installed app has
+  one is refused (`os_signature`). So publish the bundle exactly as it was signed;
+  `denext desktop publish-update` refuses one changed afterwards.
 - **Why:** Deno's `Deno.autoUpdate` patches the runtime library in place with bsdiff. Inside a
   signed `.app` that breaks the code signature; it is Unix only, the signature is optional, and
   nothing stops a downgrade. The updater ops are also gated to a packaged app: they had been

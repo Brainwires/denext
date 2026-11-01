@@ -17,6 +17,7 @@ import {
   desktopSidecarIncludeArgs,
   sidecarCacheProgram,
   sidecarPermissionSet,
+  sidecarRunWriteWarnings,
 } from "../src/build/desktop-capabilities.ts";
 import { desktopCacheTokenRuntime } from "../src/build/desktop-launch-policy.ts";
 import { desktopAppDirs } from "../src/desktop/app-dirs.ts";
@@ -635,4 +636,86 @@ Deno.test("bundleDesktopSidecars: the host's OS by default, a sidecar with nothi
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test("sidecarRunWriteWarnings: a scoped --allow-run that a baked --allow-write covers is reported, never refused", () => {
+  // A project-file program with the cache scope: the copy's folder is written, the copy run.
+  const scoped = sidecarRunWriteWarnings(
+    {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    },
+    "linux",
+    { cacheScope: true },
+  );
+  assertEquals(scoped.length, 1);
+  assertMatch(
+    scoped[0],
+    /sidecar "server": --allow-run=\$DENO_DESKTOP_CACHE\/sidecars\/server\/server is not containment/,
+  );
+  assertMatch(scoped[0], /--allow-write=\$DENO_DESKTOP_CACHE\/sidecars\/server covers/);
+  assertMatch(scoped[0], /copied into the app's cache folder/);
+  // A broad write (another write grant) covers it too, and says so.
+  const broad = sidecarRunWriteWarnings(
+    {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        extraPermissions: { write: ["/tmp/x"] },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    },
+    "linux",
+    { cacheScope: true },
+  );
+  assertEquals(broad.length, 1);
+  assertMatch(broad[0], /an unscoped --allow-write covers/);
+  // An absolute program under a configured write of its folder (baked as the unscoped
+  // --allow-write: only cache-token writes stay scoped).
+  const own = sidecarRunWriteWarnings({
+    desktop: {
+      sidecars: [{
+        name: "tool",
+        run: { exec: "/opt/tool/bin/tool" },
+        permissions: { write: ["/opt/tool"] },
+      }],
+    },
+  }, "linux");
+  assertEquals(own.length, 1);
+  assertMatch(
+    own[0],
+    /--allow-run=\/opt\/tool\/bin\/tool is not containment: an unscoped --allow-write covers/,
+  );
+  assert(!own[0].includes("cache folder"));
+  // Nothing to report: no write at all, a write elsewhere, a bare name, an unscoped run (the old
+  // runtime's grant), no sidecars.
+  assertEquals(
+    sidecarRunWriteWarnings(
+      { desktop: { sidecars: [{ name: "git", run: { exec: "git" } }] } },
+      "linux",
+    ),
+    [],
+  );
+  assertEquals(
+    sidecarRunWriteWarnings({
+      desktop: {
+        sidecars: [{
+          name: "tool",
+          run: { exec: "/opt/tool/bin/tool" },
+          permissions: { write: ["$DENO_DESKTOP_CACHE/other"] },
+        }],
+      },
+    }, "linux"),
+    [],
+  );
+  assertEquals(
+    sidecarRunWriteWarnings(
+      { desktop: { sidecars: [{ name: "server", run: { exec: "./bin/server" } }] } },
+      "linux",
+      { cacheScope: false },
+    ),
+    [],
+  );
+  assertEquals(sidecarRunWriteWarnings({}, "linux"), []);
 });

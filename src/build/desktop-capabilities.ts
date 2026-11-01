@@ -728,6 +728,79 @@ function programNeeds(
 }
 
 /**
+ * Why the baked sidecar `run` grants are not containment: one line for each program a sidecar's
+ * `run` grant names that a baked `write` grant covers as well (the program's own path, a folder
+ * above it, or a write of everything), for the package run to print. Scoping `--allow-run` to a
+ * path limits what the app's code may run BY NAME; with a write grant over that path the same code
+ * can write the program and then run it, so nothing keeps it from running what it likes. A
+ * project-file program sidecar in a packaged app is always such a case: the app copies the program
+ * into its cache folder at launch, which takes a write grant on that folder (`sidecarCacheProgram`),
+ * and runs it from there. Reported, never refused: refusing it would refuse every project-file
+ * program sidecar, and a capability that writes (`fs`, the updater's UI overlay) bakes a write of
+ * everything anyway. A bare program name (`git`, looked up on `PATH`) is not compared.
+ *
+ * @param config The project config (`denext.config.ts` default export).
+ * @param os The target OS (the sidecars' login shells depend on it; they are never reported).
+ * @param options `cacheScope`: see {@linkcode desktopBuildFlags}.
+ * @returns The warnings, one per covered program.
+ */
+export function sidecarRunWriteWarnings(
+  config: unknown,
+  os: DesktopOs,
+  options: DesktopBuildFlagOptions = {},
+): string[] {
+  const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
+  const sidecars = configSidecars(cfg);
+  if (sidecars.length === 0) return [];
+  const cacheScope = sidecarCacheScope(cfg, options);
+  const extra = mergePermissionSets(
+    checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
+    sidecarPermissionSet(sidecars, os, cacheScope),
+  );
+  const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
+  const [writeFlag] = writeFlags(capFlags, extra, cfg);
+  if (!writeFlag) return [];
+  const writes = valuesOfFlag(writeFlag);
+  const out: string[] = [];
+  for (const d of sidecars) {
+    const exec = (d.run as { exec?: unknown } | undefined)?.exec;
+    if (typeof exec !== "string") continue;
+    const program = scopedSidecarProgram(d.name, exec, cacheScope);
+    const by = program === undefined ? undefined : writeGrantCovering(program, writes);
+    if (by === undefined) continue;
+    const grant = by === "*" ? "an unscoped --allow-write" : `--allow-write=${by}`;
+    out.push(
+      `  sidecar "${d.name}": --allow-run=${program} is not containment: ${grant} covers that ` +
+        "program too, so the app's own code can write it and then run it (the scope limits what " +
+        "is run by name, not what runs)" +
+        (isProjectProgram(exec)
+          ? "; a project-file program is copied into the app's cache folder at launch under that write grant."
+          : "."),
+    );
+  }
+  return out;
+}
+
+/**
+ * The path a sidecar's baked `run` grant names for its program `exec`, or `undefined` when the
+ * grant is not a path: an unscoped grant (`*`), or a bare name looked up on `PATH`.
+ */
+function scopedSidecarProgram(name: string, exec: string, cacheScope: boolean): string | undefined {
+  const [[, [program]]] = programNeeds(name, exec, cacheScope);
+  return program === "*" || !/[\\/]/.test(program) ? undefined : program;
+}
+
+/**
+ * The baked write grant among `writes` that covers `program` (`*` for everything, its own path,
+ * or a folder above it; `/` and `\` alike), or `undefined` when none does.
+ */
+function writeGrantCovering(program: string, writes: readonly string[]): string | undefined {
+  const slash = (p: string) => p.replaceAll("\\", "/").replace(/\/+$/, "");
+  const p = slash(program);
+  return writes.find((w) => w === "*" || slash(w) === p || p.startsWith(`${slash(w)}/`));
+}
+
+/**
  * Whether a copied program sidecar's grants are baked as {@linkcode DESKTOP_CACHE_TOKEN} paths: the
  * runtime expands the token (`options.cacheScope`, by default the pinned runtime's), and
  * `desktop.app.identifier` is set (the runtime keys the folder by the identifier baked into the

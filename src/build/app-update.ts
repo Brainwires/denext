@@ -734,7 +734,10 @@ export async function publishAppUpdate(
   const platform = o.platform ?? await appUpdatePlatformKey(o.artifact);
   if (!isAppUpdatePlatform(platform)) throw new Error(`unsupported platform key ${platform}`);
   await checkArtifactVersion(o.artifact, platform, o.version);
-  const treeWarning = await windowsTreeManifestWarning(o.artifact, platform);
+  const treeWarning = await windowsTreeManifestWarning(o.artifact, platform, {
+    appId: o.app,
+    version: o.version,
+  });
   const manifest = join(o.outDir, APP_UPDATE_MANIFEST_FILE);
   // Another platform of the SAME release keeps its entry (and its notes / minVersion unless
   // given) — only once that manifest verifies against this signing key. Read before packing, so a

@@ -20,8 +20,8 @@
 
 import { basename, dirname, fromFileUrl, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import type { DesktopOs } from "./desktop-capabilities.ts";
 import { gzipBytes } from "./precompress.ts";
+import { type DesktopOs, sidecarRunWriteWarnings } from "./desktop-capabilities.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
 
 /** Every installer format, by the OS it is built for. */
@@ -388,20 +388,26 @@ export function packageMetaWarnings(
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param meta The resolved metadata.
+ * @param os The target OS (default: this host's): what the sidecar warnings are baked for.
  * @returns The warning lines.
  */
 export async function desktopPackageMetaWarnings(
   entryUrl: string,
   meta: DesktopPackageMeta,
+  os: DesktopOs = hostDesktopOs(),
 ): Promise<string[]> {
   const root = new URL("../", entryUrl);
   const dir = root.protocol === "file:" ? fromFileUrl(root) : ".";
-  return packageMetaWarnings(
-    await readDenoJson(dir),
-    await loadConfigBeside(entryUrl),
-    meta,
-    await readPackageJson(dir),
-  );
+  const config = await loadConfigBeside(entryUrl);
+  return [
+    ...packageMetaWarnings(await readDenoJson(dir), config, meta, await readPackageJson(dir)),
+    ...sidecarRunWriteWarnings(config, os),
+  ];
+}
+
+/** The OS this process runs on, as a packaging target. */
+function hostDesktopOs(): DesktopOs {
+  return Deno.build.os === "darwin" ? "darwin" : Deno.build.os === "windows" ? "windows" : "linux";
 }
 
 // ---------------------------------------------------------------------------------------------

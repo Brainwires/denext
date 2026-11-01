@@ -260,11 +260,13 @@ export {
   type PreparedDesktopPackage,
   prepareDesktopPackage,
 } from "./desktop-package-script.ts";
-// scripts/package-windows.ts: the tree manifest of every file that is not a PE image, embedded in
-// the .exe before signing so its Authenticode signature covers the whole app.
+// scripts/package-windows.ts: the tree manifest of the app's identifier and version and every file
+// but the .exe, embedded in the .exe before signing so its Authenticode signature covers the whole
+// app.
 export {
   DESKTOP_TREE_RESOURCE,
   type DesktopTreeFile,
+  type DesktopTreeIdentity,
   type DesktopTreeManifest,
   desktopTreeManifest,
   type DesktopTreeManifestProblem,

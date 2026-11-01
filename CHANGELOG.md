@@ -10,19 +10,36 @@ and this project adheres to
 
 ### Security
 
-- **A Windows app's files that are not PE images are now under its Authenticode signature for
-  full-app updates** (5.0-gate review A, M2). The runtime verified the signature of every `.exe` /
-  `.dll` / `.node` of a staged update, but `laufey-launch.json` (the window's bridge origins and
-  inspectable policy), CEF's `.pak` / `icudtl.dat` / snapshot files, sidecar JavaScript and
-  `.deno-desktop-app` were protected by the update key alone. The Windows package build
-  (`buildDesktopBundle`, which `scripts/package-windows.ts` calls) now writes a tree manifest of
-  those files (path, size, SHA-256) into the `.exe` as the `RT_RCDATA` resource `DENEXT_TREE`
-  before the script signs it (`stampDesktopTreeManifest` from `denext/desktop`, pure TypeScript,
-  any host), and the runtime refuses an update whose files differ from it, that holds a symlink,
-  or that drops the manifest an installed app has (Deno Desktop runtime 3.0.0-denext.8; fork item
-  196). Existing package scripts pick it up unchanged. `denext desktop publish-update` refuses a
-  Windows bundle changed after its manifest was written and warns about one without a manifest;
-  an installed app that has none still accepts its first update without one.
+- **A Windows app's files are all under its Authenticode signature for full-app updates, and the
+  signature is bound to the app and version** (5.0-gate review A, M2; the runtime denext.8 audit,
+  F2). The runtime verified the signature of every `.exe` / `.dll` / `.node` of a staged update,
+  but `laufey-launch.json` (the window's bridge origins and inspectable policy), CEF's `.pak` /
+  `icudtl.dat` / snapshot files, sidecar JavaScript and `.deno-desktop-app` were protected by the
+  update key alone, and a signature says who signed a DLL, not which release or product it came
+  from. The Windows package build (`buildDesktopBundle`, which `scripts/package-windows.ts` calls)
+  now writes a tree manifest, `desktop.app.identifier` and the package version plus every file but
+  the `.exe` (DLLs included, as signed: path, size, SHA-256), into the `.exe` as the `RT_RCDATA`
+  resource `DENEXT_TREE` before the script signs it (`stampDesktopTreeManifest` from
+  `denext/desktop`, pure TypeScript, any host). `desktopSignWindows` signs the other PE files
+  first, writes the manifest again with their signed bytes, then signs the `.exe`, whatever order
+  its caller lists the files in, so existing package scripts pick it up unchanged. The runtime
+  refuses an update whose manifest is for another app or version, whose files differ from it (a
+  DLL from another build too), that holds a symlink, or that drops the manifest an installed app
+  has (Deno Desktop runtime 3.0.0-denext.8; fork items 202 and 211). An app without
+  `desktop.app.identifier` gets no manifest (the updater needs an identifier anyway).
+  `denext desktop publish-update` refuses a Windows bundle changed after its manifest was written
+  or whose manifest is for another app or version, and warns about one without a manifest; an
+  installed app that has none still accepts its first update without one.
+- **The package run says when a sidecar's scoped `--allow-run` is not containment** (the runtime
+  denext.8 audit, F4). A project-file program sidecar in a packaged app is baked as
+  `--allow-run=$DENO_DESKTOP_CACHE/sidecars/<name>/<file>` with a `--allow-write` on that folder,
+  so the app copies the program there at launch: that scope limits what the app's code may run by
+  name, but the same code can write the program under that write grant and then run it, and so
+  can another process of the user between the copy's check and the spawn. `prepareDesktopPackage`
+  prints one line per such program (`sidecarRunWriteWarnings` from `denext/desktop`: a scoped run
+  grant that a baked write grant covers, exact, by a folder above it, or unscoped); it does not
+  refuse the combination, which every project-file program sidecar is, and which a capability that
+  writes (`fs`, the updater's UI overlay) makes of every sidecar.
 
 ## [4.11.2] - 2026-10-31
 
