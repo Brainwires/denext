@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.7] - 2026-11-01
+
 ## [4.11.6] - 2026-11-01
 
 ### Changed
@@ -20579,7 +20581,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.6...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.7...development
+[4.11.7]: https://jsr.io/@denext/denext@4.11.7
 [4.11.6]: https://jsr.io/@denext/denext@4.11.6
 [4.11.5]: https://jsr.io/@denext/denext@4.11.5
 [4.11.4]: https://jsr.io/@denext/denext@4.11.4
