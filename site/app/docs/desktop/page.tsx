@@ -2530,7 +2530,7 @@ onCloseRequested(({ reason }) => {
         {" "}
         <code>"status"</code> level or above), the taskbar setter and levels above{" "}
         <code>"floating"</code>{" "}
-        need runtime 3.0.0-denext.6, which denext pins; an older runtime reports them{" "}
+        need runtime 3.0.0-denext.6 or later, which denext pins; an older runtime reports them{" "}
         <code>false</code> and rejects <code>unsupported</code>, with no change to the app (a{" "}
         <code>focusable: false</code>{" "}
         window already joins every Space on macOS and stays off the taskbar elsewhere).{" "}

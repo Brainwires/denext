@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.11.5**; 4.x patch and minor releases are cut from
+> The current release is denext **4.11.6**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 >
 > Two parts: **Before 5.0** is the work the 5.0 gate waits on (an item stays here until its branch
@@ -28,8 +28,9 @@
   exploited V8 bug would be unfixable there; the patch-bump dispatch workflow and the Extended Stable
   plus patch-age rule come with it. If it can't fit the 5.0 date it becomes the first dated 5.x item,
   and the release notes say so.
-- **One CEF bump to the current stable.** CEF is several majors behind and renders allowed
-  third-party origins. The bump cadence is a 5.x item.
+- **A CEF 156 build with Chrome's fixes from 156.0.8078.73 on.** Runtime `3.0.0-denext.7` moved CEF
+  to 156 (Chromium 156.0.8078.48); the next runtime takes the newer build. The bump cadence is a 5.x
+  item.
 - **Embed the expected `denort` SHA-256 in the CLI.** Today the download checks `SHA256SUMS` only.
 - **`.deno/npm-compat` out of the project root** (in `denext.4`): the runtime's type-check keeps its
   copy of the `@jsr/*` packages outside the project; then delete the KNOWN-LIMITATIONS entry.

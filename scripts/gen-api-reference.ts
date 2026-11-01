@@ -381,10 +381,10 @@ for (const [i, { module }] of ENTRIES.entries()) {
 }
 
 await Deno.mkdir(dirname(OUT), { recursive: true });
-// deno-doc.ts runs `deno doc` with NO_COLOR; a colour code that still reaches a `repr` (an older
-// or differently configured deno) is stripped here, and any other escape byte is a failure:
-// tests/api-reference.test.ts refuses a committed reference that carries one.
-const json = JSON.stringify({ groups }, null, 2).replace(/\\u001b\[[0-9;]*m/g, "");
+// deno-doc.ts runs `deno doc` with NO_COLOR, and denext's Deno from 3.0.0-denext.7 writes no colour
+// into `--json` at all; an escape byte here is a failure, as tests/api-reference.test.ts refuses a
+// committed reference that carries one.
+const json = JSON.stringify({ groups }, null, 2);
 if (json.includes("\\u001b")) throw new Error(`api reference: an escape byte survived in ${OUT}`);
 await Deno.writeTextFile(OUT, json + "\n");
 const total = groups.reduce((n, g) => n + g.symbols.length, 0);
