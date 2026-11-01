@@ -519,19 +519,64 @@ Deno.test("setup: an accessory policy hides the Dock icon at launch; desktop.ts 
   assertEquals(o.setActivationPolicy("prohibited"), false);
   assertEquals(old.visible, [false]);
   assertEquals(o.getActivationPolicy(), null);
-  // Elsewhere there is no policy.
+  // Windows and Linux have no policy: it is the main window's taskbar entry there.
+  const winMain = new Win();
   const win = setUpDesktopWindows({
-    window: new Win(),
+    window: winMain,
     dock: new FakeDock(),
     os: "windows",
     emit: () => {},
     wantsTray: false,
   });
-  assertEquals(win.setActivationPolicy("accessory"), false);
+  assertEquals(win.setActivationPolicy("accessory"), true);
+  assertEquals(winMain.calls.filter((c) => c.startsWith("skip:")), ["skip:true"]);
   assertEquals(win.getActivationPolicy(), null);
   const headless = noDesktopWindows();
   assertEquals(headless.setActivationPolicy("regular"), false);
   assertEquals(headless.getActivationPolicy(), null);
+});
+
+Deno.test("setup: on Windows and Linux the activation policy is the main window's taskbar entry", () => {
+  // Live test (Windows 11 Arm64): an accessory tray app's library window opened with no taskbar
+  // entry: "accessory" hid it at launch, and setActivationPolicy("regular") answered false there.
+  for (const os of ["windows", "linux"]) {
+    const main = new Win();
+    const s = setUpDesktopWindows({
+      window: main,
+      dock: new FakeDock(),
+      os,
+      emit: () => {},
+      wantsTray: true,
+      appSettings: { activationPolicy: "accessory" },
+    });
+    const skips = () => main.calls.filter((c) => c.startsWith("skip:"));
+    assertEquals(skips(), ["skip:true"], `${os}: hidden at launch`);
+    assertEquals(s.setActivationPolicy("regular"), true);
+    assertEquals(s.setActivationPolicy("accessory"), true);
+    assertEquals(s.setActivationPolicy("prohibited"), true);
+    assertEquals(skips(), ["skip:true", "skip:false", "skip:true", "skip:true"], os);
+    assertEquals(s.getActivationPolicy(), null);
+  }
+});
+
+Deno.test("app: setActivationPolicy from a page on Windows / Linux sets the main window's taskbar entry", async () => {
+  const skips: boolean[] = [];
+  const ctl = createAppController({
+    window: Object.assign(new EventTarget(), {
+      setSkipTaskbar: (skip: boolean) => void skips.push(skip),
+    }),
+    emit: () => {},
+    Tray: NewTray,
+    dock: new FakeDock(),
+    os: "windows",
+  });
+  const cap = ctl.capability;
+  assertEquals(await call(cap, "setActivationPolicy", { policy: "regular" }), { applied: true });
+  assertEquals(await call(cap, "setActivationPolicy", { policy: "accessory" }), {
+    applied: true,
+  });
+  assertEquals(skips, [false, true]);
+  assertEquals(await call(cap, "getActivationPolicy"), { policy: null });
 });
 
 Deno.test("registry: overlay and skipTaskbar are creation options (runtime 3.0.0-denext.6)", () => {

@@ -115,7 +115,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
 - **The runtime's type-check leaves `.deno/npm-compat` in the project root** (3.0.0-rc.5 through
-  the pinned 3.0.0-denext.6). It holds
+  the pinned 3.0.0-denext.7). It holds
   an npm-shaped copy of the `@jsr/*` packages, their `_test.ts` files included, and a later
   `deno test` with default discovery would run those. A `denext create` project's `deno.json`
   excludes `.deno/` (top-level `exclude`), as denext's own does; an older project adds
@@ -691,6 +691,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
+- **The CEF backend is on Chromium 156.0.8078.48** (runtime 3.0.0-denext.7), without Chrome's fixes
+  from 156.0.8078.73 on (73 CVEs by Chrome's notes), which need a newer CEF 156 build and come with
+  the next runtime. Keep untrusted remote content out of app windows
+  (`desktop.app.allowedNavigationOrigins`) or use a system web view; see
+  [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj).
 - **CEF on Linux spellchecks seven languages out of the box** (runtime 2.9.7-denext.21): the
   runtime makes no network requests of its own, so it never downloads Hunspell dictionaries; it
   ships en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT. For any other language the app ships
@@ -699,15 +704,14 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):
   navigations and subresources arrive whole. Stream through `fetch` / `EventSource`, or use CEF.
 - **Overlay and tray-first windows depend on the OS for part of what they ask for.** With the
-  pinned runtime (3.0.0-denext.6): always-on-top levels above `"floating"` and
+  pinned runtime (3.0.0-denext.7): always-on-top levels above `"floating"` and
   `visibleOnFullScreen` are macOS-only (Windows and Linux have one floating level); a transparent
   window is opaque on CEF; `overlay: true` is a layer surface only on a Wayland compositor with
   wlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) and with gtk-layer-shell installed, an
   ordinary window elsewhere (GNOME has no layer shell); tray hover events are macOS and Windows
   only, `popUpMenu()` does nothing on Linux (the tray host opens the menu), and a Linux session
-  without a StatusNotifierWatcher (AppIndicator only) delivers no tray clicks, and its panel opens
-  where it last was (no icon position); text to speech on Linux needs speech-dispatcher (the
-  packages recommend it). Under the stock runtime, or a pinned runtime before 3.0.0-denext.6,
+  without a StatusNotifierWatcher (AppIndicator only) delivers no tray clicks; text to speech on
+  Linux needs speech-dispatcher (the packages recommend it). Under the stock runtime, or a pinned runtime before 3.0.0-denext.6,
   click-through, hit regions, every-workspace visibility, the taskbar setter, the levels, tray
   event detail and the activation policy report `false` / reject `unsupported`,
   `desktop.app.dock: false` hides the Dock icon only once the app starts (it shows for a moment at

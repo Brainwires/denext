@@ -201,7 +201,10 @@ export interface DesktopWindowsSetup {
   readonly windows: DesktopWindows;
   /** Show or hide the macOS Dock icon; whether it applied. */
   setDockVisible(visible: boolean): boolean;
-  /** Set the macOS activation policy; whether it applied. */
+  /**
+   * Set the macOS activation policy (on Windows and Linux the main window's taskbar entry); whether
+   * it applied.
+   */
   setActivationPolicy(policy: ActivationPolicy): boolean;
   /** The macOS activation policy, or `null` where there is none. */
   getActivationPolicy(): ActivationPolicy | null;
@@ -258,11 +261,13 @@ function setDock(st: SetupState, visible: boolean): boolean {
 
 /**
  * Set the macOS activation policy (`Deno.dock.setActivationPolicy`, runtime `3.0.0-denext.6`+);
- * on an older runtime `"regular"` / `"accessory"` show / hide the Dock icon instead. `false` on
- * Windows and Linux, which have no policy.
+ * on an older runtime `"regular"` / `"accessory"` show / hide the Dock icon instead. On Windows and
+ * Linux, which have no policy, `"regular"` shows the main window's taskbar entry and the others
+ * hide it, as `desktop.app.activationPolicy: "accessory"` hides it at launch.
  */
 function setPolicy(st: SetupState, policy: ActivationPolicy): boolean {
-  if (st.os !== "darwin" || !st.dock) return false;
+  if (st.os !== "darwin") return setDock(st, policy === "regular");
+  if (!st.dock) return false;
   if (typeof st.dock.setActivationPolicy === "function") {
     return st.dock.setActivationPolicy(policy) === true;
   }

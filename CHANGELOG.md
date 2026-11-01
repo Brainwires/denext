@@ -46,6 +46,79 @@ and this project adheres to
   under `dialogs`, `$DOCUMENTS`, a relative path) keeps the unscoped grant. Code that writes
   anywhere else needs the path in `desktop.extraPermissions.write`.
 
+## [4.11.6] - 2026-11-01
+
+### Changed
+
+- **The Deno toolchain and the Deno Desktop runtime are pinned to `3.0.0-denext.7`**, with
+  `3.0.0-denext.6` as the rollback.
+
+### Fixed
+
+- **`desktop.window.overlay` and tray panels work on Linux Wayland.** On KDE Plasma and wlroots
+  compositors with gtk-layer-shell, the window an app starts with can now be a layer-shell overlay
+  (on top, on every workspace, off the task manager, unfocused), and a tray panel is one too,
+  opening at the click when the tray reports no icon position. A non-resizable window keeps its
+  size instead of snapping to 800 × 600, a frameless window stays frameless on KWin, and an untitled
+  window is titled with `desktop.app.name`, not the bundle's file name. `nonActivating` is reported
+  on Wayland only with layer-shell. GNOME has no layer shell, so an overlay stays an ordinary window
+  there.
+- **A packaged Linux web-view app no longer hangs using Brotli through `node:zlib`.** The runtime
+  library called the system `libbrotlidec` the web view had loaded with its own decoder's state,
+  and spun at 100% CPU; `libdenort.so` now binds its own symbols to itself.
+- **`deno doc --json` and `--html` carry no ANSI color escapes** on denext's Deno, whether or not
+  `NO_COLOR` is set.
+
+### Security
+
+- **Rebuild desktop apps on the CEF backend: the runtime moves from CEF 150 to CEF 156**
+  ([GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)).
+  denext now pins runtime `3.0.0-denext.7`, whose CEF hosts carry CEF 156.0.14 (Chromium
+  156.0.8078.48). Runtimes through `3.0.0-denext.6` embed Chromium 150.0.7871.255 and lack Chrome's
+  fixes from 151 through 156.0.8078.48, among them two V8 bugs exploited in the wild; an app is
+  exposed to the extent its window renders content an attacker can influence. A packaged app keeps
+  the Chromium it was built with until it is repackaged and shipped. Apps on a system web view
+  (WebView2, WKWebView, WebKitGTK) and servers run with `denext start` are not affected. **Not fixed
+  yet:** Chrome's fixes from 156.0.8078.73 on need a newer CEF 156 build and come with the next
+  runtime; until then keep untrusted remote content out of app windows
+  (`desktop.app.allowedNavigationOrigins`) or use a system web view.
+
+## [4.11.5] - 2026-11-01
+
+### Added
+
+- **A close handler knows whether the app is quitting, and `onBeforeQuit` asks before a quit.**
+  `onCloseRequested` handlers (`denext/desktop/window`) get an event whose `reason` is `"close"`
+  (the close button, Cmd+W / Alt+F4) or `"quit"` (`quitApp()`, `Deno.desktop.quit()`, a Windows
+  tray menu's Quit), Electron's `before-quit` + `close` pair: a close-to-tray window hides on a
+  close and lets a quit through, and the app quits once every guarded window lets it go (each is
+  asked once). A handler written as `() => boolean` keeps working. `onBeforeQuit(handler)` is
+  Electron's `before-quit`: asked on a quit only, before the close handlers, `false` keeps the app
+  running.
+
+### Fixed
+
+- **Live views mount in the order a connection sends them.** A `defineLiveView` (or
+  `defineLustreView`) mount awaits its signature check, `authorize`, the viewer's identity and
+  the resume before it is placed, so a later mount on the same socket could overtake an earlier
+  one and take its slot under `maxViewsPerConnection`. Each connection's mounts now run one at a
+  time in arrival order (other connections stay concurrent), the cap is checked in that order, an
+  unmount or a closing socket cancels the mounts still waiting or running, and one mount holds
+  the queue for at most `live.limits.renderTimeoutSeconds` before it is answered `failed`. The
+  wire protocol is unchanged.
+- **A tray app's Quit no longer leaves it running when its main window closes to the tray.** A
+  close-to-tray guard refused every close, the quit's too, so Quit did nothing on Windows; the
+  guard now sees `reason: "quit"` and lets it go (the Hangar example does).
+- **A tray menu's `{ role: "quit" }` quits the app on Windows.** Windows' tray menu drew a role as
+  an empty row that did nothing, so a tray app's "Quit" was blank and dead there. On Windows the
+  quit role is now a "Quit" item that quits the app (`app.quit()`'s path: a guarded close still
+  holds it), and the roles only macOS has (`about`, `hide`, ...) are left out of a tray menu.
+- **`setActivationPolicy` shows and hides the main window's taskbar entry on Windows and Linux.**
+  `desktop.app.activationPolicy: "accessory"` hides the main window's taskbar entry at launch
+  there, but `setActivationPolicy("regular")` answered `false`, so a tray app's main window opened
+  with no taskbar entry. `"regular"` now shows it and `"accessory"` / `"prohibited"` hide it, from
+  `desktop.ts` (`app.setActivationPolicy`) and from a page (`denext/desktop/app`).
+
 ## [4.11.4] - 2026-10-31
 
 ### Fixed
@@ -20532,7 +20605,9 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.4...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.6...development
+[4.11.6]: https://jsr.io/@denext/denext@4.11.6
+[4.11.5]: https://jsr.io/@denext/denext@4.11.5
 [4.11.4]: https://jsr.io/@denext/denext@4.11.4
 [4.11.3]: https://jsr.io/@denext/denext@4.11.3
 [4.11.2]: https://jsr.io/@denext/denext@4.11.2

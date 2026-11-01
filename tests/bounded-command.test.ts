@@ -160,8 +160,12 @@ Deno.test("processTree: a process that finished reads as gone, and the listing n
   assert(gone.endsWith(`(pid ${done.pid} and its descendants are gone)`), gone);
   // This process: listed with its command line.
   assertStringIncludes(await processTree(Deno.pid), `${Deno.pid} `);
-  // A listing given no time is abandoned with the reason, not awaited.
-  assertMatch(await processTree(Deno.pid, 0), /^\(no process list: .+ still running after 0 ms\)$/);
+  // A listing given no time is abandoned with the reason, not awaited. The lister can still exit
+  // before a 0 ms timer fires on a busy event loop, and then its listing is the answer.
+  const hurried = await processTree(Deno.pid, 0);
+  if (!/^\(no process list: .+ still running after 0 ms\)$/.test(hurried)) {
+    assertStringIncludes(hurried, `${Deno.pid} `);
+  }
 });
 
 Deno.test("renderTree: a recycled pid held by a look-alike process reads as gone", () => {

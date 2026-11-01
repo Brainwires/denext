@@ -68,7 +68,10 @@ export interface HangarWindows {
   openFull(path: string): void;
   /** Show the panel at the tray icon. */
   showPanel(): void;
-  /** A regular app (Dock icon) while a full window shows, an accessory one otherwise (macOS). */
+  /**
+   * A regular app (Dock icon; the library's taskbar entry on Windows and Linux) while a full
+   * window shows, an accessory one otherwise.
+   */
   syncDock(): void;
 }
 
