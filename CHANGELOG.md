@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.5] - 2026-11-01
+
 ### Added
 
 - **A close handler knows whether the app is quitting, and `onBeforeQuit` asks before a quit.**
@@ -29,11 +31,9 @@ and this project adheres to
   unmount or a closing socket cancels the mounts still waiting or running, and one mount holds
   the queue for at most `live.limits.renderTimeoutSeconds` before it is answered `failed`. The
   wire protocol is unchanged.
-
 - **A tray app's Quit no longer leaves it running when its main window closes to the tray.** A
   close-to-tray guard refused every close, the quit's too, so Quit did nothing on Windows; the
   guard now sees `reason: "quit"` and lets it go (the Hangar example does).
-
 - **A tray menu's `{ role: "quit" }` quits the app on Windows.** Windows' tray menu drew a role as
   an empty row that did nothing, so a tray app's "Quit" was blank and dead there. On Windows the
   quit role is now a "Quit" item that quits the app (`app.quit()`'s path: a guarded close still
@@ -20530,7 +20530,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.4...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.5...development
+[4.11.5]: https://jsr.io/@denext/denext@4.11.5
 [4.11.4]: https://jsr.io/@denext/denext@4.11.4
 [4.11.3]: https://jsr.io/@denext/denext@4.11.3
 [4.11.2]: https://jsr.io/@denext/denext@4.11.2

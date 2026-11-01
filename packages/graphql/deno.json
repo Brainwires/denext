@@ -9,7 +9,7 @@
     "./client": "./client.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@^4.11.4",
+    "@denext/denext": "jsr:@denext/denext@^4.11.5",
     "@std/path": "jsr:@std/path@^1.0.0",
     "graphql": "npm:graphql@^16.9.0",
     "graphql-yoga": "npm:graphql-yoga@^5.24.6",
