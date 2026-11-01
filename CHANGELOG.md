@@ -10,6 +10,13 @@ and this project adheres to
 
 ### Added
 
+- **`onCloseRequested` and `onBeforeQuit` are asked about the OS's own quits** (takes effect with
+  Deno Desktop runtime 3.0.0-denext.8, once denext pins it; on an older runtime Cmd+Q still ends the
+  app at once). Cmd+Q, the Dock's Quit and a logout on macOS, and the session ending on Windows,
+  reach the handlers with `reason: "quit"`, and a handler that refuses a session end stops it. The OS
+  is never held for long: an unanswered quit goes ahead after 5 seconds, a session end after 10
+  (macOS) or 4 (Windows), and a refusal after that does nothing. macOS takes no input for the app
+  while a session end is pending, so a handler can't ask the user then.
 - **`openWindow({ backgroundThrottling })`** (and `windows.open` in `desktop.ts`), Electron's
   `webPreferences.backgroundThrottling`, passed to `Deno.BrowserWindow` at creation (takes effect
   with Deno Desktop runtime 3.0.0-denext.8; an older one ignores it). `true` (the default) keeps a

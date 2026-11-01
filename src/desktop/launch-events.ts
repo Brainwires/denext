@@ -305,6 +305,11 @@ export interface DesktopAppApi {
   };
   /** Electron's `app.quit()`: cancelable `beforequit`, then every window's cancelable `close`. */
   quit?(): boolean;
+  /**
+   * Refuse the session end the OS is holding for a guard's answer (runtime 3.0.0-denext.8). `false`
+   * when none is held: the runtime's deadline bounds the hold, so a late refusal does nothing.
+   */
+  cancelQuit?(): boolean;
   /** The OS's own file dialogs. */
   readonly dialog?: {
     showOpenDialog(options?: DesktopDialogOptions): Promise<string[] | null>;

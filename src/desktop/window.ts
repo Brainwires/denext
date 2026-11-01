@@ -835,8 +835,11 @@ function registerGuardHandler<T>(set: Set<T>, handler: T): () => void {
  * through. While a handler is registered the runtime holds every close and calls the handlers; the
  * window closes (or the quit goes on) unless one returns (or resolves) `false`. A page that stops
  * answering cannot keep the window open: a close requested again after 5 seconds without an answer
- * goes through. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role ends the
- * app at once and is not asked. Needs denext's pinned runtime (`closeGuard` in
+ * goes through. From runtime 3.0.0-denext.8 the OS's own quits ask too (`reason: "quit"`): Cmd+Q, the
+ * Dock's Quit and a logout on macOS, the session ending on Windows; on an older runtime Cmd+Q ends
+ * the app at once. The OS is never held for long: an unanswered quit goes ahead after 5 seconds, a
+ * session end after 10 (macOS) or 4 (Windows). macOS takes no input for the app while a session end
+ * is pending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in
  * {@linkcode windowCapabilities}); elsewhere the handler is never called and the window closes.
  *
  * @param handler Return `false` to keep the window open (e.g. after a "Discard changes?" prompt).
@@ -862,8 +865,10 @@ export function onCloseRequested(handler: CloseRequestHandler): () => void {
  * tray menu), like Electron's `before-quit`: the quit goes on unless a handler returns (or
  * resolves) `false`. Plain closes of this window are not held. The before-quit handlers run before
  * the {@linkcode onCloseRequested} ones (which get `reason: "quit"`); a refusal here asks no close
- * handler. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role is not asked.
- * Needs denext's pinned runtime (`closeGuard` in {@linkcode windowCapabilities}); elsewhere the
+ * handler. From runtime 3.0.0-denext.8 the OS's own quits ask too (Cmd+Q, the Dock's Quit and a logout
+ * on macOS, the session ending on Windows), within the deadlines {@linkcode onCloseRequested} lists;
+ * on an older runtime Cmd+Q is not asked. macOS takes no input for the app while a session end is
+ * pending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in {@linkcode windowCapabilities}); elsewhere the
  * handler is never called.
  *
  * @param handler Return `false` to keep the app running.
