@@ -29,8 +29,8 @@ first. Search this page for the error text you are seeing.
 `denext migrate --check` reports what `denext migrate` would change in your project, what will
 not migrate and why, and an overall verdict. It writes nothing: it needs read access to the
 project, run access to evaluate a `next.config.*` (in a subprocess that can only read the
-project, never through a symlink in it that leads elsewhere) and network access to jsr.io,
-to fetch denext itself:
+project, never through a symlink in it that leads elsewhere, and that takes only import
+mappings from its `deno.json`) and network access to jsr.io, to fetch denext itself:
 
 ```sh
 deno run --allow-read --allow-env --allow-run --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
