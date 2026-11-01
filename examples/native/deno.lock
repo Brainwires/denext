@@ -25,14 +25,14 @@
   },
   "workspace": {
     "dependencies": [
-      "npm:@capacitor/cli@7"
+      "npm:@capacitor/cli@8.6.0"
     ],
     "packageJson": {
       "dependencies": [
-        "npm:@capacitor/android@7",
-        "npm:@capacitor/cli@7",
-        "npm:@capacitor/core@7",
-        "npm:@capacitor/ios@7"
+        "npm:@capacitor/android@8.6.0",
+        "npm:@capacitor/cli@8.6.0",
+        "npm:@capacitor/core@8.6.0",
+        "npm:@capacitor/ios@8.6.0"
       ]
     },
     "links": {
