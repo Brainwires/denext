@@ -8,19 +8,7 @@ and this project adheres to
 
 ## [Unreleased]
 
-### Security
-
-- **Rebuild desktop apps on the CEF backend: the runtime moves from CEF 150 to CEF 156**
-  ([GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)).
-  denext now pins runtime `3.0.0-denext.7`, whose CEF hosts carry CEF 156.0.14 (Chromium
-  156.0.8078.48). Runtimes through `3.0.0-denext.6` embed Chromium 150.0.7871.255 and lack Chrome's
-  fixes from 151 through 156.0.8078.48, among them two V8 bugs exploited in the wild; an app is
-  exposed to the extent its window renders content an attacker can influence. A packaged app keeps
-  the Chromium it was built with until it is repackaged and shipped. Apps on a system web view
-  (WebView2, WKWebView, WebKitGTK) and servers run with `denext start` are not affected. **Not fixed
-  yet:** Chrome's fixes from 156.0.8078.73 on need a newer CEF 156 build and come with the next
-  runtime; until then keep untrusted remote content out of app windows
-  (`desktop.app.allowedNavigationOrigins`) or use a system web view.
+## [4.11.6] - 2026-11-01
 
 ### Changed
 
@@ -54,6 +42,20 @@ and this project adheres to
   mode's too) took that as a platform file or folder being created: a new generation in the middle
   of the first render could leave a page without its islands' script, and an open page reloaded for
   nothing.
+
+### Security
+
+- **Rebuild desktop apps on the CEF backend: the runtime moves from CEF 150 to CEF 156**
+  ([GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)).
+  denext now pins runtime `3.0.0-denext.7`, whose CEF hosts carry CEF 156.0.14 (Chromium
+  156.0.8078.48). Runtimes through `3.0.0-denext.6` embed Chromium 150.0.7871.255 and lack Chrome's
+  fixes from 151 through 156.0.8078.48, among them two V8 bugs exploited in the wild; an app is
+  exposed to the extent its window renders content an attacker can influence. A packaged app keeps
+  the Chromium it was built with until it is repackaged and shipped. Apps on a system web view
+  (WebView2, WKWebView, WebKitGTK) and servers run with `denext start` are not affected. **Not fixed
+  yet:** Chrome's fixes from 156.0.8078.73 on need a newer CEF 156 build and come with the next
+  runtime; until then keep untrusted remote content out of app windows
+  (`desktop.app.allowedNavigationOrigins`) or use a system web view.
 
 ## [4.11.5] - 2026-11-01
 
@@ -20577,7 +20579,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.5...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.6...development
+[4.11.6]: https://jsr.io/@denext/denext@4.11.6
 [4.11.5]: https://jsr.io/@denext/denext@4.11.5
 [4.11.4]: https://jsr.io/@denext/denext@4.11.4
 [4.11.3]: https://jsr.io/@denext/denext@4.11.3
