@@ -822,6 +822,14 @@ const LINUX_RUNTIME_DEPS: Record<string, ReadonlyArray<readonly [string, string]
     ["libexpat.so.1", "libexpat1"],
     ["libxcb.so.1", "libxcb1"],
     ["libdrm.so.2", "libdrm2"],
+    // Linked directly by CEF with no declared package; they installed only because other packages
+    // happened to pull them in. `libnssutil3` and `libsmime3` ship in Debian's `libnss3` too.
+    ["libcups.so.2", "libcups2"],
+    ["libnspr4.so", "libnspr4"],
+    ["libnssutil3.so", "libnss3"],
+    ["libsmime3.so", "libnss3"],
+    ["libatk-bridge-2.0.so.0", "libatk-bridge2.0-0"],
+    ["libXi.so.6", "libxi6"],
   ],
 };
 
@@ -1244,8 +1252,12 @@ export function debControl(
     `Maintainer: ${oneLine(meta.publisher)}`,
     `Installed-Size: ${installedKiB}`,
     `Depends: ${
-      [...linuxDeps(meta.backend).map(([, p]) => p), ...linuxCapabilityDeps(meta).map(([d]) => d)]
-        .join(", ")
+      [
+        ...new Set([
+          ...linuxDeps(meta.backend).map(([, p]) => p),
+          ...linuxCapabilityDeps(meta).map(([d]) => d),
+        ]),
+      ].join(", ")
     }`,
     `Recommends: ${LINUX_RECOMMENDS.map(([d]) => d).join(", ")}`,
     "Section: utils",

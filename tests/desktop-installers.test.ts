@@ -296,7 +296,24 @@ Deno.test("linux: control and spec carry the version, arch, deps and owned paths
   assertStringIncludes(control, "Package: my-app\nVersion: 2.3.4~rc.1\nArchitecture: arm64\n");
   assertStringIncludes(control, "Depends: libwebkit2gtk-4.1-0, libgtk-3-0\n");
   assertStringIncludes(control, "Installed-Size: 42\n");
-  assertStringIncludes(debControl({ ...META, backend: "cef" }, "x86_64", 1), "libnss3");
+  const cefControl = debControl({ ...META, backend: "cef" }, "x86_64", 1);
+  assertStringIncludes(cefControl, "libnss3");
+  for (const pkg of ["libcups2", "libnspr4", "libatk-bridge2.0-0", "libxi6"]) {
+    assertStringIncludes(cefControl, `, ${pkg}`);
+  }
+  // libnssutil3 / libsmime3 share Debian's libnss3: listed once.
+  assertEquals(cefControl.match(/\blibnss3\b/g)?.length, 1);
+  const cefSpec = rpmSpec({ ...META, backend: "cef" }, "/tmp/s", []);
+  for (
+    const so of [
+      "libcups.so.2",
+      "libnspr4.so",
+      "libnssutil3.so",
+      "libsmime3.so",
+      "libatk-bridge-2.0.so.0",
+      "libXi.so.6",
+    ]
+  ) assertStringIncludes(cefSpec, `Requires: ${so}()(64bit)\n`);
   const spec = rpmSpec(META, "/tmp/it's", ["/usr/lib/my-app", "/usr/bin/my-app"]);
   assertStringIncludes(spec, "Name: my-app\nVersion: 2.3.4~rc.1\nRelease: 1\n");
   assertStringIncludes(spec, "License: MIT\n");
