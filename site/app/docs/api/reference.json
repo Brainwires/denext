@@ -4301,7 +4301,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: 4.11.4",
+          "signature": "VERSION: 4.11.5",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -23850,12 +23850,48 @@
       "module": "denext/desktop/window",
       "symbols": [
         {
+          "name": "BeforeQuitHandler",
+          "slug": "BeforeQuitHandler",
+          "kind": "typeAlias",
+          "signature": "type BeforeQuitHandler = () => boolean | void | Promise<boolean | void>",
+          "doc": "A before-quit handler: return (or resolve) false to keep the app running.",
+          "docFull": "A before-quit handler: return (or resolve) `false` to keep the app running.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "CloseReason",
+          "slug": "CloseReason",
+          "kind": "typeAlias",
+          "signature": "type CloseReason = close | quit",
+          "doc": "Why the window is asked to close: the user closed it, or the app is quitting.",
+          "docFull": "Why the window is asked to close: the user closed it, or the app is quitting.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "CloseRequestEvent",
+          "slug": "CloseRequestEvent",
+          "kind": "interface",
+          "signature": "interface CloseRequestEvent",
+          "doc": "What an onCloseRequested handler is told about the close.",
+          "docFull": "What an {@linkcode onCloseRequested} handler is told about the close.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "CloseRequestHandler",
           "slug": "CloseRequestHandler",
           "kind": "typeAlias",
-          "signature": "type CloseRequestHandler = () => boolean | void | Promise<boolean | void>",
-          "doc": "A close-request handler: return (or resolve) false to keep the window open.",
-          "docFull": "A close-request handler: return (or resolve) `false` to keep the window open.",
+          "signature": "type CloseRequestHandler = (event: CloseRequestEvent) => boolean | void | Promise<boolean | void>",
+          "doc": "A close-request handler: return (or resolve) false to keep the window open. A handler written as () => boolean still works; the event says why the window is closing.",
+          "docFull": "A close-request handler: return (or resolve) `false` to keep the window open. A handler written\nas `() => boolean` still works; the event says why the window is closing.",
           "params": [],
           "returns": "",
           "examples": [],
@@ -24126,12 +24162,31 @@
           "denextOnly": true
         },
         {
+          "name": "onBeforeQuit",
+          "slug": "onBeforeQuit",
+          "kind": "function",
+          "signature": "onBeforeQuit(handler: BeforeQuitHandler): () => void",
+          "doc": "Ask before the app quits (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu), like Electron's before-quit: the quit goes on unless a handler returns (or resolves) false. Plain closes of this window are not held. The before-quit handlers run before the onCloseRequested ones (which get reason: \"quit\"); a refusal here asks no close handler. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role is not asked. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called.",
+          "docFull": "Ask before the app quits ({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows\ntray menu), like Electron's `before-quit`: the quit goes on unless a handler returns (or\nresolves) `false`. Plain closes of this window are not held. The before-quit handlers run before\nthe {@linkcode onCloseRequested} ones (which get `reason: \"quit\"`); a refusal here asks no close\nhandler. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role is not asked.\nNeeds denext's pinned runtime (`closeGuard` in {@linkcode windowCapabilities}); elsewhere the\nhandler is never called.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Return false to keep the app running."
+            }
+          ],
+          "returns": "A function that unregisters the handler.",
+          "examples": [
+            "```ts\nimport { onBeforeQuit } from \"denext/desktop/window\";\n\nonBeforeQuit(async () => {\n  await saveDraft();\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "onCloseRequested",
           "slug": "onCloseRequested",
           "kind": "function",
           "signature": "onCloseRequested(handler: CloseRequestHandler): () => void",
-          "doc": "Ask before the window closes (its close button, Cmd+W / Alt+F4, or quitApp). While a handler is registered the runtime holds every close and calls the handlers; the window closes unless one returns (or resolves) false. A page that stops answering cannot keep the window open: a close requested again after 5 seconds without an answer goes through. Quitting from the macOS app menu (Cmd+Q) is not asked. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called and the window closes.",
-          "docFull": "Ask before the window closes (its close button, Cmd+W / Alt+F4, or {@linkcode quitApp}). While a\nhandler is registered the runtime holds every close and calls the handlers; the window closes\nunless one returns (or resolves) `false`. A page that stops answering cannot keep the window\nopen: a close requested again after 5 seconds without an answer goes through. Quitting from the\nmacOS app menu (Cmd+Q) is not asked. Needs denext's pinned runtime (`closeGuard` in\n{@linkcode windowCapabilities}); elsewhere the handler is never called and the window closes.",
+          "doc": "Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu). The handler gets a CloseRequestEvent whose reason says which (\"close\" or \"quit\"), like Electron's before-quit + close pair: a close-to-tray window hides on a close and lets a quit through. While a handler is registered the runtime holds every close and calls the handlers; the window closes (or the quit goes on) unless one returns (or resolves) false. A page that stops answering cannot keep the window open: a close requested again after 5 seconds without an answer goes through. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role ends the app at once and is not asked. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called and the window closes.",
+          "docFull": "Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting\n({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows tray menu). The handler\ngets a {@linkcode CloseRequestEvent} whose `reason` says which (`\"close\"` or `\"quit\"`), like\nElectron's `before-quit` + `close` pair: a close-to-tray window hides on a close and lets a quit\nthrough. While a handler is registered the runtime holds every close and calls the handlers; the\nwindow closes (or the quit goes on) unless one returns (or resolves) `false`. A page that stops\nanswering cannot keep the window open: a close requested again after 5 seconds without an answer\ngoes through. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role ends the\napp at once and is not asked. Needs denext's pinned runtime (`closeGuard` in\n{@linkcode windowCapabilities}); elsewhere the handler is never called and the window closes.",
           "params": [
             {
               "name": "handler",
@@ -24140,7 +24195,7 @@
           ],
           "returns": "A function that unregisters the handler.",
           "examples": [
-            "```ts\nimport { onCloseRequested } from \"denext/desktop/window\";\n\nonCloseRequested(async () => !hasUnsavedChanges() || await confirmDiscard());\n```"
+            "```ts\nimport { onCloseRequested } from \"denext/desktop/window\";\n\n// Close to the tray, but let the app quit.\nonCloseRequested(({ reason }) => {\n  if (reason === \"quit\") return true;\n  void hideWindow();\n  return false;\n});\n```"
           ],
           "denextOnly": true
         },
@@ -24284,10 +24339,10 @@
           "slug": "quitApp",
           "kind": "function",
           "signature": "quitApp(): Promise<boolean>",
-          "doc": "Quit the app, like Electron's app.quit(): the onCloseRequested handlers are asked first, so a guarded close keeps it running.",
-          "docFull": "Quit the app, like Electron's `app.quit()`: the {@linkcode onCloseRequested} handlers are asked\nfirst, so a guarded close keeps it running.",
+          "doc": "Quit the app, like Electron's app.quit(): the onBeforeQuit handlers and then the onCloseRequested ones (with reason: \"quit\") of every guarded window are asked first, so a handler that answers false keeps it running.",
+          "docFull": "Quit the app, like Electron's `app.quit()`: the {@linkcode onBeforeQuit} handlers and then the\n{@linkcode onCloseRequested} ones (with `reason: \"quit\"`) of every guarded window are asked\nfirst, so a handler that answers `false` keeps it running.",
           "params": [],
-          "returns": "true when the app is quitting, false when the close is held (the handlers decide).",
+          "returns": "true when the app is quitting at once, false when a guarded window holds the quit (its handlers decide; the app quits once they let it go).",
           "examples": [],
           "denextOnly": true
         },
@@ -25296,14 +25351,14 @@
           "kind": "function",
           "signature": "setActivationPolicy(policy: ActivationPolicy): Promise<boolean>",
           "doc": "Set the app's macOS activation policy (Electron's app.setActivationPolicy): \"regular\" (a Dock icon and a menu bar), \"accessory\" (neither: a menu-bar app or a desktop companion) or \"prohibited\". Switching to regular also brings the app to the front, so a tray app can show a Dock icon only while it has a full window open. desktop.app.activationPolicy (or desktop.app.dock: false) sets the one the app starts in. Needs runtime 3.0.0-denext.6 (activationPolicy in appCapabilities); on an older runtime \"regular\" / \"accessory\" show / hide the Dock icon as setDockVisible does.",
-          "docFull": "Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `\"regular\"` (a\nDock icon and a menu bar), `\"accessory\"` (neither: a menu-bar app or a desktop companion) or\n`\"prohibited\"`. Switching to regular also brings the app to the front, so a tray app can show a\nDock icon only while it has a full window open. `desktop.app.activationPolicy` (or\n`desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6\n(`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `\"regular\"` /\n`\"accessory\"` show / hide the Dock icon as {@linkcode setDockVisible} does.",
+          "docFull": "Set the app's macOS activation policy (Electron's `app.setActivationPolicy`): `\"regular\"` (a\nDock icon and a menu bar), `\"accessory\"` (neither: a menu-bar app or a desktop companion) or\n`\"prohibited\"`. Switching to regular also brings the app to the front, so a tray app can show a\nDock icon only while it has a full window open. `desktop.app.activationPolicy` (or\n`desktop.app.dock: false`) sets the one the app starts in. Needs runtime 3.0.0-denext.6\n(`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `\"regular\"` /\n`\"accessory\"` show / hide the Dock icon as {@linkcode setDockVisible} does.\n\nWindows and Linux have no policy: there `\"regular\"` shows the main window's taskbar entry and the\nothers hide it, as `desktop.app.activationPolicy: \"accessory\"` hides it at launch.",
           "params": [
             {
               "name": "policy",
               "doc": "The policy."
             }
           ],
-          "returns": "Whether it applied: false on Windows and Linux, which have no policy.",
+          "returns": "Whether it applied (false where the runtime can't hide a taskbar entry).",
           "examples": [
             "```ts\nimport { setActivationPolicy } from \"denext/desktop/app\";\nimport { openWindow } from \"denext/desktop/window\";\n\nawait setActivationPolicy(\"regular\"); // a Dock icon while the window is open\nconst win = await openWindow({ url: \"/library\" });\nwin.onClosed(() => void setActivationPolicy(\"accessory\"));\n```"
           ],
