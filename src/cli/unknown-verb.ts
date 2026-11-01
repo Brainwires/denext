@@ -40,3 +40,21 @@ export async function unknownVerbAction(
     Object.hasOwn(config.keys, "commands") || Object.hasOwn(config.keys, "plugins");
   return declares ? "discover" : "unknown";
 }
+
+/**
+ * Decide about a name only after a compiled binary has offered it to the denext the project pins:
+ * a verb only that newer denext has must not be "unknown" in an older binary. The hand-off ends
+ * this process when it happens, and the pinned CLI then decides for itself, so a pin to a denext
+ * from before this check imports the config whatever the name.
+ *
+ * @param handOff Re-runs the invocation on the pinned denext, when there is one to run on.
+ * @param decide The decision, as {@linkcode unknownVerbAction} makes it.
+ * @returns The decision.
+ */
+export async function afterPinHandOff<T>(
+  handOff: () => Promise<void>,
+  decide: () => Promise<T>,
+): Promise<T> {
+  await handOff();
+  return await decide();
+}

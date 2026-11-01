@@ -7,7 +7,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { readStaticConfig } from "../src/build/config-static.ts";
 import { writeCommandCache } from "../src/cli/command-cache.ts";
-import { unknownVerbAction } from "../src/cli/unknown-verb.ts";
+import { afterPinHandOff, unknownVerbAction } from "../src/cli/unknown-verb.ts";
 
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
 const VERB = { name: "seed", index: 0 };
@@ -187,3 +187,27 @@ for (
     });
   });
 }
+
+Deno.test("the pinned denext gets the invocation before the name is decided", async () => {
+  const order: string[] = [];
+  const result = await afterPinHandOff(
+    () => Promise.resolve(void order.push("hand-off")),
+    () => Promise.resolve(order.push("decide")),
+  );
+  assertEquals(order, ["hand-off", "decide"]);
+  assertEquals(result, 2);
+  // A hand-off that happens never comes back, so nothing is decided here.
+  let decided = false;
+  await afterPinHandOff(() => Promise.reject(new Error("exited")), () => {
+    decided = true;
+    return Promise.resolve();
+  }).catch(() => {});
+  assertEquals(decided, false);
+});
+
+Deno.test("cli.ts passes the pinned hand-off and the decision through that order", async () => {
+  const source = await Deno.readTextFile(join(ROOT, "cli.ts"));
+  const call = source.slice(source.indexOf("await afterPinHandOff("));
+  assertStringIncludes(call.slice(0, call.indexOf(");\n")), "deferDiscoveryToPinned(dir)");
+  assertEquals(source.match(/unknownVerbAction\(/g)?.length, 1);
+});
