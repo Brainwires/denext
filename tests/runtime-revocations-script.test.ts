@@ -150,7 +150,8 @@ Deno.test("init signs an empty list, writes it and publishes it to the web root 
     assertEquals(f.web, [text], "rsynced as runtime/revocations.json");
     const rsync = f.calls.find((c) => c.cmd === "rsync")!;
     assertEquals(rsync.args.at(-1), "host:/srv/www/runtime/");
-    assert(rsync.args.includes("--chmod=D755,F644"));
+    assert(rsync.args.includes("-rtp"));
+    assert(!rsync.args.some((arg) => arg.startsWith("--chmod")));
     assertEquals(f.mirror, [{ parents: [] }], "an orphan commit the first time");
     assertStringIncludes(f.logged.join("\n"), `published list #${list!.sequence}`);
     // Once published, init refuses (add / resign extend it).
