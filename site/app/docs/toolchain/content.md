@@ -98,6 +98,7 @@ code switch to it on their own, and the others hand it to the `deno` they start:
 | a project's own verbs (`denext.config.ts` `commands`, plugins)                | yes                   |
 | `task`, and every Deno verb denext forwards (`compile`, `run`, `x`, …)        | yes                   |
 | `create`, `generate`, `migrate`, `upgrade`, `add`, `lint`, `fmt`, `ui`, `mcp` | the `deno` they start |
+| `migration`, `db`, `gen` (they import the project's config)                   | the `deno` they start |
 | help, `--version`, `toolchain`, `completions`                                 | no (they run no Deno) |
 
 When one of them starts under stock Deno, denext re-runs the same invocation under the toolchain:
@@ -443,6 +444,13 @@ Finding a project's verbs means importing its `denext.config.ts` (and running ev
 - `run`, `x`, `eval`, `serve`, `compile`, `install`, `uninstall`, `upgrade` and `task` always mean
   Deno's (or denext's own `upgrade`). A project verb or plugin `addCommand` with one of these
   names is refused when it is defined.
+- `<name> --help` never imports it for a name the listing below doesn't hold: it reports the name as
+  unknown and points at `denext commands`, the explicit way to run discovery. Listed, the verb's
+  help works.
+- Any other name imports the config only if its text declares `commands` or `plugins`, or hides
+  them (a spread, a computed key, a variable as the default export, a wrapper other than
+  `defineConfig`). So a typo in a plain project runs nothing, and a typo in a project with plugins
+  still imports its config: [Security › Untrusted repositories](/docs/security#untrusted-repositories).
 - Any other Deno verb (`bench`, `doc`, …) runs the project's verb of that name only when the
   project's last `denext commands` listing (`.denext/commands.json`, fingerprinted against the
   config, `deno.json` and `deno.lock`) names it — and prints one line saying it shadows Deno's.
