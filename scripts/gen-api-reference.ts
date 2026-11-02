@@ -19,6 +19,20 @@
 
 import { denoDocJsonMany } from "./deno-doc.ts";
 import { dirname, fromFileUrl } from "@std/path";
+import {
+  type ApiMember,
+  type ApiParam,
+  type ApiParent,
+  extendsOf,
+  interfaceDetail,
+  linkParents,
+  paramsOf,
+  paramStr,
+  plainText,
+  returnsOf,
+  typeParamsStr,
+  typeStr,
+} from "./lib/api-signature.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
 const OUT = `${ROOT}site/app/docs/api/reference.json`;
@@ -78,10 +92,6 @@ async function expoEntries(): Promise<{ module: string; file: string }[]> {
     }));
 }
 
-interface Param {
-  name: string;
-  doc: string;
-}
 interface Symbol {
   name: string;
   slug: string;
@@ -89,97 +99,18 @@ interface Symbol {
   signature: string;
   doc: string;
   docFull: string;
-  params: Param[];
+  params: ApiParam[];
   returns: string;
   examples: string[];
   denextOnly: boolean;
+  /** An interface's own members (absent when it declares none). */
+  members?: ApiMember[];
+  /** What an interface extends (absent when nothing): inherited members stay on the parent. */
+  extends?: ApiParent[];
 }
 interface Group {
   module: string;
   symbols: Symbol[];
-}
-
-// deno doc represents a type as `{ repr, kind, ... }`. `repr` is the source text for most
-// nodes but is EMPTY for a generic reference (`Promise<T>` → repr "Promise", typeParams
-// separate) and for composites, so those are reassembled from their parts.
-// deno-lint-ignore no-explicit-any
-type Doc = any;
-
-// deno doc v2 keeps every node's payload under `value` (union members, the array element,
-// the typeRef's `typeName`/`typeParams`, the function shape).
-const TYPE_BY_KIND: Record<string, (t: Doc) => string> = {
-  typeRef: (t) => typeRefStr(t),
-  union: (t) => joinMembers(t.value, " | ", t),
-  intersection: (t) => joinMembers(t.value, " & ", t),
-  array: (t) => (t.value ? `${typeStr(t.value)}[]` : fallbackTypeStr(t)),
-  fnOrConstructor: (t) => (t.value?.params ? fnTypeStr(t.value) : fallbackTypeStr(t)),
-  typeLiteral: (t) => t.repr || "object",
-};
-
-/** Members joined by `sep`, or the node's own repr when deno doc gave no member list. */
-function joinMembers(members: Doc[] | undefined, sep: string, t: Doc): string {
-  return Array.isArray(members) ? members.map(typeStr).join(sep) : fallbackTypeStr(t);
-}
-
-function typeStr(t: Doc): string {
-  if (!t) return "unknown";
-  const render = TYPE_BY_KIND[t.kind];
-  return render ? render(t) : fallbackTypeStr(t);
-}
-
-/** `repr` when deno doc gives one, else the node kind. */
-function fallbackTypeStr(t: Doc): string {
-  return t.repr || t.kind || "unknown";
-}
-
-function typeRefStr(t: Doc): string {
-  const ref = t.value ?? t.typeRef ?? {};
-  return `${refName(ref, t)}${typeArgsStr(ref.typeParams)}`;
-}
-
-function refName(ref: Doc, t: Doc): string {
-  return ref.typeName ?? t.repr ?? "unknown";
-}
-
-/** `<A, B>` for a generic reference's type arguments, or "". */
-function typeArgsStr(typeParams: Doc[] | undefined): string {
-  return typeParams?.length ? `<${typeParams.map(typeStr).join(", ")}>` : "";
-}
-
-function fnTypeStr(f: Doc): string {
-  const params = (f.params ?? []).map(paramStr).join(", ");
-  return `(${params}) => ${typeStr(f.tsType)}`;
-}
-
-/** The identifier of a destructured parameter, by pattern kind. */
-const PATTERN_NAMES: Record<string, string> = { object: "options", array: "items" };
-
-/**
- * One parameter as `name?: Type`. deno doc encodes a defaulted parameter as
- * `{ kind: "assign", left, right }`, a rest parameter as `{ kind: "rest", arg }`, and a
- * destructured one as `{ kind: "object" | "array" }` — none of which carry `name` directly.
- */
-function paramStr(p: Doc): string {
-  if (!p) return "_: unknown";
-  if (p.kind === "assign") return optionalize(paramStr(inner(p.left, p)));
-  if (p.kind === "rest") return `...${paramStr(inner(p.arg, p))}`;
-  return plainParamStr(p);
-}
-
-/** `name?: Type` for an identifier or destructuring-pattern parameter. */
-function plainParamStr(p: Doc): string {
-  const name = p.name ?? PATTERN_NAMES[p.kind] ?? "_";
-  return `${name}${p.optional ? "?" : ""}: ${typeStr(p.tsType)}`;
-}
-
-/** A wrapped parameter node with the wrapper's type annotation when its own is missing. */
-function inner(node: Doc, wrapper: Doc): Doc {
-  return { ...node, tsType: node?.tsType ?? wrapper.tsType };
-}
-
-/** `name: T` → `name?: T` (a defaulted parameter is optional to callers). */
-function optionalize(sig: string): string {
-  return sig.includes("?:") ? sig : sig.replace(/: /, "?: ");
 }
 
 // deno-lint-ignore no-explicit-any
@@ -193,7 +124,7 @@ const SIGNATURES: Record<string, (name: string, def: Decl, tp: string) => string
   },
   variable: (name, def) => `${name}: ${typeStr(def.tsType)}`,
   typeAlias: (name, def, tp) => `type ${name}${tp} = ${typeStr(def.tsType)}`,
-  interface: (name, _def, tp) => `interface ${name}${tp}`,
+  interface: (name, def, tp) => `interface ${name}${tp}${extendsClause(def)}`,
   class: (name, _def, tp) => `class ${name}${tp}`,
   enum: (name) => `enum ${name}`,
 };
@@ -204,27 +135,10 @@ function signatureOf(name: string, decl: Decl): string {
   return render(name, def, typeParamsStr(def));
 }
 
-/** `<T, U>` for a declaration's type parameters, or "". */
-function typeParamsStr(def: Decl): string {
-  const tp = (def.typeParams ?? []).map((p: { name: string }) => p.name);
-  return tp.length ? `<${tp.join(", ")}>` : "";
-}
-
-/**
- * Flatten JSDoc inline markup for a PLAIN-TEXT context (list blurbs, the page lead, the
- * `<meta description>`): `{@link Target | label}` → its label/name, and drop `` `code` ``
- * backticks. The rich per-symbol Description renders `docFull` (kept raw) instead.
- */
-function plainText(s: string): string {
-  return s
-    .replace(/\{@link(?:code|plain)?\s+([^}]+)\}/g, (_m, body: string) => {
-      const pipe = body.indexOf("|");
-      const text = (pipe >= 0 ? body.slice(pipe + 1) : body).trim();
-      return text.replace(/#/g, ".");
-    })
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\s+/g, " ")
-    .trim();
+/** ` extends A, B` for an interface, or "". */
+function extendsClause(def: Decl): string {
+  const parents = extendsOf(def);
+  return parents.length ? ` extends ${parents.join(", ")}` : "";
 }
 
 // deno-lint-ignore no-explicit-any
@@ -235,26 +149,12 @@ function docSummary(decl: any): string {
 }
 
 // deno-lint-ignore no-explicit-any
-const tagsOf = (decl: any): any[] => decl.jsDoc?.tags ?? [];
-
-// deno-lint-ignore no-explicit-any
-function paramsOf(decl: any): Param[] {
-  return tagsOf(decl)
-    .filter((t) => t.kind === "param" && (t.name || t.doc))
-    .map((t) => ({ name: String(t.name ?? ""), doc: plainText(String(t.doc ?? "")) }));
-}
-
-// deno-lint-ignore no-explicit-any
-function returnsOf(decl: any): string {
-  const t = tagsOf(decl).find((x) => x.kind === "return");
-  return t ? plainText(String(t.doc ?? "")) : "";
-}
-
-// deno-lint-ignore no-explicit-any
 function examplesOf(decl: any): string[] {
-  return tagsOf(decl)
-    .filter((t) => t.kind === "example")
-    .map((t) => String(t.doc ?? "").trim())
+  return (decl.jsDoc?.tags ?? [])
+    // deno-lint-ignore no-explicit-any
+    .filter((t: any) => t.kind === "example")
+    // deno-lint-ignore no-explicit-any
+    .map((t: any) => String(t.doc ?? "").trim())
     .filter(Boolean);
 }
 
@@ -367,6 +267,7 @@ function symbolEntry(name: string, decl: Decl): Symbol {
     returns: returnsOf(decl),
     examples: examplesOf(decl),
     denextOnly: !realNames.has(name),
+    ...interfaceDetail(decl),
   };
 }
 
@@ -379,6 +280,8 @@ for (const [i, { module }] of ENTRIES.entries()) {
   if (module.startsWith("denext/expo/")) { for (const s of symbols) s.denextOnly = false; }
   groups.push({ module, symbols });
 }
+
+linkParents(groups);
 
 await Deno.mkdir(dirname(OUT), { recursive: true });
 // deno-doc.ts runs `deno doc` with NO_COLOR, and denext's Deno from 3.0.0-denext.7 writes no colour

@@ -8,6 +8,28 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.12] - 2026-11-02
+
+### Changed
+
+- **The `@denext/denext` package is 3.13 MiB smaller as published (19.61 → 16.48 MiB against JSR's
+  20 MiB cap).** The publish job blanks whole-line `//` comments and the JSDoc outside the public
+  API before `deno publish`. The code, every line number, the public API's documentation and every
+  import are unchanged, so reading the package's source on JSR shows fewer internal notes than the
+  tagged commit. A release now stops before tagging if the package would go over 18.5 MiB
+  (`scripts/publish-strip.ts`).
+
+### Fixed
+
+- **The API reference lists what an interface contains.** All 1376 interface entries had only a
+  name and a summary. Each page at `/docs/api/<module>/<symbol>` and each `denext_read_docs`
+  `api:<module>/<name>` answer now lists the interface's own properties, methods and call,
+  construct and index signatures, with types and doc comments, and `denext_search_docs` finds an
+  interface by a member's name. Inherited members stay on the parent, which the entry names and
+  links. Signatures across the reference are also more accurate: string literals keep their quotes
+  and object, tuple, conditional, mapped and indexed types print in full, where they printed as
+  `object` or a bare kind name.
+
 ## [4.11.11] - 2026-11-02
 
 ### Security
@@ -20660,7 +20682,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.11...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.12...development
+[4.11.12]: https://jsr.io/@denext/denext@4.11.12
 [4.11.11]: https://jsr.io/@denext/denext@4.11.11
 [4.11.10]: https://jsr.io/@denext/denext@4.11.10
 [4.11.9]: https://jsr.io/@denext/denext@4.11.9

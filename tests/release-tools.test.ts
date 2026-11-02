@@ -6,6 +6,12 @@ import { join } from "@std/path";
 import { renderMarkdown } from "../packages/content-collections/markdown.ts";
 import { publishedFiles } from "./_published-files.ts";
 import {
+  measurePublishSet,
+  PUBLISH_GUARD_BYTES,
+  publishSizeProblem,
+  stripForPublish,
+} from "../scripts/publish-strip.ts";
+import {
   bumpVersion,
   currentVersionPattern,
   docSpecifierPattern,
@@ -326,11 +332,13 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   // help text stopped shipping twice (plain in src/cli/commands/*.ts and packed in
   // src/cli/command-meta.packed.ts): the readable copy moved to the unpublished
   // src/cli/commands/meta/ → 19.55 MiB; 0.25 MiB above that is still past 19.75, so the guard
-  // stays. Raise it only with the reason.
-  const files = await publishedFiles();
-  if (!files) return; // not a git checkout: nothing to measure
-  const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
-  assert(mib < 19.75, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
+  // stays. Nothing else in the set was data, so scripts/publish-strip.ts now blanks internal
+  // comments at publish (19.61 → 16.48 MiB); the guard is on that size, at 18.5 MiB. Raise it
+  // only with the reason.
+  const measured = await measurePublishSet();
+  if (!measured) return; // not a git checkout: nothing to measure
+  assertEquals(publishSizeProblem(measured.after), null);
+  const files = (await publishedFiles())!;
   // The data @denext/docs-corpus carries for denext stays out of it, and the plain-text copies of
   // what ships packed stay unpublished.
   for (
@@ -355,6 +363,94 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
       "src/plugin/catalog.packed.ts",
     ]
   ) assert(files.has(file), `${file} is not published`);
+});
+
+Deno.test("the size guard stops a package over 18.5 MiB and names the size", () => {
+  assertEquals(publishSizeProblem(PUBLISH_GUARD_BYTES), null);
+  assertEquals(PUBLISH_GUARD_BYTES, 18.5 * 1024 * 1024);
+  const problem = publishSizeProblem(PUBLISH_GUARD_BYTES + 1024 * 1024);
+  assertStringIncludes(problem ?? "", "19.50 MiB");
+  assertStringIncludes(problem ?? "", "18.50 MiB guard");
+});
+
+Deno.test("publish stripping blanks internal comments and keeps lines, API docs and tools'", () => {
+  const source = [
+    "// internal note",
+    "/** Internal helper. */",
+    "function helper(): string {",
+    "  /** Inside a body. */",
+    "  const url = `",
+    "  // inside a template",
+    "  /** inside a template */`;",
+    "  return url + '// in a string'; // trailing stays",
+    "}",
+    "/**",
+    " * Public, over",
+    " * two lines.",
+    " */",
+    "export function pub(): string {",
+    "  // deno-lint-ignore no-explicit-any",
+    "  // @ts-ignore a reason",
+    "  return helper();",
+    "}",
+    "/** Named by an export list. */",
+    "const listed = 1;",
+    "export { listed };",
+    "/** A private type in a public signature. */",
+    "interface Shape {",
+    "  /** A member. */",
+    "  a: string;",
+    "}",
+    "export const shape: Shape = { a: '' };",
+    "/** Assigned onto the function. */",
+    "(pub as unknown as Record<string, number>).size = 1;",
+    "/** Stays private. */",
+    "interface Hidden {",
+    "  /** Private member. */",
+    "  b: string;",
+    "}",
+  ].join("\n");
+  const out = stripForPublish("src/a.ts", source);
+  assertEquals(out.split("\n").length, source.split("\n").length);
+  for (
+    const gone of [
+      "internal note",
+      "Internal helper",
+      "Inside a body",
+      "Stays private",
+      "Private member",
+    ]
+  ) assert(!out.includes(gone), gone);
+  for (
+    const kept of [
+      "// inside a template",
+      "/** inside a template */",
+      "// in a string",
+      "// trailing stays",
+      " * Public, over",
+      "// deno-lint-ignore no-explicit-any",
+      "// @ts-ignore a reason",
+      "/** Named by an export list. */",
+      "/** A private type in a public signature. */",
+      "/** A member. */",
+      "/** Assigned onto the function. */",
+    ]
+  ) assertStringIncludes(out, kept);
+});
+
+Deno.test("publish stripping leaves a licence notice, vendored code and non-modules alone", () => {
+  const body = "// note\nconst a = 1;\n";
+  assertEquals(stripForPublish("src/a.ts", body), "\nconst a = 1;\n");
+  for (
+    const [path, text] of [
+      ["src/a.ts", `// Copyright 2026 Someone\n${body}`],
+      ["src/build/esbuild/vendor/common.ts", body],
+      ["README.md", body],
+      ["src/a.d.ts", body],
+    ]
+  ) assertEquals(stripForPublish(path, text), text);
+  const moduleDoc = "/**\n * Doc.\n * @module\n */\nimport './b.ts';\n";
+  assertEquals(stripForPublish("src/a.ts", moduleDoc), moduleDoc);
 });
 
 /** Published generated files over 50 KiB that may ship uncompressed, and why. */
