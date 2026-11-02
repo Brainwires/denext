@@ -87,7 +87,14 @@ and this project adheres to
   from where its installers put it (Homebrew, `/usr/local/bin`, the distro package, Linuxbrew,
   snap, or `GitHub CLI` under Program Files or the user's `Programs` folder). A `gh` elsewhere is
   treated as not installed: the SHA-256 pin is still enforced, and `DENEXT_DESKTOP_RUNTIME_ATTEST=1`
-  says the CLI is missing.
+  says the CLI is missing. On macOS, the `plutil` and `codesign` that sign the pinned runtime's
+  bundle come from the OS's own tool folders the same way; one missing there is reported as not
+  found.
+- **`denext migrate --from expo` and `denext mobile assets` read an Expo app config only when it
+  is a regular file.** `app.json` and `app.config.*` were opened whatever they were: a FIFO under
+  that name in a clone blocked the command, and a huge file was read whole. They are now read only
+  when they are a regular file (or a link to one) of at most 8 MiB, as the workspace files the
+  icon search reads already were; anything else counts as missing.
 
 ## [4.11.12] - 2026-11-02
 

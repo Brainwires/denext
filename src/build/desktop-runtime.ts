@@ -58,7 +58,7 @@ import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 import toolchainPinJson from "./deno-toolchain-pin.json" with { type: "json" };
 import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
 import { warnStockDeprecation } from "./stock-deprecation.ts";
-import { ghPath } from "../utils/system-programs.ts";
+import { ghPath, type IsFile, systemToolPath } from "../utils/system-programs.ts";
 import {
   decideRevocation,
   findRevocation,
@@ -453,20 +453,37 @@ async function downloadVerified(
 /** Run a program to completion with inherited output; resolves its exit code. */
 export type RuntimeCommandRunner = (cmd: string, args: string[]) => Promise<number>;
 
+/** The macOS tools the runtime's bundle harmonizing runs, from the OS's own /usr/bin only. */
+const MACOS_SYSTEM_TOOLS = new Set(["plutil", "codesign"]);
+
 /**
  * The program a default runner starts for `cmd`: the GitHub CLI from where its installers put it
- * ({@link ghPath}), never a `gh` found through PATH; a missing one is `NotFound`, as a missing
- * program on PATH is.
+ * ({@link ghPath}) and, on macOS, `plutil` / `codesign` from the OS's own tool folders
+ * ({@link systemToolPath}), never one of those found through PATH; a missing one is `NotFound`, as
+ * a missing program on PATH is. Any other `cmd` (an absolute path) is returned as it is.
+ *
+ * @param cmd The program a runner was asked to start.
+ * @param os The OS (default: this one).
+ * @param isFile Checks a path (default: `Deno.statSync`).
+ * @returns The path to start.
  */
-function runnable(cmd: string): string {
-  if (cmd !== "gh") return cmd;
-  const gh = ghPath();
-  if (gh === null) throw new Deno.errors.NotFound("gh: the GitHub CLI is not installed");
-  return gh;
+export function runtimeProgram(cmd: string, os: string = Deno.build.os, isFile?: IsFile): string {
+  if (cmd === "gh") {
+    const gh = ghPath(os, isFile);
+    if (gh === null) throw new Deno.errors.NotFound("gh: the GitHub CLI is not installed");
+    return gh;
+  }
+  if (os !== "darwin" || !MACOS_SYSTEM_TOOLS.has(cmd)) return cmd;
+  const tool = systemToolPath(cmd, os, isFile);
+  if (tool === null) {
+    throw new Deno.errors.NotFound(`${cmd}: not found in the system's tool folders`);
+  }
+  return tool;
 }
 
 const defaultRunner: RuntimeCommandRunner = async (cmd, args) =>
-  (await new Deno.Command(runnable(cmd), { args, stdout: "inherit", stderr: "inherit" }).output())
+  (await new Deno.Command(runtimeProgram(cmd), { args, stdout: "inherit", stderr: "inherit" })
+    .output())
     .code;
 
 /**
@@ -560,7 +577,7 @@ export type CaptureRunner = (
 ) => Promise<{ code: number; text: string }>;
 
 const capture: CaptureRunner = async (cmd, args) => {
-  const out = await runToExit(runnable(cmd), { args });
+  const out = await runToExit(runtimeProgram(cmd), { args });
   const d = new TextDecoder();
   return { code: out.code, text: d.decode(out.stdout) + d.decode(out.stderr) };
 };

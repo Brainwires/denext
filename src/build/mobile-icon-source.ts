@@ -25,6 +25,7 @@ import { posixRelative } from "./mobile-paths.ts";
 import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel } from "./config-edit.ts";
 import { type ExpoIcons, readExpoAppConfig, readJsonFile } from "./expo-app-config.ts";
+import { readRegularTextFile } from "../utils/read-regular-file.ts";
 import { decodeImage, parseHexColor } from "./png-raster.ts";
 import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
 
@@ -257,39 +258,12 @@ const WORKSPACE_MARKERS = [
   "rush.json",
 ];
 
-/** The largest workspace file read; a clone's bigger one counts as missing. */
-const MAX_WORKSPACE_FILE_BYTES = 8 * 1024 * 1024;
-
-/**
- * A workspace file's text, or `null` when it is missing, too big or not a regular file: a FIFO
- * or device under a workspace file's name in a clone would block the read or never end.
- */
-async function readWorkspaceFile(path: string): Promise<string | null> {
-  const link = await Deno.lstat(path).catch(() => null);
-  if (link === null || !(link.isFile || link.isSymlink)) return null;
-  const info = link.isSymlink ? await Deno.stat(path).catch(() => null) : link;
-  if (info === null || !info.isFile || info.size > MAX_WORKSPACE_FILE_BYTES) return null;
-  return await Deno.readTextFile(path).catch(() => null);
-}
-
-/** A workspace JSON file's object, or `null` (see {@link readWorkspaceFile}). */
-async function readWorkspaceJson(path: string): Promise<Record<string, unknown> | null> {
-  const text = await readWorkspaceFile(path);
-  if (text === null) return null;
-  try {
-    const value = JSON.parse(text);
-    return value && typeof value === "object" ? value : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Whether `dir` is a monorepo root (a workspace marker, or a manifest declaring workspaces). */
 async function isWorkspaceRoot(dir: string): Promise<boolean> {
   for (const f of WORKSPACE_MARKERS) if (await isFile(join(dir, f))) return true;
-  const pkg = await readWorkspaceJson(join(dir, "package.json"));
+  const pkg = await readJsonFile(join(dir, "package.json"));
   if (pkg && pkg.workspaces) return true;
-  const deno = await readWorkspaceJson(join(dir, "deno.json"));
+  const deno = await readJsonFile(join(dir, "deno.json"));
   return !!deno && Array.isArray(deno.workspace);
 }
 
@@ -353,13 +327,13 @@ function arrayKey(json: Record<string, unknown> | null, key: string): string[] |
  * folders; `!` excludes), or `null` when its markers list none (nx.json or turbo.json alone).
  */
 async function workspaceMemberGlobs(dir: string): Promise<string[] | null> {
-  const pnpm = await readWorkspaceFile(join(dir, "pnpm-workspace.yaml"));
+  const pnpm = await readRegularTextFile(join(dir, "pnpm-workspace.yaml"));
   const lists = [
-    arrayKey(await readWorkspaceJson(join(dir, "deno.json")), "workspace"),
-    packageJsonWorkspaces(await readWorkspaceJson(join(dir, "package.json"))),
+    arrayKey(await readJsonFile(join(dir, "deno.json")), "workspace"),
+    packageJsonWorkspaces(await readJsonFile(join(dir, "package.json"))),
     pnpm === null ? null : pnpmPackages(pnpm),
-    arrayKey(await readWorkspaceJson(join(dir, "lerna.json")), "packages"),
-    rushProjects(await readWorkspaceJson(join(dir, "rush.json"))),
+    arrayKey(await readJsonFile(join(dir, "lerna.json")), "packages"),
+    rushProjects(await readJsonFile(join(dir, "rush.json"))),
   ].filter((list): list is string[] => list !== null);
   return lists.length > 0 ? lists.flat() : null;
 }

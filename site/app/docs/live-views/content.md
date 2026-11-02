@@ -148,8 +148,10 @@ so a view mounted first takes a slot under `maxViewsPerConnection` before one mo
 however long its `authorize` takes. Other connections are not held up. One mount holds its
 connection's queue for at most `live.limits.renderTimeoutSeconds` (30): past it the view is
 answered `failed` and places nothing even when its `authorize` settles later, and the next mount
-runs. An unmount, or the socket closing, cancels the mounts still waiting. Lustre views
-(`defineLustreView`) are queued the same way, in their own queue.
+runs. An unmount, or the socket closing, cancels the mounts still waiting. A connection holds at
+most `max(4, 2 × maxViewsPerConnection)` mounts waiting or running (32 by default); a mount past
+that is refused with `limit` and never queued. Lustre views (`defineLustreView`) are queued the
+same way, in their own queue.
 
 Per view, at most 32 events wait to be processed (more are refused with `limit`), at most 32
 effects are pending and 32 subscriptions open, and an interval fires at most every 100 ms.
