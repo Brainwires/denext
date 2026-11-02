@@ -42,6 +42,7 @@ import {
   rootMdPage,
   VNodeMarkdown,
 } from "./lib/docs-corpus.ts";
+import type { ApiMember } from "./lib/api-signature.ts";
 import { CORPUS_MODULE } from "./lib/docs-corpus-package.ts";
 import { brotliBase64 } from "./lib/pack-texts.ts";
 
@@ -63,6 +64,8 @@ interface RefSymbol {
   returns: string;
   examples?: string[];
   denextOnly: boolean;
+  members?: ApiMember[];
+  extends?: { type: string; ref?: string }[];
 }
 interface RefGroup {
   module: string;
@@ -82,6 +85,21 @@ interface ApiChunk {
 /** `denext/server` → `denext-server` (matches site/lib/api.ts). */
 const moduleSlug = (m: string) => m.replace(/\//g, "-");
 
+/** An `extends` entry, with the `denext_read_docs` reference of a documented parent. */
+function parentMarkdown(p: { type: string; ref?: string }): string {
+  return p.ref ? `\`${p.type}\` (\`api:${p.ref}\`)` : `\`${p.type}\``;
+}
+
+/** One interface member as a list item; the continuation lines stay inside the item. */
+function memberMarkdown(m: ApiMember): string {
+  const tags = [
+    ...(m.params ?? []).filter((p) => p.doc).map((p) => `\`${p.name}\` — ${p.doc}`),
+    ...(m.returns ? [`Returns ${m.returns}`] : []),
+  ];
+  const body = [m.doc?.trim(), ...tags].filter(Boolean).join("\n\n").replace(/\n/g, "\n  ");
+  return `- \`${m.signature}\`${body ? ` — ${body}` : ""}`;
+}
+
 /** An API symbol's full docs as Markdown (signature, prose, params, returns, examples). */
 function symbolMarkdown(module: string, s: RefSymbol): string {
   const out = [`\`\`\`ts\n${s.signature}\n\`\`\``];
@@ -92,6 +110,8 @@ function symbolMarkdown(module: string, s: RefSymbol): string {
     out.push("**Parameters**\n\n" + params.map((p) => `- \`${p.name}\` — ${p.doc}`).join("\n"));
   }
   if (s.returns) out.push(`**Returns** ${s.returns}`);
+  if (s.extends?.length) out.push(`**Inherits from** ${s.extends.map(parentMarkdown).join(", ")}`);
+  if (s.members?.length) out.push(`**Members**\n\n${s.members.map(memberMarkdown).join("\n")}`);
   for (const ex of s.examples ?? []) out.push(ex.includes("```") ? ex : `\`\`\`ts\n${ex}\n\`\`\``);
   return `# ${s.name} (${s.kind}, \`${module}\`)\n\n${out.join("\n\n")}`;
 }

@@ -8,6 +8,17 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **The API reference lists what an interface contains.** All 1376 interface entries had only a
+  name and a summary. Each page at `/docs/api/<module>/<symbol>` and each `denext_read_docs`
+  `api:<module>/<name>` answer now lists the interface's own properties, methods and call,
+  construct and index signatures, with types and doc comments, and `denext_search_docs` finds an
+  interface by a member's name. Inherited members stay on the parent, which the entry names and
+  links. Signatures across the reference are also more accurate: string literals keep their quotes
+  and object, tuple, conditional, mapped and indexed types print in full, where they printed as
+  `object` or a bare kind name.
+
 ## [4.11.11] - 2026-11-02
 
 ### Security

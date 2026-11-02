@@ -851,6 +851,31 @@ main {
 .api-param-nodoc {
   color: var(--muted);
 }
+.api-parents {
+  margin: 12px 0;
+}
+.api-members {
+  margin: 12px 0;
+}
+.api-member {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+.api-member dt {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.api-member dd {
+  margin: 6px 0 0;
+  color: var(--prose);
+  line-height: 1.6;
+}
+.api-member dd > :first-child {
+  margin-top: 0;
+}
+.api-member dd > :last-child {
+  margin-bottom: 0;
+}
 .api-detail-back {
   margin-top: 36px;
   padding-top: 16px;

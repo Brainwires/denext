@@ -3,6 +3,22 @@
 
 import reference from "../app/docs/api/reference.json" with { type: "json" };
 
+/** One member of an interface, as emitted by scripts/gen-api-reference.ts. */
+export interface ApiMember {
+  kind: string;
+  name: string;
+  signature: string;
+  doc?: string;
+  params?: { name: string; doc: string }[];
+  returns?: string;
+}
+
+/** One `extends` entry; `ref` is the parent's `<module slug>/<symbol slug>` when documented. */
+export interface ApiParent {
+  type: string;
+  ref?: string;
+}
+
 /** One documented export, as emitted by scripts/gen-api-reference.ts. */
 export interface ApiSymbol {
   name: string;
@@ -15,6 +31,8 @@ export interface ApiSymbol {
   returns: string;
   examples: string[];
   denextOnly: boolean;
+  members?: ApiMember[];
+  extends?: ApiParent[];
 }
 export interface ApiGroup {
   module: string;
