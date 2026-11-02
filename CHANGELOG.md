@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.13] - 2026-11-02
+
 ### Added
 
 - **A channel publish carries the grant it was read under, and `authorize` admits under one.**
@@ -20770,7 +20772,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.12...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.13...development
+[4.11.13]: https://jsr.io/@denext/denext@4.11.13
 [4.11.12]: https://jsr.io/@denext/denext@4.11.12
 [4.11.11]: https://jsr.io/@denext/denext@4.11.11
 [4.11.10]: https://jsr.io/@denext/denext@4.11.10
