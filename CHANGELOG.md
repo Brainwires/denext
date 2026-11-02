@@ -21,6 +21,14 @@ and this project adheres to
 
 ### Fixed
 
+- **Re-running a release no longer reports a failed publish as released.** `deno task release X`
+  on a version whose tag already exists now confirms that `@denext/denext@X` is on JSR and that
+  the tag's publish job succeeded before it prints "Released" or hands over the `main` PR. A
+  failed run stops with what to do: rerun the failed run if the cause was transient, or, for a real
+  defect, treat X as burned (tags are never moved or reused), cut the next patch and do not merge
+  `main`. A run still going is waited for. The release's local publish dry-run also checks the set
+  the publish job sends, with internal comments stripped, in a temporary copy that leaves the
+  working tree untouched.
 - **The API reference lists what an interface contains.** All 1376 interface entries had only a
   name and a summary. Each page at `/docs/api/<module>/<symbol>` and each `denext_read_docs`
   `api:<module>/<name>` answer now lists the interface's own properties, methods and call,
