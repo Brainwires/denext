@@ -618,6 +618,47 @@ Deno.test("window close guard: a refused quit is over; the next quit asks every 
   assertEquals(quits.length, 1, "A's page reloaded: unguarded now, the quit goes through");
 });
 
+Deno.test("window close guard: a refused quit ends the session end the OS holds; nothing else does", async () => {
+  const win = new FakeWindow();
+  const { api } = quittingApi([win]);
+  let cancels = 0;
+  const withCancel = Object.assign(api, { cancelQuit: () => (cancels++, true) });
+  const w = guardedWindow(withCancel, win);
+  await w.call("setCloseGuard", { enabled: true });
+
+  // A plain close the page refuses has nothing to do with the OS's wait.
+  w.ctl.interceptClose(new Event("close", { cancelable: true }));
+  await w.call("closeRespond", { id: w.last().id, close: false });
+  assertEquals(cancels, 0);
+  await Promise.resolve();
+
+  // A stale answer refuses nothing.
+  withCancel.quit!();
+  await w.call("closeRespond", { id: "stale", close: false });
+  assertEquals(cancels, 0);
+
+  // A refused quit does, once.
+  assertEquals(await w.call("closeRespond", { id: w.last().id, close: false }), { closing: false });
+  assertEquals(cancels, 1);
+  await w.call("closeRespond", { id: w.last().id, close: false });
+  assertEquals(cancels, 1);
+  await Promise.resolve();
+
+  // A quit the page lets go is not a refusal.
+  withCancel.quit!();
+  await w.call("closeRespond", { id: w.last().id, close: true });
+  assertEquals(cancels, 1);
+});
+
+Deno.test("window close guard: a refused quit on a runtime without cancelQuit stays a plain refusal", async () => {
+  const win = new FakeWindow();
+  const { api } = quittingApi([win]);
+  const w = guardedWindow(api, win);
+  await w.call("setCloseGuard", { enabled: true });
+  assertEquals(api.quit!(), false);
+  assertEquals(await w.call("closeRespond", { id: w.last().id, close: false }), { closing: false });
+});
+
 Deno.test("window close guard: quitOnly holds quits and lets plain closes go; turning it off drops consent", async () => {
   const win = new FakeWindow();
   const { api, quits } = quittingApi([win]);

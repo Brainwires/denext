@@ -2434,8 +2434,17 @@ onCloseRequested(({ reason }) => {
           answers loses its hold: a close requested again 5 seconds later goes through.{" "}
           <code>closeWindow()</code> closes without asking; <code>quitApp()</code>{" "}
           asks first (Electron&apos;s{" "}
-          <code>app.quit()</code>). Cmd+Q from the macOS app menu and a macOS tray menu&apos;s quit
-          role end the app at once and are never held. A reload drops the hold.
+          <code>app.quit()</code>). From runtime 3.0.0-denext.8 the OS&apos;s own quits ask too,
+          with{" "}
+          <code>reason: "quit"</code>: Cmd+Q, the Dock&apos;s Quit and a logout on macOS, the
+          session ending on Windows. A handler that refuses a session end asks the OS to stop it,
+          which the OS may not honour: on macOS 26 a logout stopped for an app with a Dock icon,
+          with an alert that offers to try again, and went on anyway for an accessory app (a real
+          Windows logoff is untested). The OS is never held for long: an unanswered quit goes ahead
+          after 5 seconds, a session end after 10 (macOS) or 4 (Windows). While a session end is
+          pending macOS takes no input for the app, so a prompt can&apos;t be answered: decide
+          without asking the user. On an older runtime Cmd+Q ends the app at once. A reload drops
+          the hold.
         </li>
         <li>
           <strong>Before quitting</strong>: <code>onBeforeQuit(handler)</code> is Electron&apos;s
@@ -2445,7 +2454,7 @@ onCloseRequested(({ reason }) => {
           {" "}
           <code>false</code>{" "}
           keeps the app running, and no close handler is asked then. Use it to save state on the way
-          out.
+          out. The OS&apos;s own quits reach it under the same runtime and limits as above.
         </li>
       </ul>
       <p>
