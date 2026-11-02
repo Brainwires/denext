@@ -3313,9 +3313,18 @@ export default defineDesktopExtension({
           stays on macOS and Linux: another program of the same user that changes the file in the
           microseconds between the check and the exec can run for a moment before the runtime sees
           it and kills the child (<code>outputSync()</code>{" "}
-          has no such kill); on Windows the file is locked for the spawn. The hash covers that one
-          file, not what the program loads or runs in turn. The program gets the sidecar&apos;s
-          variables, and one JSON line on stdin (
+          has no such kill). On Linux that check compares the file&apos;s timestamps, which ext4
+          keeps to a coarse clock (a 1 ms tick on a 1000 Hz kernel, measured on Linux 6.8; kernels
+          with multigrain timestamps, 6.13 and later, refine a timestamp that has been read), so a
+          rewrite of the same length with the mode put back, inside the tick after the file last
+          changed, goes unseen; such a program must already be able to write the file, which the
+          app&apos;s own code can&apos;t. On Windows the file is locked for the spawn. Code holding
+          unscoped <code>--allow-read</code> and <code>--allow-write</code>{" "}
+          could put a symlink where a folder above the program&apos;s will be before the runtime
+          first writes it and race the spawn the same way, but such an app can change what the
+          user&apos;s own programs run anyway. The hash covers that one file, not what the program
+          loads or runs in turn. The program gets the sidecar&apos;s variables, and one JSON line on
+          stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
           as the app runs, so a program that exits on end-of-file never outlives it.
         </li>
