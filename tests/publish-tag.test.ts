@@ -27,6 +27,20 @@ Deno.test("tagVersionProblem: the tag must name the config's version under its p
   assertStringIncludes(tagVersionProblem("v4.3.0", "deno.json", undefined)!, "no version");
 });
 
+Deno.test("ci.yml dry-runs the stripped publish on stock Deno, before a tag can exist", async () => {
+  const yml = await Deno.readTextFile(join(ROOT, ".github", "workflows", "ci.yml"));
+  const step = yml.indexOf("name: Publish dry-run of the stripped package");
+  const strip = yml.indexOf("deno run -A scripts/publish-strip.ts --write", step);
+  const dry = yml.indexOf("deno publish --dry-run --allow-dirty", strip);
+  const toolchain = yml.indexOf("name: Put denext's Deno toolchain on PATH");
+  assert(step > 0 && step < strip && strip < dry, "strips, then dry-runs");
+  assert(dry < toolchain, "under the stock Deno publish.yml publishes with");
+  assert(
+    yml.indexOf("\n  check:\n") < step && step < yml.indexOf("\n  bundle-budget:\n"),
+    "in `check`",
+  );
+});
+
 Deno.test("publish.yml checks the tag before it verifies or publishes", async () => {
   const yml = await Deno.readTextFile(join(ROOT, ".github", "workflows", "publish.yml"));
   const check = yml.indexOf("scripts/publish-tag.ts");
