@@ -627,6 +627,9 @@ async function requireGatePass(
     await checkCi(target.branch, false, current.base);
     await runReleaseGate(opts.fullGate);
     if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
+    if (await run("deno", "run", "-A", "scripts/publish-strip.ts") !== 0) {
+      die("the package is over its size guard — release aborted BEFORE tagging.");
+    }
     const after = await currentGateState(target.version, step);
     if (after.tree !== current.tree) die("the gate changed the tree — release aborted.");
     return await recordGatePass(current);
@@ -857,8 +860,16 @@ async function runGate(version: string, fullGate: boolean): Promise<void> {
   // What the publish job will do after the tag — fail HERE instead (rc.6's slow-type incident).
   console.log("\n6. Doc lint + publish dry-run…");
   if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
+  await checkPublishSize();
   if (await run("deno", "publish", "--dry-run", "--allow-dirty") !== 0) {
     die("publish dry-run failed — release aborted BEFORE tagging.");
+  }
+}
+
+/** Stop before tagging when the package, as published, is over its size guard. */
+async function checkPublishSize(): Promise<void> {
+  if (await run("deno", "run", "-A", "scripts/publish-strip.ts") !== 0) {
+    die("the package is over its size guard — release aborted BEFORE tagging.");
   }
 }
 

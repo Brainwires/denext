@@ -32,7 +32,12 @@ Deno.test("publish.yml checks the tag before it verifies or publishes", async ()
   const check = yml.indexOf("scripts/publish-tag.ts");
   assert(check > 0, "the check step runs");
   assertMatch(yml.slice(check - 300, check), /name: Check the tag names the config's version/);
-  assert(check < yml.indexOf("run: deno publish --config"), "before the publish");
+  const publish = yml.indexOf("run: deno publish --allow-dirty --config");
+  assert(check > 0 && check < publish, "before the publish");
+  // The comments go after the verify step's leftovers are cleared, on @denext/denext only.
+  const strip = yml.indexOf("run: deno run -A scripts/publish-strip.ts --write");
+  assert(yml.indexOf("git clean -fdq") < strip && strip < publish, "strips right before publish");
+  assertMatch(yml.slice(strip - 100, strip), /if: steps\.pkg\.outputs\.config == 'deno\.json'/);
   assert(check < yml.indexOf("run: deno run -A scripts/publish-verify.ts"), "before the gate");
   // Every package tag publish.yml maps resolves to that package's own directory.
   for (const [, prefix, dir] of yml.matchAll(/^\s+([a-z-]+)-v\*\)\s+cfg=packages\/([a-z-]+)\//gm)) {
