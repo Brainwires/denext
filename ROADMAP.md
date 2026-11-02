@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.11.10**; 4.x patch and minor releases are cut from
+> The current release is denext **4.11.11**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 >
 > Two parts: **Before 5.0** is the work the 5.0 gate waits on (an item stays here until its branch
@@ -190,8 +190,6 @@ seeded fallback. No Deno has the hook below yet.
 - **CEF bump cadence** after the one 5.0 bump. _Why 5.x: no owner yet._
 - **Bit-level reproducible runtime builds** (floating setup-deno / brew / apt, rust-cache on tags).
   _Why 5.x: Low._
-- **The Windows CI Deno children hang, root cause** (an npm_installer flag lock and a cache_db
-  mutex). _Why 5.x unless it recurs._
 - **Node compatibility, continuing:** `node:test`, `async_hooks`, TLS, CLI flags, HTTP edge cases,
   the ESM loader, `worker_threads`, `fs`, `crypto`, `stream/iter`, `child_process`, the compile
   cache, `repl` / inspector, Node 26 experimental APIs (per-cluster counts in the fork's gap list).

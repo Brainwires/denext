@@ -259,6 +259,8 @@ export type ParseOutcome =
      * hand the invocation to Deno (`denext compile …`, `denext main.ts`) before reporting it.
      */
     readonly unknownVerb?: { readonly name: string; readonly index: number };
+    /** A further line of advice, printed under the suggestion. */
+    readonly hint?: string;
   };
 
 /** Coerce a raw string to a flag's declared type, or throw a usage error. */

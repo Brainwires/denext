@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.11] - 2026-11-02
+
+### Security
+
+- **A mistyped or unknown verb no longer runs a `denext.config.*` that can't add verbs.** `denext
+  biuld`, `denext foo --help`, and `denext openapi lint`, `content list`, `functions list` or
+  `storage ls` without their plugin imported the config with every permission the CLI held. The CLI
+  now reads the config's text first and imports it only if it declares `commands` or `plugins`, or
+  hides them (a spread, a computed key, a variable as the default export, a wrapper other than
+  `defineConfig`, a re-export). `<verb> --help` imports nothing unless the last `denext commands`
+  listing names the verb; it reports the name and points at `denext commands`, so a project verb's
+  or a plugin verb's help now needs that listing. This is not a full fix: a hostile config that
+  declares `commands` still runs on any unknown verb, and a compiled binary hands an unknown verb to
+  the denext the project pins first, so a pin to an older denext runs it too, as the security guide
+  says.
+
 ## [4.11.10] - 2026-11-01
 
 ### Fixed
@@ -20644,7 +20660,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.10...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.11...development
+[4.11.11]: https://jsr.io/@denext/denext@4.11.11
 [4.11.10]: https://jsr.io/@denext/denext@4.11.10
 [4.11.9]: https://jsr.io/@denext/denext@4.11.9
 [4.11.8]: https://jsr.io/@denext/denext@4.11.8
