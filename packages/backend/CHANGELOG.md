@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.1 - 2026-11-02
+
 ### Added
 
 - **Realtime replays what a reconnecting subscriber missed** (`realtime({ replay })`, on by
