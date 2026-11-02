@@ -271,6 +271,7 @@ interface LiveTray {
 /** The adopted window, as far as this module uses it. */
 type AppWindow = EventTarget & {
   setApplicationMenu?(menu: DesktopMenuItem[]): void;
+  setSkipTaskbar?(skip: boolean): void;
   isVisible?(): boolean;
   show?(): void;
 };
@@ -322,18 +323,50 @@ function trayOf(s: AppState, args: unknown): LiveTray {
   return live;
 }
 
+/** The id the quit role reports where a tray draws it as an item of the controller's (Windows). */
+const TRAY_QUIT_ID = "denext:role:quit";
+
+/**
+ * A tray menu as `os` can draw it. Windows' tray menu (the runtime's) draws a role as an empty row
+ * that does nothing: there the quit role is a "Quit" item the controller answers, and the other
+ * roles, which only macOS has (`about`, `hide`, …), are left out. Unchanged elsewhere.
+ */
+function trayMenuFor(os: string, items: DesktopMenuItem[]): DesktopMenuItem[] {
+  if (os !== "windows") return items;
+  return items.flatMap((entry): DesktopMenuItem[] => {
+    if (typeof entry !== "object") return [entry];
+    if ("role" in entry) {
+      if (entry.role.role.toLowerCase() !== "quit") return [];
+      return [{ item: { label: "Quit", id: TRAY_QUIT_ID, enabled: true } }];
+    }
+    if ("submenu" in entry) {
+      const { label, items: children } = entry.submenu;
+      return [{ submenu: { label, items: trayMenuFor(os, children) } }];
+    }
+    return [entry];
+  });
+}
+
 /** Apply the optional `icon` / `iconDark` / `tooltip` / `menu` of `a` to a tray. */
-function applyTray(live: LiveTray, a: Record<string, unknown>): void {
+function applyTray(s: AppState, live: LiveTray, a: Record<string, unknown>): void {
   if (a.icon !== undefined) live.tray.setIcon(png(a.icon, "icon"));
   if (a.iconDark !== undefined) {
     live.tray.setIconDark?.(a.iconDark === null ? null : png(a.iconDark, "iconDark"));
   }
   if (a.tooltip !== undefined) live.tray.setTooltip(shortText(a.tooltip, "tooltip"));
-  if (a.menu !== undefined) {
-    const menu = a.menu === null ? null : nativeMenu(a.menu);
-    live.ids = menu?.ids ?? new Set();
-    live.tray.setMenu(menu?.items ?? null);
+  if (a.menu !== undefined) applyTrayMenu(s, live, a.menu);
+}
+
+/** Set a tray's menu (`null` removes it) and the ids its items report. */
+function applyTrayMenu(s: AppState, live: LiveTray, raw: unknown): void {
+  if (raw === null) {
+    live.ids = new Set();
+    live.tray.setMenu(null);
+    return;
   }
+  const menu = nativeMenu(raw);
+  live.ids = menu.ids;
+  live.tray.setMenu(trayMenuFor(s.os, menu.items));
 }
 
 /**
@@ -413,10 +446,14 @@ function liveTray(
   const icon = png(args.icon, "icon");
   const live: LiveTray = { tray: newTray(s, s.Tray!), ids: new Set(), owner };
   live.tray.setIcon(icon);
-  applyTray(live, { ...args, icon: undefined });
+  applyTray(s, live, { ...args, icon: undefined });
   forwardTrayEvents(s, live.tray, id, owner);
   live.tray.addEventListener("menuclick", (e) => {
     const item = clickedId(e);
+    if (item === TRAY_QUIT_ID) {
+      s.options.api?.quit?.();
+      return;
+    }
     if (item !== undefined && live.ids.has(item)) {
       pushAction(s, { source: "trayMenu", tray: id, id: item }, owner);
     }
@@ -452,10 +489,10 @@ function destroyTrays(s: AppState, windowId: string): void {
 }
 
 /** The backend tray's handle for `runDesktop`. */
-function backendHandle(live: LiveTray): BackendTray {
+function backendHandle(s: AppState, live: LiveTray): BackendTray {
   return {
     tray: live.tray,
-    update: (options) => applyTray(live, options),
+    update: (options) => applyTray(s, live, options),
     get menuIds() {
       return live.ids;
     },
@@ -477,7 +514,7 @@ async function createBackendTray(
     return { reason: missing };
   }
   try {
-    return backendHandle(liveTray(s, BACKEND_TRAY_ID, options, undefined));
+    return backendHandle(s, liveTray(s, BACKEND_TRAY_ID, options, undefined));
   } catch (err) {
     if (err instanceof DesktopCapError && err.code === "unsupported") {
       return { reason: String((err.data as { reason?: unknown } | undefined)?.reason) };
@@ -636,15 +673,17 @@ const POLICIES = new Set<string>(["regular", "accessory", "prohibited"]);
 /**
  * `setActivationPolicy`: the macOS activation policy (`Deno.dock.setActivationPolicy`, runtime
  * `3.0.0-denext.6`+); on an older runtime `"regular"` / `"accessory"` show / hide the Dock icon.
- * `{ applied: false }` on Windows and Linux, which have no policy.
+ * On Windows and Linux, which have no policy, `"regular"` shows the main window's taskbar entry and
+ * the others hide it (as `desktop.app.activationPolicy: "accessory"` does at launch).
  */
 function setActivationPolicy(s: AppState, args: unknown): { applied: boolean } {
   const policy = argsOf(args).policy;
   if (typeof policy !== "string" || !POLICIES.has(policy)) {
     throw invalid('policy must be "regular", "accessory" or "prohibited"');
   }
+  if (s.os !== "darwin") return { applied: setMainTaskbar(s, policy === "regular") };
   const dock = s.dock;
-  if (s.os !== "darwin" || !dock) return { applied: false };
+  if (!dock) return { applied: false };
   if (typeof dock.setActivationPolicy === "function") {
     return { applied: dock.setActivationPolicy(policy as ActivationPolicy) === true };
   }
@@ -653,13 +692,20 @@ function setActivationPolicy(s: AppState, args: unknown): { applied: boolean } {
   return { applied: true };
 }
 
+/** Show or hide the main window's taskbar entry (Windows, Linux); whether the runtime can. */
+function setMainTaskbar(s: AppState, visible: boolean): boolean {
+  if (typeof s.win?.setSkipTaskbar !== "function") return false;
+  s.win.setSkipTaskbar(!visible);
+  return true;
+}
+
 /** The tray methods, and `take` (the clicks queued for the page). */
 function trayMethods(s: AppState): DesktopCapability["methods"] {
   return {
     createTray: { handler: (args, ctx) => createTray(s, args, ctx?.windowId ?? "main") },
     updateTray: {
       handler: (args) => {
-        applyTray(trayOf(s, args), argsOf(args));
+        applyTray(s, trayOf(s, args), argsOf(args));
         return null;
       },
     },

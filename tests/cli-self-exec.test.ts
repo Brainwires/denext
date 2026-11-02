@@ -569,3 +569,64 @@ Deno.test("pinnedConfigArgs hands the pinned child the project's config only fro
     await Deno.remove(root, { recursive: true });
   }
 });
+
+Deno.test("pinnedDenextCli: an importMap outside the repository pins nothing", async () => {
+  const base = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-pin-outside-" }));
+  try {
+    const repo = join(base, "repo");
+    await Deno.mkdir(join(repo, ".git"), { recursive: true });
+    await Deno.mkdir(join(repo, "apps", "web"), { recursive: true });
+    const map = (version: string) =>
+      JSON.stringify({ imports: { denext: `jsr:@denext/denext@${version}` } });
+    await Deno.writeTextFile(join(base, "outside.json"), map("1.0.0"));
+    // By a path out of it, by an absolute one, and through a link.
+    for (const importMap of ["../outside.json", join(base, "outside.json"), "./link.json"]) {
+      await Deno.remove(join(repo, "link.json")).catch(() => {});
+      await Deno.symlink(join(base, "outside.json"), join(repo, "link.json"));
+      await Deno.writeTextFile(join(repo, "deno.json"), JSON.stringify({ importMap }));
+      assertEquals(pinnedDenextCli(repo), null, importMap);
+    }
+    // A member's map up in its own repository still counts, outside its own directory.
+    await Deno.writeTextFile(join(repo, "map.json"), map("2.0.0"));
+    await Deno.writeTextFile(
+      join(repo, "apps", "web", "deno.json"),
+      JSON.stringify({ importMap: "../../map.json" }),
+    );
+    assertEquals(pinnedDenextCli(join(repo, "apps", "web")), "jsr:@denext/denext@2.0.0/cli");
+  } finally {
+    await Deno.remove(base, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "pinnedDenextCli: a device or a FIFO named by a config never blocks the lookup",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-pin-device-" }));
+    try {
+      await Deno.mkdir(join(dir, ".git"));
+      // Both would block this process for good, so each runs in a child with a deadline.
+      await new Deno.Command("mkfifo", { args: [join(dir, "fifo")] }).output();
+      await Deno.symlink("/dev/zero", join(dir, "zero"));
+      const moduleUrl = new URL("../src/cli/self-exec.ts", import.meta.url).href;
+      for (const config of [{ importMap: "./fifo" }, { importMap: "./zero" }]) {
+        await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(config));
+        const { code, stdout } = await new Deno.Command(Deno.execPath(), {
+          args: [
+            "eval",
+            `const m = await import(${JSON.stringify(moduleUrl)});` +
+            `console.log(m.pinnedDenextCli(${JSON.stringify(dir)}));`,
+          ],
+          stdin: "null",
+          stdout: "piped",
+          stderr: "null",
+          signal: AbortSignal.timeout(30_000),
+        }).output();
+        assertEquals(code, 0, JSON.stringify(config));
+        assertEquals(new TextDecoder().decode(stdout).trim(), "null");
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  },
+});

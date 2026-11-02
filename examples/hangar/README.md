@@ -72,7 +72,7 @@ Everything below comes from denext's desktop windowing (`denext.config.ts`, `des
 - **No Dock icon.** `desktop.app.activationPolicy: "accessory"` (macOS): no Dock icon or menu bar
   from the first frame. `lib/tray-driver.ts` switches to `setActivationPolicy("regular")` while a
   full window is open, so it comes to the front and Cmd-Tab reaches it, and back to `"accessory"`
-  after.
+  after. On Windows and Linux the same calls show and hide the library window's taskbar entry.
 - **A backend tray.** `desktop.tray` is created by `runDesktop` before any page loads and survives
   reloads. `desktop.ts` drives it (`app.tray`: `onMenuItem`, `onDoubleClick`, `on("mouseenter")`,
   `update`) in the app's process, so it answers while every window is hidden.
@@ -88,7 +88,8 @@ Everything below comes from denext's desktop windowing (`denext.config.ts`, `des
   `hangar` extension's `open`, so there is one window per page); "Open Hangar" shows the main
   window.
 - **Keep alive.** `desktop.app.keepAlive`: closing every window leaves Hangar in the tray; closing
-  the main window hides it (`onCloseRequested`). "Quit" quits.
+  the main window hides it (`onCloseRequested`). "Quit" quits: the same handler is told the app is
+  quitting (`reason: "quit"`) and lets it go.
 
 On Windows the tray, the panel and the windows work, but the VM side doesn't: Hangar starts VMs
 through `/bin/sh` and lists running QEMU with `ps`, neither of which Windows has, so it lists no

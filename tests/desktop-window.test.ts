@@ -446,7 +446,7 @@ Deno.test("window close guard: off → the window closes; on → held, asked, an
   assertEquals(emitted.length, 1);
   // A stale id (a replayed event after a reload) is not current.
   assertEquals(await call("closeAck", { id: "stale" }), { current: false });
-  assertEquals(await call("closeAck", { id }), { current: true });
+  assertEquals(await call("closeAck", { id }), { current: true, reason: "close" });
   // The page says no: the window stays, the next close asks again.
   assertEquals(await call("closeRespond", { id, close: false }), { closing: false });
   assertEquals(ctl.interceptClose(close()), true);
@@ -498,6 +498,168 @@ Deno.test("window.quit: Deno.desktop.quit decides (a guarded close holds it); st
   assertEquals(await stock.capability.methods.quit.handler({}, ctx()), { quitting: true });
   await until(() => exits.length > 0, WAIT_MS);
   assertEquals(exits, [0]);
+});
+
+/**
+ * A fake `Deno.desktop` whose `quit()` behaves like the pinned runtime's: a cancelable
+ * `beforequit`, then a cancelable `close` on every window, any `preventDefault()` refusing;
+ * otherwise the app quits (counted in `quits`).
+ */
+function quittingApi(windows: EventTarget[]) {
+  const quits: number[] = [];
+  const api: DesktopAppApi & EventTarget = fakeApi({
+    quit: () => {
+      const before = new Event("beforequit", { cancelable: true });
+      api.dispatchEvent(before);
+      if (before.defaultPrevented) return false;
+      for (const win of windows) {
+        const close = new Event("close", { cancelable: true });
+        win.dispatchEvent(close);
+        if (close.defaultPrevented) return false;
+      }
+      quits.push(1);
+      return true;
+    },
+  });
+  return { api, quits };
+}
+
+/** A guarded window over `api` whose `close` listener asks its controller, as runDesktop's does. */
+function guardedWindow(api: DesktopAppApi, win: FakeWindow) {
+  const emitted: Array<[string, string, unknown]> = [];
+  const closed: string[] = [];
+  const ctl = createWindowController({
+    window: win,
+    api,
+    emit: (cap, event, data) => void emitted.push([cap, event, data]),
+    closed: () => void closed.push("closed"),
+  });
+  win.addEventListener("close", (event) => void ctl.interceptClose(event));
+  const call = (method: string, args: unknown = {}) =>
+    Promise.resolve().then(() => ctl.capability.methods[method].handler(args, ctx()));
+  const last = () => emitted.at(-1)![2] as { id: string; reason: string };
+  return { ctl, emitted, closed, call, last };
+}
+
+Deno.test("window close guard: a quit tells the page why, and its consent quits the app", async () => {
+  const win = new FakeWindow();
+  const { api, quits } = quittingApi([win]);
+  const w = guardedWindow(api, win);
+  await w.call("setCloseGuard", { enabled: true });
+  // A plain close (the close button): reason "close"; the close-to-tray page refuses it.
+  const plain = new Event("close", { cancelable: true });
+  assertEquals(w.ctl.interceptClose(plain), true);
+  assertEquals(w.last().reason, "close");
+  assertEquals(await w.call("closeAck", { id: w.last().id }), { current: true, reason: "close" });
+  assertEquals(await w.call("closeRespond", { id: w.last().id, close: false }), {
+    closing: false,
+  });
+  assert(!win.closed);
+  // The app quits (a tray's Quit, quitApp()): held and asked, as a quit.
+  assertEquals(api.quit!(), false);
+  assertEquals(w.last().reason, "quit");
+  assertEquals(await w.call("closeAck", { id: w.last().id }), { current: true, reason: "quit" });
+  // The page lets the quit go: the app quits (not just this window closing).
+  assertEquals(await w.call("closeRespond", { id: w.last().id, close: true }), { closing: true });
+  assertEquals(quits.length, 1);
+  assertEquals(w.closed, [], "the window was not closed on its own: the app quit");
+  // Once the quit is over, a plain close is a close again.
+  await Promise.resolve();
+  assertEquals(w.ctl.interceptClose(new Event("close", { cancelable: true })), true);
+  assertEquals(w.last().reason, "close");
+});
+
+Deno.test("window close guard: a quit held by two windows is asked of each once", async () => {
+  const a = new FakeWindow();
+  const b = new FakeWindow();
+  const { api, quits } = quittingApi([a, b]);
+  const wa = guardedWindow(api, a);
+  const wb = guardedWindow(api, b);
+  await wa.call("setCloseGuard", { enabled: true });
+  await wb.call("setCloseGuard", { enabled: true });
+  assertEquals(api.quit!(), false);
+  assertEquals(wa.emitted.length, 1, "A is asked first");
+  assertEquals(wb.emitted.length, 0);
+  // A agrees: the quit is issued again and stops at B.
+  assertEquals(await wa.call("closeRespond", { id: wa.last().id, close: true }), {
+    closing: false,
+  });
+  assertEquals(wb.last().reason, "quit");
+  // B agrees: A is not asked again, and the app quits.
+  assertEquals(await wb.call("closeRespond", { id: wb.last().id, close: true }), {
+    closing: true,
+  });
+  assertEquals(wa.emitted.length, 1);
+  assertEquals(quits.length, 1);
+});
+
+Deno.test("window close guard: a refused quit is over; the next quit asks every window again", async () => {
+  const a = new FakeWindow();
+  const b = new FakeWindow();
+  const { api, quits } = quittingApi([a, b]);
+  const wa = guardedWindow(api, a);
+  const wb = guardedWindow(api, b);
+  await wa.call("setCloseGuard", { enabled: true });
+  await wb.call("setCloseGuard", { enabled: true });
+  api.quit!();
+  await wa.call("closeRespond", { id: wa.last().id, close: true });
+  // B refuses: nothing quits, and A's consent is dropped with the quit.
+  assertEquals(await wb.call("closeRespond", { id: wb.last().id, close: false }), {
+    closing: false,
+  });
+  assertEquals(quits.length, 0);
+  await Promise.resolve();
+  assertEquals(api.quit!(), false);
+  assertEquals(wa.emitted.length, 2, "A is asked again");
+  // A new page load in A drops a consent it gave.
+  await wa.call("closeRespond", { id: wa.last().id, close: true });
+  await wa.ctl.capability.onPageLoad!();
+  await wb.call("closeRespond", { id: wb.last().id, close: true });
+  assertEquals(quits.length, 1, "A's page reloaded: unguarded now, the quit goes through");
+});
+
+Deno.test("window close guard: quitOnly holds quits and lets plain closes go; turning it off drops consent", async () => {
+  const win = new FakeWindow();
+  const { api, quits } = quittingApi([win]);
+  const w = guardedWindow(api, win);
+  await w.call("setCloseGuard", { enabled: true, quitOnly: true });
+  assertEquals(w.ctl.interceptClose(new Event("close", { cancelable: true })), false);
+  assertEquals(w.emitted.length, 0);
+  assertEquals(api.quit!(), false);
+  assertEquals(w.last().reason, "quit");
+  // A close request already pending when the app quits is asked again, as a quit.
+  await w.call("setCloseGuard", { enabled: true });
+  await w.call("closeRespond", { id: w.last().id, close: false });
+  await Promise.resolve();
+  w.ctl.interceptClose(new Event("close", { cancelable: true }));
+  const plainId = w.last().id;
+  assertEquals(api.quit!(), false);
+  assert(w.last().id !== plainId);
+  assertEquals(w.last().reason, "quit");
+  assertEquals(await w.call("closeAck", { id: plainId }), { current: false });
+  await w.call("setCloseGuard", { enabled: false });
+  assertEquals(api.quit!(), true);
+  assertEquals(quits.length, 1);
+  await assertRejects(
+    () => w.call("setCloseGuard", { enabled: true, quitOnly: "yes" }),
+    DesktopCapError,
+  );
+});
+
+Deno.test("window close guard: a consented quit with no runtime quit closes the window", async () => {
+  const win = new FakeWindow();
+  const api = fakeApi();
+  const w = guardedWindow(api, win);
+  await w.call("setCloseGuard", { enabled: true });
+  // A beforequit from the runtime marks the closes it dispatches as a quit.
+  api.dispatchEvent(new Event("beforequit", { cancelable: true }));
+  assert(w.ctl.interceptClose(new Event("close", { cancelable: true })));
+  assertEquals(w.last().reason, "quit");
+  // The runtime's quit is gone by the time the page answers: the window closes instead.
+  (api as { quit?: unknown }).quit = undefined;
+  assertEquals(await w.call("closeRespond", { id: w.last().id, close: true }), { closing: true });
+  assert(win.closed);
+  await until(() => w.closed.length > 0, WAIT_MS);
 });
 
 Deno.test("window drops: files become read-only handles, folders readFolder; taken once", async () => {

@@ -407,7 +407,9 @@ downloaded and SHA-256-verified on first need. Four ways to get it:
    `denext toolchain install` fetches the toolchain and caches every verb for offline use).
 3. `deno task compile` from a checkout.
 4. Nothing at all: `deno run -A jsr:@denext/denext/cli <verb>` does the same thing, and the
-   scaffolded `dev` / `build` / `start` tasks run that CLI pinned to the project's version.
+   scaffolded `dev` / `build` / `start` tasks run that CLI pinned to the project's version. Deno
+   applies the working directory's `deno.json` to that CLI, so on a repository you don't trust add
+   `--no-config`: https://denext.dev/docs/security#untrusted-repositories
 
 A project is a `deno.json` with the JSX settings, the import map and the lint plugin — no
 `node_modules`, no lockfile churn:

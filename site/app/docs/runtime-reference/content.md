@@ -23,7 +23,7 @@ number (there is no upstream Deno 3.0; denext checks the marker too):
 
 ```ts
 if (Deno.build.denext) {
-  console.log(`denext's Deno ${Deno.build.denext}`); // "3.0.0-denext.6"
+  console.log(`denext's Deno ${Deno.build.denext}`); // "3.0.0-denext.7"
 } else {
   console.log("stock Deno: Deno.SQL and the other additions are not here");
 }
@@ -31,17 +31,17 @@ if (Deno.build.denext) {
 
 ```text
 $ deno --version
-deno 3.0.0-denext.6 (stable, release, aarch64-apple-darwin)
+deno 3.0.0-denext.7 (stable, release, aarch64-apple-darwin)
 v8 15.2.124.45-rusty
 typescript 6.0.3
-denext 3.0.0-denext.6 (Brainwires)
+denext 3.0.0-denext.7 (Brainwires)
 ```
 
 | What                       | Detail                                                                                                                                                                                            | Since        |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
 | `Deno.build.denext`        | The runtime's version, a string, in the main thread and in workers. `undefined` on stock Deno.                                                                                                    | `3.0.0-rc.3` |
 | `deno --version` last line | `denext <version> (Brainwires)`; `deno -V` stays one line.                                                                                                                                        | `3.0.0-rc.3` |
-| `Deno.version.deno`        | The fork's own version (`3.0.0-denext.6`), also in the user agent (`Deno/3.0.0-denext.6`). Before `3.0.0-rc.1` it was `2.9.7-denext.N`.                                                           | `3.0.0-rc.1` |
+| `Deno.version.deno`        | The fork's own version (`3.0.0-denext.7`), also in the user agent (`Deno/3.0.0-denext.7`). Before `3.0.0-rc.1` it was `2.9.7-denext.N`.                                                           | `3.0.0-rc.1` |
 | `deno upgrade`             | Refuses to run in a release build, and the background update check is off: upstream's channels would replace the fork with stock Deno. Use `denext upgrade` or `denext toolchain install`.        | `3.0.0-rc.1` |
 | Release channel            | `deno --version` says `stable`, the channel of the Deno release the build is made from (2.9.8). `npm` `engines.deno` ranges are checked against that release, not against the prerelease version. | `3.0.0-rc.1` |
 
@@ -49,8 +49,8 @@ The versions sort in release order: `2.9.7-denext.1` … `2.9.7-denext.22`, then
 `3.0.0-rc.6`, then `3.0.0-denext.1`, `3.0.0-denext.2`, … (there is no `3.0.0-denext.4` release). That is semver's order with one
 exception: denext ranks the `3.0.0-denext.N` releases above every `3.0.0-rc.N`, where plain semver
 would put them below. There is no upstream 3.0: upstream Deno stays on its 2.9.x LTS line, and
-denext's runtime is the forward line. denext 4.x pins `3.0.0-denext.6`, so the rows marked "rc.6",
-"denext.1", "denext.2", "denext.3", "denext.5" and "denext.6" below apply to it. Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
+denext's runtime is the forward line. denext 4.x pins `3.0.0-denext.7`, so the rows marked "rc.6",
+"denext.1", "denext.2", "denext.3", "denext.5", "denext.6" and "denext.7" below apply to it. Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
 
 **Required from denext 5.0 (planned).** Today every denext command still has the stock-Deno
 escape hatch, `DENEXT_DENO=stock`, and what needs the fork falls back or says why it can't. From

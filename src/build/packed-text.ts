@@ -37,9 +37,9 @@ export function unpackText(brotliBase64: string): string {
  * Generated modules whose values are data tables read them through this (and
  * {@linkcode packedObject}) rather than decoding when imported: a module graph that only imports
  * them (the config validator's, and through it the packaged desktop app's) then never runs
- * `node:zlib`'s Brotli. In a Linux WebKitGTK window that call can bind to the system
- * `libbrotlidec` the web view loads and never return, so an eager decode kept the app from
- * starting (tests/desktop-runtime-graph.test.ts).
+ * `node:zlib`'s Brotli. In a Linux WebKitGTK window on a runtime before `3.0.0-denext.7` (still the
+ * rollback pin) that call binds to the system `libbrotlidec` the web view loads and never returns,
+ * so an eager decode kept the app from starting (tests/desktop-runtime-graph.test.ts).
  *
  * @param brotliBase64 The packed document.
  * @returns The decoder: the document's values by name.

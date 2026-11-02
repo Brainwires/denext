@@ -2,6 +2,14 @@
 // touches goes through a `Host`. `deno-host.ts` is the real one (the desktop extension's); the
 // tests pass an in-memory fake, so no test ever starts QEMU, reads ~/VMs or opens a socket.
 
+/**
+ * The user's home folder, from the environment. Windows sets `USERPROFILE` and no `HOME`, and a
+ * `HOME` a Unix-like shell exports there may not be a Windows path, so it is only the fallback.
+ */
+export function homeFolder(os: string, env: (name: string) => string | undefined): string {
+  return (os === "windows" ? env("USERPROFILE") || env("HOME") : env("HOME")) || "/";
+}
+
 /** What a finished command printed. */
 export interface RunResult {
   /** The exit code. */

@@ -132,14 +132,19 @@ async function resolveMiddlewarePath(
   return found[0] ?? null;
 }
 
+/** A project's layout: everything {@linkcode ProjectPaths} holds that its files alone decide. */
+export type ProjectLayout = Omit<ProjectPaths, "i18n" | "config">;
+
 /**
- * Resolve the project at `projectDir`: its layout, root modules and `denext.config`.
- * `probes` makes its file probes cancellable (see {@linkcode ProbeScope}).
+ * The layout of the project at `projectDir`, found by probing files. Nothing of the project runs:
+ * this is what an inspecting verb (`denext routes`, `denext info`, `denext generate`, the UI, the
+ * MCP tools) reads, since {@linkcode resolveProject} imports `denext.config.ts` under whatever
+ * permissions the process holds. `probes` makes its file probes cancellable.
  */
-export async function resolveProject(
+export async function resolveProjectLayout(
   projectDir: string,
   probes?: ProbeScope,
-): Promise<ProjectPaths> {
+): Promise<ProjectLayout> {
   // Optional `src/` layout (Next.js parity): when `src/app` exists, the app,
   // middleware, and instrumentation live under `src/` — while `public/`,
   // `deno.json`/`denext.config`, and `.denext` stay at the project root. `src/app`
@@ -148,30 +153,42 @@ export async function resolveProject(
     ? join(projectDir, "src")
     : projectDir;
 
-  const appDir = join(srcBase, "app");
-  const publicDir = join(projectDir, "public");
-
   const projectConfig = join(projectDir, "deno.json");
-  // Fall back to the framework's own deno.json when the project has none. frameworkFileUrl
-  // handles both a local checkout (file://) and a remote (JSR) framework — `join` would
-  // corrupt a URL.
-  const configPath = (await exists(projectConfig, probes))
-    ? projectConfig
-    : frameworkFileUrl("deno.json");
+  return {
+    projectDir,
+    appDir: join(srcBase, "app"),
+    publicDir: join(projectDir, "public"),
+    // Fall back to the framework's own deno.json when the project has none. frameworkFileUrl
+    // handles both a local checkout (file://) and a remote (JSR) framework — `join` would
+    // corrupt a URL.
+    configPath: (await exists(projectConfig, probes))
+      ? projectConfig
+      : frameworkFileUrl("deno.json"),
+    outDir: join(projectDir, ".denext"),
+    middlewarePath: await resolveMiddlewarePath(projectDir, srcBase, probes),
+    instrumentationPath: await firstOf(
+      srcBase,
+      ["instrumentation.ts", "instrumentation.js"],
+      probes,
+    ),
+    instrumentationClientPath: await firstOf(srcBase, [
+      "instrumentation-client.ts",
+      "instrumentation-client.tsx",
+      "instrumentation-client.js",
+    ], probes),
+  };
+}
 
-  const middlewarePath = await resolveMiddlewarePath(projectDir, srcBase, probes);
-
-  const instrumentationPath = await firstOf(
-    srcBase,
-    ["instrumentation.ts", "instrumentation.js"],
-    probes,
-  );
-  const instrumentationClientPath = await firstOf(srcBase, [
-    "instrumentation-client.ts",
-    "instrumentation-client.tsx",
-    "instrumentation-client.js",
-  ], probes);
-
+/**
+ * Resolve the project at `projectDir`: its layout, root modules and `denext.config`, which this
+ * imports (see {@linkcode resolveProjectLayout} for a caller that must not run project code).
+ * `probes` makes its file probes cancellable (see {@linkcode ProbeScope}).
+ */
+export async function resolveProject(
+  projectDir: string,
+  probes?: ProbeScope,
+): Promise<ProjectPaths> {
+  const layout = await resolveProjectLayout(projectDir, probes);
   const config = await loadDenextConfig(projectDir, probes);
   // Seed the feature-flag map for SERVER rendering and unbundled runs: the client bundle folds
   // `feature("KEY")` calls to literals, but the server evaluates the original source, so its
@@ -180,18 +197,7 @@ export async function resolveProject(
   (globalThis as { __DENEXT_FEATURES__?: Record<string, boolean> }).__DENEXT_FEATURES__ =
     featureFlags(config);
 
-  return {
-    projectDir,
-    appDir,
-    publicDir,
-    configPath,
-    outDir: join(projectDir, ".denext"),
-    middlewarePath,
-    instrumentationPath,
-    instrumentationClientPath,
-    i18n: config?.i18n ?? null,
-    config,
-  };
+  return { ...layout, i18n: config?.i18n ?? null, config };
 }
 
 // Every `DenextConfig` field a config module may export (named export or default-object

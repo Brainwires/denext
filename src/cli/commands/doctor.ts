@@ -15,7 +15,8 @@ import { VERSION } from "../../../mod.ts";
 import type { CommandContext, CommandLocks, CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs, projectDir } from "../shared.ts";
 import { runDenoPassthrough } from "./deno-toolchain.ts";
-import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
+import { type ProjectPaths, resolveProject, resolveProjectLayout } from "../../build/paths.ts";
+import { readStaticConfig, type StaticConfig } from "../../build/config-static.ts";
 import { setupAppPlugins } from "../../plugin/mod.ts";
 import { defaultLoader } from "../../server/default-loader.ts";
 import { type ConformanceReport, probeApp } from "../../testing/conformance.ts";
@@ -118,6 +119,13 @@ async function infoProjectDir(ctx: CommandContext): Promise<string | null> {
   return await isDirectory(dir) ? dir : null;
 }
 
+/** The app's mode as its config writes it; `"unknown"` when code computes it. */
+function staticMode(config: StaticConfig): string {
+  const mode = config.keys.mode;
+  if (!config.readable || (mode && mode.kind !== "editable")) return "unknown";
+  return typeof mode?.value === "string" ? mode.value : "app-router";
+}
+
 export const infoCommand: CommandSpec = {
   ...commandMeta("info"),
   run: async (ctx) => {
@@ -129,15 +137,17 @@ export const infoCommand: CommandSpec = {
         true,
       );
     }
-    const paths = await resolveProject(dir);
+    // Facts about the project, not a run of it: the config stays unimported.
+    const paths = await resolveProjectLayout(dir);
+    const config = await readStaticConfig(dir);
     const facts = {
       denext: VERSION,
       deno: Deno.version.deno,
       v8: Deno.version.v8,
       platform: `${Deno.build.os}/${Deno.build.arch}`,
       projectDir: dir,
-      config: paths.config ? paths.configPath : null,
-      mode: paths.config?.mode ?? "app-router",
+      config: config.file === null ? null : paths.configPath,
+      mode: staticMode(config),
       appDir: paths.appDir,
     };
     if (ctx.global.json) {

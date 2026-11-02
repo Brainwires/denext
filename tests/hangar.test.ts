@@ -28,6 +28,7 @@ import {
   HangarError,
   parseSettings,
 } from "../examples/hangar/lib/hangar.ts";
+import { homeFolder } from "../examples/hangar/lib/host.ts";
 import { parseImageInfo, sizeBytes } from "../examples/hangar/lib/images.ts";
 import { readVmFile, scanLibrary } from "../examples/hangar/lib/library.ts";
 import {
@@ -1165,4 +1166,30 @@ Deno.test("hangar: the entry, the extension and the pages type-check against den
     cwd: dir,
   });
   assertEquals(out.code, 0, out.stderr);
+});
+
+Deno.test("homeFolder: Windows' profile folder, as Windows sets no HOME", () => {
+  const env = (vars: Record<string, string>) => (name: string) => vars[name];
+  const profile = "C:\\Users\\u";
+  assertEquals(homeFolder("windows", env({ USERPROFILE: profile })), profile);
+  // A HOME that a Unix-like shell exported on Windows is not a Windows path.
+  assertEquals(homeFolder("windows", env({ USERPROFILE: profile, HOME: "/c/Users/u" })), profile);
+  assertEquals(homeFolder("windows", env({ HOME: "C:\\home" })), "C:\\home");
+  assertEquals(homeFolder("darwin", env({ HOME: "/Users/u", USERPROFILE: "x" })), "/Users/u");
+  assertEquals(homeFolder("linux", env({})), "/");
+  assertEquals(
+    defaultSettings(homeFolder("windows", env({ USERPROFILE: profile })), "windows").libraryRoot,
+    "C:\\Users\\u/VMs",
+  );
+});
+
+Deno.test("the desktop config may read the variable the home folder comes from on each OS", async () => {
+  const root = new URL("../examples/hangar/", import.meta.url);
+  const config = JSON.parse(await Deno.readTextFile(new URL(".deno-desktop/config.json", root)));
+  assertEquals(config.desktop.extraPermissions.env, ["HOME", "USERPROFILE"]);
+  assert(
+    (await Deno.readTextFile(new URL("denext.config.ts", root))).includes(
+      'env: ["HOME", "USERPROFILE"]',
+    ),
+  );
 });

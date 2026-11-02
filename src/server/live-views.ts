@@ -6,7 +6,9 @@
 // size cap; a registered view and a token the server signed over exactly these props (either
 // failing is `gone` — the client re-renders the route for fresh ones, and an attacker learns
 // nothing); the props decode; the view's `authorize` in the viewer's session (a throw is a
-// deny); a post-await connected + cap re-check. Then a parked instance named by `resume` is
+// deny); a post-await connected + cap re-check. A connection's mounts run one at a time in
+// arrival order (`createMountQueue`), each for at most `renderTimeoutSeconds`; an unmount or a
+// close cancels the ones still waiting or running. Then a parked instance named by `resume` is
 // adopted (same view, same signed props, same viewer — `viewerIdentity`), or `init` runs. The
 // props token carries its issue time and is refused past `viewTokenMaxAgeSeconds`; a resume
 // matches the props it signs (`resumeKey`), not the token, so a re-signed page still resumes.
@@ -60,10 +62,10 @@ import {
 import { recordViewMessages, type RedactedValue, redactValue } from "./live-devtools.ts";
 import {
   authorizeView,
+  createMountQueue,
   endView,
   enqueueEvent,
   type MountShape,
-  mountView,
   resumeKey,
   str,
   takeParked as takeParkedFrom,
@@ -588,6 +590,9 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     scheduleRender(inst);
   };
 
+  /** Each connection's mounts, placed in arrival order. */
+  const mounts = createMountQueue<C>(deps);
+
   const atCap = (conn: C, vid: string): boolean =>
     !conn.views.has(vid) && conn.views.size >= deps.limits().maxViewsPerConnection;
 
@@ -725,13 +730,14 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     conn: C,
     shape: MountShape,
     admitted: { def: LiveViewDef; props: unknown },
+    live: () => boolean,
   ): Promise<void> => {
     const { vid } = shape;
     const signed = await resumeKey(shape.view, shape.props);
     const identity = await viewerIdentity(deps, conn);
-    if (!deps.isConnected(conn)) return;
+    if (!live()) return;
     const { parked, restored } = await resumeOf(shape, signed, identity);
-    if (restored && !deps.isConnected(conn)) return;
+    if (restored && !live()) return;
     if (restored && atCap(conn, vid)) {
       return deps.sendError(conn, "limit", "too many views", { subId: vid });
     }
@@ -746,13 +752,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
 
   return {
     mount(conn, msg) {
-      return mountView(
-        deps,
-        conn,
-        msg,
-        policy(conn),
-        (shape, admitted) => place(conn, shape, admitted),
-      );
+      return mounts.mount(conn, msg, policy(conn), place);
     },
 
     event(conn, msg) {
@@ -781,6 +781,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
 
     unmount(conn, vid) {
       if (typeof vid !== "string") return;
+      mounts.cancel(conn, vid);
       const inst = own(conn, vid);
       if (inst) stop(inst);
     },
@@ -795,6 +796,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     },
 
     drop(conn) {
+      mounts.cancel(conn);
       const { viewResumeSeconds, maxParkedViews } = deps.limits();
       for (const v of [...conn.views.values()]) {
         const inst = v as Instance<C>;
@@ -816,6 +818,7 @@ export function createLiveViewHub<C extends ViewConn>(deps: ViewHubDeps<C>): Vie
     },
 
     discard(conn) {
+      mounts.cancel(conn);
       for (const v of [...conn.views.values()]) stop(v as Instance<C>);
       conn.views.clear();
     },

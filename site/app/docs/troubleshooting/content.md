@@ -18,7 +18,7 @@ process. Your app's `node_modules` is untouched — the compat layer still loads
 your npm React libraries from it.
 
 ```sh
-deno run --node-modules-dir=none -A jsr:@denext/denext/cli migrate
+deno run --no-config --node-modules-dir=none -A jsr:@denext/denext/cli migrate
 ```
 
 See [Migrating from Next.js](/docs/migrating) § 3.
