@@ -89,8 +89,7 @@ function blankRange(
     return ownLine && !TOOL_LINE_COMMENT.test(comment) ? [lineStart, range.end] : null;
   }
   if (!comment.startsWith("/**") || inPublicApi || TOOL_JSDOC.test(comment)) return null;
-  const after = text.indexOf("\n", range.end);
-  const restOfLine = text.slice(range.end, after === -1 ? text.length : after);
+  const restOfLine = text.slice(range.end).split("\n", 1)[0];
   return [ownLine && restOfLine.trim() === "" ? lineStart : range.pos, range.end];
 }
 
