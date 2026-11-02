@@ -28,9 +28,6 @@
   yet. The bump cadence is a 5.x item.
 - **The expected `denort` SHA-256 embedded in the CLI, landing in `3.0.0-denext.8`.** Today the
   download checks `SHA256SUMS` only.
-- **`.deno/npm-compat` out of the project root, landing in `3.0.0-denext.8`:** the runtime's
-  type-check keeps its copy of the `@jsr/*` packages outside the project; delete the
-  KNOWN-LIMITATIONS entry with the pin.
 - **The blocking-pool cap documented (other holders of the pool), landing in `3.0.0-denext.8`.**
 - **A one-commit re-pin runbook** (the pin, the symbols, the revert) before 5.0.
 

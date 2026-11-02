@@ -96,6 +96,16 @@ and this project adheres to
   refuse the combination, which every project-file program sidecar is, and which a capability that
   writes (`fs`, the updater's UI overlay) makes of every sidecar.
 
+### Fixed
+
+- **The desktop kitchen-sink's drag check passes on a Wayland WebKitGTK window**, where a drag with
+  no button held ends `"cancelled"` rather than `"failed"`. The desktop guide and known limitations
+  now say that `startFileDrag` resolving `"failed"` is a normal outcome on Wayland (always under
+  CEF), and that the runtime's clipboard `change` event can be absent under CEF on Wayland.
+- **`.deno/npm-compat` is no longer listed as a limitation of the pinned runtime**: from runtime
+  3.0.0-denext.8 the type check keeps it under `DENO_DIR` and removes the old folder. A project
+  on an older runtime still wants `"exclude": [".deno/"]`.
+
 ## [4.11.12] - 2026-11-02
 
 ### Changed

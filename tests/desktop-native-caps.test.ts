@@ -32,7 +32,14 @@ const call = (cap: { methods: Record<string, any> }, method: string, args: unkno
 // --- clipboard ---------------------------------------------------------------------------
 
 /** A fake native clipboard holding one kind of content at a time, like the OS. */
-function fakeClipboard(caps = { text: true, html: true, image: true, formats: true }) {
+function fakeClipboard(
+  caps: ReturnType<DesktopNativeClipboard["capabilities"]> & { changeEvents?: boolean } = {
+    text: true,
+    html: true,
+    image: true,
+    formats: true,
+  },
+) {
   const state: { text: string; html: string; image: Uint8Array | null } = {
     text: "",
     html: "",
@@ -69,6 +76,21 @@ function fakeClipboard(caps = { text: true, html: true, image: true, formats: tr
   };
   return { clip, state, writes, api: { clipboard: clip } as DesktopAppApi };
 }
+
+Deno.test("clipboard: a backend without change events still reads and writes", async () => {
+  // CEF on Wayland without data-control (runtime 3.0.0-denext.8) reports changeEvents: false.
+  const { api } = fakeClipboard({
+    text: true,
+    html: true,
+    image: true,
+    formats: true,
+    changeEvents: false,
+  });
+  const cap = clipboardCapability({ api });
+  assertEquals(await call(cap, "capabilities", {}), { text: true, html: true, image: true });
+  await call(cap, "writeText", { text: "plain" });
+  assertEquals(await call(cap, "readText", {}), "plain");
+});
 
 Deno.test("clipboard: text, HTML and images through Deno.desktop.clipboard", async () => {
   const { api, writes, state } = fakeClipboard();

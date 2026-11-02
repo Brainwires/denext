@@ -779,6 +779,14 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         <code>"os"</code>).
       </p>
       <p>
+        The runtime&apos;s own <code>Deno.desktop.clipboard</code> <code>change</code>{" "}
+        event may be absent: under CEF on a Wayland compositor without data-control,{" "}
+        <code>capabilities().changeEvents</code> is <code>false</code>{" "}
+        from runtime 3.0.0-denext.8 and the event never fires. Check it before relying on the event.
+        denext&apos;s <code>clipboard</code>{" "}
+        capability reads and writes without it, so it needs no change.
+      </p>
+      <p>
         Linux&apos;s <code>clipboard</code>{" "}
         works whether or not the app has focus (on Wayland too), so an app in the background reads
         it while the session is unlocked, as on macOS and Windows: read it in response to the user.
@@ -2632,7 +2640,15 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, â€
         <code>preventDefault()</code>) while the button is held. It takes picked handles or files in
         the app&apos;s own folders (<code>"data"</code>, <code>"cache"</code>,{" "}
         <code>"documents"</code>), never a raw path, and resolves <code>"dropped"</code>,{" "}
-        <code>"cancelled"</code> or <code>"failed"</code>.
+        <code>"cancelled"</code> or <code>"failed"</code>. On Wayland <code>"failed"</code>{" "}
+        is a normal outcome rather than an error: with runtime 3.0.0-denext.8 a drag with the
+        pointer off the app&apos;s windows reports it, where GTK used to end the process, and so
+        does every drag under CEF, which needs an X11 display to start one (<code>fileDragOut</code>
+        {" "}
+        in <code>windowCapabilities()</code> is <code>false</code> there; use the{" "}
+        <code>webview</code>{" "}
+        backend). With no button held, a WebKitGTK window under the pointer ends it{" "}
+        <code>"cancelled"</code> instead.
       </p>
       <Code lang="ts">
         {`import { onFileDrop, startFileDrag } from "denext/desktop/window";

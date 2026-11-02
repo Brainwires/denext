@@ -46,7 +46,13 @@ export interface DesktopPermissionSet {
   readonly ffi?: readonly string[];
   /** `--allow-run`: programs spawned with `Deno.Command` (full trust over each program). */
   readonly run?: readonly string[];
-  /** `--allow-read`: paths (`$APPDATA`, `$CACHE`, `$DOCUMENTS` are resolved at packaging). */
+  /**
+   * `--allow-read`: paths. This narrows nothing unless `desktop.permissions` is `"strict"`, since
+   * the baseline read grant is broad. Under strict mode (runtime 3.0.0-denext.8, with
+   * `desktop.app.identifier`) `$APPDATA[/…]` and `$CACHE[/…]` are baked as the tokens the runtime
+   * expands at launch, an absolute path stays as it is, and anything else (`*`, `$DOCUMENTS`, a
+   * relative path) keeps the grant unscoped.
+   */
   readonly read?: readonly string[];
   /** `--allow-write`: paths. */
   readonly write?: readonly string[];

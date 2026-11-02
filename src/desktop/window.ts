@@ -980,7 +980,9 @@ export function onFileDrop(handler: (drop: FileDrop) => void): () => void {
  * @param items The files: picked handles, or files in the app's folders.
  * @param options `icon`: a PNG (base64) shown under the pointer; the OS's file icon by default.
  * @returns `"dropped"` when a target took the files, `"cancelled"` when the user let go where
- * nothing took them, `"failed"` when the drag never started (no button held, another drag running).
+ * nothing took them, `"failed"` when the drag never started (no button held, another drag running;
+ * on Wayland also with the pointer off the app's windows, and always under CEF, where `fileDragOut`
+ * is `false`). `"failed"` is an outcome, not an error: it never rejects.
  * @example
  * ```ts
  * import { startFileDrag } from "denext/desktop/window";

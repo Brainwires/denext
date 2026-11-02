@@ -114,13 +114,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   keeps TypeScript 6 whatever the setting says, and a `deno.unstable` list in
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
-- **The runtime's type-check leaves `.deno/npm-compat` in the project root** (3.0.0-rc.5 through
-  the pinned 3.0.0-denext.7). It holds
-  an npm-shaped copy of the `@jsr/*` packages, their `_test.ts` files included, and a later
-  `deno test` with default discovery would run those. A `denext create` project's `deno.json`
-  excludes `.deno/` (top-level `exclude`), as denext's own does; an older project adds
-  `"exclude": [".deno/"]` itself. A runtime issue, to be fixed in a later runtime by keeping the
-  copy out of the project. Planned before 5.0 (ROADMAP, "Before 5.0 / Runtime fork").
 - **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
   `denext start` begins its graceful shutdown on those events too, but Windows ends a console
   process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
@@ -692,6 +685,10 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
   its own window; CEF gets no paths from a file drop (use the webview backend).
+  `startFileDrag` resolves `"failed"` as a normal outcome with the pointer off the app's windows,
+  and always under CEF (`fileDragOut` is `false`). Under CEF the runtime's clipboard `change` event
+  doesn't fire where the compositor lacks data-control (`Deno.desktop.clipboard.capabilities()`
+  has `changeEvents: false`).
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).

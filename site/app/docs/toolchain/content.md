@@ -517,12 +517,13 @@ subpath), or remove it. `"node"` and `"deno"` are fine as they are. Earlier runt
 an entry silently, so a `"types": ["vite/client"]` carried over from a `tsconfig.json` can start
 failing there. The same release prints `Checked N files` after a clean `deno check`.
 
-From runtime `3.0.0-rc.5` the type check writes `.deno/npm-compat` into the project root, the
-`_test.ts` files of `@jsr/*` packages included, so a `deno test` with default discovery would run
-them. A project `denext create` scaffolds excludes it, and `denext upgrade` adds the entry to an
-existing one; otherwise add the same top-level entry to an older project's `deno.json` (a
-workspace's root and its members): `{ "exclude": [".deno/"] }`. See
-[known limitations](/docs/limitations).
+Runtimes `3.0.0-rc.5` through `3.0.0-denext.7` write the type check's `.deno/npm-compat` into the
+project root, the `_test.ts` files of `@jsr/*` packages included, so a `deno test` with default
+discovery would run them. A project `denext create` scaffolds excludes it, and `denext upgrade` adds
+the entry to an existing one; otherwise add the same top-level entry to an older project's
+`deno.json` (a workspace's root and its members): `{ "exclude": [".deno/"] }`. From `3.0.0-denext.8`
+the copy lives under `DENO_DIR` (`npm_compat/`, one folder per project) and a check removes an
+earlier `.deno/npm-compat`; only without a resolvable `DENO_DIR` does it stay in the project.
 
 The dev type-check overlay checks only the files an edit changed (and what they import). From
 runtime `3.0.0-rc.2` the native check also:

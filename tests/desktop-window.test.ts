@@ -796,6 +796,30 @@ Deno.test("window.startDrag: picked handles and app-folder files only, never a r
   }
 });
 
+Deno.test("window.startDrag: a drag that never started is an outcome, and fileDragOut follows the runtime", async () => {
+  // Wayland (runtime 3.0.0-denext.8): the pointer off the window, or any drag under CEF, reports
+  // FAILED. denext hands it on as "failed" and doesn't turn it into an error.
+  const dir = await Deno.makeTempDir({ prefix: "denext-dragout-failed-" });
+  try {
+    const data = join(dir, "data");
+    await Deno.mkdir(data, { recursive: true });
+    await Deno.writeTextFile(join(data, "r.txt"), "r");
+    const { call, win } = setup({
+      dirs: { data, cache: join(dir, "cache"), documents: join(dir, "docs") },
+      api: fakeApi({ windowCapabilities: () => ({ fileDragOut: false }) }),
+    });
+    win.dragResult = "failed";
+    assertEquals(await call("startDrag", { items: [{ directory: "data", path: "r.txt" }] }), {
+      result: "failed",
+    });
+    // The window has the method, but the runtime's own report wins.
+    const caps = await call("capabilities") as Record<string, unknown>;
+    assertEquals(caps.fileDragOut, false);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("window.startDrag: the engine profile and updater dirs never leave by drag", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-dragout-reserved-" });
   try {
