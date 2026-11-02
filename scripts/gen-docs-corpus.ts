@@ -100,6 +100,16 @@ function memberMarkdown(m: ApiMember): string {
   return `- \`${m.signature}\`${body ? ` — ${body}` : ""}`;
 }
 
+/** An interface's parents and members as Markdown blocks; none for any other symbol. */
+function interfaceMarkdown(s: RefSymbol): string[] {
+  const parents = (s.extends ?? []).map(parentMarkdown).join(", ");
+  const members = (s.members ?? []).map(memberMarkdown).join("\n");
+  return [
+    ...(parents ? [`**Inherits from** ${parents}`] : []),
+    ...(members ? [`**Members**\n\n${members}`] : []),
+  ];
+}
+
 /** An API symbol's full docs as Markdown (signature, prose, params, returns, examples). */
 function symbolMarkdown(module: string, s: RefSymbol): string {
   const out = [`\`\`\`ts\n${s.signature}\n\`\`\``];
@@ -110,8 +120,7 @@ function symbolMarkdown(module: string, s: RefSymbol): string {
     out.push("**Parameters**\n\n" + params.map((p) => `- \`${p.name}\` — ${p.doc}`).join("\n"));
   }
   if (s.returns) out.push(`**Returns** ${s.returns}`);
-  if (s.extends?.length) out.push(`**Inherits from** ${s.extends.map(parentMarkdown).join(", ")}`);
-  if (s.members?.length) out.push(`**Members**\n\n${s.members.map(memberMarkdown).join("\n")}`);
+  out.push(...interfaceMarkdown(s));
   for (const ex of s.examples ?? []) out.push(ex.includes("```") ? ex : `\`\`\`ts\n${ex}\n\`\`\``);
   return `# ${s.name} (${s.kind}, \`${module}\`)\n\n${out.join("\n\n")}`;
 }

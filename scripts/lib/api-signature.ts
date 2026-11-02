@@ -152,12 +152,16 @@ function mappedStr(m: Doc): string {
 
 /** A literal type: a string keeps its quotes, a template its backticks. */
 function literalStr(value: Doc, t: Doc): string {
-  if (value?.kind === "string") return JSON.stringify(value.string);
-  if (value?.kind === "number") return String(value.number);
-  if (value?.kind === "boolean") return String(value.boolean);
-  if (value?.kind === "template") return templateStr(value.tsTypes ?? []);
-  return fallbackTypeStr(t);
+  const render = LITERAL_BY_KIND[value?.kind];
+  return render ? render(value) : fallbackTypeStr(t);
 }
+
+const LITERAL_BY_KIND: Record<string, (value: Doc) => string> = {
+  string: (v) => JSON.stringify(v.string),
+  number: (v) => String(v.number),
+  boolean: (v) => String(v.boolean),
+  template: (v) => templateStr(v.tsTypes ?? []),
+};
 
 /** `` `a${T}b` ``: deno doc alternates literal text and `${…}` holes. */
 function templateStr(parts: Doc[]): string {
