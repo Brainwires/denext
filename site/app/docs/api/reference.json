@@ -14295,8 +14295,8 @@
             {
               "kind": "method",
               "name": "publish",
-              "signature": "publish(key: string, payload: T): Promise<void>",
-              "doc": "Validate, encode once, and deliver to every authorized subscriber of `key` on every instance."
+              "signature": "publish(key: string, payload: T, options?: ChannelPublishOptions): Promise<void>",
+              "doc": "Validate, encode once, and deliver to every authorized subscriber of `key` on every instance\n(stamped with `options.grant`: only to those admitted under that grant)."
             },
             {
               "kind": "method",
@@ -14308,7 +14308,7 @@
               "kind": "method",
               "name": "discard",
               "signature": "discard(key: string): void",
-              "doc": "Drop this instance's publishes of `key` that its Live hub has not yet sent to a subscriber:\nthose inside the hub's coalescing window, or still in the transport. Later publishes are\ndelivered as usual. For a key whose next subscriber must not get what was published for an\nearlier one (a subscription re-authorized under other claims); publishes from other\ninstances, and frames already held for a connected subscriber, are not reached."
+              "doc": "Drop THIS instance's publishes of `key` that its Live hub has not yet sent to a subscriber:\nthose inside the hub's coalescing window, or still in the transport. Later publishes are\ndelivered as usual. Per instance: another instance's publishes of the key — in its hub's\nwindow, or on their way through a shared transport — are not reached, nor are frames already\nheld for a connected subscriber. A key whose next subscriber must not get what was published\nfor an earlier one (a subscription re-authorized under other claims, on any instance) is\nprotected by stamping its publishes with a `grant` and having `authorize` answer one\n({@linkcode ChannelPublishOptions.grant}); `discard` is the local complement, not that\nguarantee."
             }
           ]
         },
@@ -14350,6 +14350,32 @@
           ]
         },
         {
+          "name": "ChannelAdmission",
+          "slug": "ChannelAdmission",
+          "kind": "interface",
+          "signature": "interface ChannelAdmission",
+          "doc": "What ChannelConfig.authorize answers to admit a subscriber under a grant: an opaque, short text for what it may read (a digest of its role and claims, say — never the claims themselves: it travels between instances). The Live hub then sends it a publish stamped with a grant (ChannelPublishOptions.grant) only when the two are equal, and every unstamped publish as before. The grant is recorded again at each re-authorization, so a subscriber whose claims changed is matched against what it may read now.",
+          "docFull": "What {@linkcode ChannelConfig.authorize} answers to admit a subscriber under a grant: an\nopaque, short text for what it may read (a digest of its role and claims, say — never the\nclaims themselves: it travels between instances). The Live hub then sends it a publish stamped\nwith a grant ({@linkcode ChannelPublishOptions.grant}) only when the two are equal, and every\nunstamped publish as before. The grant is recorded again at each re-authorization, so a\nsubscriber whose claims changed is matched against what it may read now.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "allow",
+              "signature": "allow: true",
+              "doc": "Admitted."
+            },
+            {
+              "kind": "property",
+              "name": "grant",
+              "signature": "grant: string",
+              "doc": "What it was admitted to read, as the publisher stamps it."
+            }
+          ]
+        },
+        {
           "name": "ChannelConfig",
           "slug": "ChannelConfig",
           "kind": "interface",
@@ -14382,8 +14408,8 @@
             {
               "kind": "property",
               "name": "authorize",
-              "signature": "authorize: (ctx: ChannelContext, key: string) => boolean | Promise<boolean>",
-              "doc": "REQUIRED: may this subscriber receive `key`? Runs in the subscriber's session."
+              "signature": "authorize: (ctx: ChannelContext, key: string) => boolean | ChannelAdmission | Promise<boolean | ChannelAdmission>",
+              "doc": "REQUIRED: may this subscriber receive `key`? Runs in the subscriber's session. `true` admits\nit, `false` refuses; `{ allow: true, grant }` admits it under a grant\n({@linkcode ChannelAdmission}), so a publish stamped with another grant is not sent to it."
             },
             {
               "kind": "property",
@@ -14517,6 +14543,12 @@
             },
             {
               "kind": "property",
+              "name": "grant",
+              "signature": "grant?: string",
+              "doc": "The grant the payload was read under (`publish`, {@linkcode ChannelPublishOptions.grant}):\na hub sends it only to a subscriber admitted under the same one. Never sent to a browser."
+            },
+            {
+              "kind": "property",
               "name": "seq",
               "signature": "seq: number",
               "doc": "Per-instance, per-key monotonic sequence (`publish`; `0` otherwise)."
@@ -14594,7 +14626,7 @@
             {
               "kind": "method",
               "name": "append",
-              "signature": "append(channelId: string, key: string, entry: { encoded: string; enc?: 1 }, history: ChannelHistory): Promise<string>",
+              "signature": "append(channelId: string, key: string, entry: { encoded: string; enc?: 1; grant?: string }, history: ChannelHistory): Promise<string>",
               "doc": "Log one publish to `key` and return its cursor."
             },
             {
@@ -14634,6 +14666,12 @@
               "name": "enc",
               "signature": "enc?: 1",
               "doc": "`1` when `encoded` carries codec tags."
+            },
+            {
+              "kind": "property",
+              "name": "grant",
+              "signature": "grant?: string",
+              "doc": "The grant it was published under (`publish(key, payload, { grant })`), if any: replayed only\nto a subscriber admitted under the same one."
             }
           ]
         },
@@ -14688,6 +14726,26 @@
           ]
         },
         {
+          "name": "ChannelPublishOptions",
+          "slug": "ChannelPublishOptions",
+          "kind": "interface",
+          "signature": "interface ChannelPublishOptions",
+          "doc": "Options of Channel.publish.",
+          "docFull": "Options of {@linkcode Channel.publish}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "grant",
+              "signature": "grant?: string",
+              "doc": "The grant the payload was read under (the same text `authorize` answers for a subscriber\nwho may read it, {@linkcode ChannelAdmission.grant}). The hub sends the publish only to the\nsubscribers admitted under this grant, on any instance; a subscriber admitted with a plain\n`true` has none and gets no stamped publish. Server-side only: the stamp rides the\ntransport and the replay log, never a frame to the browser."
+            }
+          ]
+        },
+        {
           "name": "ChannelRef",
           "slug": "ChannelRef",
           "kind": "interface",
@@ -14728,8 +14786,8 @@
             {
               "kind": "property",
               "name": "onPayload",
-              "signature": "onPayload: (payload: T, seq: number) => void",
-              "doc": "A payload published to the key (decoded; `seq` orders publishes from one instance)."
+              "signature": "onPayload: (payload: T, seq: number, grant?: string) => void",
+              "doc": "A payload published to the key (decoded; `seq` orders publishes from one instance; `grant`\nis the one it was published under, {@linkcode ChannelPublishOptions.grant}, if any)."
             },
             {
               "kind": "property",
@@ -22953,7 +23011,7 @@
               "kind": "property",
               "name": "maxViewsPerConnection",
               "signature": "maxViewsPerConnection?: number",
-              "doc": "Max live views (`defineLiveView`) one connection may hold mounted (default 16)."
+              "doc": "Max live views (`defineLiveView`) one connection may hold mounted (default 16). It also caps\nthe connection's mount queue: at most `max(4, 2 × maxViewsPerConnection)` mounts waiting or\nrunning at once; a mount past that is refused with `limit` and never queued."
             },
             {
               "kind": "property",
@@ -72222,8 +72280,8 @@
             {
               "kind": "method",
               "name": "publish",
-              "signature": "publish(key: string, payload: T): Promise<void>",
-              "doc": "Validate, encode once, and deliver to every authorized subscriber of `key` on every instance."
+              "signature": "publish(key: string, payload: T, options?: ChannelPublishOptions): Promise<void>",
+              "doc": "Validate, encode once, and deliver to every authorized subscriber of `key` on every instance\n(stamped with `options.grant`: only to those admitted under that grant)."
             },
             {
               "kind": "method",
@@ -72235,7 +72293,7 @@
               "kind": "method",
               "name": "discard",
               "signature": "discard(key: string): void",
-              "doc": "Drop this instance's publishes of `key` that its Live hub has not yet sent to a subscriber:\nthose inside the hub's coalescing window, or still in the transport. Later publishes are\ndelivered as usual. For a key whose next subscriber must not get what was published for an\nearlier one (a subscription re-authorized under other claims); publishes from other\ninstances, and frames already held for a connected subscriber, are not reached."
+              "doc": "Drop THIS instance's publishes of `key` that its Live hub has not yet sent to a subscriber:\nthose inside the hub's coalescing window, or still in the transport. Later publishes are\ndelivered as usual. Per instance: another instance's publishes of the key — in its hub's\nwindow, or on their way through a shared transport — are not reached, nor are frames already\nheld for a connected subscriber. A key whose next subscriber must not get what was published\nfor an earlier one (a subscription re-authorized under other claims, on any instance) is\nprotected by stamping its publishes with a `grant` and having `authorize` answer one\n({@linkcode ChannelPublishOptions.grant}); `discard` is the local complement, not that\nguarantee."
             }
           ]
         },
@@ -72329,8 +72387,8 @@
             {
               "kind": "property",
               "name": "onPayload",
-              "signature": "onPayload: (payload: T, seq: number) => void",
-              "doc": "A payload published to the key (decoded; `seq` orders publishes from one instance)."
+              "signature": "onPayload: (payload: T, seq: number, grant?: string) => void",
+              "doc": "A payload published to the key (decoded; `seq` orders publishes from one instance; `grant`\nis the one it was published under, {@linkcode ChannelPublishOptions.grant}, if any)."
             },
             {
               "kind": "property",
