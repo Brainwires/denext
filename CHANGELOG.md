@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.11.11] - 2026-11-02
+
 ### Security
 
 - **A mistyped or unknown verb no longer runs a `denext.config.*` that can't add verbs.** `denext
@@ -20658,7 +20660,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.10...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.11...development
+[4.11.11]: https://jsr.io/@denext/denext@4.11.11
 [4.11.10]: https://jsr.io/@denext/denext@4.11.10
 [4.11.9]: https://jsr.io/@denext/denext@4.11.9
 [4.11.8]: https://jsr.io/@denext/denext@4.11.8
