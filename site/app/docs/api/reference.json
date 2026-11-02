@@ -51411,7 +51411,7 @@
               "kind": "property",
               "name": "capabilities",
               "signature": "readonly capabilities?: readonly string[]",
-              "doc": "The desktop capabilities its pages may call (default: all the app has; `window` always). Least\nprivilege for a page that needs little — not isolation: every window shares the app's origin."
+              "doc": "The desktop capabilities its pages may call (default: all the app has; `window` always). Least\nprivilege for a trusted page that needs little, not a security boundary: every window shares\nthe app's origin, storage and launch token, so script in this window can still reach every\ncapability the app has (for example by calling the bridge as the main window). Never open\nuntrusted content in an app window because of a subset."
             }
           ]
         },

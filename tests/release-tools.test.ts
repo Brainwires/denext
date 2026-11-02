@@ -11,6 +11,7 @@ import {
   PUBLISH_GUARD_BYTES,
   publishSizeProblem,
   stripForPublish,
+  strippedCodeProblem,
 } from "../scripts/publish-strip.ts";
 import {
   bumpVersion,
@@ -339,6 +340,7 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   const measured = await measurePublishSet();
   if (!measured) return; // not a git checkout: nothing to measure
   assertEquals(publishSizeProblem(measured.after), null);
+  assertEquals(measured.changedCode, []);
   const files = (await publishedFiles())!;
   // The data @denext/docs-corpus carries for denext stays out of it, and the plain-text copies of
   // what ships packed stay unpublished.
@@ -452,6 +454,31 @@ Deno.test("publish stripping leaves a licence notice, vendored code and non-modu
   ) assertEquals(stripForPublish(path, text), text);
   const moduleDoc = "/**\n * Doc.\n * @module\n */\nimport './b.ts';\n";
   assertEquals(stripForPublish("src/a.ts", moduleDoc), moduleDoc);
+});
+
+Deno.test("publish stripping never joins the tokens around an inline comment", () => {
+  // Only leading comments (after a line break) are blanked, so code always has whitespace on one
+  // side today; the space keeps a later rule change from joining `a/** x */b` into `ab`.
+  const source = "let a = 1;\nconst b = a\n/** x *//** y */+ 1;\nfunction f(v: number) {\n" +
+    "  return/** c */v;\n}\n";
+  const out = stripForPublish("src/a.ts", source);
+  assert(!out.includes("/** x */") && !out.includes("/** y */"));
+  assertStringIncludes(out, "return/** c */v;"); // a trailing comment is never blanked
+  assertEquals(out.split("\n").length, source.split("\n").length);
+  assertEquals(strippedCodeProblem("src/a.ts", source, out), null);
+});
+
+Deno.test("the publish gate refuses a strip that changed the code", () => {
+  const source = "function f(v: number) {\n  return/** c */v;\n}\n";
+  assertEquals(strippedCodeProblem("src/a.ts", source, source), null);
+  assertEquals(
+    strippedCodeProblem("src/a.ts", source, "function f(v: number) {\n  return\n v;\n}\n"),
+    "src/a.ts: the comment strip changed the code, not just comments",
+  );
+  assertEquals(
+    strippedCodeProblem("src/a.ts", source, "function f(v: number) {\n  return v;\n}\n"),
+    null,
+  );
 });
 
 /** Published generated files over 50 KiB that may ship uncompressed, and why. */

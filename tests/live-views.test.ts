@@ -1145,6 +1145,36 @@ Deno.test("live views: an unmount or a close cancels the mounts still waiting or
   hub.dispose();
 });
 
+Deno.test("live views: a connection's mount queue is capped at twice its views", async () => {
+  // Each queued mount holds its frame until its turn; past 2 × maxViewsPerConnection (at least 4)
+  // waiting or running, a mount is refused at once and never queued.
+  const g = gate(1);
+  const { hub, conn } = fakeHub({ maxViewsPerConnection: 2 });
+  const c = conn("ok");
+  const mounts = [];
+  for (let i = 1; i <= 6; i++) mounts.push((await gatedMount(hub, c, i, `v${i}`)).done);
+  await reached(1);
+  await tick();
+  assertEquals(
+    c.frames.filter(isError("limit")).map((f) => [f.subId, f.reason]),
+    [["v5", "too many pending mounts"], ["v6", "too many pending mounts"]],
+  );
+  g.get(1)!.resolve(true);
+  await Promise.all(mounts);
+  // v3 and v4 were queued, then refused at the view cap (before their authorize); v5 and v6 never
+  // reached the queue.
+  assertEquals(authorized, [1, 2]);
+  assertEquals([...c.views.keys()], ["v1", "v2"]);
+  assertEquals(
+    c.frames.filter(isError("limit")).map((f) => [f.subId, f.reason]).slice(2),
+    [["v3", "too many views"], ["v4", "too many views"]],
+  );
+  // Once the queue drained, the connection may mount again (here: up to its view cap).
+  await mounted(hub, c, 7, "v1");
+  assertEquals(c.views.size, 2);
+  hub.dispose();
+});
+
 Deno.test("live views: a slow authorize delays only its own connection's later mounts", async () => {
   const g = gate(1);
   const { hub, conn } = fakeHub();

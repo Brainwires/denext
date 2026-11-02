@@ -45,6 +45,23 @@ and this project adheres to
   `HTMLAttributes`, `ForwardRefExoticComponent` and `MemoExoticComponent` extend, are now exported
   from `denext` as types, as they already were from the `react` alias, and `CssAssets`, the base of
   `AppCss`, from `denext/plugin-kit`. Each has its own entry.
+- **`denext mobile assets` no longer hangs or crashes on a hostile workspace file.** Looking for a
+  sibling Expo app's icon, it compiled each workspace member glob from `deno.json`,
+  `package.json`, `pnpm-workspace.yaml`, `lerna.json` and `rush.json` into one regular expression,
+  which could backtrack for minutes, and a glob the RegExp constructor rejected threw. Globs are
+  now matched one path segment at a time, stacked `**` are collapsed, a glob over 256 characters,
+  a segment with more than 3 wildcards, a nested extglob group or an invalid glob is skipped with a
+  note, and at most 256 globs are read. Those files are read only when they are regular files of
+  at most 8 MiB, so a FIFO or device under one of their names is never opened.
+- **The publish job proves the published code matches the tag.** Blanking an inline comment now
+  leaves a space where removing it would join two tokens, and every file the comment strip
+  rewrites must compile to the same JavaScript as the tagged file (comments and whitespace aside),
+  or the release stops (`scripts/publish-strip.ts`, run by the release, the CI dry-run and the
+  publish job).
+- **The docs for `openWindow({ capabilities })` say a capability subset is not a security
+  boundary.** Every window shares the app's origin, storage and launch token, so script in a
+  window opened with a subset can still reach every capability the app has. Open only the app's
+  own trusted pages in it.
 
 ### Security
 
@@ -60,6 +77,17 @@ and this project adheres to
   already answers with `stale` and a re-read. The Supabase Realtime protocol
   (`/realtime/v1/websocket`) delivers each binding's frames to its own socket in-process and never
   over the transport, so it was not exposed.
+- **A Live connection can no longer queue mounts without limit.** Mounts on one connection run one
+  at a time, and frames waiting their turn were held in memory with no cap. A connection now holds
+  at most twice `live.limits.maxViewsPerConnection` mounts waiting or running (at least 4); a mount
+  past that is refused with a `limit` error and never queued.
+- **`denext dev --lan` and the desktop runtime's provenance check no longer run a helper found
+  through PATH.** The default-route lookup runs the OS's own `ip` / `route` from `/usr/sbin`,
+  `/sbin`, `/usr/bin` or `/bin` (`System32` on Windows), and the provenance check runs `gh` only
+  from where its installers put it (Homebrew, `/usr/local/bin`, the distro package, Linuxbrew,
+  snap, or `GitHub CLI` under Program Files or the user's `Programs` folder). A `gh` elsewhere is
+  treated as not installed: the SHA-256 pin is still enforced, and `DENEXT_DESKTOP_RUNTIME_ATTEST=1`
+  says the CLI is missing.
 
 ## [4.11.12] - 2026-11-02
 
