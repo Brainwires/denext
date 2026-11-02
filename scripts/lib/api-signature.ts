@@ -1,4 +1,4 @@
-// Renders `deno doc --json` type nodes and interface members as TypeScript source, for the API
+// Renders `deno doc --json` type nodes and interface and class members as TypeScript source, for the API
 // reference (scripts/gen-api-reference.ts). Kept free of top-level side effects so
 // tests/api-reference.test.ts can import it.
 
@@ -14,10 +14,18 @@ export interface ApiParam {
   doc: string;
 }
 
-/** One member of an interface, as the reference lists it. */
+/** One member of an interface or class, as the reference lists it. */
 export interface ApiMember {
   /** What sort of member it is. */
-  kind: "property" | "method" | "getter" | "setter" | "call" | "construct" | "index";
+  kind:
+    | "constructor"
+    | "property"
+    | "method"
+    | "getter"
+    | "setter"
+    | "call"
+    | "construct"
+    | "index";
   /** The member's name; "" for a call, construct or index signature. */
   name: string;
   /** The member as TypeScript source. */
@@ -28,14 +36,24 @@ export interface ApiMember {
   params?: ApiParam[];
   /** Its `@returns` tag, if any. */
   returns?: string;
+  /** Set on a class's static member (its signature also starts with `static`). */
+  static?: true;
 }
 
-/** One `extends` entry; `ref` is the parent's `<module slug>/<symbol slug>` when it is documented. */
+/**
+ * One `extends` or `implements` entry; `ref` is the `<module slug>/<symbol slug>` of the
+ * documented type it names.
+ */
 export interface ApiParent {
   /** The parent as written, type arguments included. */
   type: string;
   /** Where its entry is. */
   ref?: string;
+  /**
+   * The name in `type` that `ref` points at, when it is not the head: the type a utility type
+   * such as `Omit<X, "k">` takes its members from.
+   */
+  refName?: string;
 }
 
 /**
@@ -318,12 +336,91 @@ export function interfaceDetail(decl: Doc): { members?: ApiMember[]; extends?: A
   };
 }
 
+/**
+ * A class's own public members: constructors, properties, methods and accessors, each static one
+ * marked. Private members (`private` or `#name`) and inherited ones are left out.
+ */
+export function classMembers(def: Doc): ApiMember[] {
+  return [
+    ...callable(def.constructors).map((c) =>
+      classMember("constructor", "constructor", `constructor(${paramsStr(c.params)})`, c)
+    ),
+    ...(def.indexSignatures ?? []).map((i: Doc) => member("index", "", indexSignature(i), i)),
+    ...publicOnly(def.properties).map((p) =>
+      classMember("property", String(p.name), propertySignature(p), p)
+    ),
+    // A class method keeps its parameters and return type under `functionDef`.
+    ...callable((def.methods ?? []).map((m: Doc) => ({ ...m, ...m.functionDef }))).map((m) =>
+      classMember(METHOD_KINDS[m.kind] ?? "method", String(m.name), methodSignature(m), m)
+    ),
+  ];
+}
+
+/**
+ * The public constructors or methods a caller sees: an overloaded one's overload signatures, not
+ * the implementation signature behind them (the one with a body, which TypeScript hides).
+ */
+function callable(members: Doc[] | undefined): Doc[] {
+  const visible = publicOnly(members);
+  const key = (m: Doc) => `${m.isStatic ? "static " : ""}${m.kind ?? ""} ${m.name}`;
+  const overloaded = new Set(visible.filter((m) => !m.hasBody).map(key));
+  return visible.filter((m) => !(m.hasBody && overloaded.has(key(m))));
+}
+
+/** The members a caller can reach: not `private`, not a `#private` name. */
+function publicOnly(members: Doc[] | undefined): Doc[] {
+  return (members ?? []).filter((m) =>
+    m.accessibility !== "private" && !String(m.name).startsWith("#")
+  );
+}
+
+/** A class member entry, its signature led by its `protected` / `static` / `abstract` modifiers. */
+function classMember(
+  kind: ApiMember["kind"],
+  name: string,
+  signature: string,
+  node: Doc,
+): ApiMember {
+  const modifiers = [
+    node.accessibility === "protected" ? "protected " : "",
+    node.isStatic ? "static " : "",
+    node.isAbstract ? "abstract " : "",
+  ].join("");
+  const out = member(kind, name, `${modifiers}${signature}`, node);
+  if (node.isStatic) out.static = true;
+  return out;
+}
+
+/** A class's `extends` parent (type arguments included) and its `implements` entries. */
+export function classParents(def: Doc): { extends: string[]; implements: string[] } {
+  const base = typeof def.extends === "string" && def.extends
+    ? [`${def.extends}${typeArgsStr(def.superTypeParams)}`]
+    : [];
+  return { extends: base, implements: (def.implements ?? []).map(typeStr) };
+}
+
+/** A class declaration's members and parents, each only when it has some; {} for any other kind. */
+export function classDetail(
+  decl: Doc,
+): { members?: ApiMember[]; extends?: ApiParent[]; implements?: ApiParent[] } {
+  if (decl.kind !== "class") return {};
+  const def = decl.def ?? {};
+  const members = classMembers(def);
+  const parents = classParents(def);
+  const entries = (types: string[]) => types.map((type) => ({ type }));
+  return {
+    ...(members.length ? { members } : {}),
+    ...(parents.extends.length ? { extends: entries(parents.extends) } : {}),
+    ...(parents.implements.length ? { implements: entries(parents.implements) } : {}),
+  };
+}
+
 /** The parts of a reference group {@linkcode linkParents} reads. */
 export interface ParentGroup {
   /** The module's name. */
   module: string;
   /** Its symbols. */
-  symbols: { name: string; slug: string; extends?: ApiParent[] }[];
+  symbols: { name: string; slug: string; extends?: ApiParent[]; implements?: ApiParent[] }[];
 }
 
 /** Each of a group's symbols as `[name, "<module slug>/<symbol slug>"]`. */
@@ -332,19 +429,34 @@ function symbolRefs(g: ParentGroup): [string, string][] {
   return g.symbols.map((s) => [s.name, `${module}/${s.slug}`]);
 }
 
+/** A utility type whose members come from its first type argument, and that argument's name. */
+const MEMBER_SOURCE =
+  /^(?:Omit|Pick|Partial|Required|Readonly)<\s*([\p{ID_Start}$_][\p{ID_Continue}$]*)/u;
+
+/** The name a parent's members come from: `X` for `X<T>`, and for `Omit<X, "k">` too. */
+function memberSource(type: string): { name: string; wrapped: boolean } {
+  const inner = MEMBER_SOURCE.exec(type)?.[1];
+  return inner
+    ? { name: inner, wrapped: true }
+    : { name: type.replace(/<.*$/s, ""), wrapped: false };
+}
+
 /**
- * Point each `extends` entry at the parent's page: the same module's symbol first, else the first
- * module that documents the name. A lib type (`Error`, `Iterable<T>`) that no module exports
- * stays plain text.
+ * Point each `extends` / `implements` entry at the parent's page: the same module's symbol first,
+ * else the first module that documents the name. A utility type (`Omit<X, "k">`, `Partial<X>`)
+ * links the type it takes its members from. A lib type (`Error`, `Iterable<T>`) that no module
+ * exports stays plain text.
  */
 export function linkParents(groups: ParentGroup[]): void {
   const anywhere = new Map(groups.flatMap(symbolRefs).reverse());
   for (const g of groups) {
     const local = new Map(symbolRefs(g));
-    for (const parent of g.symbols.flatMap((s) => s.extends ?? [])) {
-      const name = parent.type.replace(/<.*$/s, "");
+    for (const parent of g.symbols.flatMap((s) => [...s.extends ?? [], ...s.implements ?? []])) {
+      const { name, wrapped } = memberSource(parent.type);
       const ref = local.get(name) ?? anywhere.get(name);
-      if (ref) parent.ref = ref;
+      if (!ref) continue;
+      parent.ref = ref;
+      if (wrapped) parent.refName = name;
     }
   }
 }

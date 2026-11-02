@@ -3,7 +3,7 @@
 
 import reference from "../app/docs/api/reference.json" with { type: "json" };
 
-/** One member of an interface, as emitted by scripts/gen-api-reference.ts. */
+/** One member of an interface or class, as emitted by scripts/gen-api-reference.ts. */
 export interface ApiMember {
   kind: string;
   name: string;
@@ -11,12 +11,17 @@ export interface ApiMember {
   doc?: string;
   params?: { name: string; doc: string }[];
   returns?: string;
+  static?: true;
 }
 
-/** One `extends` entry; `ref` is the parent's `<module slug>/<symbol slug>` when documented. */
+/**
+ * One `extends` / `implements` entry; `ref` is the `<module slug>/<symbol slug>` of the documented
+ * type it names, and `refName` that name when it is not the head (`Omit<X, "k">` links `X`).
+ */
 export interface ApiParent {
   type: string;
   ref?: string;
+  refName?: string;
 }
 
 /** One documented export, as emitted by scripts/gen-api-reference.ts. */
@@ -33,6 +38,7 @@ export interface ApiSymbol {
   denextOnly: boolean;
   members?: ApiMember[];
   extends?: ApiParent[];
+  implements?: ApiParent[];
 }
 export interface ApiGroup {
   module: string;

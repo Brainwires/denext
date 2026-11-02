@@ -55,7 +55,10 @@ export default function ApiSymbolPage(props: PageProps) {
 
   const toc = [{ id: "signature", text: "Signature", level: 2 as const }];
   if (symbol.docFull) toc.push({ id: "description", text: "Description", level: 2 as const });
-  if (symbol.members?.length || symbol.extends?.length) {
+  const hasMembers = Boolean(
+    symbol.members?.length || symbol.extends?.length || symbol.implements?.length,
+  );
+  if (hasMembers) {
     toc.push({ id: "members", text: "Members", level: 2 as const });
   }
   if (symbol.params.length) toc.push({ id: "parameters", text: "Parameters", level: 2 as const });
@@ -100,11 +103,12 @@ export default function ApiSymbolPage(props: PageProps) {
         )
         : null}
 
-      {symbol.members?.length || symbol.extends?.length
+      {hasMembers
         ? (
           <>
             <h2 id="members">Members</h2>
             <ApiParents parents={symbol.extends ?? []} />
+            <ApiParents parents={symbol.implements ?? []} label="Implements" />
             <ApiMembers members={symbol.members ?? []} />
           </>
         )

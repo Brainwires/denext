@@ -8,6 +8,22 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Fixed
+
+- **The API reference lists what a class contains.** All 102 class entries had only a name and a
+  summary. Each page at `/docs/api/<module>/<symbol>` and each `denext_read_docs`
+  `api:<module>/<name>` answer now lists the class's public constructors, properties, methods and
+  accessors, with types and doc comments and each static member marked `static`, and the
+  signature and entry name what the class extends and implements, linked when documented. An
+  overloaded method shows its overloads, not the implementation signature behind them.
+- **A parent written as a utility type links the type it comes from.** `Omit<X, "k">`, `Pick<X, …>`,
+  `Partial<X>`, `Required<X>` and `Readonly<X>` link `X` to its page, where they linked nothing.
+- **Every parent the reference names has a page, or is a platform type.** `AriaAttributes`,
+  `DOMAttributes`, `ExoticComponent` and `NamedExoticComponent`, the React types that
+  `HTMLAttributes`, `ForwardRefExoticComponent` and `MemoExoticComponent` extend, are now exported
+  from `denext` as types, as they already were from the `react` alias, and `CssAssets`, the base of
+  `AppCss`, from `denext/plugin-kit`. Each has its own entry.
+
 ## [4.11.12] - 2026-11-02
 
 ### Changed
