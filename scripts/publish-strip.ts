@@ -172,6 +172,45 @@ export async function measurePublishSet(
   return { before, after };
 }
 
+/**
+ * Copy the working tree's files (tracked and untracked, ignored ones left out) into `dest` with
+ * the publish set stripped exactly as publish.yml's `--write` does it, so a `deno publish
+ * --dry-run` there checks what JSR will receive while the working tree stays untouched.
+ *
+ * @param dest An existing directory to fill.
+ * @returns How many files were copied, `null` outside a git checkout.
+ */
+export async function copyStrippedTree(dest: string): Promise<number | null> {
+  const root = new URL("../", import.meta.url);
+  const listed = await new Deno.Command("git", {
+    args: ["ls-files", "-z", "-co", "--exclude-standard"],
+    cwd: root,
+    stdout: "piped",
+    stderr: "inherit",
+    stdin: "null",
+  }).output();
+  if (!listed.success) return null;
+  const published = await publishedFiles();
+  let copied = 0;
+  for (const path of new TextDecoder().decode(listed.stdout).split("\0")) {
+    const from = new URL(path, root);
+    const info = await Deno.lstat(from).catch(() => null);
+    if (!path || !info) continue; // listed but deleted in the working tree
+    const to = `${dest}/${path}`;
+    await Deno.mkdir(to.slice(0, to.lastIndexOf("/")), { recursive: true });
+    if (info.isSymlink) {
+      await Deno.symlink(await Deno.readLink(from), to);
+    } else if (published?.has(path) && /\.m?ts$/.test(path)) {
+      const text = await Deno.readTextFile(from);
+      await Deno.writeTextFile(to, stripForPublish(path, text));
+    } else {
+      await Deno.copyFile(from, to);
+    }
+    copied++;
+  }
+  return copied;
+}
+
 if (import.meta.main) {
   const measured = await measurePublishSet(Deno.args.includes("--write"));
   if (!measured) {
