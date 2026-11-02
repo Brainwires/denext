@@ -2720,7 +2720,11 @@ export interface LiveLimits {
    * queue; past it the mount is answered `failed` and the next one runs.
    */
   renderTimeoutSeconds?: number;
-  /** Max live views (`defineLiveView`) one connection may hold mounted (default 16). */
+  /**
+   * Max live views (`defineLiveView`) one connection may hold mounted (default 16). It also caps
+   * the connection's mount queue: at most `max(4, 2 × maxViewsPerConnection)` mounts waiting or
+   * running at once; a mount past that is refused with `limit` and never queued.
+   */
   maxViewsPerConnection?: number;
   /**
    * Max bytes of server-held state per connection across its live views (default 1048576): each

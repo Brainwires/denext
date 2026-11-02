@@ -227,6 +227,10 @@ export interface MountQueue<C> {
   cancel(conn: C, vid?: string): void;
 }
 
+/** Mounts one connection may have waiting or running, per view it may hold (at least 4 in all). */
+const MOUNT_QUEUE_PER_VIEW = 2;
+const MIN_MOUNT_QUEUE = 4;
+
 /**
  * The per-connection mount queue of a view hub. Every await of a mount (the token check,
  * `authorize`, the viewer's identity, the resume digest and store) runs before it is placed, so
@@ -234,7 +238,9 @@ export interface MountQueue<C> {
  * slot under the view cap. Mounts of one connection run one at a time, in arrival order; other
  * connections' mounts run concurrently. Each holds the queue at most `renderTimeoutSeconds`: past
  * it the mount is cancelled (it places nothing, even when its `authorize` settles later) and
- * answered `failed`, and the next one runs.
+ * answered `failed`, and the next one runs. A connection holds at most twice
+ * `maxViewsPerConnection` mounts waiting or running (at least 4); a mount past that is refused with
+ * `limit` and never queued.
  *
  * @param deps The hub primitives.
  * @returns The queue.
@@ -264,7 +270,16 @@ export function createMountQueue<C extends object>(deps: ViewHubBaseDeps<C>): Mo
       let state = queues.get(conn);
       if (!state) queues.set(conn, state = { tail: Promise.resolve(), tickets: new Set() });
       const queue = state;
-      const ticket: MountTicket = { vid: str(msg.vid, 64), cancelled: false };
+      const vid = str(msg.vid, 64);
+      const cap = Math.max(
+        MIN_MOUNT_QUEUE,
+        deps.limits().maxViewsPerConnection * MOUNT_QUEUE_PER_VIEW,
+      );
+      if (queue.tickets.size >= cap) {
+        if (vid !== null) deps.sendError(conn, "limit", "too many pending mounts", { subId: vid });
+        return Promise.resolve();
+      }
+      const ticket: MountTicket = { vid, cancelled: false };
       queue.tickets.add(ticket);
       const turn = queue.tail.then(() =>
         ticket.cancelled

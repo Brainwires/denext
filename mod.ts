@@ -303,6 +303,7 @@ export type {
 // Surfaced under the `react` alias via `src/compat/react.ts`, but was missing from the bare
 // `denext` entrypoint whose hooks it annotates (e.g. `src/utils/use-async-effect.ts`).
 export type {
+  AriaAttributes,
   ChangeEvent,
   ComponentProps,
   ComponentPropsWithoutRef,
@@ -311,8 +312,10 @@ export type {
   CSSProperties,
   DependencyList,
   Dispatch,
+  DOMAttributes,
   EffectCallback,
   ElementRef,
+  ExoticComponent,
   FC,
   FormEvent,
   ForwardedRef,
@@ -323,6 +326,7 @@ export type {
   MemoExoticComponent,
   MouseEvent,
   MutableRefObject,
+  NamedExoticComponent,
   PropsWithChildren,
   ReactElement,
   ReactNode,
@@ -496,4 +500,4 @@ export type {
 export { isPublicEnvKey, PUBLIC_ENV_PREFIXES, publicEnv } from "./src/runtime/public-env.ts";
 
 /** The denext framework version. */
-export const VERSION = "4.11.12";
+export const VERSION = "4.11.13";

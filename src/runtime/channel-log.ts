@@ -21,6 +21,11 @@ export interface ChannelLogEntry {
   encoded: string;
   /** `1` when `encoded` carries codec tags. */
   enc?: 1;
+  /**
+   * The grant it was published under (`publish(key, payload, { grant })`), if any: replayed only
+   * to a subscriber admitted under the same one.
+   */
+  grant?: string;
 }
 
 /** A channel's retention: how many entries per key, for how long. */
@@ -37,7 +42,7 @@ export interface ChannelLog {
   append(
     channelId: string,
     key: string,
-    entry: { encoded: string; enc?: 1 },
+    entry: { encoded: string; enc?: 1; grant?: string },
     history: ChannelHistory,
   ): Promise<string>;
   /**
@@ -148,7 +153,10 @@ export function inMemoryChannelLog(options: InMemoryChannelLogOptions = {}): Cha
       rings.delete(id);
       rings.set(id, ring);
       const expires = now + history.ttlSeconds * 1000;
-      ring.entries.push({ cursor, encoded: entry.encoded, enc: entry.enc, expires, bytes });
+      const logged: Ring["entries"][number] = { cursor, encoded: entry.encoded, expires, bytes };
+      if (entry.enc) logged.enc = entry.enc;
+      if (entry.grant !== undefined) logged.grant = entry.grant;
+      ring.entries.push(logged);
       ring.bytes += bytes;
       total += bytes;
       trim(ring, history.size, now);
@@ -165,10 +173,11 @@ export function inMemoryChannelLog(options: InMemoryChannelLogOptions = {}): Cha
         e.expires > now && compareCursors(e.cursor, cursor) > 0
       );
       return Promise.resolve(
-        after.slice(-limit).map(({ cursor, encoded, enc }) => ({
+        after.slice(-limit).map(({ cursor, encoded, enc, grant }) => ({
           cursor,
           encoded,
           ...(enc ? { enc } : {}),
+          ...(grant !== undefined ? { grant } : {}),
         })),
       );
     },

@@ -5,9 +5,12 @@
 // in the viewer's request context (a throw is a deny), then lazily again on traffic once the
 // channel's `authTtlSeconds` (default `live.limits.channelAuthTtlSeconds`) has passed — the
 // payload that found it stale is held (latest wins) until the re-check allows it — and
-// `channel.revoke(key)` (or one naming this subscriber's peer) ends it immediately.
+// `channel.revoke(key)` (or one naming this subscriber's peer) ends it immediately. As at the
+// socket, a payload published under a grant reaches the subscriber only when `authorize` admitted
+// it under that grant (`{ allow: true, grant }`, recorded again at each re-check).
 
 import {
+  admissionOf,
   type Channel,
   channelAuthTtlMs,
   type ChannelContext,
@@ -73,10 +76,14 @@ export async function tapChannelAuthorized<T>(
   if (!ch || !ch.keyOk(key)) throw new ChannelAccessError();
   const ctx = subscriberContext(options.peerId ?? crypto.randomUUID());
   const runAs = captureRequestContext();
+  /** The grant the last allowed `authorize` admitted under (`undefined`: none). */
+  let grant: string | undefined;
   const allowed = async (): Promise<boolean> => {
     if (typeof ch.authorize !== "function") return false;
     try {
-      return (await runAs(() => ch.authorize!(ctx, key))) === true;
+      const admission = admissionOf(await runAs(() => ch.authorize!(ctx, key)));
+      if (admission.allow) grant = admission.grant;
+      return admission.allow;
     } catch {
       return false;
     }
@@ -85,7 +92,7 @@ export async function tapChannelAuthorized<T>(
 
   let expires = Date.now() + channelAuthTtlMs(id);
   let ended = false;
-  let pending: { payload: T; seq: number } | null = null;
+  let pending: { payload: T; seq: number; grant?: string } | null = null;
   let reauth: Promise<void> | null = null;
   const end = () => {
     if (ended) return;
@@ -102,17 +109,22 @@ export async function tapChannelAuthorized<T>(
       expires = Date.now() + channelAuthTtlMs(id);
       const held = pending;
       pending = null;
-      if (held) options.onPayload(held.payload, held.seq);
+      // Checked against the grant the re-check just recorded: a payload read under other claims
+      // than the viewer has now is not for them.
+      if (held && (held.grant === undefined || held.grant === grant)) {
+        options.onPayload(held.payload, held.seq);
+      }
     });
   };
   const stop = tapChannel<T>(id, key, {
     peerId: ctx.peerId,
-    onPayload: (payload, seq) => {
+    onPayload: (payload, seq, publishedUnder) => {
       if (ended) return;
       if (Date.now() >= expires) {
-        pending = { payload, seq }; // latest wins while the re-check runs
+        pending = { payload, seq, grant: publishedUnder }; // latest wins while the re-check runs
         return recheck();
       }
+      if (publishedUnder !== undefined && publishedUnder !== grant) return;
       options.onPayload(payload, seq);
     },
     onRevoke: end,

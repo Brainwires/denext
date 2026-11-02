@@ -2568,10 +2568,17 @@ onCloseRequested(({ reason }) => {
         <code>new BrowserWindow()</code>, Tauri&apos;s{" "}
         <code>WebviewWindow</code>): a settings window, a document, an overlay. The URL is a path of
         the app, never another site. The new window&apos;s page has the app&apos;s desktop
-        capabilities (or the <code>capabilities</code>{" "}
-        subset you give it, least privilege: every window shares the app origin, so this is not
-        isolation), and its own <code>denext/desktop/window</code>{" "}
+        capabilities (or the <code>capabilities</code> subset you give it), and its own{" "}
+        <code>denext/desktop/window</code>{" "}
         calls act on itself. At most 8 are open at once besides the main window and the tray panel.
+      </p>
+      <p>
+        A <code>capabilities</code>{" "}
+        subset limits what the page&apos;s own calls are routed to. It is not a security boundary:
+        every window shares the app&apos;s origin, storage and launch token, so script in a window
+        opened with a subset can still reach every capability the app has (for example by calling
+        the bridge as the main window). Open only the app&apos;s own trusted pages in it, and keep
+        untrusted content out of the app&apos;s windows.
       </p>
       <Code lang="ts">
         {`import { getWindows, openWindow, windowHandle } from "denext/desktop/window";

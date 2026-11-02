@@ -23,6 +23,8 @@ import {
   type ApiMember,
   type ApiParam,
   type ApiParent,
+  classDetail,
+  classParents,
   extendsOf,
   interfaceDetail,
   linkParents,
@@ -103,10 +105,12 @@ interface Symbol {
   returns: string;
   examples: string[];
   denextOnly: boolean;
-  /** An interface's own members (absent when it declares none). */
+  /** An interface's or class's own members (absent when it declares none). */
   members?: ApiMember[];
-  /** What an interface extends (absent when nothing): inherited members stay on the parent. */
+  /** What an interface or class extends (absent when nothing): inherited members stay on the parent. */
   extends?: ApiParent[];
+  /** What a class implements (absent when nothing). */
+  implements?: ApiParent[];
 }
 interface Group {
   module: string;
@@ -125,7 +129,8 @@ const SIGNATURES: Record<string, (name: string, def: Decl, tp: string) => string
   variable: (name, def) => `${name}: ${typeStr(def.tsType)}`,
   typeAlias: (name, def, tp) => `type ${name}${tp} = ${typeStr(def.tsType)}`,
   interface: (name, def, tp) => `interface ${name}${tp}${extendsClause(def)}`,
-  class: (name, _def, tp) => `class ${name}${tp}`,
+  class: (name, def, tp) =>
+    `${def.isAbstract ? "abstract " : ""}class ${name}${tp}${heritage(def)}`,
   enum: (name) => `enum ${name}`,
 };
 
@@ -133,6 +138,13 @@ function signatureOf(name: string, decl: Decl): string {
   const def = decl.def ?? {};
   const render = SIGNATURES[decl.kind] ?? ((n: string) => n);
   return render(name, def, typeParamsStr(def));
+}
+
+/** ` extends A implements B, C` for a class, or "". */
+function heritage(def: Decl): string {
+  const parents = classParents(def);
+  const base = parents.extends.length ? ` extends ${parents.extends[0]}` : "";
+  return parents.implements.length ? `${base} implements ${parents.implements.join(", ")}` : base;
 }
 
 /** ` extends A, B` for an interface, or "". */
@@ -268,6 +280,7 @@ function symbolEntry(name: string, decl: Decl): Symbol {
     examples: examplesOf(decl),
     denextOnly: !realNames.has(name),
     ...interfaceDetail(decl),
+    ...classDetail(decl),
   };
 }
 

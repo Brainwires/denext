@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.1 - 2026-11-02
+
 ### Added
 
 - **Realtime replays what a reconnecting subscriber missed** (`realtime({ replay })`, on by
@@ -26,14 +28,21 @@
 
 ### Security
 
-- **A reconnect under other claims gets no frame read under the old ones, even within the Live
-  hub's flush window.** A frame published just before a `useTableChanges` subscriber's connection
-  dropped was fanned out on the hub's next flush (up to 16 ms later), so a reconnect re-authorized
-  within that window under other claims (the same user, a role or tenant changed) could still
-  receive rows read under the old ones. The re-authorization now discards the subscription's
-  frames the hub has not sent yet (`channel.discard`, new in denext 4.11.1; the
-  `jsr:@denext/denext` floor is raised to `^4.11.1` with that release, and on an older denext the
-  window stays as it was).
+- **A reconnect under other claims gets no frame read under the old ones, on any instance.** A
+  frame published just before a `useTableChanges` subscriber's connection dropped was fanned out
+  on the Live hub's next flush (up to 16 ms later), so a reconnect re-authorized within that
+  window under other claims (the same user, a role or tenant changed) could still receive rows
+  read under the old ones. Every frame is now published under the SHA-256 of the grant (role and
+  claims, minus the ones a token refresh changes) it was read as, and every subscriber is admitted
+  under the grant it has: the hub sends a frame only where the two match, whichever instance read
+  it — so a reconnect that lands on another replica behind a shared channel transport
+  (`redisChannelTransport`, no sticky sessions) is covered too, where the per-instance
+  `channel.discard` the same-instance re-authorization also calls cannot reach. A dropped frame is
+  a sequence gap to the hook, which it already answers with `stale` and a re-read. A
+  `postgres_changes` binding of the Supabase Realtime protocol delivers to its own socket
+  in-process, never over the transport, and was not exposed. (The stamp is matched by the Live hub
+  of the denext that ships it; an older hub ignores it and keeps only the same-instance
+  `channel.discard` of denext 4.11.1.)
 - **A reconnect under a reduced grant forgets the keys it tracked.** A subscriber re-authorized
   with other claims (a role, tenant or group removed) kept the old set of tracked keys, so a later
   delete or move-out of a row it could only see before was still sent, with its old image under

@@ -147,12 +147,14 @@ export {
 } from "../runtime/channel.ts";
 export type {
   Channel,
+  ChannelAdmission,
   ChannelConfig,
   ChannelContext,
   ChannelEvent,
   ChannelIdleReason,
   ChannelPublisher,
   ChannelPublisherContext,
+  ChannelPublishOptions,
   ChannelRef,
   ChannelTapHandlers,
   ChannelTransport,

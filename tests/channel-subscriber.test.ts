@@ -139,3 +139,38 @@ Deno.test("tapChannelAuthorized: revoke(key) and revoke(key, { peerId }) for thi
   assertEquals(ends, ["a", "b"]);
   resetChannels();
 });
+
+Deno.test("tapChannelAuthorized: a payload published under a grant reaches the viewer only when authorize admitted them under it", async () => {
+  resetChannels();
+  setChannelAuthTtl(300);
+  const ch = createChannel<number>({
+    id: "auth:grant",
+    authorize: (ctx) => ({ allow: true, grant: /g=(\w+)/.exec(ctx.cookie)![1] }),
+  });
+  const got: number[] = [];
+  const stop = await asViewer(
+    "g=one",
+    () => tapChannelAuthorized(ch, "k", { onPayload: (n) => got.push(n), peerId: "p1" }),
+  );
+  await ch.publish("k", 1, { grant: "one" });
+  await ch.publish("k", 2, { grant: "two" });
+  await ch.publish("k", 3);
+  assertEquals(got, [1, 3], "another grant's payload is not for them; an unstamped one is");
+  // A lapsed authorization holds the payload, then checks it against the grant just recorded.
+  setChannelAuthTtl(0);
+  const gotLater: number[] = [];
+  const later = await asViewer(
+    "g=two",
+    () => tapChannelAuthorized(ch, "k", { onPayload: (n) => gotLater.push(n), peerId: "p2" }),
+  );
+  await ch.publish("k", 4, { grant: "one" });
+  await tick();
+  await ch.publish("k", 5, { grant: "two" });
+  await tick();
+  assertEquals(gotLater, [5]);
+  assertEquals(got, [1, 3, 4], "the first viewer, admitted under `one`, still gets its own");
+  stop();
+  later();
+  setChannelAuthTtl(300);
+  resetChannels();
+});
