@@ -1383,6 +1383,15 @@ export default {
           without the library) it reports none, Clerk does not offer them, and the hosted browser
           sign-in is the way to use one.
         </li>
+        <li>
+          On macOS the first passkey request after login can take noticeably longer than later ones:
+          about 0.5 s on Apple silicon and up to 2.5 s on Intel, measured on fresh CI machines. It
+          does not depend on the window backend. macOS starts its AuthenticationServices agent on
+          demand for that first request; later requests, from any app while the agent is running,
+          start in a few milliseconds. Your page stays responsive the whole time. Don&apos;t put a
+          short timeout on the first ceremony, and show your own pending state if you start one
+          without a user gesture.
+        </li>
       </ul>
 
       <h2 id="desktop-updates">Desktop UI self-updates</h2>

@@ -649,6 +649,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   work only for the RP IDs listed in `desktop.capabilities.passkeys.rpIds`, which the packaged
   launch file pins natively (`passkeyRpIds`); from runtime `3.0.0-denext.1` (`strictPolicy`) a
   missing or empty list refuses every ceremony with `invalid_rp`.
+- **The first macOS passkey request after login is slower:** about 0.5 s on Apple silicon and up to
+  2.5 s on Intel (measured on fresh CI machines), whatever the window backend. macOS starts its
+  AuthenticationServices agent on demand; later requests, from any app while the agent runs, start
+  in a few milliseconds. The page stays responsive. Don't put a short timeout on the first
+  ceremony, and show your own pending state if you start one without a user gesture.
 - **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted
   while the app is closed need a `.deb` / `.rpm` install, xdg-desktop-portal 1.19+ and a systemd
   user manager; macOS shows them only from a signed bundle. A click's tag, action and `data` are
