@@ -8,6 +8,15 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **The `@denext/denext` package is 3.13 MiB smaller as published (19.61 → 16.48 MiB against JSR's
+  20 MiB cap).** The publish job blanks whole-line `//` comments and the JSDoc outside the public
+  API before `deno publish`. The code, every line number, the public API's documentation and every
+  import are unchanged, so reading the package's source on JSR shows fewer internal notes than the
+  tagged commit. A release now stops before tagging if the package would go over 18.5 MiB
+  (`scripts/publish-strip.ts`).
+
 ## [4.11.11] - 2026-11-02
 
 ### Security
