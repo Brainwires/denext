@@ -6,7 +6,8 @@
 // (what JSR's docs and an editor's hover show) stays, every remaining line keeps its line number
 // (stack traces and JSR's source links match the tag), and the code is unchanged.
 //
-//   deno run -A scripts/publish-strip.ts            # measure; exit 1 over the guard
+//   deno run -A scripts/publish-strip.ts            # measure; exit 1 over the guard, or when a
+//                                                   # stripped file's code differs from the tag's
 //   deno run -A scripts/publish-strip.ts --write    # also rewrite the files (publish.yml only)
 
 // deno-lint-ignore no-import-prefix -- denext's release tooling only; never published.
@@ -124,9 +125,44 @@ export function stripForPublish(path: string, text: string): string {
   let out = text;
   for (const [start, end] of blanks.sort((a, b) => b[0] - a[0])) {
     const newlines = text.slice(start, end).replace(/[^\n]/g, "");
-    out = out.slice(0, start) + newlines + out.slice(end);
+    // `a/** x */b` must not become `ab`: an inline comment between two tokens leaves a space.
+    const joins = newlines === "" && /\S/.test(out[start - 1] ?? " ") &&
+      /\S/.test(out[end] ?? " ");
+    out = out.slice(0, start) + (joins ? " " : newlines) + out.slice(end);
   }
   return out;
+}
+
+function transpiledCode(path: string, text: string): string {
+  const { outputText } = ts.transpileModule(text, {
+    fileName: path,
+    compilerOptions: {
+      removeComments: true,
+      target: ts.ScriptTarget.ESNext,
+      module: ts.ModuleKind.ESNext,
+    },
+  });
+  return outputText.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Why a stripped file must not be published, or `null` when it compiles to the same code as its
+ * original (comments and whitespace aside). Run on every rewritten file, so the published bytes
+ * provably differ from the tag only in comments.
+ *
+ * @param path The file's repo-relative path.
+ * @param original The file's source as tagged.
+ * @param stripped What {@link stripForPublish} made of it.
+ * @returns The message to stop the release with.
+ */
+export function strippedCodeProblem(
+  path: string,
+  original: string,
+  stripped: string,
+): string | null {
+  if (original === stripped) return null;
+  if (transpiledCode(path, original) === transpiledCode(path, stripped)) return null;
+  return `${path}: the comment strip changed the code, not just comments`;
 }
 
 /**
@@ -147,16 +183,18 @@ export function publishSizeProblem(bytes: number): string | null {
  * Measure the publish set as it goes out, optionally rewriting it in place.
  *
  * @param write Rewrite the files too (publish.yml's checkout only).
- * @returns The set's size before and after stripping, `null` outside a git checkout.
+ * @returns The set's size before and after stripping, and every file whose code the strip changed
+ * (see {@link strippedCodeProblem}); `null` outside a git checkout.
  */
 export async function measurePublishSet(
   write = false,
-): Promise<{ before: number; after: number } | null> {
+): Promise<{ before: number; after: number; changedCode: string[] } | null> {
   const files = await publishedFiles();
   if (!files) return null;
   const root = new URL("../", import.meta.url);
   const encoder = new TextEncoder();
   let before = 0, after = 0;
+  const changedCode: string[] = [];
   for (const [path, size] of files) {
     before += size;
     if (!/\.m?ts$/.test(path)) {
@@ -167,9 +205,14 @@ export async function measurePublishSet(
     const text = await Deno.readTextFile(url);
     const stripped = stripForPublish(path, text);
     after += encoder.encode(stripped).length;
+    const problem = strippedCodeProblem(path, text, stripped);
+    if (problem) {
+      changedCode.push(problem);
+      continue; // never write a file whose code the strip changed
+    }
     if (write && stripped !== text) await Deno.writeTextFile(url, stripped);
   }
-  return { before, after };
+  return { before, after, changedCode };
 }
 
 if (import.meta.main) {
@@ -180,9 +223,8 @@ if (import.meta.main) {
   }
   const mib = (n: number) => (n / 1024 / 1024).toFixed(2);
   console.log(`@denext/denext: ${mib(measured.before)} MiB → ${mib(measured.after)} MiB published`);
+  for (const problem of measured.changedCode) console.error(problem);
   const problem = publishSizeProblem(measured.after);
-  if (problem) {
-    console.error(problem);
-    Deno.exit(1);
-  }
+  if (problem) console.error(problem);
+  if (problem || measured.changedCode.length) Deno.exit(1);
 }

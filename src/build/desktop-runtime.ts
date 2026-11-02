@@ -58,6 +58,7 @@ import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 import toolchainPinJson from "./deno-toolchain-pin.json" with { type: "json" };
 import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
 import { warnStockDeprecation } from "./stock-deprecation.ts";
+import { ghPath } from "../utils/system-programs.ts";
 import {
   decideRevocation,
   findRevocation,
@@ -452,8 +453,21 @@ async function downloadVerified(
 /** Run a program to completion with inherited output; resolves its exit code. */
 export type RuntimeCommandRunner = (cmd: string, args: string[]) => Promise<number>;
 
+/**
+ * The program a default runner starts for `cmd`: the GitHub CLI from where its installers put it
+ * ({@link ghPath}), never a `gh` found through PATH; a missing one is `NotFound`, as a missing
+ * program on PATH is.
+ */
+function runnable(cmd: string): string {
+  if (cmd !== "gh") return cmd;
+  const gh = ghPath();
+  if (gh === null) throw new Deno.errors.NotFound("gh: the GitHub CLI is not installed");
+  return gh;
+}
+
 const defaultRunner: RuntimeCommandRunner = async (cmd, args) =>
-  (await new Deno.Command(cmd, { args, stdout: "inherit", stderr: "inherit" }).output()).code;
+  (await new Deno.Command(runnable(cmd), { args, stdout: "inherit", stderr: "inherit" }).output())
+    .code;
 
 /**
  * The workflow (in the runtime's repository) that builds and attests every pinned runtime
@@ -546,7 +560,7 @@ export type CaptureRunner = (
 ) => Promise<{ code: number; text: string }>;
 
 const capture: CaptureRunner = async (cmd, args) => {
-  const out = await runToExit(cmd, { args });
+  const out = await runToExit(runnable(cmd), { args });
   const d = new TextDecoder();
   return { code: out.code, text: d.decode(out.stdout) + d.decode(out.stderr) };
 };

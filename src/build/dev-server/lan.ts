@@ -10,6 +10,7 @@ import { encodeQr, renderQrTerminal } from "../../utils/qr-code.ts";
 // The strict loopback test lives in one place (used as a security gate by `denext desktop dev`).
 // Imported for lan.ts's own use AND re-exported so lan.ts's callers keep importing it from here.
 import { isLoopbackHost } from "../../utils/loopback.ts";
+import { type IsFile, systemToolPath } from "../../utils/system-programs.ts";
 
 /** The slice of `Deno.NetworkInterfaceInfo` the selection reads (so tests can inject it). */
 export interface LanInterface {
@@ -56,14 +57,36 @@ export function parseDefaultRoute(os: string, listing: string): string | null {
   return routes[0]?.[1] ?? null;
 }
 
-/** The OS's own answer to which interface has the default route; `null` when it can't be asked. */
-function defaultRouteInterface(): string | null {
-  const os = Deno.build.os;
-  const [command, ...args] = os === "linux"
+/**
+ * The command that lists the default route: `ip -4 route show default` on Linux, `route print -4
+ * 0.0.0.0` on Windows, `route -n get default` elsewhere, each by the OS's own absolute path (never a
+ * program of that name found through PATH).
+ *
+ * @param os The OS (default: this one).
+ * @param isFile Checks a path (default: `Deno.statSync`).
+ * @param env Reads an environment variable (default: `Deno.env.get`).
+ * @returns The program's absolute path and its arguments, or `null` when the OS has no such tool.
+ */
+export function defaultRouteCommand(
+  os: string = Deno.build.os,
+  isFile?: IsFile,
+  env?: (name: string) => string | undefined,
+): [string, ...string[]] | null {
+  const [tool, ...args] = os === "linux"
     ? ["ip", "-4", "route", "show", "default"]
     : os === "windows"
     ? ["route", "print", "-4", "0.0.0.0"]
-    : ["/sbin/route", "-n", "get", "default"];
+    : ["route", "-n", "get", "default"];
+  const command = systemToolPath(tool, os, isFile, env);
+  return command === null ? null : [command, ...args];
+}
+
+/** The OS's own answer to which interface has the default route; `null` when it can't be asked. */
+function defaultRouteInterface(): string | null {
+  const os = Deno.build.os;
+  const found = defaultRouteCommand(os);
+  if (found === null) return null;
+  const [command, ...args] = found;
   try {
     // Never a permission prompt: without --allow-run the name heuristic decides.
     if (Deno.permissions.querySync({ name: "run", command }).state !== "granted") return null;
