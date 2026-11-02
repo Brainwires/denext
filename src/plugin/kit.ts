@@ -182,7 +182,7 @@ export { bundleRoutes, platformClientRedirects } from "../build/plugin-kit-build
 // ── CSS pipeline (build step) ──────────────────────────────────────────────
 // Compile and collect a route's CSS the same way the core App Router does.
 export { buildAppCss, extractRouteCss } from "../build/plugin-kit-build.ts";
-export type { AppCss } from "../build/plugin-css.ts";
+export type { AppCss, CssAssets } from "../build/plugin-css.ts";
 
 // ── Client hydration & fast refresh ────────────────────────────────────────
 // Hydrate a plugin-rendered tree in the browser, and register component families
