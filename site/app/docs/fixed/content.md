@@ -33,7 +33,7 @@ project, never through a symlink in it that leads elsewhere, and that takes only
 mappings from its `deno.json`) and network access to jsr.io, to fetch denext itself:
 
 ```sh
-deno run --allow-read --allow-env --allow-run --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
+deno run --no-config --allow-read --allow-env --allow-run --allow-net=jsr.io jsr:@denext/denext/cli migrate --check
 ```
 
 Add `--json` for a machine-readable report. See

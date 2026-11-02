@@ -111,6 +111,7 @@ const DESKTOP_ACTIONS: Record<
 export const desktopCommand: CommandSpec = {
   ...commandMeta("desktop"),
   moduleDir: desktopDir,
+  inspectsOnly: (ctx) => ["doctor", "add"].includes(ctx.positionals[0]),
   // `package` writes dist/ and runs the packaging script, whose `deno task export` child takes
   // the build dir and out/ itself — so the parent locks dist/ only (rank 0, below the child's).
   locks: (ctx) =>

@@ -96,6 +96,7 @@ on:
       - "src/build/json-edit.ts"
       - "src/build/config-edit.ts"
       - "src/build/config-files.ts"
+      - "src/build/config-static.ts"
       - "src/build/workspace-imports.ts"
       - "src/build/patch-diff.ts"
       - "src/build/css-config-guard.ts"

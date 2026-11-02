@@ -6,7 +6,8 @@ lead: denext doctor renders every route and checks the project; denext audit inv
 
 ## `denext doctor`
 
-`denext doctor` runs a series of checks — Deno version, app directory, config
+`denext doctor` runs the project's code, with every permission the CLI holds, so run it on a
+repository you trust ([what runs what](/docs/security#untrusted-repositories)). It runs a series of checks — Deno version, app directory, config
 load (a malformed `denext.config.ts` is a failed check, not a crash) and
 in-process **route conformance** — exiting non-zero when a critical one fails.
 Conformance renders **every route** on the real SSR path, expanding dynamic
@@ -96,10 +97,10 @@ Deno's audit alone.
 
 ## `denext info`
 
-`denext info` prints environment and project facts — no checks, no rendering: the
-denext version, the Deno and V8 versions, the platform (`os/arch`), the project
-directory, the resolved config file path (or `— (using defaults)`), the mode
-(`app-router` or `spa`), and the resolved app directory. With `--json` the same
+`denext info` prints environment and project facts — no checks, no rendering, and none of the
+project's code runs: the denext version, the Deno and V8 versions, the platform (`os/arch`), the
+project directory, the resolved config file path (or `— (using defaults)`), the mode (`app-router`
+or `spa`, as the config writes it; `unknown` when code computes it), and the resolved app directory. With `--json` the same
 facts come back as an object — the quickest thing to paste into a bug report. Given a
 module, file or URL instead of a directory, `denext info <module>` is Deno's `deno info`
 for it (its flags pass through); Deno's cache locations are `denext deno info`.
