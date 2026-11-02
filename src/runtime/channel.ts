@@ -30,7 +30,11 @@
 // ends a key's (or one peer's) subscriptions immediately, cluster-wide. Payloads are validated
 // on the PUBLISHER side (a schema failure is a server bug thrown at the publisher, never sent)
 // and byte-capped. The channel id is an opaque hash assigned at export from a "use server"
-// module (like an action id); the browser only ever sees that id.
+// module (like an action id); the browser only ever sees that id. A payload read for a
+// particular subscriber (rows under their row-level security) is published with the `grant` it
+// was read under, and `authorize` admits a subscriber under a grant: the hub delivers a stamped
+// publish only where the two match, on whichever instance the subscriber is — so a subscription
+// re-admitted under other claims, there or elsewhere, never gets a frame read under the old ones.
 
 import {
   ActionValidationError,
@@ -76,8 +80,15 @@ export interface ChannelConfig<T> {
   schema?: StandardSchemaV1<T>;
   /** Accepted key shape (default `/^[A-Za-z0-9_:.\-]{1,128}$/`). */
   key?: RegExp | ((key: string) => boolean);
-  /** REQUIRED: may this subscriber receive `key`? Runs in the subscriber's session. */
-  authorize: (ctx: ChannelContext, key: string) => boolean | Promise<boolean>;
+  /**
+   * REQUIRED: may this subscriber receive `key`? Runs in the subscriber's session. `true` admits
+   * it, `false` refuses; `{ allow: true, grant }` admits it under a grant
+   * ({@linkcode ChannelAdmission}), so a publish stamped with another grant is not sent to it.
+   */
+  authorize: (
+    ctx: ChannelContext,
+    key: string,
+  ) => boolean | ChannelAdmission | Promise<boolean | ChannelAdmission>;
   /** Re-authorize a subscriber lazily after this many seconds (default: `live.limits.channelAuthTtlSeconds`). */
   authTtlSeconds?: number;
   /**
@@ -146,20 +157,54 @@ export type ChannelPublisher<T> = (ctx: ChannelPublisherContext<T>) => unknown;
 /** Why a channel key lost its last local subscriber (see {@linkcode ChannelConfig.onIdle}). */
 export type ChannelIdleReason = "unsubscribe" | "disconnect";
 
+/**
+ * What {@linkcode ChannelConfig.authorize} answers to admit a subscriber under a grant: an
+ * opaque, short text for what it may read (a digest of its role and claims, say — never the
+ * claims themselves: it travels between instances). The Live hub then sends it a publish stamped
+ * with a grant ({@linkcode ChannelPublishOptions.grant}) only when the two are equal, and every
+ * unstamped publish as before. The grant is recorded again at each re-authorization, so a
+ * subscriber whose claims changed is matched against what it may read now.
+ */
+export interface ChannelAdmission {
+  /** Admitted. */
+  allow: true;
+  /** What it was admitted to read, as the publisher stamps it. */
+  grant: string;
+}
+
+/** Options of {@linkcode Channel.publish}. */
+export interface ChannelPublishOptions {
+  /**
+   * The grant the payload was read under (the same text `authorize` answers for a subscriber
+   * who may read it, {@linkcode ChannelAdmission.grant}). The hub sends the publish only to the
+   * subscribers admitted under this grant, on any instance; a subscriber admitted with a plain
+   * `true` has none and gets no stamped publish. Server-side only: the stamp rides the
+   * transport and the replay log, never a frame to the browser.
+   */
+  grant?: string;
+}
+
 /** A channel on the server. */
 export interface Channel<T> {
   /** The stable id (assigned at export, or the explicit `id`). */
   readonly denextChannelId: string;
-  /** Validate, encode once, and deliver to every authorized subscriber of `key` on every instance. */
-  publish(key: string, payload: T): Promise<void>;
+  /**
+   * Validate, encode once, and deliver to every authorized subscriber of `key` on every instance
+   * (stamped with `options.grant`: only to those admitted under that grant).
+   */
+  publish(key: string, payload: T, options?: ChannelPublishOptions): Promise<void>;
   /** End every subscription to `key` (or one peer's); the client sees `denied`. Cluster-wide. */
   revoke(key: string, opts?: { peerId?: string }): void;
   /**
-   * Drop this instance's publishes of `key` that its Live hub has not yet sent to a subscriber:
+   * Drop THIS instance's publishes of `key` that its Live hub has not yet sent to a subscriber:
    * those inside the hub's coalescing window, or still in the transport. Later publishes are
-   * delivered as usual. For a key whose next subscriber must not get what was published for an
-   * earlier one (a subscription re-authorized under other claims); publishes from other
-   * instances, and frames already held for a connected subscriber, are not reached.
+   * delivered as usual. Per instance: another instance's publishes of the key — in its hub's
+   * window, or on their way through a shared transport — are not reached, nor are frames already
+   * held for a connected subscriber. A key whose next subscriber must not get what was published
+   * for an earlier one (a subscription re-authorized under other claims, on any instance) is
+   * protected by stamping its publishes with a `grant` and having `authorize` answer one
+   * ({@linkcode ChannelPublishOptions.grant}); `discard` is the local complement, not that
+   * guarantee.
    */
   discard(key: string): void;
   /** Phantom — carries the payload type for `useChannel`. */
@@ -198,6 +243,11 @@ export interface ChannelEvent {
   enc?: 1;
   /** The publish's replay-log cursor (`publish` on a channel with `history`). */
   cursor?: string;
+  /**
+   * The grant the payload was read under (`publish`, {@linkcode ChannelPublishOptions.grant}):
+   * a hub sends it only to a subscriber admitted under the same one. Never sent to a browser.
+   */
+  grant?: string;
   /** Per-instance, per-key monotonic sequence (`publish`; `0` otherwise). */
   seq: number;
   /** The publishing instance's id (frames from one instance are ordered by `seq`). */
@@ -257,7 +307,10 @@ export interface ChannelInternals {
   /** Is `key` an acceptable key for this channel? */
   keyOk(key: string): boolean;
   /** The subscriber gate (may be missing at runtime → the hub answers `no-policy`). */
-  authorize?: (ctx: ChannelContext, key: string) => boolean | Promise<boolean>;
+  authorize?: (
+    ctx: ChannelContext,
+    key: string,
+  ) => boolean | ChannelAdmission | Promise<boolean | ChannelAdmission>;
   /** Per-channel re-auth TTL override. */
   authTtlSeconds?: number;
   /** The replay-log retention (`history`), when the channel keeps one. */
@@ -355,7 +408,7 @@ export function createChannel<T>(config: ChannelConfig<T>): Channel<T> {
   };
   const channel: Channel<T> = {
     denextChannelId: internals.id,
-    publish: (key, payload) => publish(internals, config.schema, key, payload),
+    publish: (key, payload, options) => publish(internals, config.schema, key, payload, options),
     revoke: (key, opts) => revoke(internals, key, opts?.peerId),
     discard: (key) => discard(internals, key),
   };
@@ -553,11 +606,28 @@ function nextSeq(seqKey: string): number {
   return seq;
 }
 
+/**
+ * What an `authorize` answer admits: `true` (or any other non-object truthy value) admits with no
+ * grant, `{ allow: true, grant }` admits under that grant, anything else refuses. The hub and
+ * the authorized tap read every answer through this, so an object with another shape (a user
+ * record returned as "truthy", say) refuses rather than admits.
+ *
+ * @param answer What `authorize` returned.
+ * @returns Whether to admit, and under which grant.
+ */
+export function admissionOf(answer: unknown): { allow: boolean; grant?: string } {
+  if (answer === null || typeof answer !== "object") return { allow: Boolean(answer) };
+  const { allow, grant } = answer as { allow?: unknown; grant?: unknown };
+  if (allow !== true) return { allow: false };
+  return typeof grant === "string" && grant !== "" ? { allow: true, grant } : { allow: true };
+}
+
 async function publish<T>(
   ch: ChannelInternals,
   schema: StandardSchemaV1<T> | undefined,
   key: string,
   payload: T,
+  options?: ChannelPublishOptions,
 ): Promise<void> {
   if (!ch.keyOk(key)) throw new TypeError(`channel.publish: invalid key ${JSON.stringify(key)}`);
   if (!ch.id) {
@@ -581,6 +651,8 @@ async function publish<T>(
     instance: shared.instance,
   };
   if (p.tagged) ev.enc = WIRE_ENC;
+  const grant = options?.grant;
+  if (typeof grant === "string" && grant !== "") ev.grant = grant;
   if (ch.history) await logPublish(ch.id, key, ev, ch.history);
   await currentTransport().publish(ev);
 }
@@ -596,7 +668,10 @@ async function logPublish(
   history: ChannelHistory,
 ): Promise<void> {
   try {
-    ev.cursor = await channelLog().append(id, key, { encoded: ev.encoded!, enc: ev.enc }, history);
+    const entry: { encoded: string; enc?: 1; grant?: string } = { encoded: ev.encoded! };
+    if (ev.enc) entry.enc = ev.enc;
+    if (ev.grant !== undefined) entry.grant = ev.grant;
+    ev.cursor = await channelLog().append(id, key, entry, history);
   } catch (err) {
     if (shared.warnedLog) return;
     shared.warnedLog = true;
@@ -724,8 +799,11 @@ export function broadcastChannelTransport(
 
 /** What {@link tapChannel} reports. */
 export interface ChannelTapHandlers<T> {
-  /** A payload published to the key (decoded; `seq` orders publishes from one instance). */
-  onPayload: (payload: T, seq: number) => void;
+  /**
+   * A payload published to the key (decoded; `seq` orders publishes from one instance; `grant`
+   * is the one it was published under, {@linkcode ChannelPublishOptions.grant}, if any).
+   */
+  onPayload: (payload: T, seq: number, grant?: string) => void;
   /**
    * The key was revoked cluster-wide — or, when {@linkcode ChannelTapHandlers.peerId} is set, for
    * that peer. Any other peer-scoped revoke is not reported.
@@ -785,7 +863,7 @@ export function tapChannel<T>(
       // into the transport (which would starve later subscribers and reject the publisher).
       try {
         const parsed = JSON.parse(ev.encoded);
-        handlers.onPayload((ev.enc ? decodeWire(parsed) : parsed) as T, ev.seq);
+        handlers.onPayload((ev.enc ? decodeWire(parsed) : parsed) as T, ev.seq, ev.grant);
       } catch (err) {
         console.error(`denext channels: tap on ${id}/${key} failed`, err);
       }

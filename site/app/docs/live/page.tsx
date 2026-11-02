@@ -346,10 +346,17 @@ const { data: event } = useChannel(orderEvents, \`user:\${userId}\`);`}
           {" "}
           <code>channel.revoke(key)</code>{" "}
           ends access immediately, cluster-wide. An unknown channel id is <code>denied</code>.{" "}
-          <code>channel.discard(key)</code>{" "}
+          A payload read for a particular subscriber (rows under their row-level security) is
+          published with the grant it was read under,{" "}
+          <code>{"publish(key, payload, { grant })"}</code>, and <code>authorize</code>{" "}
+          admits a subscriber under one,{" "}
+          <code>{"{ allow: true, grant }"}</code>: the hub sends a stamped publish only where the
+          two match, on whichever instance the subscriber is (recorded again at each
+          re-authorization; an unstamped publish goes to every subscriber). The stamp never reaches
+          the browser. <code>channel.discard(key)</code>{" "}
           drops this instance&apos;s publishes of a key its hub has not sent yet (the 16 ms burst
-          window), for a key whose next subscriber must not get what was published for an earlier
-          one.
+          window) — per instance only: for a key whose next subscriber must not get what was
+          published for an earlier one, stamp the publishes.
         </li>
         <li>
           <strong>Delivery.</strong>{" "}

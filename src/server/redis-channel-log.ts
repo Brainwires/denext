@@ -20,11 +20,12 @@ export interface RedisChannelLogOptions {
   prefix?: string;
 }
 
-/** A logged entry as stored: cursor, payload, codec flag, expiry (epoch ms). */
+/** A logged entry as stored: cursor, payload, codec flag, grant, expiry (epoch ms). */
 interface Stored {
   c: string;
   v: string;
   e?: 1;
+  g?: string;
   x: number;
 }
 
@@ -64,6 +65,7 @@ export function redisChannelLog(
         c: cursor,
         v: entry.encoded,
         ...(entry.enc ? { e: entry.enc } : {}),
+        ...(entry.grant !== undefined ? { g: entry.grant } : {}),
         x: expires,
       };
       const zkey = keyOf(channelId, key);
@@ -82,6 +84,7 @@ export function redisChannelLog(
         cursor: s.c,
         encoded: s.v,
         ...(s.e ? { enc: s.e } : {}),
+        ...(typeof s.g === "string" ? { grant: s.g } : {}),
       } as ChannelLogEntry));
     },
   };

@@ -882,7 +882,11 @@ tenant; a refreshed token is the same claims) — `stale` turns true and `onResy
    loss, or a reconnect re-authorized under other claims (the frames kept for it were read under
    the old ones, and are dropped), is `{ resync: true }` instead; a reconnect answered by neither
    within 10 seconds (the subscription was dropped, or the socket reached another instance) marks
-   the hook `stale`.
+   the hook `stale`. Every frame is published under a digest of the grant (role and claims) it was
+   read as, and every subscriber is admitted under the grant it has, so the Live hub — on any
+   instance, behind a shared channel transport too — never sends a frame read under other claims
+   than the subscriber's; one it drops that way is a sequence gap, which the hook answers with
+   `stale`.
 
 **Who receives what.** The subscription key holds the table, the filter and a 128-bit random value
 the browser picks; the first subscriber binds it to their identity (the user's id, or anon; for a

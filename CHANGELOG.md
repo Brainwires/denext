@@ -8,6 +8,35 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **A channel publish carries the grant it was read under, and `authorize` admits under one.**
+  `channel.publish(key, payload, { grant })` stamps the publish with an opaque text for what it
+  was read as (a digest of a role and claims, say), and `authorize` may answer
+  `{ allow: true, grant }` instead of `true` (`ChannelAdmission`). The Live hub sends a stamped
+  publish only to the subscribers admitted under the same grant — recorded at subscribe and at
+  every re-authorization, matched on whichever instance the publish came from — and an unstamped
+  one to every subscriber as before; a stamped publish logged for replay (`history`) is replayed
+  under the same rule, and `tapChannelAuthorized` applies it to a viewer's tap. The stamp travels
+  between instances and never in a frame to the browser; `authorize`'s answer is read strictly
+  (an object admits only with `allow: true`). The dev panel's channel pushes say how many of a
+  key's subscribers a stamped publish was not for.
+
+### Security
+
+- **Realtime: a reconnect under other claims on another instance gets no frame read under the
+  old ones.** 4.11.1 closed the Live hub's flush window for a `useTableChanges` subscriber
+  re-authorized under other claims on the SAME instance (`channel.discard`), but the discard is
+  per instance: with a shared channel transport (`redisChannelTransport`) and no sticky sessions, a
+  frame instance A had read under the old claims could still be fanned out by instance B to the
+  reconnect that landed there. The realtime engine now publishes every frame under the SHA-256 of
+  the grant it was read as and admits every subscriber under the grant it has, so a hub on any
+  instance drops a frame read under another grant; the same-instance discard stays as a local
+  complement. A frame dropped that way shows the subscriber a sequence gap, which `useTableChanges`
+  already answers with `stale` and a re-read. The Supabase Realtime protocol
+  (`/realtime/v1/websocket`) delivers each binding's frames to its own socket in-process and never
+  over the transport, so it was not exposed.
+
 ## [4.11.12] - 2026-11-02
 
 ### Changed
