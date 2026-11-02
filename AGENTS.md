@@ -687,7 +687,7 @@ The window: `denext/desktop/window` (no `desktop add`) — `maximizeWindow` / `m
 `setTitleBarStyle` / `setWindowButtonPosition` / `setWindowBackdrop` (Mica / Acrylic / vibrancy),
 `makeWindowDraggable(el)` for a hidden title bar (a double click does the user's title-bar action),
 `getTitleBarPreferences()` / `onTitleBarPreferencesChange` (the user's button side and order,
-double-click action, colour scheme — for an app-drawn title bar), `onCloseRequested(() => boolean)` (cancelable close),
+double-click action, colour scheme — for an app-drawn title bar), `onCloseRequested(({ reason }) => boolean)` (cancelable close; `reason` is `"close"` or `"quit"`, so a close-to-tray guard lets a quit through), `onBeforeQuit`,
 `closeWindow` / `quitApp`, `onFileDrop` (read-only picked handles) and
 `startFileDrag([{ directory: "cache", path } | { directory: { picked } }])`; first-window config is
 `desktop.window` / `titleBar` / `backdrop` / `minSize` / `maxSize`. All but size, position, title and
@@ -712,7 +712,7 @@ origin; `desktop.app.bridgeOrigins` adds others). The window stays on that origi
 navigation anywhere else (a link, a script, a redirect, `window.open`) opens an `http(s)` URL in
 the user's browser and drops any other, unless `desktop.app.allowedNavigationOrigins` lists it
 (exact origins, such as an identity provider that signs in inside the window). It takes effect under denext's pinned Deno Desktop runtime, which
-`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.6 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
+`denext desktop` and the package scripts download and SHA-256-verify (Deno 2.9.8 exactly: stock, or denext's Deno toolchain built from it; denext pins runtime 3.0.0-denext.7 and needs at least 2.9.7-denext.14, and the runtime takes its own version from 3.0.0-rc.1 on: `3.0.0-rc.N`, then `3.0.0-denext.N`, which denext orders above every rc; there is no upstream 3.0 (upstream stays on 2.9.x LTS, and denext's runtime is the forward line), and from 3.0.0-rc.3 denext tells its Deno by `Deno.build.denext` and the `denext <version> (Brainwires)` line of `deno --version`, never the version alone; what it changes and why: https://denext.dev/docs/desktop-runtime;
 `DENEXT_DESKTOP_RUNTIME=stock` opts out, and the stock runtime keeps the loopback origin); the gates
 detect which one they run under. Packaging is per target, not per host: Linux and Windows apps
 package from any host under the pinned runtime; macOS apps package on a Mac. `denext desktop run` /
@@ -1202,7 +1202,9 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `mobile dev|build`,
   project verbs) re-run themselves on denext's pinned Deno build (a `3.0.0-rc.N` release built from Deno
   2.9.8: `Deno.SQL`, Vitest/Jest compat in `deno test`), downloaded and SHA-256-verified into
-  `<DENO_DIR>/denext-deno/` on first need; the `deno` on PATH is never replaced (every API, flag
+  `<DENO_DIR>/denext-deno/` on first need (`migration`, `db` and `gen` run project code too, as they
+  import `denext.config.*`, but under `deno run` stay on the Deno that started them and hand the
+  toolchain to their children); the `deno` on PATH is never replaced (every API, flag
   and env var it adds over Deno 2.9.8, by version: https://denext.dev/docs/runtime-reference). `DENEXT_DENO=stock`
   opts out (deprecated: denext 5.0 drops stock Deno; every stock path — `DENEXT_DENO=stock`,
   `DENEXT_DESKTOP_RUNTIME=stock`, the npm esbuild, `createTestApp()` under a stock `deno test` —
@@ -1237,13 +1239,15 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `migrate` / `create` / `add` write the `supplyChain.jailScripts.packages` exceptions known
   packages (puppeteer, sharp, Prisma's engines, electron, …) need (into the workspace root's
   deno.json, the only one Deno reads; download hosts instead of `net: true` from runtime
-  3.0.0-rc.6, which denext's 3.0.0-denext.6 pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
+  3.0.0-rc.6, which denext's 3.0.0-denext.7 pin includes) and `denext doctor` flags a missing one; never turn the jail off for them:
   https://denext.dev/docs/toolchain#supply-chain-lifecycle-script-jail.
 - **Every Deno verb works through `denext`**: a verb denext doesn't define runs on the toolchain
   exactly like `denext deno <verb>` (`denext compile …`, `denext run …`, `denext x …`, `denext
   bench`), and `denext main.ts` / `denext https://…/x.ts` is `deno run`. Precedence: denext's
   built-in verbs, then the project's own (`commands:` / plugins), then Deno's. A script or a Deno
-  verb never imports `denext.config.ts` first (only a name that may be a project verb does); a
+  verb never imports `denext.config.ts` first (only a name that may be a project verb does: one
+  the fresh listing holds, or, unless it is `<name> --help`, any name when the config's text declares
+  or could hide `commands` / `plugins`; this narrows typos, a hostile config still runs by declaring them); a
   project verb may not be named `run`, `x`, `eval`, `serve`, `compile`, `install`, `uninstall`,
   `upgrade` or `task` (refused), and one named after another Deno verb (`bench`, `doc`, …) runs
   in its place only once `denext commands` has listed it (`.denext/commands.json`, matching the

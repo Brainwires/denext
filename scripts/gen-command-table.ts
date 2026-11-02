@@ -59,6 +59,7 @@ export const OFFLINE_OUT: string = join(CLI_DIR, "offline-modules.generated.ts")
 export const ENTRY_LAZY_MODULES: readonly string[] = [
   "./run-verb.ts",
   "./plugin-commands.ts",
+  "./unknown-verb.ts",
   "./commands/deno-toolchain.ts",
 ];
 

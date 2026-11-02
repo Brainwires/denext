@@ -15,7 +15,8 @@
  * - `state`: the window was maximized / unmaximized / minimized / restored / entered or left
  *   fullscreen — the page reads `state`.
  * - `display`: displays were added, removed or rescaled — the page reads `screens`.
- * - `closeRequested` `{ id }`: the user asked to close the window while the page guards the close.
+ * - `closeRequested` `{ id, reason }`: the window is asked to close while the page guards the close;
+ *   `reason` is `"close"` (its close button, Cmd+W / Alt+F4) or `"quit"` (the app is quitting).
  * - `drop`: files were dropped on the window — the page takes them with `takeDrops`.
  * - `titleBarPreferences`: the user changed their title bar settings — the page reads
  *   `titleBarPreferences` (runtime 2.9.7-denext.12).
@@ -33,6 +34,14 @@
  * page acknowledges (`closeAck`, which proves it is alive) and answers (`closeRespond`). A page
  * that never acknowledges cannot keep the window open: a close requested again after
  * {@link UNRESPONSIVE_MS} closes it. A new page load drops the guard.
+ *
+ * Why the window closes. `Deno.desktop.quit()` (Electron's `app.quit()`: `quitApp()`, a Windows
+ * tray's Quit) fires a cancelable `beforequit` and then a cancelable `close` on every window, all
+ * synchronously; a `close` seen while that runs is a quit (`reason: "quit"`), any other a plain
+ * close. A guard set with `quitOnly` (the page has only `onBeforeQuit` handlers) holds quits and
+ * lets plain closes through. When the page lets a held quit go, the quit is issued again with that
+ * window's approval recorded ({@link QuitState}), so a window that already agreed is not asked
+ * twice while another one is asked; a refusal ends the quit and drops every approval.
  *
  * Dropped files are untrusted input like opened files: the page gets READ-ONLY picked handles
  * ({@link PickedPaths} — `read` for a file, `readFolder` for a folder), never authority from a path.
@@ -519,8 +528,65 @@ interface WindowState {
   readonly now: () => number;
   readonly drops: QueuedDrop[];
   guard: boolean;
-  pending: { id: string; at: number; acked: boolean } | undefined;
+  /** The guard holds only quits (the page has `onBeforeQuit` handlers but no close handlers). */
+  guardQuitOnly: boolean;
+  pending: { id: string; at: number; acked: boolean; reason: CloseReason } | undefined;
   installed: boolean;
+}
+
+/** Why a guarded window is asked to close. */
+type CloseReason = "close" | "quit";
+
+/**
+ * The app-wide quit in progress, shared by every window over one runtime API: whether a
+ * `Deno.desktop.quit()` is dispatching its events right now, and the windows whose pages already
+ * let it go.
+ */
+interface QuitState {
+  /** A `beforequit` fired and its `close` events are being dispatched (reset after the task). */
+  quitting: boolean;
+  /** A page let the quit go and the controller is issuing it again. */
+  reissuing: boolean;
+  /** The windows whose pages let the current quit go. */
+  readonly approved: Set<WindowState>;
+}
+
+/** Each runtime API's quit state (one per app; a fresh one for a window with no API). */
+const quitStates = new WeakMap<object, QuitState>();
+
+/** The quit state shared over `api`, listening to its `beforequit` from the first use. */
+function quitStateOf(api: DesktopAppApi | undefined): QuitState {
+  const known = api ? quitStates.get(api) : undefined;
+  if (known) return known;
+  const q: QuitState = { quitting: false, reissuing: false, approved: new Set() };
+  if (!api) return q;
+  quitStates.set(api, q);
+  api.addEventListener?.("beforequit", () => {
+    // A quit from anywhere else starts over: every guarded page is asked again.
+    if (!q.reissuing) q.approved.clear();
+    q.quitting = true;
+    // `quit()` dispatches every `close` synchronously after this event.
+    queueMicrotask(() => {
+      q.quitting = false;
+    });
+  });
+  return q;
+}
+
+/** Issue the quit again once `s`'s page let it go (`true` when the app is quitting). */
+function reissueQuit(s: WindowState): boolean {
+  const q = quitStateOf(s.api);
+  if (typeof s.api?.quit !== "function") {
+    finishClose(s);
+    return true;
+  }
+  q.approved.add(s);
+  q.reissuing = true;
+  try {
+    return s.api.quit() === true;
+  } finally {
+    q.reissuing = false;
+  }
 }
 
 /** The window, or `unsupported` outside the desktop runtime. */
@@ -961,10 +1027,18 @@ function windowCloseAndDragMethods(s: WindowState): DesktopCapability["methods"]
   return {
     setCloseGuard: {
       handler: (args) => {
-        const enabled = bool(argsOf(args).enabled, "enabled");
+        const a = argsOf(args);
+        const enabled = bool(a.enabled, "enabled");
+        const quitOnly = a.quitOnly === undefined ? false : bool(a.quitOnly, "quitOnly");
         if (enabled && typeof s.api?.quit !== "function") throw unsupported("guard its close");
+        // Listen for quits before the first one can arrive.
+        if (enabled) quitStateOf(s.api);
         s.guard = enabled;
-        if (!enabled) s.pending = undefined;
+        s.guardQuitOnly = enabled && quitOnly;
+        if (!enabled) {
+          s.pending = undefined;
+          quitStateOf(s.api).approved.delete(s);
+        }
         return null;
       },
     },
@@ -973,15 +1047,21 @@ function windowCloseAndDragMethods(s: WindowState): DesktopCapability["methods"]
         const id = argsOf(args).id;
         if (s.pending === undefined || s.pending.id !== id) return { current: false };
         s.pending.acked = true;
-        return { current: true };
+        return { current: true, reason: s.pending.reason };
       },
     },
     closeRespond: {
       handler: (args) => {
         const a = argsOf(args);
-        if (s.pending === undefined || s.pending.id !== a.id) return { closing: false };
+        const pending = s.pending;
+        if (pending === undefined || pending.id !== a.id) return { closing: false };
         s.pending = undefined;
-        if (a.close !== true) return { closing: false };
+        if (a.close !== true) {
+          // A refused quit is over: the next one asks every page again.
+          if (pending.reason === "quit") quitStateOf(s.api).approved.clear();
+          return { closing: false };
+        }
+        if (pending.reason === "quit") return { closing: reissueQuit(s) };
         finishClose(s);
         return { closing: true };
       },
@@ -1012,20 +1092,40 @@ function windowCloseAndDragMethods(s: WindowState): DesktopCapability["methods"]
   };
 }
 
+/**
+ * Whether the guard holds a close for `reason`: a quit unless this window's page already let it
+ * go (another window held it), a plain close unless the guard holds quits only.
+ */
+function guardHolds(s: WindowState, q: QuitState, reason: CloseReason): boolean {
+  return reason === "quit" ? !q.approved.has(s) : !s.guardQuitOnly;
+}
+
+/** The page never acknowledged the last request in time: it cannot keep the window open. */
+function pageUnresponsive(s: WindowState): boolean {
+  const pending = s.pending;
+  if (!pending || pending.acked || s.now() - pending.at < UNRESPONSIVE_MS) return false;
+  s.pending = undefined;
+  return true;
+}
+
+/**
+ * Ask the page about a held close, unless it is already being asked; a quit while the page is
+ * asked about a plain close is asked again, as a quit.
+ */
+function askPage(s: WindowState, reason: CloseReason): void {
+  if (s.pending && (reason !== "quit" || s.pending.reason === "quit")) return;
+  s.pending = { id: crypto.randomUUID(), at: s.now(), acked: false, reason };
+  s.emit("closeRequested", { id: s.pending.id, reason });
+}
+
 /** The window's `close` listener hook (see {@linkcode WindowController.interceptClose}). */
 function interceptClose(s: WindowState, event: Event): boolean {
   if (!s.guard) return false;
-  const at = s.now();
-  if (s.pending && !s.pending.acked && at - s.pending.at >= UNRESPONSIVE_MS) {
-    // The page never acknowledged the last request: it cannot keep the window open.
-    s.pending = undefined;
-    return false;
-  }
+  const q = quitStateOf(s.api);
+  const reason: CloseReason = q.quitting ? "quit" : "close";
+  if (!guardHolds(s, q, reason) || pageUnresponsive(s)) return false;
   event.preventDefault();
-  if (!s.pending) {
-    s.pending = { id: crypto.randomUUID(), at, acked: false };
-    s.emit("closeRequested", { id: s.pending.id });
-  }
+  askPage(s, reason);
   return true;
 }
 
@@ -1067,6 +1167,7 @@ export function createWindowController(options: WindowControllerOptions): Window
     now: options.now ?? Date.now,
     drops: [],
     guard: false,
+    guardQuitOnly: false,
     pending: undefined,
     installed: false,
   };
@@ -1076,8 +1177,10 @@ export function createWindowController(options: WindowControllerOptions): Window
     onPageLoad: () => {
       // The page that guarded the close, or that files were dropped on, is gone.
       s.guard = false;
+      s.guardQuitOnly = false;
       s.pending = undefined;
       s.drops.length = 0;
+      quitStateOf(s.api).approved.delete(s);
     },
     methods: {
       ...windowStateMethods(s),

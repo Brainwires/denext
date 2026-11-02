@@ -613,6 +613,13 @@ the backup key (store it in the keychain as the `active` item), compile a new ba
 `jsr:@denext/denext@X.Y.Z` resolves · development → main PR merged · docs
 deployed.
 
+JSR refuses a package past 20 MiB of uncompressed files. For `@denext/denext`, the publish job runs
+`scripts/publish-strip.ts --write` first: it blanks whole-line `//` comments and the JSDoc outside
+the public API, keeping every line number, and fails over its 18.5 MiB guard. The release script and
+`tests/release-tools.test.ts` measure the same size. Run it with no flag to see the number. ci.yml's
+`check` job runs the strip and `deno publish --dry-run --allow-dirty` in a clone, so a commit that
+would fail there is stopped before a tag can exist.
+
 ## Conventions
 
 - **Zero-npm runtime:** nothing under

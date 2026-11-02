@@ -688,7 +688,7 @@ async function startServesCss(dir: string): Promise<boolean> {
  * verbs that don't load user modules.
  */
 async function moduleGate(command: CommandSpec, ctx: CommandContext): Promise<boolean> {
-  if (!command.loadsModules) return false;
+  if (!command.loadsModules || command.inspectsOnly?.(ctx)) return false;
   // Before anything below imports denext.config.ts (the CSS gate does): building, not serving,
   // so config helpers don't refuse a runtime secret the build environment doesn't have.
   if (command.name === "build" || command.name === "export") markBuildPhase();

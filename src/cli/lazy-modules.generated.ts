@@ -39,3 +39,4 @@ import "./commands/ui.ts";
 import "./commands/upgrade.ts";
 import "./plugin-commands.ts";
 import "./run-verb.ts";
+import "./unknown-verb.ts";

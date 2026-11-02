@@ -135,6 +135,11 @@ Deno.test("initialWindow: overlay only for a runtime that reads it (an older one
   assertEquals(desktopInitialWindow({ overlay: false }, true), undefined);
 });
 
+Deno.test("initialOverlayRuntime: denext's own pin writes the overlay keys", () => {
+  // The default version is the pin's: a pin below the gate would quietly drop desktop.window.overlay.
+  assertEquals(initialOverlayRuntime(() => undefined), true);
+});
+
 Deno.test("initialOverlayRuntime: the pinned runtime from 3.0.0-denext.7, never stock or a local build", () => {
   const env = (vars: Record<string, string>) => (k: string) => vars[k];
   assertEquals(FIRST_INITIAL_OVERLAY_RUNTIME, "3.0.0-denext.7");

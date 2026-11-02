@@ -5,7 +5,7 @@
 // are the files the real run would create, modify, move or delete, and the findings come from
 // the same result object the real run prints. Nothing is written, so it needs read access plus
 // run access for the `next.config.*` evaluator, which is a `deno` subprocess
-// (`deno run --allow-read --allow-env --allow-run …/cli migrate --check`). Without
+// (`deno run --no-config --allow-read --allow-env --allow-run …/cli migrate --check`). Without
 // `--allow-run` the config is reported as not evaluated, not as unportable.
 
 import { VERSION } from "../../mod.ts";

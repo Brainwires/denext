@@ -120,6 +120,19 @@ jobs:
         # next/cookies.ts) and reports false private-type-ref errors.
         run: deno task doc-lint
 
+      - name: Publish dry-run of the stripped package
+        # What publish.yml does to @denext/denext once the tag exists, here where a failure can
+        # still be fixed: the same stock Deno, the comment strip and its size guard, then
+        # `deno publish --dry-run --allow-dirty`. In a clone, as the strip rewrites its files.
+        run: |
+          copy="$RUNNER_TEMP/publish-dry-run"
+          git clone --quiet --no-hardlinks . "$copy"
+          cd "$copy"
+          deno run -A scripts/publish-strip.ts --write
+          deno publish --dry-run --allow-dirty > /dev/null
+          cd - > /dev/null
+          rm -rf "$copy"
+
       - name: Put denext's Deno toolchain on PATH
         # The pinned build users run (scripts/ci/toolchain-on-path.ts; verified, cached in DENO_DIR):
         # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
@@ -534,9 +547,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.6
-      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.6-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: 245877f281289e19dc12a9838f7e973c5da0205749b5977fd14fdfcc9e6cda2c
+      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.7
+      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.7-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: bf79848a32c2667a7798dee961ddbe108e04f36e90b5cab1b40e4dbf83888718
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 

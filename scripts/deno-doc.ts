@@ -54,8 +54,8 @@ export interface BoundedDenoOptions {
   readonly cwd?: string;
   /**
    * Extra environment (a `DENO_LOG` here replaces {@linkcode DENO_CHILD_LOG}). Every child runs
-   * with `NO_COLOR=1`: `deno doc --json` otherwise writes ANSI colour codes into a type's `repr`
-   * even with its stdout piped.
+   * with `NO_COLOR=1`: `deno doc --json` before denext's Deno 3.0.0-denext.7 (and on stock Deno)
+   * otherwise writes ANSI colour codes into a type's `repr` even with its stdout piped.
    */
   readonly env?: Record<string, string>;
   /** Each attempt's deadline in ms (default 120 s, or `DENEXT_CHILD_DEADLINE_MS`). */

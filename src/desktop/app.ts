@@ -419,8 +419,11 @@ export type ActivationPolicy = "regular" | "accessory" | "prohibited";
  * (`activationPolicy` in {@linkcode appCapabilities}); on an older runtime `"regular"` /
  * `"accessory"` show / hide the Dock icon as {@linkcode setDockVisible} does.
  *
+ * Windows and Linux have no policy: there `"regular"` shows the main window's taskbar entry and the
+ * others hide it, as `desktop.app.activationPolicy: "accessory"` hides it at launch.
+ *
  * @param policy The policy.
- * @returns Whether it applied: `false` on Windows and Linux, which have no policy.
+ * @returns Whether it applied (`false` where the runtime can't hide a taskbar entry).
  * @example
  * ```ts
  * import { setActivationPolicy } from "denext/desktop/app";

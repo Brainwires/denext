@@ -5,7 +5,7 @@
 
 import { ensureDir } from "@std/fs";
 import { dirname, join, resolve } from "@std/path";
-import { resolveProject } from "../../build/paths.ts";
+import { resolveProjectLayout } from "../../build/paths.ts";
 import { Ignorer } from "./gitignore.ts";
 
 /** One indexed window of a source file. */
@@ -90,7 +90,7 @@ async function* walkSources(
 
 /** The on-disk cache path for a project (`<project>/.denext/rag/codebase.json`). */
 async function cachePath(root: string): Promise<string> {
-  const paths = await resolveProject(root);
+  const paths = await resolveProjectLayout(root);
   return join(paths.outDir, "rag", "codebase.json");
 }
 

@@ -529,7 +529,7 @@ Deno.test("Lustre hub: a malformed mount (wire encoding, props that are not JSON
   assertEquals(hub.running(), 0, "nothing started");
 });
 
-Deno.test("Lustre hub: the connection and the view cap are checked again after each await", async () => {
+Deno.test("Lustre hub: one connection's mounts take the cap in arrival order; a close places nothing", async () => {
   // Every await of a mount (authorize, the viewer's identity) holds until the test lets it go.
   const held: Array<() => void> = [];
   let hold = false;
@@ -547,38 +547,28 @@ Deno.test("Lustre hub: the connection and the view cap are checked again after e
     held.splice(0, n).forEach((go) => go());
   };
 
-  // authorize (the view has one) is the first await: a second view placed meanwhile fills the cap.
+  // Two mounts on one connection with one slot: the first sent takes it, however their awaits
+  // (authorize, the props digest, the identity) would settle; the second waits in the
+  // connection's mount queue meanwhile, then is refused at the cap, in arrival order.
   const { id } = counterView();
   const c = conn();
   hold = true;
   const first = hub.mount(c, await mountFrame(id, { start: 1 }, "l1"));
+  const second = hub.mount(c, await mountFrame(id, { start: 2 }, "l2"));
   await waitHeld(1);
+  await new Promise((r) => setTimeout(r, 10));
+  assertEquals(held.length, 1, "the second mount waits behind the first");
   hold = false;
-  await hub.mount(c, await mountFrame(id, { start: 2 }, "l2"));
-  await next(c, isLustre(0));
   await release(1);
-  await first;
-  assertEquals((await next(c, isError("limit"))).subId, "l1", "re-checked after authorize");
+  await Promise.all([first, second]);
+  assertEquals((await next(c, isLustre(0))).vid, "l1");
+  assertEquals((await next(c, isError("limit"))).subId, "l2", "the cap is checked in order");
+  assertEquals([...c.lustreViews.keys()], ["l1"]);
   assertEquals(hub.running(), 1);
   hub.dispose();
 
-  // Without authorize, the viewer's identity is the await: two mounts race for the one slot.
-  // Both passed the admission cap check (both are held), and their awaits (the props digest, the
-  // identity) settle in either order, so either may win: the cap holds for whichever does.
   const { id: open } = counterView({ authorize: undefined });
-  const d = conn();
   hold = true;
-  const a = hub.mount(d, await mountFrame(open, { start: 1 }, "l1"));
-  const b = hub.mount(d, await mountFrame(open, { start: 2 }, "l2"));
-  await release(2);
-  await Promise.all([a, b]);
-  const placed = (await next(d, isLustre(0))).vid;
-  const refused = (await next(d, isError("limit"))).subId;
-  assertEquals([placed, refused].sort(), ["l1", "l2"], "re-checked after the identity");
-  assertEquals([...d.lustreViews.keys()], [placed]);
-  assertEquals(hub.running(), 1);
-  hub.dispose();
-
   // The socket closed while the identity was read: nothing is placed.
   const e = conn();
   const closing = hub.mount(e, await mountFrame(open, { start: 1 }, "l1"));
@@ -722,4 +712,78 @@ console.log(JSON.stringify({ grew: after - before, running: hub.running(), parke
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
+});
+
+/** A view whose `authorize` waits on the gate its props' `start` names (none: allowed at once). */
+function gatedView(gates: Map<number, PromiseWithResolvers<boolean>>, authorized: number[]) {
+  return counterView({
+    authorize: (props) => {
+      authorized.push(props.start);
+      return gates.get(props.start)?.promise ?? true;
+    },
+  });
+}
+
+Deno.test("Lustre hub: mounts on one connection are queued, cancelled by an unmount or close, and bounded", async () => {
+  const tick = (ms = 10) => new Promise((r) => setTimeout(r, ms));
+  const gates = new Map([[1, Promise.withResolvers<boolean>()]]);
+  const authorized: number[] = [];
+  const { id } = gatedView(gates, authorized);
+  const { hub, conn } = fakeHub({ maxViewsPerConnection: 1 });
+
+  // Arrival order: the slow first mount still takes the only slot; the second waits, then is
+  // refused at the cap.
+  const c = conn();
+  const first = hub.mount(c, await mountFrame(id, { start: 1 }, "l1"));
+  const second = hub.mount(c, await mountFrame(id, { start: 2 }, "l2"));
+  while (!authorized.includes(1)) await tick(1);
+  await tick();
+  assertEquals(authorized, [1], "the second mount waits behind the first");
+  // Another connection is not held up by it.
+  const other = conn();
+  await hub.mount(other, await mountFrame(id, { start: 3 }, "l1"));
+  assertEquals(other.lustreViews.size, 1);
+  gates.get(1)!.resolve(true);
+  await Promise.all([first, second]);
+  assertEquals([...c.lustreViews.keys()], ["l1"]);
+  assertEquals((await next(c, isError("limit"))).subId, "l2");
+  hub.dispose();
+
+  // An unmount cancels a queued mount and a running one; a close cancels them all.
+  gates.set(1, Promise.withResolvers<boolean>());
+  authorized.length = 0;
+  const d = conn();
+  const running = hub.mount(d, await mountFrame(id, { start: 1 }, "l1"));
+  const waiting = hub.mount(d, await mountFrame(id, { start: 2 }, "l2"));
+  const closing = hub.mount(d, await mountFrame(id, { start: 4 }, "l3"));
+  while (!authorized.includes(1)) await tick(1);
+  await tick();
+  hub.unmount(d, "l1");
+  hub.unmount(d, "l2");
+  gates.set(4, Promise.withResolvers<boolean>());
+  gates.get(1)!.resolve(true);
+  await Promise.all([running, waiting]);
+  await tick();
+  assertEquals(authorized, [1, 4], "the unmounted queued mount never ran");
+  d.closed = true;
+  hub.drop(d);
+  gates.get(4)!.resolve(true);
+  await closing;
+  assertEquals([d.lustreViews.size, d.frames.length, hub.running(), hub.parked()], [0, 0, 0, 0]);
+  hub.dispose();
+
+  // A mount held past renderTimeoutSeconds is refused (`failed`) and the next one runs; its
+  // authorize settling late places nothing.
+  const bounded = fakeHub({ renderTimeoutSeconds: 0.05 });
+  gates.set(1, Promise.withResolvers<boolean>());
+  const e = bounded.conn();
+  const stuck = bounded.hub.mount(e, await mountFrame(id, { start: 1 }, "l1"));
+  const after = bounded.hub.mount(e, await mountFrame(id, { start: 2 }, "l2"));
+  await Promise.all([stuck, after]);
+  const timedOut = await next(e, isError("failed"));
+  assertEquals([timedOut.subId, timedOut.reason], ["l1", "view mount timed out"]);
+  gates.get(1)!.resolve(true);
+  await tick();
+  assertEquals([...e.lustreViews.keys()], ["l2"]);
+  bounded.hub.dispose();
 });

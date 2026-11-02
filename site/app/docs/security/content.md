@@ -258,6 +258,33 @@ patch, which runs at every boot, writes only inside the package it names, by rea
 path: a link inside the package that leads out of it (or dangles) is refused, and
 the package folder itself must resolve inside the project or its workspace root.
 
+### Untrusted repositories
+
+An installed `denext` (the compiled binary, or
+`deno install -g`, whose launcher names its own config) reads a project's files as data until a
+verb runs its code. These run none of it: `--help`, `completions`, `migrate` and `migrate --check`
+(a `next.config.*` is evaluated in the sandboxed child), `routes`, `info`, `generate`, `codemod`,
+`audit`, `upgrade --check` / `--dry-run`, `mobile doctor` / `inspect` / `fingerprint` / `privacy`,
+`desktop doctor`, `desktop add`, `<unknown verb> --help`, and the `denext_list_routes`, `denext_route_map`,
+`denext_generate`, `denext_codemod` and codebase MCP tools. These run it, with every permission the
+CLI holds: `dev`, `build`, `export`, `start`, `test`, `check`, `doctor` (it renders every route, as
+does `denext_doctor`), `commands`, `job` (`--list` too), `db`, `migration`, `gen`, `deploy`
+(`prepare --dry-run` too), `analyze`, `profile`, `denext_render`, `denext ui`'s Commands, Doctor and
+Tasks panels, and **a verb denext doesn't know, including a mistyped one, when the config might
+define it**: denext reads the config's text first, and imports it unless it can see there are no
+`commands` or `plugins`. A spread, a variable as the default export or a wrapper other than
+`defineConfig` hides the keys, so those import too, since a project's real verb must not silently
+stop working. That read decides when a typo is worth looking up. It is no protection: a hostile
+config only has to declare `commands: []` to run on `denext biuld`, so in a repository you haven't
+reviewed, type only the verbs listed above as running none of it. A compiled binary also offers an unknown
+verb to the denext the project pins before this read, so a verb only that newer denext has keeps
+working, and a repository can pin an older denext, which imports the config for any unknown verb. A
+verb named by the listing the last `denext commands` wrote on this machine counts as known, and its `--help` imports the config.
+`deno run jsr:@denext/denext/cli …` is different: Deno applies the working
+directory's `deno.json`, `package.json` and `.npmrc` to the CLI itself before any of its code runs,
+so on such a repository add `--no-config` to it. Its `imports` can replace a module of the CLI,
+under the permissions you granted.
+
 **Project code never runs in the UI's privileged process.** Doctor, tasks,
 `next.config` evaluation, `deno add`, **and discovering the project's own CLI
 verbs** (`denext commands --json`) all run as `deno` subprocesses with array

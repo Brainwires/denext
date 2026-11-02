@@ -142,6 +142,15 @@ Live views ride the Live hub, so its gates apply first: the same-origin handshak
 | `maxSubscriptionInputBytes` | 16 KiB  | A view's props.                                                                                       |
 | `viewTokenMaxAgeSeconds`    | 86400   | How long after the page rendered them a view's signed props mount or resume it (`gone` past it).      |
 
+A connection's mounts are placed in the order they arrive: each waits for the ones sent before
+it on the same socket (their signature check, `authorize`, the viewer's identity and the resume),
+so a view mounted first takes a slot under `maxViewsPerConnection` before one mounted after it,
+however long its `authorize` takes. Other connections are not held up. One mount holds its
+connection's queue for at most `live.limits.renderTimeoutSeconds` (30): past it the view is
+answered `failed` and places nothing even when its `authorize` settles later, and the next mount
+runs. An unmount, or the socket closing, cancels the mounts still waiting. Lustre views
+(`defineLustreView`) are queued the same way, in their own queue.
+
 Per view, at most 32 events wait to be processed (more are refused with `limit`), at most 32
 effects are pending and 32 subscriptions open, and an interval fires at most every 100 ms.
 Outbound, a back-pressured socket gets nothing queued per update: once it drains, the view sends

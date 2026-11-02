@@ -2,7 +2,13 @@
 // code + `{@link}` cross-references) and the per-symbol badges. Server-only, zero JS.
 
 import type { VNodeChild, VNodeChildren } from "denext";
-import { type ApiSymbol, hrefForName, kindLabel } from "../lib/api.ts";
+import {
+  type ApiMember,
+  type ApiParent,
+  type ApiSymbol,
+  hrefForName,
+  kindLabel,
+} from "../lib/api.ts";
 
 /** Render one JSDoc `{@link}` target as a cross-link (or plain code when unresolved). */
 function LinkTag({ raw }: { raw: string }) {
@@ -100,5 +106,58 @@ export function DenextOnlyCallout({ children }: { children?: VNodeChildren }) {
       No React or Next.js API shares this name, so there's nothing upstream to cross-reference —
       this is native denext.{children}
     </aside>
+  );
+}
+
+/** The parents an interface inherits members from, each linked to its page when documented. */
+export function ApiParents({ parents }: { parents: ApiParent[] }) {
+  if (!parents.length) return null;
+  return (
+    <p class="api-parents">
+      Inherits the members of {parents.map((p, i) => (
+        <span key={p.type}>
+          {i ? ", " : ""}
+          {p.ref
+            ? (
+              <a href={`/docs/api/${p.ref}`}>
+                <code>{p.type}</code>
+              </a>
+            )
+            : <code>{p.type}</code>}
+        </span>
+      ))}.
+    </p>
+  );
+}
+
+/** An interface's own members: each signature, its prose, then its `@param` / `@returns` tags. */
+export function ApiMembers({ members }: { members: ApiMember[] }) {
+  if (!members.length) return null;
+  return (
+    <dl class="api-members">
+      {members.map((m, i) => (
+        <div key={i} class="api-member">
+          <dt>
+            <code>{m.signature}</code>
+          </dt>
+          <dd>
+            {m.doc ? <DocText text={m.doc} /> : null}
+            {m.params?.length
+              ? (
+                <ul>
+                  {m.params.map((p) => (
+                    <li key={p.name}>
+                      <code>{p.name}</code>
+                      {p.doc ? ` — ${p.doc}` : ""}
+                    </li>
+                  ))}
+                </ul>
+              )
+              : null}
+            {m.returns ? <p>Returns {m.returns}</p> : null}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }

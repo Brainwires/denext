@@ -526,7 +526,7 @@ export interface RunDesktopOptions {
   ) => Response | null | undefined | Promise<Response | null | undefined>;
   /**
    * Enable the SIGNED UI self-updater. When present, the served directory is resolved through
-   * {@link resolveDesktopUiDir} — the verified overlay in the app-support dir if one is active
+   * {@link openDesktopUi} — the verified overlay in the app-support dir if one is active
    * and healthy, else the bundled export — and {@link desktopBooted} confirms the launch after
    * the server is up (the boot watchdog rolls back a UI that fails to boot). Omit it to keep the
    * existing behavior (serve the bundled export only).
@@ -646,7 +646,9 @@ export interface DesktopRuntime {
    * Set the macOS activation policy: `"regular"` (a Dock icon and a menu bar), `"accessory"`
    * (neither: a tray app) or `"prohibited"` (runtime `3.0.0-denext.6`+; on an older runtime
    * `"regular"` / `"accessory"` show / hide the Dock icon). Switching to regular also brings the
-   * app to the front. Returns whether it applied (`false` on Windows and Linux).
+   * app to the front. On Windows and Linux `"regular"` shows the main window's taskbar entry and
+   * the others hide it (as `"accessory"` does at launch), where the runtime can. Returns whether it
+   * applied.
    */
   setActivationPolicy(policy: "regular" | "accessory" | "prohibited"): boolean;
   /** The macOS activation policy, or `null` where there is none (Windows, Linux, older runtimes). */

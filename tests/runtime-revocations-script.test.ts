@@ -84,7 +84,7 @@ function fake(over: Partial<RevocationsDeps> = {}, compiled?: string[]): Promise
   const gh = { branch: null as string | null, mirror: [] as Fake["mirror"] };
   const ghRun = fakeGh(gh);
   const rsync = async (args: string[]): Promise<RunResult> => {
-    web.push(await Deno.readTextFile(join(args[2].replace(/\/$/, ""), "revocations.json")));
+    web.push(await Deno.readTextFile(join(args.at(-2)!.replace(/\/$/, ""), "revocations.json")));
     return ok();
   };
   const run = (cmd: string, args: string[], stdin?: string): Promise<RunResult> => {
@@ -150,7 +150,8 @@ Deno.test("init signs an empty list, writes it and publishes it to the web root 
     assertEquals(f.web, [text], "rsynced as runtime/revocations.json");
     const rsync = f.calls.find((c) => c.cmd === "rsync")!;
     assertEquals(rsync.args.at(-1), "host:/srv/www/runtime/");
-    assert(rsync.args.includes("--chmod=D755,F644"));
+    assert(rsync.args.includes("-rtp"));
+    assert(!rsync.args.some((arg) => arg.startsWith("--chmod")));
     assertEquals(f.mirror, [{ parents: [] }], "an orphan commit the first time");
     assertStringIncludes(f.logged.join("\n"), `published list #${list!.sequence}`);
     // Once published, init refuses (add / resign extend it).
@@ -367,8 +368,11 @@ Deno.test("floor raises the compiled-in minimum sequence to the published list's
     const file = join(dir, "keys.ts");
     // The real module declares it in the shape `floor` rewrites.
     const real = await Deno.readTextFile(new URL(`../${KEYS_MODULE}`, import.meta.url));
-    await Deno.writeTextFile(file, real);
-    assertEquals(minSequenceIn(real), 0);
+    assert(minSequenceIn(real) >= 0);
+    // From a floor of 0 whatever a past release raised it to.
+    const unraised = real.replace(/(MIN_SEQUENCE: number = )\d+/, (_, head) => `${head}0`);
+    await Deno.writeTextFile(file, unraised);
+    assertEquals(minSequenceIn(unraised), 0);
     const list = freshRevocationList([], NOW);
     await publishedWith(f, list);
     await main(["floor", "--file", file], f.deps);
@@ -387,8 +391,8 @@ Deno.test("floor raises the compiled-in minimum sequence to the published list's
     await main(["floor", "--file", file], keyless.deps);
     assertStringIncludes(keyless.logged.at(-1)!, "floor stays");
     // The rewrite is exact; a module without the constant is refused.
-    assertEquals(minSequenceIn(withMinSequence(real, 42)), 42);
-    assertEquals(withMinSequence(real, 42).replace(/= 42;/, "= 0;"), real);
+    assertEquals(minSequenceIn(withMinSequence(unraised, 42)), 42);
+    assertEquals(withMinSequence(unraised, 42).replace(/= 42;/, "= 0;"), unraised);
     assertThrowsMessage(
       () => minSequenceIn("export const X = 1;"),
       "RUNTIME_REVOCATION_MIN_SEQUENCE",

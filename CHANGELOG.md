@@ -52,7 +52,9 @@ and this project adheres to
   instead of an unscoped `--allow-write`; `$APPDATA/…` / `$CACHE/…` and absolute paths in
   `desktop.extraPermissions.write` are kept scoped too. A write with no folder token (a picked path
   under `dialogs`, `$DOCUMENTS`, a relative path) keeps the unscoped grant. Code that writes
-  anywhere else needs the path in `desktop.extraPermissions.writ### Security
+  anywhere else needs the path in `desktop.extraPermissions.write`.
+
+### Security
 
 - **A Windows app's files are all under its Authenticode signature for full-app updates, and the
   signature is bound to the app and version** (5.0-gate review A, M2; the runtime denext.8 audit,
@@ -85,7 +87,193 @@ and this project adheres to
   refuse the combination, which every project-file program sidecar is, and which a capability that
   writes (`fs`, the updater's UI overlay) makes of every sidecar.
 
-e`.
+## [4.11.12] - 2026-11-02
+
+### Changed
+
+- **The `@denext/denext` package is 3.13 MiB smaller as published (19.61 → 16.48 MiB against JSR's
+  20 MiB cap).** The publish job blanks whole-line `//` comments and the JSDoc outside the public
+  API before `deno publish`. The code, every line number, the public API's documentation and every
+  import are unchanged, so reading the package's source on JSR shows fewer internal notes than the
+  tagged commit. A release now stops before tagging if the package would go over 18.5 MiB
+  (`scripts/publish-strip.ts`).
+
+### Fixed
+
+- **The API reference lists what an interface contains.** All 1376 interface entries had only a
+  name and a summary. Each page at `/docs/api/<module>/<symbol>` and each `denext_read_docs`
+  `api:<module>/<name>` answer now lists the interface's own properties, methods and call,
+  construct and index signatures, with types and doc comments, and `denext_search_docs` finds an
+  interface by a member's name. Inherited members stay on the parent, which the entry names and
+  links. Signatures across the reference are also more accurate: string literals keep their quotes
+  and object, tuple, conditional, mapped and indexed types print in full, where they printed as
+  `object` or a bare kind name.
+
+## [4.11.11] - 2026-11-02
+
+### Security
+
+- **A mistyped or unknown verb no longer runs a `denext.config.*` that can't add verbs.** `denext
+  biuld`, `denext foo --help`, and `denext openapi lint`, `content list`, `functions list` or
+  `storage ls` without their plugin imported the config with every permission the CLI held. The CLI
+  now reads the config's text first and imports it only if it declares `commands` or `plugins`, or
+  hides them (a spread, a computed key, a variable as the default export, a wrapper other than
+  `defineConfig`, a re-export). `<verb> --help` imports nothing unless the last `denext commands`
+  listing names the verb; it reports the name and points at `denext commands`, so a project verb's
+  or a plugin verb's help now needs that listing. This is not a full fix: a hostile config that
+  declares `commands` still runs on any unknown verb, and a compiled binary hands an unknown verb to
+  the denext the project pins first, so a pin to an older denext runs it too, as the security guide
+  says.
+
+## [4.11.10] - 2026-11-01
+
+### Fixed
+
+- **A packaged Linux `.deb` / `.rpm` for the CEF backend now declares every library the runtime
+  links.** `libcups`, `libnspr4`, `libnssutil3`, `libsmime3`, `libatk-bridge-2.0` and `libXi` were
+  linked directly with no dependency, and installed only because other packages pulled them in, so a
+  distro that splits GTK's dependencies could leave an app unable to start. The `.deb` names the
+  packages (`libcups2`, `libnspr4`, `libnss3`, `libatk-bridge2.0-0`, `libxi6`, which Ubuntu 24.04+
+  and Debian 13 provide from their `t64` builds) and the `.rpm` requires the sonames.
+
+## [4.11.9] - 2026-11-01
+
+### Changed
+
+- **`examples/native` uses Capacitor 8.6.0**, the version `denext create --capacitor` pins. Its
+  `package.json` and `deno.json` still named Capacitor 7.
+
+### Security
+
+- **Inspecting a project no longer runs its `denext.config.*`.** `denext routes`, `denext info`,
+  `denext generate` (`--dry-run` included), `denext desktop doctor`, `denext desktop add` and the
+  `denext_list_routes`, `denext_route_map`, `denext_generate` and codebase MCP tools imported the
+  config with every permission the CLI held, although `routes` said it ran no project code. So did
+  `denext ui`'s Generate preview and Setup scaffold, in the UI's own process, which the docs said
+  never happens. They now read the project's files: `info` reports `mode` as the config writes it
+  (`unknown` when code computes it), and `desktop doctor` checks the launch policy from a `desktop`
+  key written as data, with a warning when code computes it.
+- **The docs' `deno run jsr:@denext/denext/cli migrate` commands take `--no-config`.** Deno applies
+  the working directory's `deno.json`, `package.json` and `.npmrc` to that CLI before any of its code
+  runs, so on a hostile repository the documented `migrate --check` line ran the repository's module
+  in the CLI with `--allow-run`, and a `.npmrc` chose the registry for the CLI's npm dependencies. An
+  installed `denext` isn't affected. The security guide now lists which verbs run a project's code.
+- **The pin lookup of a compiled `denext` stays in the repository.** It followed a `deno.json`'s
+  `importMap` to any path on the machine, in the parent process. A map outside the repository (by a
+  relative path, an absolute one or a link) now pins nothing, and a device or FIFO named as a config
+  or map, which hung the CLI, is ignored.
+- **The `next.config.*` evaluator no longer acts on the project's `deno.json`.** `denext migrate`,
+  `denext migrate --check` and `denext ui`'s Next config panel evaluate an untrusted project's config
+  in a sandboxed child, but Deno read the project's `deno.json` (or one in a directory above it) for
+  that child outside the permissions. Its `importMap` and `links` read import-map and package files
+  from outside the project and handed their values to `import.meta.resolve`, where a config could
+  copy them into a field migrate writes to `denext.config.ts`. Its `lock` rewrote any existing valid
+  lockfile on the machine, dropping that file's `specifiers` and `workspace` entries, even under
+  `migrate --check`, and its `unstable` list turned on APIs such as `Deno.openKv`. A project's own
+  `deno.lock` was rewritten the same way. The child now runs with `--no-lock`, and for a project with
+  a `deno.json` with `--no-config` and a generated import map holding its `imports`, `scopes`, a
+  contained `importMap` and its workspace's members, so a config keeps resolving its aliases and
+  `node_modules`. A `package.json` project keeps its Node-style resolution. A config that needed
+  another `deno.json` key to evaluate no longer gets it.
+
+## [4.11.8] - 2026-11-01
+
+### Security
+
+- **Runtime revocation is on.** denext now carries the public keys of the signed revoked-runtimes
+  list, so a broken Deno toolchain or Deno Desktop runtime can be revoked after release: commands
+  move to the rollback runtime and the ship verbs refuse the revoked one. Until the first list is
+  published, `denext toolchain status` reports that there is none and nothing changes.
+
+## [4.11.7] - 2026-11-01
+
+### Fixed
+
+- **`denext dev --lan` on a machine with several networks binds the one with the default route.**
+  It picked by interface name, so a Mac online over Wi-Fi (`en1`) that had another network on its
+  Ethernet (`en0`) printed a URL no phone on the Wi-Fi could open. `denext mobile dev --lan` and
+  `denext desktop dev --lan` pick the same way. A VPN holding the default route is passed over, and
+  the name order remains the fallback.
+- **`denext dev` no longer reloads or restarts its first render for files written before it
+  started.** On macOS a new file watch replays recent history, and the project-wide watcher (SPA
+  mode's too) took that as a platform file or folder being created: a new generation in the middle
+  of the first render could leave a page without its islands' script, and an open page reloaded for
+  nothing.
+- **examples/hangar finds its VM library on Windows.** Windows sets no `HOME`, so the library folder
+  fell back to `/VMs`; it now defaults to `%USERPROFILE%\VMs`.
+
+## [4.11.6] - 2026-11-01
+
+### Changed
+
+- **The Deno toolchain and the Deno Desktop runtime are pinned to `3.0.0-denext.7`**, with
+  `3.0.0-denext.6` as the rollback.
+
+### Fixed
+
+- **`desktop.window.overlay` and tray panels work on Linux Wayland.** On KDE Plasma and wlroots
+  compositors with gtk-layer-shell, the window an app starts with can now be a layer-shell overlay
+  (on top, on every workspace, off the task manager, unfocused), and a tray panel is one too,
+  opening at the click when the tray reports no icon position. A non-resizable window keeps its
+  size instead of snapping to 800 × 600, a frameless window stays frameless on KWin, and an untitled
+  window is titled with `desktop.app.name`, not the bundle's file name. `nonActivating` is reported
+  on Wayland only with layer-shell. GNOME has no layer shell, so an overlay stays an ordinary window
+  there.
+- **A packaged Linux web-view app no longer hangs using Brotli through `node:zlib`.** The runtime
+  library called the system `libbrotlidec` the web view had loaded with its own decoder's state,
+  and spun at 100% CPU; `libdenort.so` now binds its own symbols to itself.
+- **`deno doc --json` and `--html` carry no ANSI color escapes** on denext's Deno, whether or not
+  `NO_COLOR` is set.
+
+### Security
+
+- **Rebuild desktop apps on the CEF backend: the runtime moves from CEF 150 to CEF 156**
+  ([GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)).
+  denext now pins runtime `3.0.0-denext.7`, whose CEF hosts carry CEF 156.0.14 (Chromium
+  156.0.8078.48). Runtimes through `3.0.0-denext.6` embed Chromium 150.0.7871.255 and lack Chrome's
+  fixes from 151 through 156.0.8078.48, among them two V8 bugs exploited in the wild; an app is
+  exposed to the extent its window renders content an attacker can influence. A packaged app keeps
+  the Chromium it was built with until it is repackaged and shipped. Apps on a system web view
+  (WebView2, WKWebView, WebKitGTK) and servers run with `denext start` are not affected. **Not fixed
+  yet:** Chrome's fixes from 156.0.8078.73 on need a newer CEF 156 build and come with the next
+  runtime; until then keep untrusted remote content out of app windows
+  (`desktop.app.allowedNavigationOrigins`) or use a system web view.
+
+## [4.11.5] - 2026-11-01
+
+### Added
+
+- **A close handler knows whether the app is quitting, and `onBeforeQuit` asks before a quit.**
+  `onCloseRequested` handlers (`denext/desktop/window`) get an event whose `reason` is `"close"`
+  (the close button, Cmd+W / Alt+F4) or `"quit"` (`quitApp()`, `Deno.desktop.quit()`, a Windows
+  tray menu's Quit), Electron's `before-quit` + `close` pair: a close-to-tray window hides on a
+  close and lets a quit through, and the app quits once every guarded window lets it go (each is
+  asked once). A handler written as `() => boolean` keeps working. `onBeforeQuit(handler)` is
+  Electron's `before-quit`: asked on a quit only, before the close handlers, `false` keeps the app
+  running.
+
+### Fixed
+
+- **Live views mount in the order a connection sends them.** A `defineLiveView` (or
+  `defineLustreView`) mount awaits its signature check, `authorize`, the viewer's identity and
+  the resume before it is placed, so a later mount on the same socket could overtake an earlier
+  one and take its slot under `maxViewsPerConnection`. Each connection's mounts now run one at a
+  time in arrival order (other connections stay concurrent), the cap is checked in that order, an
+  unmount or a closing socket cancels the mounts still waiting or running, and one mount holds
+  the queue for at most `live.limits.renderTimeoutSeconds` before it is answered `failed`. The
+  wire protocol is unchanged.
+- **A tray app's Quit no longer leaves it running when its main window closes to the tray.** A
+  close-to-tray guard refused every close, the quit's too, so Quit did nothing on Windows; the
+  guard now sees `reason: "quit"` and lets it go (the Hangar example does).
+- **A tray menu's `{ role: "quit" }` quits the app on Windows.** Windows' tray menu drew a role as
+  an empty row that did nothing, so a tray app's "Quit" was blank and dead there. On Windows the
+  quit role is now a "Quit" item that quits the app (`app.quit()`'s path: a guarded close still
+  holds it), and the roles only macOS has (`about`, `hide`, ...) are left out of a tray menu.
+- **`setActivationPolicy` shows and hides the main window's taskbar entry on Windows and Linux.**
+  `desktop.app.activationPolicy: "accessory"` hides the main window's taskbar entry at launch
+  there, but `setActivationPolicy("regular")` answered `false`, so a tray app's main window opened
+  with no taskbar entry. `"regular"` now shows it and `"accessory"` / `"prohibited"` hide it, from
+  `desktop.ts` (`app.setActivationPolicy`) and from a page (`denext/desktop/app`).
 
 ## [4.11.4] - 2026-10-31
 
@@ -20573,7 +20761,15 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.4...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.12...development
+[4.11.12]: https://jsr.io/@denext/denext@4.11.12
+[4.11.11]: https://jsr.io/@denext/denext@4.11.11
+[4.11.10]: https://jsr.io/@denext/denext@4.11.10
+[4.11.9]: https://jsr.io/@denext/denext@4.11.9
+[4.11.8]: https://jsr.io/@denext/denext@4.11.8
+[4.11.7]: https://jsr.io/@denext/denext@4.11.7
+[4.11.6]: https://jsr.io/@denext/denext@4.11.6
+[4.11.5]: https://jsr.io/@denext/denext@4.11.5
 [4.11.4]: https://jsr.io/@denext/denext@4.11.4
 [4.11.3]: https://jsr.io/@denext/denext@4.11.3
 [4.11.2]: https://jsr.io/@denext/denext@4.11.2
