@@ -915,20 +915,32 @@ export async function probeLinuxSession(
   };
 }
 
+/** The finding for `DENEXT_DESKTOP_RUNTIME=stock`: `usable` is false on denext's Deno. */
+function stockRuntimeFinding(usable: boolean): DesktopDoctorFinding {
+  return usable
+    ? {
+      check: "runtime",
+      level: "warning",
+      message: "DENEXT_DESKTOP_RUNTIME=stock: the stock runtime has no session probe, so tray " +
+        "and keyring problems show only as failures",
+      fix: "unset DENEXT_DESKTOP_RUNTIME to use denext's pinned runtime",
+    }
+    : {
+      check: "runtime",
+      level: "error",
+      message: "DENEXT_DESKTOP_RUNTIME=stock needs a stock Deno CLI; denext's Deno builds only " +
+        "on denext's runtime",
+      fix: "unset DENEXT_DESKTOP_RUNTIME, or set DENEXT_DENO=stock with a stock `deno` on PATH",
+    };
+}
+
 /** The findings about the pinned runtime. */
 function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopDoctorFinding[] {
   const s = runtime.status;
   const out: DesktopDoctorFinding[] = [];
   const add = (level: DesktopDoctorFinding["level"], message: string, fix: string) =>
     out.push({ check: "runtime", level, message, fix });
-  if (s.mode === "stock") {
-    add(
-      "warning",
-      "DENEXT_DESKTOP_RUNTIME=stock: the stock runtime has no session probe, so tray and " +
-        "keyring problems show only as failures",
-      "unset DENEXT_DESKTOP_RUNTIME to use denext's pinned runtime",
-    );
-  }
+  if (s.mode === "stock") out.push(stockRuntimeFinding(s.ok));
   if (s.mode !== "pinned") return out;
   const found = s.deno.found === null
     ? null
@@ -946,7 +958,8 @@ function runtimeFindings(runtime: DoctorRuntime, linuxChecks: boolean): DesktopD
     add(
       "error",
       `no pinned runtime build for ${s.target}`,
-      "set DENEXT_DESKTOP_RUNTIME=stock to use the stock runtime",
+      "on a stock Deno CLI (DENEXT_DENO=stock), set DENEXT_DESKTOP_RUNTIME=stock to use the stock " +
+        "runtime",
     );
   } else if (s.cache === "invalid") {
     add(

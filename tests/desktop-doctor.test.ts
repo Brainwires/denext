@@ -362,6 +362,15 @@ Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, stock
   });
   assertEquals(checksOf(stock), ["warning:runtime"]);
   assertStringIncludes(stock.findings[0].message, "DENEXT_DESKTOP_RUNTIME=stock");
+  const stockOnDenext = await runDesktopDoctor({
+    runtimeStatus: () =>
+      Promise.resolve(status({ mode: "stock", backend: null, cache: "n/a", ok: false })),
+    os: "darwin",
+    pin: pin(45),
+  });
+  assertEquals(checksOf(stockOnDenext), ["error:runtime"]);
+  assertStringIncludes(stockOnDenext.findings[0].message, "needs a stock Deno CLI");
+  assertStringIncludes(stockOnDenext.findings[0].fix!, "DENEXT_DENO=stock");
   const unpinned = await runDesktopDoctor({
     runtimeStatus: () => Promise.resolve(status({ cache: "unpinned" })),
     os: "darwin",
@@ -369,6 +378,7 @@ Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, stock
   });
   assertEquals(checksOf(unpinned), ["error:runtime"]);
   assertStringIncludes(unpinned.findings[0].message, "no pinned runtime build");
+  assertStringIncludes(unpinned.findings[0].fix!, "on a stock Deno CLI (DENEXT_DENO=stock)");
   const invalid = await runDesktopDoctor({
     runtimeStatus: () => Promise.resolve(status({ cache: "invalid" })),
     os: "darwin",
@@ -671,12 +681,17 @@ Deno.test("desktop doctor CLI: without a seam the runtime status is read from th
       denoMatches ? ["error:runtime"] : ["error:runtime", "error:runtime"],
     );
     assert(report.findings.some((f) => f.message.includes("no pinned runtime build")));
-    // DENEXT_DESKTOP_RUNTIME=stock (read from this process's env): a warning, exit 0.
+    // DENEXT_DESKTOP_RUNTIME=stock (read from this process's env): on the deno this test runs
+    // under, an error on denext's Deno, a warning and exit 0 on a stock one.
     Deno.env.set("DENEXT_DESKTOP_RUNTIME", "stock");
+    const json = await runCli({}, true, dir, { os: "darwin" });
+    const status = (JSON.parse(json.out) as DesktopDoctorReport).runtime.status;
+    assertEquals(status.mode, "stock");
+    const onDenext = status.deno.denext !== undefined;
+    assertEquals(status.ok, !onDenext);
     const stock = await runCli({}, false, dir, { os: "darwin" });
-    assertEquals(stock.code, 0, stock.err);
-    assertEquals(stock.report?.runtime.status.mode, "stock");
-    assertStringIncludes(stock.out, "WARNING [runtime]");
+    assertEquals(stock.code, onDenext ? 1 : 0, stock.err);
+    assertStringIncludes(stock.out, onDenext ? "ERROR   [runtime]" : "WARNING [runtime]");
     assertStringIncludes(stock.out, "DENEXT_DESKTOP_RUNTIME=stock");
   } finally {
     keys.forEach((k, i) => prev[i] === undefined ? Deno.env.delete(k) : Deno.env.set(k, prev[i]!));

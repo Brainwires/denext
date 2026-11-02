@@ -16046,6 +16046,12 @@
             },
             {
               "kind": "property",
+              "name": "permissions",
+              "signature": "permissions?: \"default\" | \"strict\" | DesktopPermissionsConfig",
+              "doc": "How narrow the packaged binary's baked read and environment grants are. `\"default\"` (or unset):\n`--allow-read` and `--allow-env` unscoped, as before. `\"strict\"` (needs Deno Desktop runtime\n3.0.0-denext.8 and `desktop.app.identifier`; an older runtime keeps the default):\n`--allow-read` scoped to the app's data and cache folders (`$DENO_DESKTOP_DATA`,\n`$DENO_DESKTOP_CACHE`; the embedded files are always readable) plus\n{@link DesktopExtraPermissions.read} and what the capabilities read, and `--allow-env` scoped to\nthe variables denext's desktop runtime reads plus {@link DesktopPermissionsConfig.env} and\n{@link DesktopExtraPermissions.env}. A capability that reads a path picked at run time\n(`dialogs`) keeps `--allow-read` unscoped. Refused with a program sidecar (`run.exec`) or\n`loginShellEnv`, which hand the child the whole environment."
+            },
+            {
+              "kind": "property",
               "name": "update",
               "signature": "update?: DesktopUpdateConfig",
               "doc": "Full-app self-update (`checkForAppUpdate` … from `denext/desktop/updater`): the whole signed\napp is replaced by a newer signed build. Needs denext's pinned Deno Desktop runtime."
@@ -16116,7 +16122,7 @@
               "kind": "property",
               "name": "write",
               "signature": "write?: string[]",
-              "doc": "`--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be scoped)."
+              "doc": "`--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be\nscoped) — except under Deno Desktop runtime 3.0.0-denext.8 in an app with\n`desktop.app.identifier`, where `$APPDATA/…`, `$CACHE/…` and absolute paths are baked as\nwritten (the folders as `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE`)."
             },
             {
               "kind": "property",
@@ -16314,7 +16320,21 @@
           "params": [],
           "returns": "",
           "examples": [],
-          "denextOnly": true
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "mode",
+              "signature": "mode: \"default\" | \"strict\"",
+              "doc": "`\"strict\"` scopes the baked read and environment grants (see {@link DesktopConfig.permissions})."
+            },
+            {
+              "kind": "property",
+              "name": "env",
+              "signature": "env?: string[]",
+              "doc": "The environment variables the app's own code reads (`DATABASE_URL`, `NEXT_PUBLIC_*` names, …),\nadded to the strict `--allow-env` allow-list. One name per entry."
+            }
+          ]
         },
         {
           "name": "DesktopShellConfig",
@@ -43083,8 +43103,8 @@
           "slug": "buildDesktopBundle",
           "kind": "function",
           "signature": "buildDesktopBundle(entryUrl: string, os: \"linux\" | \"windows\", o: DesktopBundleOptions): Promise<string>",
-          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable.",
-          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable.",
+          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable).",
+          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable, and on Windows the tree\nmanifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and\nversion; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it\nsigns the executable).",
           "params": [
             {
               "name": "entryUrl",
@@ -43468,6 +43488,18 @@
           "denextOnly": true
         },
         {
+          "name": "DESKTOP_TREE_RESOURCE",
+          "slug": "DESKTOP_TREE_RESOURCE",
+          "kind": "variable",
+          "signature": "DESKTOP_TREE_RESOURCE: \"DENEXT_TREE\"",
+          "doc": "The RT_RCDATA resource name the manifest is stored under.",
+          "docFull": "The `RT_RCDATA` resource name the manifest is stored under.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DESKTOP_VC_RUNTIME_DLLS",
           "slug": "DESKTOP_VC_RUNTIME_DLLS",
           "kind": "variable",
@@ -43721,6 +43753,12 @@
               "name": "cacheScope",
               "signature": "readonly cacheScope?: boolean",
               "doc": "The runtime expands `$DENO_DESKTOP_CACHE` in a baked permission (denext's pinned Deno Desktop\nruntime, 3.0.0-denext.8 or later; see `desktopCacheTokenRuntime`): a program sidecar copied\ninto the app's cache folder gets `--allow-run` over that copy alone, when\n`desktop.app.identifier` names the folder. Default: `desktopCacheTokenRuntime()`."
+            },
+            {
+              "kind": "property",
+              "name": "dataScope",
+              "signature": "readonly dataScope?: boolean",
+              "doc": "The runtime expands `$DENO_DESKTOP_DATA` (and `$DENO_DESKTOP_CACHE`) in a baked permission\n(denext's pinned Deno Desktop runtime, 3.0.0-denext.8 or later; see `desktopDataTokenRuntime`):\nthe app-folder writes (`$APPDATA`, `$CACHE`: the `fs` / `sqlite` / `updates` capabilities, a\nsidecar's log file, the UI overlay's `ui-updates`) are baked as those folders instead of an\nunscoped `--allow-write`, when `desktop.app.identifier` names them. Default:\n`desktopDataTokenRuntime()`."
             }
           ]
         },
@@ -44442,6 +44480,12 @@
             },
             {
               "kind": "property",
+              "name": "backgroundThrottling",
+              "signature": "readonly backgroundThrottling?: boolean",
+              "doc": "`false`: its page keeps its timers' rate while the window is not on screen (Electron's\n`backgroundThrottling`; default `true`, throttled, never frozen). Creation time only; runtime\n3.0.0-denext.8 (an older one ignores it)."
+            },
+            {
+              "kind": "property",
               "name": "show",
               "signature": "readonly show?: boolean",
               "doc": "Show it once created (default `true`)."
@@ -45074,7 +45118,7 @@
           "kind": "function",
           "signature": "desktopSignWindows(files: readonly string[], deps?: DesktopSignWindowsDeps): Promise<boolean>",
           "doc": "Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD), else the certificate store's DENEXT_WINDOWS_CERT_THUMBPRINT, timestamped by DENEXT_SIGN_TIMESTAMP_URL, batched a few dozen files per signtool sign call. Without a certificate nothing is signed and a warning says so. With one but without signtool (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the script's --no-sign builds unsigned on purpose. The password, which signtool takes only as /p, never reaches its command line: a password-protected .pfx is imported into the user's certificate store for the run and signed with by thumbprint (withSigntoolCertificate).",
-          "docFull": "Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password\n`DENEXT_WINDOWS_CERT_PASSWORD`), else the certificate store's `DENEXT_WINDOWS_CERT_THUMBPRINT`,\ntimestamped by `DENEXT_SIGN_TIMESTAMP_URL`, batched a few dozen files per `signtool sign` call.\nWithout a certificate nothing is signed and a warning says so. With one but without `signtool`\n(off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the\nscript's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as\n`/p`, never reaches its command line: a password-protected `.pfx` is imported into the user's\ncertificate store for the run and signed with by thumbprint ({@linkcode withSigntoolCertificate}).",
+          "docFull": "Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password\n`DENEXT_WINDOWS_CERT_PASSWORD`), else the certificate store's `DENEXT_WINDOWS_CERT_THUMBPRINT`,\ntimestamped by `DENEXT_SIGN_TIMESTAMP_URL`, batched a few dozen files per `signtool sign` call.\nWithout a certificate nothing is signed and a warning says so. With one but without `signtool`\n(off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the\nscript's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as\n`/p`, never reaches its command line: a password-protected `.pfx` is imported into the user's\ncertificate store for the run and signed with by thumbprint ({@linkcode withSigntoolCertificate}).\n\nAn executable among `files` that carries a tree manifest ({@linkcode stampDesktopTreeManifest})\nis signed last: every other file is signed first, the manifest is written again so it lists the\nother PE images as signed, and then the executable is signed, whatever order the caller listed\nthe files in. (The manifest lists every file of the bundle but the executable, DLLs included;\nsigning a DLL after the manifest was written would make the installed app refuse the update.)",
           "params": [
             {
               "name": "files",
@@ -45490,6 +45534,172 @@
               "name": "menu",
               "signature": "readonly menu?: readonly unknown[] | null",
               "doc": "The menu."
+            }
+          ]
+        },
+        {
+          "name": "DesktopTreeFile",
+          "slug": "DesktopTreeFile",
+          "kind": "interface",
+          "signature": "interface DesktopTreeFile",
+          "doc": "One listed file: its path relative to the bundle directory (/-separated), size and SHA-256.",
+          "docFull": "One listed file: its path relative to the bundle directory (`/`-separated), size and SHA-256.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path: string",
+              "doc": "Relative to the bundle directory, `/`-separated."
+            },
+            {
+              "kind": "property",
+              "name": "size",
+              "signature": "readonly size: number",
+              "doc": "Its size in bytes."
+            },
+            {
+              "kind": "property",
+              "name": "sha256",
+              "signature": "readonly sha256: string",
+              "doc": "Lowercase hex."
+            }
+          ]
+        },
+        {
+          "name": "DesktopTreeIdentity",
+          "slug": "DesktopTreeIdentity",
+          "kind": "interface",
+          "signature": "interface DesktopTreeIdentity",
+          "doc": "The app a manifest is written for: the runtime refuses a manifest for another app or version.",
+          "docFull": "The app a manifest is written for: the runtime refuses a manifest for another app or version.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "appId",
+              "signature": "readonly appId: string",
+              "doc": "`desktop.app.identifier` (the installed app's, as compiled into it)."
+            },
+            {
+              "kind": "property",
+              "name": "version",
+              "signature": "readonly version: string",
+              "doc": "The app's version (deno.json `version`: the version the update offers)."
+            }
+          ]
+        },
+        {
+          "name": "desktopTreeManifest",
+          "slug": "desktopTreeManifest-fn",
+          "kind": "function",
+          "signature": "desktopTreeManifest(dir: string, exe: string, identity: DesktopTreeIdentity): Promise<DesktopTreeManifest>",
+          "doc": "The manifest of a Windows bundle directory for identity: every regular file but the executable exe (the manifest's carrier, which cannot hold its own hash: its signature is its check), PE images included, sorted by path.",
+          "docFull": "The manifest of a Windows bundle directory for `identity`: every regular file but the executable\n`exe` (the manifest's carrier, which cannot hold its own hash: its signature is its check), PE\nimages included, sorted by path.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            },
+            {
+              "name": "exe",
+              "doc": "The executable's name inside it (<App>.exe)."
+            },
+            {
+              "name": "identity",
+              "doc": "The app and version the manifest is for."
+            }
+          ],
+          "returns": "The manifest.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTreeManifest",
+          "slug": "DesktopTreeManifest-iface",
+          "kind": "interface",
+          "signature": "interface DesktopTreeManifest extends DesktopTreeIdentity",
+          "doc": "The manifest's JSON shape (version 1).",
+          "docFull": "The manifest's JSON shape (version 1).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "v",
+              "signature": "readonly v: 1",
+              "doc": "The format version."
+            },
+            {
+              "kind": "property",
+              "name": "files",
+              "signature": "readonly files: readonly DesktopTreeFile[]",
+              "doc": "Every listed file."
+            }
+          ],
+          "extends": [
+            {
+              "type": "DesktopTreeIdentity",
+              "ref": "denext-desktop/DesktopTreeIdentity"
+            }
+          ]
+        },
+        {
+          "name": "desktopTreeManifestProblem",
+          "slug": "desktopTreeManifestProblem-fn",
+          "kind": "function",
+          "signature": "desktopTreeManifestProblem(dir: string, exe: string, identity?: DesktopTreeIdentity): Promise<DesktopTreeManifestProblem | undefined>",
+          "doc": "Why a Windows bundle's files no longer match its executable's tree manifest (the runtime would refuse it as an update), or why the manifest is not for identity when one is given, or undefined when all is well. A bundle whose executable carries no manifest is reported with unlisted: true: its other files would be protected by the update key alone, and an installed app that has a manifest refuses it.",
+          "docFull": "Why a Windows bundle's files no longer match its executable's tree manifest (the runtime would\nrefuse it as an update), or why the manifest is not for `identity` when one is given, or\n`undefined` when all is well. A bundle whose executable carries no manifest is reported with\n`unlisted: true`: its other files would be protected by the update key alone, and an installed\napp that has a manifest refuses it.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            },
+            {
+              "name": "exe",
+              "doc": "The executable's name inside it."
+            },
+            {
+              "name": "identity",
+              "doc": "The app and version the manifest must be for (when known)."
+            }
+          ],
+          "returns": "The problem, if any.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTreeManifestProblem",
+          "slug": "DesktopTreeManifestProblem-iface",
+          "kind": "interface",
+          "signature": "interface DesktopTreeManifestProblem",
+          "doc": "Why a bundle's files don't match its executable's tree manifest.",
+          "docFull": "Why a bundle's files don't match its executable's tree manifest.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "problem",
+              "signature": "readonly problem: string",
+              "doc": "What differs."
+            },
+            {
+              "kind": "property",
+              "name": "unlisted",
+              "signature": "readonly unlisted: boolean",
+              "doc": "`true` when the executable carries no manifest at all (packaged before the manifest)."
             }
           ]
         },
@@ -45940,6 +46150,27 @@
           "denextOnly": true
         },
         {
+          "name": "embedDesktopTreeManifest",
+          "slug": "embedDesktopTreeManifest",
+          "kind": "function",
+          "signature": "embedDesktopTreeManifest(pe: Uint8Array, manifest: DesktopTreeManifest): Uint8Array",
+          "doc": "pe with manifest as its RT_RCDATA DENEXT_TREE resource (replacing one it has), every other resource kept. Any Authenticode signature is dropped: sign after this.",
+          "docFull": "`pe` with `manifest` as its `RT_RCDATA` `DENEXT_TREE` resource (replacing one it has), every\nother resource kept. Any Authenticode signature is dropped: sign after this.",
+          "params": [
+            {
+              "name": "pe",
+              "doc": "The executable's bytes."
+            },
+            {
+              "name": "manifest",
+              "doc": "The manifest to embed."
+            }
+          ],
+          "returns": "The new executable's bytes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "injectDesktopGlobal",
           "slug": "injectDesktopGlobal",
           "kind": "function",
@@ -46359,6 +46590,23 @@
           "docFull": "The lazily-imported reverse-proxy module ({@link ./dev-proxy.ts}) {@linkcode createDesktopHandler}\nforwards to when a backend proxy is configured; exported so the handler's signature is public.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "readDesktopTreeManifest",
+          "slug": "readDesktopTreeManifest",
+          "kind": "function",
+          "signature": "readDesktopTreeManifest(pe: Uint8Array): DesktopTreeManifest | null",
+          "doc": "The DENEXT_TREE manifest an executable carries, or null when it has none.",
+          "docFull": "The `DENEXT_TREE` manifest an executable carries, or `null` when it has none.",
+          "params": [
+            {
+              "name": "pe",
+              "doc": "The executable's bytes."
+            }
+          ],
+          "returns": "The manifest.",
           "examples": [],
           "denextOnly": true
         },
@@ -47275,6 +47523,31 @@
               "doc": "Runs the removal from a signal handler (default: the process, synchronously)."
             }
           ]
+        },
+        {
+          "name": "stampDesktopTreeManifest",
+          "slug": "stampDesktopTreeManifest",
+          "kind": "function",
+          "signature": "stampDesktopTreeManifest(dir: string, exe: string, identity: DesktopTreeIdentity): Promise<DesktopTreeManifest>",
+          "doc": "Write the tree manifest of a finished Windows bundle into its executable. Run it once nothing else will be written into the bundle (after the VC++ runtime and laufey-launch.json) and once every other PE image is signed as it ships (the manifest lists their bytes), and before the executable is signed: its Authenticode signature then covers every file of the app. desktopSignWindows runs it again between signing the DLLs and the executable, so a bundle stamped before signing (as buildDesktopBundle does) ends up right whatever the order.",
+          "docFull": "Write the tree manifest of a finished Windows bundle into its executable. Run it once nothing\nelse will be written into the bundle (after the VC++ runtime and `laufey-launch.json`) and once\nevery other PE image is signed as it ships (the manifest lists their bytes), and before the\nexecutable is signed: its Authenticode signature then covers every file of the app.\n`desktopSignWindows` runs it again between signing the DLLs and the executable, so a bundle\nstamped before signing (as `buildDesktopBundle` does) ends up right whatever the order.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            },
+            {
+              "name": "exe",
+              "doc": "The executable's name inside it (<App>.exe)."
+            },
+            {
+              "name": "identity",
+              "doc": "The app and version the manifest is for."
+            }
+          ],
+          "returns": "The manifest written.",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "stopSidecars",
@@ -49759,6 +50032,12 @@
               "name": "overlay",
               "signature": "readonly overlay?: boolean",
               "doc": "A desktop overlay surface (runtime 3.0.0-denext.6): on a Wayland compositor with\nwlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) a layer above every window, on every\nworkspace and out of the task list, placed with `setBounds` (`layerShell` in\n{@linkcode windowCapabilities}); an ordinary window elsewhere."
+            },
+            {
+              "kind": "property",
+              "name": "backgroundThrottling",
+              "signature": "readonly backgroundThrottling?: boolean",
+              "doc": "What its page does while the window is not on screen (hidden, minimized or covered), like\nElectron's `webPreferences.backgroundThrottling`. `true` (the default): it keeps running with\nits timers slowed (about once a second on macOS); its events, messages and sockets are still\nhandled. `false`: its timers keep their rate, for a hidden window that does the app's\nbackground work. Creation time only; runtime 3.0.0-denext.8 (an older one ignores it, and on\nmacOS froze a page created hidden about a second after it loaded). The system WebView on\nWindows and Linux and the CEF backend throttle a hidden page without freezing it either way."
             },
             {
               "kind": "property",
