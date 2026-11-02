@@ -532,3 +532,52 @@ Deno.test("subscribeChannel: sends `since`, skips a seen cursor, resumes from th
     else g.location = loc0;
   }
 });
+
+Deno.test("channel log: a publish's grant is logged, in memory and in Redis, and a replay honours it", async () => {
+  // The logs keep the stamp.
+  const memory = inMemoryChannelLog();
+  await memory.append("c", "k", { encoded: "1", grant: "g1" }, H(5));
+  await memory.append("c", "k", { encoded: "2" }, H(5));
+  assertEquals(
+    (await memory.since("c", "k", "0", 10)).map((e) => [e.encoded, e.grant]),
+    [["1", "g1"], ["2", undefined]],
+  );
+  const server = fakeRedis();
+  const client = redisClient(server.url);
+  try {
+    const log = redisChannelLog(client, { prefix: "t" });
+    await log.append("c", "k", { encoded: "1", grant: "g1" }, H(5));
+    await log.append("c", "k", { encoded: "2", enc: 1 }, H(5));
+    assertEquals(
+      (await log.since("c", "k", "0", 10)).map((e) => [e.encoded, e.enc, e.grant]),
+      [["1", undefined, "g1"], ["2", 1, undefined]],
+    );
+  } finally {
+    await client.close();
+    await server.close();
+  }
+
+  // A replay sends the viewer what was logged under their grant, and what was not stamped.
+  resetChannels();
+  const { hub, conn } = fakeHub();
+  const flush = wire(hub);
+  const ch = createChannel<{ n: number }>({
+    id: "log",
+    authorize: (ctx) => ({ allow: true, grant: ctx.peerId }),
+    history: 10,
+  });
+  await ch.publish("k", { n: 1 }, { grant: "alice" });
+  await ch.publish("k", { n: 2 }, { grant: "bob" });
+  await ch.publish("k", { n: 3 });
+  await flush();
+  const alice = conn("alice");
+  await hub.subscribe(alice, { subId: "s", channelId: "log", key: "k", since: "0" });
+  assertEquals(values(alice), [1, 3]);
+  // Live frames after the replay: the same rule, and the skipped entry never comes back.
+  await ch.publish("k", { n: 4 }, { grant: "bob" });
+  await ch.publish("k", { n: 5 }, { grant: "alice" });
+  await flush();
+  assertEquals(values(alice), [1, 3, 5]);
+  hub.dispose();
+  resetChannels();
+});

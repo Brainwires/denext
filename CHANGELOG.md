@@ -8,8 +8,30 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **A channel publish carries the grant it was read under, and `authorize` admits under one.**
+  `channel.publish(key, payload, { grant })` stamps the publish with an opaque text for what it
+  was read as (a digest of a role and claims, say), and `authorize` may answer
+  `{ allow: true, grant }` instead of `true` (`ChannelAdmission`). The Live hub sends a stamped
+  publish only to the subscribers admitted under the same grant — recorded at subscribe and at
+  every re-authorization, matched on whichever instance the publish came from — and an unstamped
+  one to every subscriber as before; a stamped publish logged for replay (`history`) is replayed
+  under the same rule, and `tapChannelAuthorized` applies it to a viewer's tap. The stamp travels
+  between instances and never in a frame to the browser; `authorize`'s answer is read strictly
+  (an object admits only with `allow: true`). The dev panel's channel pushes say how many of a
+  key's subscribers a stamped publish was not for.
+
 ### Fixed
 
+- **Re-running a release no longer reports a failed publish as released.** `deno task release X`
+  on a version whose tag already exists now confirms that `@denext/denext@X` is on JSR and that
+  the tag's publish job succeeded before it prints "Released" or hands over the `main` PR. A
+  failed run stops with what to do: rerun the failed run if the cause was transient, or, for a real
+  defect, treat X as burned (tags are never moved or reused), cut the next patch and do not merge
+  `main`. A run still going is waited for. The release's local publish dry-run also checks the set
+  the publish job sends, with internal comments stripped, in a temporary copy that leaves the
+  working tree untouched.
 - **The API reference lists what a class contains.** All 102 class entries had only a name and a
   summary. Each page at `/docs/api/<module>/<symbol>` and each `denext_read_docs`
   `api:<module>/<name>` answer now lists the class's public constructors, properties, methods and
@@ -24,6 +46,21 @@ and this project adheres to
   from `denext` as types, as they already were from the `react` alias, and `CssAssets`, the base of
   `AppCss`, from `denext/plugin-kit`. Each has its own entry.
 
+### Security
+
+- **Realtime: a reconnect under other claims on another instance gets no frame read under the
+  old ones.** 4.11.1 closed the Live hub's flush window for a `useTableChanges` subscriber
+  re-authorized under other claims on the SAME instance (`channel.discard`), but the discard is
+  per instance: with a shared channel transport (`redisChannelTransport`) and no sticky sessions, a
+  frame instance A had read under the old claims could still be fanned out by instance B to the
+  reconnect that landed there. The realtime engine now publishes every frame under the SHA-256 of
+  the grant it was read as and admits every subscriber under the grant it has, so a hub on any
+  instance drops a frame read under another grant; the same-instance discard stays as a local
+  complement. A frame dropped that way shows the subscriber a sequence gap, which `useTableChanges`
+  already answers with `stale` and a re-read. The Supabase Realtime protocol
+  (`/realtime/v1/websocket`) delivers each binding's frames to its own socket in-process and never
+  over the transport, so it was not exposed.
+
 ## [4.11.12] - 2026-11-02
 
 ### Changed
@@ -37,14 +74,6 @@ and this project adheres to
 
 ### Fixed
 
-- **Re-running a release no longer reports a failed publish as released.** `deno task release X`
-  on a version whose tag already exists now confirms that `@denext/denext@X` is on JSR and that
-  the tag's publish job succeeded before it prints "Released" or hands over the `main` PR. A
-  failed run stops with what to do: rerun the failed run if the cause was transient, or, for a real
-  defect, treat X as burned (tags are never moved or reused), cut the next patch and do not merge
-  `main`. A run still going is waited for. The release's local publish dry-run also checks the set
-  the publish job sends, with internal comments stripped, in a temporary copy that leaves the
-  working tree untouched.
 - **The API reference lists what an interface contains.** All 1376 interface entries had only a
   name and a summary. Each page at `/docs/api/<module>/<symbol>` and each `denext_read_docs`
   `api:<module>/<name>` answer now lists the interface's own properties, methods and call,

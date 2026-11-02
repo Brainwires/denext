@@ -45,6 +45,7 @@ import {
 } from "../packages/backend/src/realtime-sql.ts";
 import {
   grantOf,
+  grantStampOf,
   groupRereadQuery,
   identityOf,
   installRealtime,
@@ -2393,6 +2394,106 @@ Deno.test("realtime replay: a frame in the hub's window still reaches a reconnec
   } finally {
     await env.done();
   }
+});
+
+Deno.test("realtime replay: a frame another instance read under the old claims never reaches a reconnect there under other claims", async () => {
+  // Two replicas behind one channel transport, no sticky sessions: the subscriber is on A, its
+  // frame is published there, and the reconnect under other claims lands on B — where A's
+  // per-instance discard cannot reach, and where B's hub had nothing to discard.
+  const byEmail = (claims: Record<string, unknown>, row: Record<string, unknown>) =>
+    claims.email !== undefined && claims.email === row.email;
+  const sql = fakeRealtimeClient({ notes: { policy: byEmail } });
+  const env = await setUp({}, sql);
+  const hubB = realtimeHarness({ instance: "replica-b" });
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(await cookieFor(A, "one@x.test"));
+    const { key } = await env.hub.subscribe(first, "notes");
+    // The frame for row 1 reaches both hubs' transports while `first` is connected to A; neither
+    // hub has fanned it out when the connection drops.
+    const windowA = env.hub.holdDelivery();
+    const windowB = hubB.holdDelivery();
+    env.sql.insert("notes", { id: 1, email: "one@x.test", body: "read under the old claims" });
+    await engine.flush();
+    await until(() => windowB.held() === 1, 3_000, "the frame on its way to B");
+    env.hub.drop(first);
+
+    // The same subject is back on B, with other claims, before B's hub flushes A's frame.
+    const back = hubB.conn(await cookieFor(A, "two@x.test"));
+    assert((await hubB.subscribe(back, "notes", { key })).ok, "the same subject may come back");
+    await until(() => windowB.held() === 2, 3_000, "the resync");
+    windowB.release();
+    await until(() => back.frames.length >= 1, 3_000, "the answer to the reconnect");
+    await settle(100);
+    assertEquals(unnumbered(back.frames), [{ resync: true }]);
+    assertEquals(changesOf(back), [], "no row read under the old claims, from any instance");
+    // The grant stamp stays between the servers: no frame to the browser carries it.
+    for (const text of back.raw) {
+      assert(!text.includes("grant"), `a frame leaked the stamp: ${text}`);
+    }
+    windowA.release();
+    await settle(50);
+    assertEquals(first.frames, []);
+  } finally {
+    hubB.dispose();
+    await env.done();
+  }
+});
+
+Deno.test("realtime replay: a frame another instance read under the same claims still reaches a reconnect there", async () => {
+  const env = await setUp();
+  const hubB = realtimeHarness({ instance: "replica-b" });
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(env.a);
+    const { key } = await env.hub.subscribe(first, "notes");
+    const windowB = hubB.holdDelivery();
+    env.sql.insert("notes", { id: 1, owner: A, body: "x" });
+    await engine.flush();
+    await until(() => windowB.held() === 1, 3_000, "the frame on its way to B");
+    env.hub.drop(first);
+    const back = hubB.conn(env.a);
+    assert((await hubB.subscribe(back, "notes", { key })).ok);
+    await until(() => windowB.held() === 2, 3_000, "the resume");
+    windowB.release();
+    await until(() => back.frames.length >= 2, 3_000, "the frame and the resume");
+    assertEquals(
+      changesOf(back).map((c) => c.key),
+      ["1"],
+      "the same grant keeps it, cross-instance",
+    );
+    assertEquals(unnumbered(back.frames).at(-1), { resumed: true });
+    for (const text of back.raw) {
+      assert(!text.includes("grant"), `a frame leaked the stamp: ${text}`);
+    }
+  } finally {
+    hubB.dispose();
+    await env.done();
+  }
+});
+
+Deno.test("realtime: the grant stamp is the grant's SHA-256 — stable across token refreshes, distinct across claims", async () => {
+  const scope = (claims: Record<string, unknown>) => ({
+    role: "authenticated" as const,
+    claims: JSON.stringify(claims),
+  });
+  const one = await grantStampOf(scope({ sub: "u1", tenant: 1, exp: 1 }));
+  assertEquals(one, await grantStampOf(scope({ tenant: 1, sub: "u1", exp: 2, iat: 3 })));
+  assert(/^[0-9a-f]{64}$/.test(one));
+  assert(one !== await grantStampOf(scope({ sub: "u1", tenant: 2 })));
+  assert(one !== await grantStampOf({ role: "anon", claims: "{}" }));
+  assertEquals(
+    await grantStampOf(scope({ sub: "u1", tenant: 1 })),
+    Array.from(
+      new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(grantOf(scope({ sub: "u1", tenant: 1 }))),
+        ),
+      ),
+      (b) => b.toString(16).padStart(2, "0"),
+    ).join(""),
+  );
 });
 
 Deno.test("realtime: a subscription's identity and grant — a token without a subject is its own identity", () => {
