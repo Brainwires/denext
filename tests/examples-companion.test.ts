@@ -150,6 +150,7 @@ import {
 } from "../examples/companion/lib/realtime-client.ts";
 import { VoiceBubble, voiceBubbleShown } from "../examples/companion/components/VoiceBubble.tsx";
 import { VoiceSettings } from "../examples/companion/components/VoiceSettings.tsx";
+import companionConfig from "../examples/companion/denext.config.ts";
 
 /** Run the machine over `events` from `from`. */
 function run(events: LoopyEvent[], from: LoopyModel = INITIAL_MODEL): LoopyModel {
@@ -1643,6 +1644,9 @@ Deno.test("loopy size: clamped to whole steps; ?scale= takes a percentage or a f
 
 Deno.test("loopy size: the window is the base size scaled, resized about its bottom-right corner", () => {
   assertEquals(WINDOW_SIZE, { width: 260, height: 300 });
+  // The window opens at the default size, so the first frame needs no resize.
+  const first = companionConfig.desktop?.window as { width?: number; height?: number };
+  assertEquals({ width: first.width, height: first.height }, scaledWindowSize(SCALE.default));
   assertEquals(scaledWindowSize(100), WINDOW_SIZE);
   assertEquals(scaledWindowSize(SCALE.default), { width: 325, height: 375 });
   assertEquals(scaledWindowSize(SCALE.min), { width: 195, height: 225 });

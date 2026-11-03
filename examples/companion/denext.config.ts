@@ -22,8 +22,11 @@ export default {
       activationPolicy: "accessory",
     },
     window: {
-      width: 260,
-      height: 300,
+      // Loopy at its default size, 125 % of the 260 × 300 base (lib/placement.ts WINDOW_SIZE ×
+      // lib/voice-settings.ts SCALE.default), so the first frame needs no resize; the page resizes
+      // the window to the size setting after that.
+      width: 325,
+      height: 375,
       title: "Loopy",
       resizable: false,
       // Creation-time (written to .deno-desktop/app.json): Loopy stands on the desktop itself.

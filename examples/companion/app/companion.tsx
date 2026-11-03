@@ -304,8 +304,8 @@ function BubbleSlot(
   );
 }
 
-/** The read-aloud toggle. */
-function VoiceToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
+/** The read-aloud toggle (kept under its old storage key, lib/speech.ts). */
+function ReadAloudToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) => void }) {
   return (
     <button
       type="button"
@@ -313,7 +313,7 @@ function VoiceToggle({ on, onChange }: { on: boolean; onChange: (on: boolean) =>
       title="Read Loopy's messages aloud"
       onClick={() => onChange(!on)}
     >
-      {on ? "Voice on" : "Voice off"}
+      {on ? "Read aloud on" : "Read aloud off"}
     </button>
   );
 }
@@ -335,7 +335,7 @@ function Controls(
       <button type="button" onClick={shown ? onFold : onCall}>
         {shown ? "Fold up" : "Call Loopy"}
       </button>
-      <VoiceToggle on={readAloud} onChange={onReadAloud} />
+      <ReadAloudToggle on={readAloud} onChange={onReadAloud} />
       <button type="button" aria-label="Settings" title="Settings" onClick={onSettings}>⚙</button>
       {desktop && <button type="button" onClick={() => void quit()}>Quit</button>}
     </nav>

@@ -24,8 +24,9 @@ and this project adheres to
   same-origin `POST /api/voice`. Tool calls are relayed from the page to a registry in Deno, ready
   for the tools to come. A size setting (75–250 %, 125 % by default, or `?scale=` in dev) scales
   Loopy and its bubble and resizes the window about its bottom-right corner, with the
-  click-through region following. The desktop window can't use the microphone yet; Loopy says so
-  and points at the browser.
+  click-through region following; the window opens at the default size (325 × 375), so the first
+  frame needs no resize. The read-aloud toggle is now labelled **Read aloud** (the setting carries
+  over). The desktop window can't use the microphone yet; Loopy says so and points at the browser.
 
 ## [4.11.13] - 2026-11-02
 

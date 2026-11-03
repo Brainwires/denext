@@ -9,8 +9,9 @@
 // position (`layerShellEdgeAnchor`), where the compositor keeps it clear of the panels itself.
 
 /**
- * Loopy's window size at 100 % (kept equal to `desktop.window` in denext.config.ts). The page
- * resizes the window to its size setting (`scaledWindowSize`).
+ * Loopy's window size at 100 %, the base for the size math. `desktop.window` in denext.config.ts
+ * opens at the default size (`scaledWindowSize(SCALE.default)`, 325 × 375), and the page resizes
+ * the window to its size setting.
  */
 export const WINDOW_SIZE = { width: 260, height: 300 } as const;
 

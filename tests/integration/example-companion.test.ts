@@ -24,6 +24,9 @@ Deno.test("examples/companion: exports Loopy's page, its client bundle and its s
   assertStringIncludes(html, "<title>Loopy</title>");
   assertMatch(html, /<svg class="loopy" data-state="hidden"[^>]*aria-label="Loopy"/);
   assertStringIncludes(html, 'href="/styles.css"');
+  // The read-aloud toggle says what it does (it was "Voice on/off" before the voice assistant).
+  assertStringIncludes(html, "Read aloud off");
+  assert(!html.includes("Voice off"), "the old label is gone");
   // Only Loopy and its buttons catch clicks before a bubble opens; the empty bubble row and the
   // room beside Loopy let them through (lib/window-setup.ts follows the marked elements).
   const marked = [...html.matchAll(/<(\w+)([^>]*)>/g)]

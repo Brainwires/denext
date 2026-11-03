@@ -38,12 +38,12 @@ drawn by `public/styles.css`):
 | `dismiss`   | **Fold up**                            | folds flat into the desk                                  |
 | (squash)    | clicking its face                      | squash-and-stretch (Web Animations) and a line of its own |
 
-The window is a 260 × 300 transparent, frameless overlay in the bottom-right corner: the speech
-bubble on top, Loopy below it on the left, and **Fold up** / **Quit** in the bottom-right corner
-(faint until the pointer is over them). It never takes the focus from the app you are typing in,
-floats above other windows on every Space, and has no Dock or taskbar entry: the tray icon shows and
-hides Loopy and quits. Drag Loopy to move it. In a browser the same page shows five demo buttons
-under Loopy instead.
+The window is a 325 × 375 (Loopy's default size, 125 % of a 260 × 300 base) transparent, frameless
+overlay in the bottom-right corner: the speech bubble on top, Loopy below it on the left, and **Fold
+up** / **Quit** in the bottom-right corner (faint until the pointer is over them). It never takes
+the focus from the app you are typing in, floats above other windows on every Space, and has no Dock
+or taskbar entry: the tray icon shows and hides Loopy and quits. Drag Loopy to move it. In a browser
+the same page shows five demo buttons under Loopy instead.
 
 ## How it works
 
@@ -60,10 +60,10 @@ under Loopy instead.
   `overlay` for a layer-shell surface on Linux Wayland), no Dock icon from the first frame
   (`desktop.app.activationPolicy: "accessory"`) and the tray (`desktop.tray`, handled in
   `desktop.ts`).
-- `lib/speech.ts` — **Voice on** reads each bubble aloud (its text, then its buttons as the choices)
-  with `speak()` from `denext/mobile`: the window's Web Speech where it has one, else the OS engine
-  through the desktop runtime (`Deno.desktop.speech`; speech-dispatcher on Linux). Off until turned
-  on; the toggle is kept in `localStorage`.
+- `lib/speech.ts` — **Read aloud on** reads each bubble aloud (its text, then its buttons as the
+  choices) with `speak()` from `denext/mobile`: the window's Web Speech where it has one, else the
+  OS engine through the desktop runtime (`Deno.desktop.speech`; speech-dispatcher on Linux). Off
+  until turned on; the toggle is kept in `localStorage`.
 - `lib/window-setup.ts` + `lib/click-through.ts` — `denext/desktop/window`: `windowCapabilities()`
   first; a transparent background where the window is transparent; clicks through everywhere but
   Loopy, its bubble and its buttons (`setHitRegion` over their rectangles, else
