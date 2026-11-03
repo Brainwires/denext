@@ -4,6 +4,7 @@
 
 import { basename, dirname, resolve } from "@std/path";
 import { pinEligibleFile } from "../../build/eligible-pins.ts";
+import { describeClash } from "../../build/local-checkout-imports.ts";
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { type AppIconReport, type MigrateOptions, migrateProject } from "../../build/migrate.ts";
 import {
@@ -206,6 +207,16 @@ function reportPatches(p: NonNullable<MigrateResult["patches"]>): void {
   const mark = p.action === "written" && p.review.length === 0 ? "▸" : "⚠️ ";
   console.log(`  ${mark} ${first}`);
   for (const line of rest) console.log(`      ${line}`);
+}
+
+/** The packages the app maps at another major than the local denext checkout (kept as the app's). */
+function reportImportClashes(clashes: NonNullable<MigrateResult["importClashes"]>): void {
+  console.log(
+    "  ⚠️  The app maps packages the local denext checkout also imports, at another major; " +
+      "the app's entry was kept (denext's would shadow the app's version):",
+  );
+  for (const c of clashes) console.log(`      ${describeClash(c)}`);
+  console.log("      denext's modules load the app's version of these; check they still work.");
 }
 
 /** Up to `max` review notes (and a count of the rest); nothing when there are none. */
@@ -865,6 +876,7 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       if (r.nextAuth) reportNextAuth(r.nextAuth);
       if (r.jailScripts) reportJailScripts(r.jailScripts);
       if (r.patches) reportPatches(r.patches);
+      if (r.importClashes) reportImportClashes(r.importClashes);
       await capacitorSteps(r, run ?? terminalRunner(false), false, ctx.flags.yes === true);
 
       if (r.denoJsonExists) {

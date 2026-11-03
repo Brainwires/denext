@@ -43,6 +43,14 @@ import {
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
 import { DENEXT_EXCLUDE, denextExemptions } from "../../build/dep-age.ts";
+import {
+  describeClash,
+  frameworkRuntimeDeps,
+  importsOf,
+  localCheckoutOf,
+  majorClashes,
+  readDenoConfig,
+} from "../../build/local-checkout-imports.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
 import {
   DENO_TOOLCHAIN,
@@ -410,6 +418,40 @@ export async function depAgeExemptionCheck(
       `other dependency; fix: ${fixes.join("; ")}. Keep an entry only if you publish denext ` +
       `yourself, or in a harness that tests its own fresh releases (${DEP_AGE_EXEMPTION_ALLOWED_ENV}=1 ` +
       "marks it deliberate): https://denext.dev/docs/toolchain#supply-chain-hold",
+    critical: false,
+  };
+}
+
+/**
+ * The local-checkout import check: an app whose import map points `denext` at a local checkout
+ * (a path or `file:` URL) must map denext's own deps itself, and an entry it maps at another major
+ * than the checkout's (`"@std/path": "jsr:@std/path@^0.224.0"` beside the checkout's `^1`) gives
+ * denext's modules a version they were not written for. A failure naming each clash (not
+ * critical); a pass when the checkout's deps agree; null when denext does not come from a checkout.
+ *
+ * @param dir The project directory (its `deno.json`).
+ */
+export async function localCheckoutImportsCheck(dir: string): Promise<Check | null> {
+  const imports = importsOf(await readDenoConfig(dir));
+  const checkout = await localCheckoutOf(dir, imports);
+  if (!checkout) return null;
+  const clashes = majorClashes(imports, await frameworkRuntimeDeps(checkout));
+  if (!clashes.length) {
+    return {
+      name: "local denext imports",
+      ok: true,
+      detail: `denext from the checkout at ${checkout}; the import map agrees with its deps`,
+      critical: false,
+    };
+  }
+  return {
+    name: "local denext imports",
+    ok: false,
+    detail: `denext comes from the checkout at ${checkout}, and the import map maps ` +
+      `${clashes.length === 1 ? "a package" : "packages"} it imports at another major: ` +
+      `${clashes.map(describeClash).join("; ")}. denext's modules load the app's version. ` +
+      "Map the checkout's version if the app does not need its own, or check denext works " +
+      "with the app's: https://denext.dev/docs/toolchain#a-local-denext-checkout",
     critical: false,
   };
 }
@@ -1054,6 +1096,8 @@ export async function collectDoctorReport(
   if (signing) checks.push(signing);
   const depAge = await depAgeExemptionCheck(paths.projectDir);
   if (depAge) checks.push(depAge);
+  const localImports = await localCheckoutImportsCheck(paths.projectDir);
+  if (localImports) checks.push(localImports);
   const jail = await jailScriptsCheck(paths.projectDir, options);
   if (jail) checks.push(jail);
   checks.push(...await backendChecks(paths.projectDir, paths.config), ...authChecks(paths.config));

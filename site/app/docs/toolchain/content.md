@@ -648,6 +648,24 @@ workspace member's mapping to a module on another drive from `3.0.0-rc.5`. Stock
 Deno 2.9 still resolves it as `file:///C:/D:/…`, so under `DENEXT_DENO=stock` keep the project and
 its `file:` targets on one drive.
 
+## A local denext checkout
+
+An app can run an unreleased denext straight from a checkout: `denext migrate --denext-local-path
+<checkout>` points the import map's `denext` entries (and the tasks' CLI) at the checkout's files
+instead of `jsr:@denext/denext`. A checkout is not a self-contained package, so its modules' bare
+imports (`@std/path`, `ws`, …) resolve through the app's import map, and migrate maps them too —
+only the ones the modules an app can load import (not the dependencies only denext's CLI or its
+tests use; a local CLI runs under the checkout's own `deno.json`).
+
+The app's own entries win. A key the app already maps (its import map, or a `package.json`
+dependency resolved from `node_modules`) is never overridden by the checkout's, which would shadow
+the app's version (an app on Effect 4 against a checkout's `effect@^3`, say, breaks a
+`nodeModulesDir: "manual"` workspace's bundles). When the two disagree on the major, migrate keeps
+the app's entry and reports the clash — the package, the app's specifier and the checkout's — and
+`denext doctor` flags an import-map entry that maps a package the checkout needs at another major
+(`local denext imports`). Do not copy the checkout's whole `imports` into an app: its root import
+map also serves denext's workspace packages and tests.
+
 ## Supply-chain hold
 
 Deno holds a package version published less than its _minimum dependency age_ ago out of

@@ -8,6 +8,30 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`denext upgrade` lists out-of-date native templates.** The native files `denext mobile add` /
+  `add-ota` wrote into `ios/` and `android/` carry their template generation; `upgrade` (with
+  `--dry-run` too, and as `nativeTemplates` in `--json`) names every family older than this denext
+  writes, with the command that refreshes it (`denext mobile add auth-session` for the bridge
+  frame-guard fixes of auth-session generation 6, say). Native files are never rewritten by
+  `upgrade`: they change the binary.
+- **`denext doctor` checks an app that runs denext from a local checkout.** When the import map's
+  `denext` entry is a path or `file:` URL into a denext checkout, the `local denext imports` check
+  flags an entry that maps a package the checkout's modules import at another major (or to another
+  package), naming the app's specifier and the checkout's.
+
+### Fixed
+
+- **`migrate --denext-local-path` never overrides a package the app maps itself.** A key in the
+  app's existing import map keeps the app's value on a re-run (it was replaced by the checkout's),
+  a `package.json` dependency stays the app's, and a clash at another major is reported (package,
+  the app's specifier, the checkout's) instead of shadowing the app's version.
+- **`migrate --denext-local-path` maps only the deps an app's graph can load.** They come from the
+  modules reachable from the checkout's public entry points, not from every file under `src/`: a
+  dependency only denext's CLI imports (its profiler's headless-browser client) no longer lands in
+  the app's import map, and neither does one of the checkout's workspace packages or tests.
+
 ## [4.11.13] - 2026-11-02
 
 ### Added
