@@ -1345,7 +1345,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type AnchorProps = Omit<Record<string, unknown>, "href" | "children">` — The anchor attributes a Link forwards (everything an <a> takes except href).
 - `interface ApiClient<S>` — A typed callable over an app's ApiSchema.
 - `interface ApiClientAuth` — A bearer-token source for createApiClient: the token to send, and how to get a new one after a 401.
-- `class ApiClientError<Code>` — A failed typed API call: the HTTP status plus, when the server answered with denext's JSON error envelope ({ error: { code, status, message, data?, fieldErrors?, digest? } } — an ApiError, a validation failure, a control signal, or a redacted 500), the envelope's fields. code narrows to the endpoint's declared codes (ErrorsOf<E>); a non-envelope failure (a plain text 500, an HTML error page) has code: "http_error".
+- `class ApiClientError<Code> extends Error` — A failed typed API call: the HTTP status plus, when the server answered with denext's JSON error envelope ({ error: { code, status, message, data?, fieldErrors?, digest? } } — an ApiError, a validation failure, a control signal, or a redacted 500), the envelope's fields. code narrows to the endpoint's declared codes (ErrorsOf<E>); a non-envelope failure (a plain text 500, an HTML error page) has code: "http_error".
 - `interface ApiClientOptions` — Options for createApiClient.
 - `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies, query, error codes.
 - `type ApiEndpointOf<P, M> = NonNullable<RegisteredSchema[P][M]>` — The registered schema's entry for one route + method (what useApi is typed against).
@@ -1355,6 +1355,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `apiRequest(pattern: string, method: HttpMethod, opts?: ApiRequestOptions, base?: string, fetchImpl?: typeof fetch): Promise<unknown>` — Perform one typed API request (the runtime the typed client dispatches to). Substitutes params, encodes a body through the wire codec (flagging it only when a tag was needed), and parses the JSON response (decoding it when the server flagged it; a 204/empty body → undefined). A non-2xx response throws an ApiClientError carrying the server's error envelope when there is one.
 - `interface ApiRequestOptions` — Options accepted by the untyped runtime call (the typed client narrows these).
 - `type ApiSchema = Record<string, Partial<Record<HttpMethod, ApiEndpoint>>>` — A whole app's API surface: route pattern → (method → endpoint).
+- `interface AriaAttributes` — ARIA attributes (permissive superset).
 - `AsyncContext: { Variable: typeof Variable; Snapshot: typeof Snapshot }` — The TC39-shaped namespace object: AsyncContext.Variable / AsyncContext.Snapshot.
 - `type AsyncEffect = (args: { signal: AbortSignal; sleep: (ms: number) => Promise<void>; setTimeout: (ms: number, task: () => void) => Promise<void>; fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> }) => Promise<void>` — The async effect useAsyncEffect runs. It receives the effect's signal (AbortSignal, aborted on cleanup) and abort-aware sleep, setTimeout and fetch helpers.
 - `type AsyncEffectErrorClass = new (...args: never[]) => Error` — An error class useAsyncEffect can route to onError (catch: [TypeError]).
@@ -1388,6 +1389,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type DependencyList = readonly unknown[]` — A useEffect/useMemo dependency array.
 - `interface DirectoryEntry` — One entry of a directory listing.
 - `type Dispatch<A> = (value: A) => void` — useState/useReducer dispatcher.
+- `interface DOMAttributes<T>` — The DOM event-handler surface shared by every element (permissive).
 - `dynamic<P>(loader: DynamicLoader<P>, options?: DynamicOptions<P>): Component<P>` — Lazily load a component. Returns a component you can render immediately; its target module is imported on first render (as its own bundle chunk) and shown once resolved, with loading displayed meanwhile.
 - `type DynamicLoader<P> = (() => Promise<{ default: Component<P> }>) | (() => Promise<Component<P>>)` — A loader returning a module (whose default is the component) or the component.
 - `interface DynamicLoadingProps` — The props next/dynamic passes to a loading component.
@@ -1402,6 +1404,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ErrorResult<E> = readonly [false, E]` — A failed operation result.
 - `type ErrorsOf<E> = E extends { errors: infer C } ? C : string` — The error codes a call to one endpoint may fail with.
 - `escapeHtml(value: string): string` — Escape &, <, >, ", and ' so a string is safe as HTML text or attribute content.
+- `interface ExoticComponent<P>` — A callable "exotic" component (forwardRef/memo/lazy results).
 - `type FC<P> = FunctionComponent<P>` — Alias for FunctionComponent.
 - `type FileAs = "text" | "arrayBuffer" | "json"` — How useFile decodes the file's contents.
 - `interface FileSystemChangeRecord` — A single change reported by the observer.
@@ -1413,7 +1416,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface FontResult` — The result of localFont: a style object plus its @font-face CSS.
 - `interface FontSource` — A single font source file (with optional weight/style for the face).
 - `forbidden(): never` — Throw to render the nearest forbidden.tsx UI with a 403 status.
-- `class ForbiddenError` — Error thrown by forbidden to render the nearest forbidden UI (HTTP 403).
+- `class ForbiddenError extends Error` — Error thrown by forbidden to render the nearest forbidden UI (HTTP 403).
 - `interface FormEvent<T> extends SyntheticEvent<T>` — A form event.
 - `interface FormStatus` — Status of the enclosing form's action, as returned by useFormStatus.
 - `type ForwardedRef<T> = ((instance: T | null) => void) | MutableRefObject<T | null> | null` — The ref a forwardRef render fn receives.
@@ -1478,11 +1481,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ModuleEndpoints<M, P> = { [K in keyof M & HttpMethod as M[K] extends HandlerLike ? K : never]: InferEndpoint<M[K], P> }` — Every exported HTTP-method handler of a route module, as { GET: InferEndpoint; … }. P is the pattern-derived params record (never for a static route).
 - `interface MouseEvent<T, E> extends SyntheticEvent<T, E>` — A mouse event.
 - `interface MutableRefObject<T>` — A mutable ref cell.
+- `interface NamedExoticComponent<P> extends ExoticComponent<P>` — An exotic component with a displayName.
 - `interface NativeIdTokenSignIn` — What a native id_token sign-in sends.
 - `interface NativeMfaChallenge` — A native sign-in that still owes a second factor: finish it with NativeSession.completeMfa. Single-use — every call answers a fresh one on the error it throws — and short-lived (five minutes from the id_token sign-in).
 - `nativeSession(options: NativeSessionOptions): NativeSession` — A native session against a remote denext server (denextAuth({ native })). Pass it as createApiClient({ base, auth: session }).
 - `interface NativeSession` — A native session: an auth provider for createApiClient, plus sign-in and sign-out.
-- `class NativeSessionError` — A failed native-session call.
+- `class NativeSessionError extends Error` — A failed native-session call.
 - `interface NativeSessionOptions` — Options for nativeSession.
 - `interface NativeSessionStorage` — Where the refresh token is kept — secureStore from denext/mobile fits as is.
 - `interface NativeSessionUser` — The user a native sign-in answers with.
@@ -1490,7 +1494,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface NavigateOptions` — Options controlling a soft (client-side) navigation.
 - `interface NetworkState` — Network status, with connection hints when the browser provides them.
 - `notFound(): never` — Throw to render the nearest not-found UI with a 404 status.
-- `class NotFoundError` — Error thrown by notFound to trigger the nearest not-found UI (HTTP 404).
+- `class NotFoundError extends Error` — Error thrown by notFound to trigger the nearest not-found UI (HTTP 404).
 - `permanentRedirect(url: Href | (string & Record<never, never>), type?: RedirectType): never` — Throw to issue a permanent (308) redirect to url.
 - `interface PictureInPictureControls` — The controls returned by usePictureInPicture.
 - `type PlainBody<H> = H extends (req: infer Q, ...rest: never[]) => unknown ? ([Q] extends [TypedRequest<infer B>] ? Informative<B> : never) : never` — A plain handler's request body: the B of its TypedRequest<B> first param, else never.
@@ -1507,9 +1511,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type QueryInput = Record<string, string | number | boolean | null | undefined> | string` — An href's query: a record (nullish values are dropped) or a pre-built query string.
 - `type ReactElement<P, _T> = VNode & { props: P }` — A denext element (React's ReactElement). The 2nd param (element type) is accepted for @types/react shape compatibility; denext keys elements on VNode.
 - `type ReactNode = VNode | string | number | bigint | boolean | null | undefined | Iterable<ReactNode> | Promise<ReactNode>` — Anything renderable as a child (React's ReactNode). Accepts denext VNode.
-- `class ReadonlyURLSearchParams` — Next's ReadonlyURLSearchParams — the read-only view of the URL query that useSearchParams() returns. It is a real URLSearchParams for reads/iteration, but its mutating methods throw (you cannot change the URL by mutating this object; navigate instead).
+- `class ReadonlyURLSearchParams extends URLSearchParams` — Next's ReadonlyURLSearchParams — the read-only view of the URL query that useSearchParams() returns. It is a real URLSearchParams for reads/iteration, but its mutating methods throw (you cannot change the URL by mutating this object; navigate instead).
 - `redirect(url: Href | (string & Record<never, never>), typeOrStatus?: RedirectType | number): never` — Throw to redirect to url from a component or action.
-- `class RedirectError` — Error thrown by redirect/permanentRedirect to issue an HTTP redirect.
+- `class RedirectError extends Error` — Error thrown by redirect/permanentRedirect to issue an HTTP redirect.
 - `enum RedirectType` — next/navigation's RedirectType — how a client-side (soft) navigation applies the redirect: push a new history entry or replace the current one. Server responses ignore it (they always issue an HTTP redirect).
 - `type Reducer<S, A> = (prevState: S, action: A) => S` — A useReducer reducer.
 - `type Ref<T> = { current: T | null } | ((value: T | null) => void) | null | undefined` — A mutable ref object or a callback ref, as accepted by ref/useImperativeHandle.
@@ -1540,7 +1544,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ScrollSnapOptions` — Snap points, React Native's way (VirtualListProps.scrollSnap).
 - `interface ScrollToIndexOptions` — Options for VirtualListHandle.scrollToIndex.
 - `type SearchOutput<S> = S extends StandardSchemaV1<infer O> ? O : never` — What a Standard Schema produces from the query string — its validated output type.
-- `class SearchParamsValidationError` — Thrown by useSearchParams(schema) when the URL query fails the schema. It is a normal error, so the nearest error.tsx boundary catches it (matching the server's defineApi validation).
+- `class SearchParamsValidationError extends Error` — Thrown by useSearchParams(schema) when the URL query fails the schema. It is a normal error, so the nearest error.tsx boundary catches it (matching the server's defineApi validation).
 - `serverAction<A, R>(id: string, handler: (...args: A) => R | Promise<R>): ServerActionRef<A, R>` — Define a server action. Give it a **stable, explicit id** (unique per app) so the client stub and the server handler agree across the boundary.
 - `interface ServerActionRef<A, R>` — A reference to a server action: callable, and tagged with its stable id.
 - `serverOnly(name?: string): void` — Assert the current module is running on the server. Call at module top level to guarantee a module (e.g. one reading secrets or a database) never ships to or executes in the browser.
@@ -1581,7 +1585,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type TypedQuery<Q> = unknown extends Q ? FreeQuery : { query: Q }` — A schema-typed query, required; an uninformative (any/unknown) schema stays free-form.
 - `type TypedUrlObject = { [P in keyof RegisteredParams & string]: { pathname: P; query?: QueryInput; hash?: string; search?: string } & (keyof RegisteredParams[P] extends never ? { params?: Record<never, never> } : { params: RegisteredParams[P] }) }[keyof RegisteredParams & string]` — The typed object form of an href: a route pattern as pathname plus the params object it requires (checked against this app's routes when .denext/routes.ts is imported). A route with no dynamic segments takes no params. Unresolved dynamic segments are filled from params, so { pathname: "/blog/[slug]", params: { slug } } navigates to /blog/<slug>.
 - `unauthorized(): never` — Throw to render the nearest unauthorized.tsx UI with a 401 status.
-- `class UnauthorizedError` — Error thrown by unauthorized to render the nearest unauthorized UI (HTTP 401).
+- `class UnauthorizedError extends Error` — Error thrown by unauthorized to render the nearest unauthorized UI (HTTP 401).
 - `unstable_rethrow(error: unknown): void` — Next's unstable_rethrow — re-throw denext's control-flow signals (redirect(), notFound(), forbidden(), unauthorized(), a PPR postpone) from inside a try/catch, so a catch-all handler doesn't swallow them. Also rethrows an Error whose cause chain wraps such a signal (a library that re-wraps what it caught). A no-op for any other value.
 - `interface UrlObject` — Next.js UrlObject — the object form Link/useRouter accept as an href.
 - `use<T>(usable: Promise<T> | Context<T>): T` — React 19's use: read a resource during render. Given a **promise**, unwrap its value, suspending (throwing the promise) while it is pending — the same promise instance must be passed across renders (cache it). Given a **context** (from createContext), read its current value like useContext — this overload may be called conditionally. Works on the client and under every SSR renderer, since both delegate to the active hook dispatcher.
@@ -1659,7 +1663,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `useWindowSize(): WindowSize` — Track the viewport size, re-rendering on resize.
 - `type ValueResult<R> = [Exclude<R, Response | Err<unknown, unknown>>] extends [never] ? unknown : Exclude<R, Response | Err<unknown, unknown>>` — A defineApi handler's returned VALUE type: a returned Response carries no body type, and a returned err(...) is an error envelope, not a body.
 - `class Variable<T>` — A value scoped to an async control flow. Set it for the duration of a callback with run, read the innermost enclosing value with get.
-- `VERSION: "4.11.12"` — The denext framework version.
+- `VERSION: "4.11.13"` — The denext framework version.
 - `interface ViewabilityConfig` — React Native's ViewabilityConfig.
 - `interface ViewabilityConfigCallbackPair<T>` — A viewabilityConfigCallbackPairs entry.
 - `interface ViewableItemsChanged<T>` — What onViewableItemsChanged receives.
@@ -1702,7 +1706,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type ActionErrGuard<Out> = [Exclude<Extract<Out, Err<unknown, unknown>>, ActionErr>] extends [never] ? unknown : { readonly "denext: a defineAction err() takes a string message and { fieldErrors? }": Exclude<Extract<Out, Err<unknown, unknown>>, ActionErr> }` — unknown when every err(...) a handler returns is an ActionErr (a string message, optional fieldErrors); otherwise a type the handler can't satisfy, so the mistake is a compile error.
 - `interface ActionHandlerOptions` — Options for handleAction.
 - `type ActionResult<Out> = { readonly ok: true; readonly data: Out } | { readonly ok: false; readonly error: string; readonly fieldErrors?: Readonly<Record<string, string>>; readonly digest?: string }` — The result an action returns: ok carries the typed handler output, else an error.
-- `class ActionValidationError` — Throw this from an input parser (or a handler) to return per-field form errors.
+- `class ActionValidationError extends Error` — Throw this from an input parser (or a handler) to return per-field form errors.
 - `activeAuthConfig(): AuthConfig` — The auth config denextAuth() was built with — the one auth() and the auth endpoints use. Server code that needs the config itself (requireBearer, issueApiToken, requestPasswordReset, …) can read it here instead of importing its own copy.
 - `interface AdapterAccount` — A provider account linked to an AdapterUser.
 - `interface AdapterAccountRef` — Identifies one linked provider account.
@@ -1718,7 +1722,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ApiDispatchOptions` — Per-dispatch options the pipeline passes to handleApi.
 - `type ApiErr<D> = Err<ApiErrorCodes<D>, ApiErrorInit | undefined>` — A failure a handler may RETURN instead of calling fail(): err(code, init?) from denext/result, with code one of the endpoint's declared errors.
 - `type ApiErrGuard<D, R> = IsAny<Awaited<R>> extends true ? unknown : Exclude<Extract<Awaited<R>, Err<unknown, unknown>>, ApiErr<D>> extends infer U ? [U] extends [never] ? unknown : { readonly "denext: err() code is not declared in this endpoint's `errors`": U extends Err<infer C, unknown> ? C : never } : never` — unknown when every err(...) a handler returns uses a declared code; otherwise a type the handler can't satisfy, whose one key names the offending code — so return err("typo") is a compile error even on an endpoint without a response schema. A handler whose result is any (an untyped JSON.parse / res.json()) can't be told apart from an err(), so it is accepted rather than reported as an undeclared code.
-- `class ApiError` — A typed API failure: an HTTP status, a machine-readable code, and optional data / fieldErrors / headers. Throw it from a route handler (plain or defineApi) or from defineApi middleware; the dispatch seam turns it into the JSON error envelope and the client rebuilds it as an ApiClientError with the same fields.
+- `class ApiError extends Error` — A typed API failure: an HTTP status, a machine-readable code, and optional data / fieldErrors / headers. Throw it from a route handler (plain or defineApi) or from defineApi middleware; the dispatch seam turns it into the JSON error envelope and the client rebuilds it as an ApiClientError with the same fields.
 - `interface ApiErrorBody` — The JSON body of a failed API response.
 - `type ApiErrorCodes<D> = D extends { errors: infer E } ? keyof E & string : never` — The error codes an endpoint declares (keyof def.errors).
 - `interface ApiErrorInit` — Optional parts of an ApiError.
@@ -1738,7 +1742,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ApiRouteMeta` — The metadata attached to a defineApi handler (what handleApi and plugins read).
 - `interface ApiTokenRecord` — A long-lived bearer API token. The presented secret is never stored, only its hash.
 - `type ApiTokenRevokedReason = "revoked" | "owner_refused" | "password_reset" | "email_verified" | "phone_verified"` — Why an API token was revoked, as apiTokenRevoked reports it.
-- `class ApiValidationError` — A request that failed schema validation: a 400 with code "validation", the per-field messages, and data.source naming the offending part of the request.
+- `class ApiValidationError extends ApiError` — A request that failed schema validation: a 400 with code "validation", the per-field messages, and data.source naming the offending part of the request.
 - `type ApiValidationSource = "params" | "query" | "body"` — Which part of the request a validation failure came from.
 - `interface ApnsConfig` — Token-based APNs credentials (a .p8 key from the Apple Developer portal).
 - `interface AppConfig` — Configuration for createApp: how to resolve the route manifest and load modules, plus optional cross-cutting behavior (request logging, per-request timeout, and the rest). ServeOptions extends this for the higher-level serve entry point.
@@ -1786,7 +1790,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `bootDdlEnabled(): boolean` — Whether denext's Postgres features may create their own schema (DENEXT_BOOT_DDL is not off / 0 / false / no). Read on every call.
 - `bootMigrate(sql: SqlClient, options: BootMigrateOptions): Promise<void>` — Bring a feature's schema up at startup or first use. With boot-time DDL on, apply the pending migrations (the server's NOTICEs silenced) and print one line when any were applied. With it off, apply nothing: throw a BootSchemaError unless every migration is recorded.
 - `interface BootMigrateOptions extends Omit<PostgresMigrateOptions, "dryRun" | "quiet">` — Options for bootMigrate: the migrations and their tracking table, and who asks.
-- `class BootSchemaError` — Why a feature can't start with boot-time DDL off: its schema is not (all) there.
+- `class BootSchemaError extends Error` — Why a feature can't start with boot-time DDL off: its schema is not (all) there.
 - `broadcastChannelTransport(name?: string): ChannelTransport & { close(): void }` — A transport over the Web BroadcastChannel API: every instance that shares the channel name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.
 - `buildAuthnRequest(options: BuildAuthnRequestOptions): Promise<{ id: string; url: string }>` — Build an AuthnRequest and the IdP URL that carries it (HTTP-Redirect binding: the XML is DEFLATE-compressed, base64-encoded and URL-encoded into SAMLRequest). The request names this SP's HTTP-POST ACS URL, and is signed (SigAlg + Signature) when sp.signingKey is set. Remember the returned id (with the RelayState) and pass it as expectedInResponseTo when the Response arrives.
 - `interface BuildAuthnRequestOptions` — Options for buildAuthnRequest.
@@ -1812,7 +1816,8 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface CdnCacheHeadersConfig` — Shared-cache headers on ISR pages with options (DenextConfig.cdnCacheHeaders as an object: the headers on, with these settings).
 - `interface CertifiedKeyPem` — A certificate and its key, PEM.
 - `interface Channel<T>` — A channel on the server.
-- `class ChannelAccessError` — Why tapChannelAuthorized refused a subscriber.
+- `class ChannelAccessError extends Error` — Why tapChannelAuthorized refused a subscriber.
+- `interface ChannelAdmission` — What ChannelConfig.authorize answers to admit a subscriber under a grant: an opaque, short text for what it may read (a digest of its role and claims, say — never the claims themselves: it travels between instances). The Live hub then sends it a publish stamped with a grant (ChannelPublishOptions.grant) only when the two are equal, and every unstamped publish as before. The grant is recorded again at each re-authorization, so a subscriber whose claims changed is matched against what it may read now.
 - `interface ChannelConfig<T>` — The definition passed to createChannel.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
 - `interface ChannelEvent` — One transport event: a channel publish/revoke, a cross-instance cache-tag invalidate, an instance's presence snapshot of one usePresence room, or a parked live view's view-resumed (it resumed on another instance, so the one that parked it stops its copy).
@@ -1822,6 +1827,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface ChannelLogEntry` — One logged publish.
 - `type ChannelPublisher<T> = (ctx: ChannelPublisherContext<T>) => unknown` — A supervised per-key producer (ChannelConfig.publisher).
 - `interface ChannelPublisherContext<T>` — What a ChannelConfig.publisher receives.
+- `interface ChannelPublishOptions` — Options of Channel.publish.
 - `interface ChannelRef<T>` — A channel as the browser sees it: the id (and the phantom type).
 - `interface ChannelTapHandlers<T>` — What tapChannel reports.
 - `interface ChannelTransport` — Carries ChannelEvents to every hub that should deliver them (across instances).
@@ -1885,7 +1891,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type DenoKvRateLimitStoreOptions = DenoKvConnectionOptions` — Options for denoKvRateLimitStore.
 - `denoKvSessionStore(options?: DenoKvSessionStoreOptions): SessionStore & { close(): Promise<void> }` — A durable, shared SessionStore on Deno KV.
 - `type DenoKvSessionStoreOptions = DenoKvConnectionOptions` — Options for denoKvSessionStore.
-- `class DenoKvUnsupportedError` — Thrown when this Deno has no Deno.openKv (outside Deno Deploy without --unstable-kv).
+- `class DenoKvUnsupportedError extends Error` — Thrown when this Deno has no Deno.openKv (outside Deno Deploy without --unstable-kv).
 - `interface DesktopAppIcons` — DesktopConfig.app's icons: the app icon file per OS, relative to the project.
 - `interface DesktopCapabilitiesConfig` — desktop.capabilities: which native capabilities the page may reach, keyed by the name denext desktop add <name> writes. true enables a capability with its defaults; an object scopes it. Anything absent is denied. An unknown key is allowed (a newer desktop add) and the validator warns on it.
 - `interface DesktopConfig` — The desktop block of denext.config.ts: Deno Desktop native capabilities. The allowlist the desktop runtime's capability bridge serves (default deny), and the source the package scripts derive least-privilege --allow-* from. Written by denext desktop add <cap>. Distinct from SpaDesktopConfig (spa.desktop, packaging settings such as the icon); the two may be unified later. Docs: https://denext.dev/docs/desktop
@@ -1979,7 +1985,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `google(options: OAuthClientOptions): OAuthProvider` — Google (OIDC). Verifies the id_token; no userinfo round-trip needed.
 - `interface GoTrueAccessTokenHookInput` — What GoTrueHooks.customAccessToken receives.
 - `interface GoTrueCaptchaOptions` — Captcha verification for sign-up, sign-in, OTP, recovery and anonymous sign-in.
-- `class GoTrueError` — A GoTrue-shaped refusal; goTrueErrorResponse renders it.
+- `class GoTrueError extends Error` — A GoTrue-shaped refusal; goTrueErrorResponse renders it.
 - `type GoTrueErrorCode = "anonymous_provider_disabled" | "bad_code_verifier" | "bad_json" | "bad_jwt" | "bad_oauth_callback" | "bad_oauth_state" | "captcha_failed" | "custom_provider_not_found" | "email_address_invalid" | "email_address_not_authorized" | "email_exists" | "email_not_confirmed" | "email_provider_disabled" | "flow_state_expired" | "flow_state_not_found" | "identity_already_exists" | "identity_not_found" | "insufficient_aal" | "invalid_credentials" | "manual_linking_disabled" | "mfa_challenge_expired" | "mfa_factor_not_found" | "mfa_verification_failed" | "mfa_verification_rejected" | "mfa_phone_enroll_not_enabled" | "no_authorization" | "oauth_authorization_not_found" | "oauth_client_not_found" | "not_admin" | "otp_disabled" | "otp_expired" | "over_email_send_rate_limit" | "over_request_rate_limit" | "over_sms_send_rate_limit" | "phone_exists" | "phone_provider_disabled" | "provider_disabled" | "reauthentication_needed" | "reauthentication_not_valid" | "refresh_token_already_used" | "refresh_token_not_found" | "same_password" | "saml_entity_id_mismatch" | "saml_idp_already_exists" | "saml_metadata_expired" | "saml_metadata_fetch_failed" | "saml_provider_disabled" | "session_not_found" | "signup_disabled" | "single_identity_not_deletable" | "sms_send_failed" | "sso_domain_already_exists" | "sso_provider_not_found" | "unexpected_failure" | "user_already_exists" | "user_banned" | "user_not_found" | "user_sso_managed" | "validation_failed" | "weak_password" | "web3_provider_disabled" | "web3_unsupported_chain" | "not_found" | "method_not_allowed"` — A GoTrue error code (the subset denext answers with).
 - `interface GoTrueHandlerOptions` — What the handler needs besides the request.
 - `interface GoTrueHooks` — Supabase's auth hooks, as functions.
@@ -2241,7 +2247,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface PostgresRateLimitStoreOptions extends PostgresAuthStoreOptions` — Options for postgresRateLimitStore.
 - `postgresSessionStore(options: PostgresSessionStoreOptions): SessionStore` — A durable, shared SessionStore on Postgres.
 - `interface PostgresSessionStoreOptions extends PostgresAuthStoreOptions` — Options for postgresSessionStore.
-- `class PostgresUnsupportedError` — Why a Postgres feature could not run: no Deno.SQL and no client was passed.
+- `class PostgresUnsupportedError extends Error` — Why a Postgres feature could not run: no Deno.SQL and no client was passed.
 - `interface PrepareStepOptions` — Options for PluginContext.addPrepareStep.
 - `interface ProfileInput` — Raw inputs a provider maps into an AuthUser.
 - `provideMessages(messages: Messages, child: VNodeChild): VNode` — Wrap child in a MessagesContext provider so descendants resolve useTranslations() against messages during server rendering.
@@ -2276,9 +2282,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RedisClient` — A Redis connection shared by its callers (see the module docs).
 - `interface RedisClientOptions` — Options for redisClient.
 - `type RedisCommand = readonly (string | number)[]` — One command: its name and arguments (numbers are sent as their decimal text).
-- `class RedisConnectionError` — The connection failed or dropped; the command's effect on the server is unknown.
+- `class RedisConnectionError extends Error` — The connection failed or dropped; the command's effect on the server is unknown.
 - `interface RedisConnectionOptions` — Options shared by the Redis stores: a client of your own, or a URL to open one.
-- `class RedisError` — An error reply from the server (-ERR …, -WRONGTYPE …, -NOAUTH …).
+- `class RedisError extends Error` — An error reply from the server (-ERR …, -WRONGTYPE …, -NOAUTH …).
 - `redisLiveViewStore(options?: RedisLiveViewStoreOptions): LiveViewStore & { close(): Promise<void> }` — A LiveViewStore on Redis (6.2+, or Valkey), shared by every replica.
 - `type RedisLiveViewStoreOptions = RedisConnectionOptions` — Options for redisLiveViewStore.
 - `redisRateLimitStore(options?: RedisRateLimitStoreOptions): RateLimitStore & { close(): Promise<void> }` — A shared RateLimitStore on Redis.
@@ -2346,7 +2352,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `revalidateTag(tag: string, profile?: string | CacheLifeProfile): Promise<void>` — Invalidate every cached data entry and page carrying tag.
 - `type RevenueCatEventType = "TEST" | "INITIAL_PURCHASE" | "RENEWAL" | "CANCELLATION" | "UNCANCELLATION" | "NON_RENEWING_PURCHASE" | "SUBSCRIPTION_PAUSED" | "EXPIRATION" | "BILLING_ISSUE" | "PRODUCT_CHANGE" | "TRANSFER" | "SUBSCRIBER_ALIAS" | "SUBSCRIPTION_EXTENDED" | "TEMPORARY_ENTITLEMENT_GRANT" | "REFUND_REVERSED" | "INVOICE_ISSUANCE" | "VIRTUAL_CURRENCY_TRANSACTION" | "EXPERIMENT_ENROLLMENT" | (string & Record<never, never>)` — The event types RevenueCat sends (a newer one arrives as its own string).
 - `interface RevenueCatWebhookBody` — The whole webhook body.
-- `class RevenueCatWebhookError` — A refused webhook: status is the HTTP status to answer with.
+- `class RevenueCatWebhookError extends Error` — A refused webhook: status is the HTTP status to answer with.
 - `interface RevenueCatWebhookEvent` — One webhook event (the fields RevenueCat documents; others are kept on the object).
 - `revokeAllSessions(userId: string): Promise<void>` — Revoke every session of userId — "sign out everywhere", the right call after a password change or a suspected cookie theft: the session store's records, every native app session family when the adapter has that group, and — with an adapter — every cookie session signed in before now, stateless ones included (the user's sessionsValidAfter). Fires the sessionRevoked event. Throws when there is nothing to revoke through: no adapter and no sessionStore.
 - `revokeApiToken(config: AuthConfig, id: string, options: { userId?: string }): Promise<boolean>` — Revoke a token by id — it stops authenticating immediately and can never be revived. Revoking an unknown (or already revoked) id is a no-op, not an error, and fires nothing; an actual revocation fires apiTokenRevoked (reason: "revoked").
@@ -2366,13 +2372,13 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type RouteSynthesizer = (manifest: RouteManifest) => void | Promise<void>` — A hook run over the scanned manifest before it is returned. May add, remove, or adjust routes — the extension point behind synthesized/derived routes. May be async (e.g. a plugin scanning its own route tree off disk).
 - `runJob(name: string, payload?: unknown, opts?: { trigger?: "schedule" | "manual"; signal?: AbortSignal }): Promise<unknown>` — Run a job by name and return its handler's result. Throws if no such job is registered. Callable from app code (a route handler, an action) to trigger work on demand. The handler's signal aborts when opts.signal does and when the server shuts down.
 - `safeFetch: (url: string | URL, opts?: SafeFetchOptions) => Promise<Response>` — SSRF-safe fetch for **untrusted / user-supplied URLs** (link previews, "import from URL", avatar-by-URL, webhooks). Use it instead of fetch() whenever the destination is influenced by an end user.
-- `class SafeFetchError` — Thrown by safeFetch/pinned fetch when a request is refused or fails.
+- `class SafeFetchError extends Error` — Thrown by safeFetch/pinned fetch when a request is refused or fails.
 - `type SafeFetchErrorCode = "unsupported-protocol" | "host-not-allowed" | "blocked-address" | "dns" | "network" | "bad-response" | "too-many-redirects"` — Error codes surfaced by safeFetch.
 - `interface SafeFetchOptions` — Options for safeFetch.
 - `safeRedirectLocation(location: string): string` — Make a redirect Location safe against open redirects. An explicit http(s):// absolute URL is preserved (a deliberately-configured external redirect); anything else is forced to a single-slash, same-origin path so a protocol-relative (//host) or backslash (/\host) prefix — which browsers resolve cross-origin — cannot escape the current origin.
 - `saml(options: SamlProviderOptions): SamlProvider` — A SAML 2.0 identity provider (Okta, Entra ID, Google Workspace, ADFS, Keycloak, …) on {basePath}/signin/:id. Sign-ins are SSO sign-ins: the account is the IdP's (an SSO user), its email is bound only on the provider's domains, and an existing account is never taken over unless linkExistingAccounts is set.
 - `type SamlBindingInput = { query: string } | { form: URLSearchParams }` — How a logout message arrived: the raw query (HTTP-Redirect) or the posted form.
-- `class SamlError` — A refused SAML message or bad SAML configuration. code is a stable machine code (see SamlErrorCode); the message is human-readable detail for logs. Never echo the message to an end user — report a generic sign-in failure.
+- `class SamlError extends Error` — A refused SAML message or bad SAML configuration. code is a stable machine code (see SamlErrorCode); the message is human-readable detail for logs. Never echo the message to an end user — report a generic sign-in failure.
 - `type SamlErrorCode = "malformed_xml" | "doctype_forbidden" | "malformed_response" | "unexpected_markup" | "unsigned" | "bad_signature" | "signature_wrapping" | "multiple_assertions" | "encrypted_assertion_unsupported" | "decryption_failed" | "status_not_success" | "bad_destination" | "bad_recipient" | "bad_subject_confirmation" | "bad_audience" | "bad_issuer" | "expired" | "not_yet_valid" | "in_response_to_mismatch" | "idp_initiated_disallowed" | "replay" | "unsupported_algorithm" | "bad_certificate" | "bad_metadata" | "bad_key" | "bad_binding"` — The stable machine codes a SamlError carries. Switch on code, never on the message (which is for logs and may change between versions).
 - `interface SamlIdpConfig` — A trusted SAML 2.0 Identity Provider.
 - `type SamlPrivateKey = string | JsonWebKey` — An SP private key: a PKCS #8 PEM (-----BEGIN PRIVATE KEY-----) or an RSA private JWK. Only RSA keys are supported (RSA-SHA256 signatures, RSA-OAEP key transport).
@@ -2435,11 +2441,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `slack(options: OAuthClientOptions): OAuthProvider` — Slack ("Sign in with Slack", OIDC). Claims come from the verified id_token; Slack's email_verified claim is honoured by the shared mapper.
 - `interface SlotRoutes` — A parallel-route slot's own routable subtree (its pages + a default fallback).
 - `interface SmtpContent` — What SmtpMailerOptions.render returns.
-- `class SmtpError` — Why a send failed: the step, and the server's reply code when it answered.
+- `class SmtpError extends Error` — Why a send failed: the step, and the server's reply code when it answered.
 - `smtpMailer(options: SmtpMailerOptions): SmtpMailer` — A mailer over SMTP: pass it as denextAuth({ sendVerificationRequest: smtpMailer({ … }) }), and every verification email, password reset, magic link and one-time code goes out through it; mailer.send({ to, subject, text, html? }) sends anything else.
 - `interface SmtpMailer extends SendVerificationRequest` — A configured mailer: a sendVerificationRequest, and send() for any message.
 - `interface SmtpMailerOptions` — Options for smtpMailer.
-- `class SmtpMessageError` — Why a message can't be built.
+- `class SmtpMessageError extends Error` — Why a message can't be built.
 - `interface SpaConfig` — SPA-mode settings (mode: "spa"). denext bundles SpaConfig.entry as a single client-side-rendered app, wraps it in a generated HTML shell, and serves that shell for every navigation (history-API fallback) — no app/ directory, no SSR/Flight. The entry module mounts the app itself (a side-effect import, like a Vite main.tsx calling createRoot(...).render(...)), so denext stays out of the mount: bring your own router (TanStack, etc.) and data layer.
 - `interface SpaDesktopConfig` — deno desktop packaging settings under SpaConfig.desktop.
 - `interface SpaProxyConfig` — Reverse-proxy configuration for SPA serving — the SPA analogue of a Vite dev server's server.proxy. The client talks to its own origin and denext relays matched requests (HTTP + WebSocket) to a separate backend.
@@ -2489,7 +2495,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `SUPABASE_KEY_ENV: { publishableKey: string; secretKey: string; jwtSecret: string; signingKeys: string }` — Environment variables the keys default to.
 - `supabaseJwks(keys: SupabaseKeys): { keys: JsonWebKey[] }` — The JWKS document — the public halves of the ES256 keys (empty under HS256 only: a symmetric secret is never published).
 - `interface SupabaseJwtClaims` — Verified JWT claims.
-- `class SupabaseKeyError` — A refused token or API key. Its message never contains the presented value.
+- `class SupabaseKeyError extends Error` — A refused token or API key. Its message never contains the presented value.
 - `type SupabaseKeyErrorCode = "bad_jwt" | "jwt_expired" | "invalid_api_key"` — Why a token or key was refused — GoTrue / PostgREST-shaped codes.
 - `interface SupabaseKeys` — Resolved key material. Build it with resolveSupabaseKeys.
 - `interface SupabaseKeysConfig` — The key material for backend({ supabase }). Every field defaults to its environment variable.
@@ -2504,7 +2510,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `supervisionStatus(): SupervisorStatus[]` — The status of every started top-level supervisor (the services/ tree among them), each with its children: state (running, restarting, failed, …), restart counts, the last error.
 - `type SupervisionStrategy = "one_for_one" | "one_for_all" | "rest_for_one"` — Which children restart when one crashes: "one_for_one" restarts just that child, "one_for_all" stops every other child and restarts them all, "rest_for_one" restarts it and every child started after it (they may depend on it).
 - `interface Supervisor` — A supervisor: returned by supervise; nest it as another supervisor's child.
-- `class SupervisorError` — Thrown (as done's rejection, and to onError) when a supervisor exceeds its intensity.
+- `class SupervisorError extends Error` — Thrown (as done's rejection, and to onError) when a supervisor exceeds its intensity.
 - `interface SupervisorStatus extends ChildStatus` — A supervisor's status: its own, plus its children's, in start order.
 - `interface TailwindConfig` — Tailwind CSS integration. When set, denext compiles input (which contains the raw @import "tailwindcss"; directives) into output using the Tailwind v4 standalone binary — which denext downloads and manages itself — before its own CSS pipeline runs. The output file is what your layout imports.
 - `tapChannel<T>(channel: Channel<T> | string, key: string, handlers: ChannelTapHandlers<T>): () => void` — Observe a channel's publishes on the SERVER: every payload published to key on any instance — through the installed transport, decoded, in seq order per instance — until the returned disposer runs. The seam a plugin uses to bridge channel pushes into another protocol (a GraphQL subscription in @denext/graphql, an SSE stream, a queue) without a second event bus. Survives setChannelTransport (re-binds to the new transport).
@@ -2578,7 +2584,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type AnchorProps = Omit<Record<string, unknown>, "href" | "children">` — The anchor attributes a Link forwards (everything an <a> takes except href).
 - `interface ApiClient<S>` — A typed callable over an app's ApiSchema.
 - `interface ApiClientAuth` — A bearer-token source for createApiClient: the token to send, and how to get a new one after a 401.
-- `class ApiClientError<Code>` — A failed typed API call: the HTTP status plus, when the server answered with denext's JSON error envelope ({ error: { code, status, message, data?, fieldErrors?, digest? } } — an ApiError, a validation failure, a control signal, or a redacted 500), the envelope's fields. code narrows to the endpoint's declared codes (ErrorsOf<E>); a non-envelope failure (a plain text 500, an HTML error page) has code: "http_error".
+- `class ApiClientError<Code> extends Error` — A failed typed API call: the HTTP status plus, when the server answered with denext's JSON error envelope ({ error: { code, status, message, data?, fieldErrors?, digest? } } — an ApiError, a validation failure, a control signal, or a redacted 500), the envelope's fields. code narrows to the endpoint's declared codes (ErrorsOf<E>); a non-envelope failure (a plain text 500, an HTML error page) has code: "http_error".
 - `interface ApiClientOptions` — Options for createApiClient.
 - `interface ApiEndpoint` — One endpoint's typed shape: its params, optional request/response bodies, query, error codes.
 - `type ApiEndpointOf<P, M> = NonNullable<RegisteredSchema[P][M]>` — The registered schema's entry for one route + method (what useApi is typed against).
@@ -2646,7 +2652,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface NativeMfaEnrollment` — A first factor being enrolled to finish a pending sign-in (NativeSession.enrollMfa).
 - `nativeSession(options: NativeSessionOptions): NativeSession` — A native session against a remote denext server (denextAuth({ native })). Pass it as createApiClient({ base, auth: session }).
 - `interface NativeSession` — A native session: an auth provider for createApiClient, plus sign-in and sign-out.
-- `class NativeSessionError` — A failed native-session call.
+- `class NativeSessionError extends Error` — A failed native-session call.
 - `interface NativeSessionOptions` — Options for nativeSession.
 - `interface NativeSessionStorage` — Where the refresh token is kept — secureStore from denext/mobile fits as is.
 - `interface NativeSessionUser` — The user a native sign-in answers with.
@@ -2672,7 +2678,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `qrl<E>(loader: () => Promise<(event: E) => unknown>, id: string, capture?: readonly unknown[]): Qrl<E>` — Define a lazily-loaded event handler. Give it a **stable, explicit id** so the server-serialized reference and the client loader agree.
 - `interface Qrl<E>` — A reference to a lazily-loaded handler: callable, tagged with its stable id.
 - `type QueryInput = Record<string, string | number | boolean | null | undefined> | string` — An href's query: a record (nullish values are dropped) or a pre-built query string.
-- `class ReadonlyURLSearchParams` — Next's ReadonlyURLSearchParams — the read-only view of the URL query that useSearchParams() returns. It is a real URLSearchParams for reads/iteration, but its mutating methods throw (you cannot change the URL by mutating this object; navigate instead).
+- `class ReadonlyURLSearchParams extends URLSearchParams` — Next's ReadonlyURLSearchParams — the read-only view of the URL query that useSearchParams() returns. It is a real URLSearchParams for reads/iteration, but its mutating methods throw (you cannot change the URL by mutating this object; navigate instead).
 - `interface RegisteredApi` — Augmentation target for the generated .denext/api.ts: declare module "denext" { interface RegisteredApi { schema: ApiSchema } } makes createApiClient() typed with no type argument.
 - `type RegisteredParams = RegisteredRoutes extends { params: infer P } ? P : Record<string, Record<string, string | string[]>>` — The per-route params map when typed-routes is wired (from .denext/routes.ts), else a loose fallback. Each key is a route pattern (/blog/[slug]) → its params object ({ slug: string }).
 - `interface RegisteredRoutes` — Typed-routes registry (augmentation seam). denext build/dev emit .denext/routes.ts, which augments this interface with routes: Routes; import that file anywhere in your app and Link / Router.push narrow to real paths. Empty by default ⇒ Href is string (no enforcement until you opt in).
@@ -2688,7 +2694,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface Router` — Imperative navigation API returned by useRouter (Next.js AppRouterInstance).
 - `interface RouterNavigateOptions` — Options for Router.push / Router.replace (Next.js NavigateOptions).
 - `type SearchOutput<S> = S extends StandardSchemaV1<infer O> ? O : never` — What a Standard Schema produces from the query string — its validated output type.
-- `class SearchParamsValidationError` — Thrown by useSearchParams(schema) when the URL query fails the schema. It is a normal error, so the nearest error.tsx boundary catches it (matching the server's defineApi validation).
+- `class SearchParamsValidationError extends Error` — Thrown by useSearchParams(schema) when the URL query fails the schema. It is a normal error, so the nearest error.tsx boundary catches it (matching the server's defineApi validation).
 - `SessionProvider(props: SessionProviderProps): VNode` — Provide session state to the tree. Seed it with session from the server for no loading flash, or omit it to fetch {basePath}/session on mount.
 - `interface SessionProviderProps` — Props for SessionProvider.
 - `interface SessionUser` — The signed-in user exposed to the client (non-sensitive fields only).
@@ -2830,7 +2836,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface RoleOptions` — Options for Queries.getByRole.
 - `interface RouteProbe` — The result of probing one concrete route path.
 - `sessionStoreContract(t: ContractContext, make: StoreFactory<SessionStore>): Promise<void>` — The SessionStore contract: round-trips, expiry, overwrite, write-only-if-present update (a revoked or expired session is never resurrected), delete and deleteByUser.
-- `class StoreContractError` — A contract case that failed; its message names what the store got wrong.
+- `class StoreContractError extends Error` — A contract case that failed; its message names what the store got wrong.
 - `type StoreFactory<S> = () => S | Promise<S>` — Makes a fresh, empty store for one case.
 - `interface TestApp extends AsyncDisposable` — The handler createTestApp returns: still a plain (Request) => Response function (pass it to createTestClient as before), plus close() to stop what the app started — its services/, its jobs/ registrations, and its denext.config.ts plugins' teardowns. await using app = await createTestApp(dir) closes it at the end of the scope.
 - `interface TestAppOptions` — What createTestApp starts beside the request handler. Every field defaults to true; pass false to leave that part out.
@@ -2928,7 +2934,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopCapability` — A desktop capability: a name (its address on the bridge — an extension's name is its cap name), a set of methods, and the event names it may DesktopCapCtx.emit. Built-ins live in ./caps; user extensions are authored with defineDesktopExtension.
 - `interface DesktopCapabilityMethod<I, O>` — One capability method: an optional input schema (validated before the handler), an optional output schema (strips the result before it reaches the page, in production too), the Deno permissions it needs, an optional per-method timeout, and the handler that runs in the Deno process.
 - `interface DesktopCapCtx` — The context a capability handler runs with: a scoped DesktopCapCtx.emit for its declared events, the OS app-support directory (which survives relaunch, unlike browser storage — see the desktop storage note), the running OS, the app window (Deno's BrowserWindow when the runtime exposes it), and an AbortSignal that fires when the handler's timeout elapses.
-- `class DesktopCapError` — Throw this from a capability handler to answer the page with a specific error code and a SAFE message. The bridge puts code, the message and any data into the { ok: false, error } envelope at status (default 400). Never encode an absolute path, environment value or stack into the message — it crosses to the page. The code "unavailable" is RESERVED (it means the capability/method is not enabled, which makes the page fall back to its web path); use another code for a real failure.
+- `class DesktopCapError extends Error` — Throw this from a capability handler to answer the page with a specific error code and a SAFE message. The bridge puts code, the message and any data into the { ok: false, error } envelope at status (default 400). Never encode an absolute path, environment value or stack into the message — it crosses to the page. The code "unavailable" is RESERVED (it means the capability/method is not enabled, which makes the page fall back to its web path); use another code for a real failure.
 - `desktopCheckCefSignature(exe: string, deps?: WindowsTrustDeps): Promise<boolean>` — After signing a CEF app on Windows: warn when the signed <App>.exe will not start here (cefSignatureProblem). Off Windows, or when the probe fails, nothing is said.
 - `desktopDenoFlagArgs(entryUrl: string): Promise<string[]>` — The project's desktop.denoFlags, checked, for a scaffolded packaging script: reads denext.config.ts next to entryUrl's folder (a script in scripts/ → ../), like desktopPackageFlags. A project without a config gets []; a refused flag throws.
 - `desktopDevProxyDecision(devUrl: string | undefined, lan: boolean, execPath: string, devBuild?: boolean): DesktopDevProxyDecision` — Decide whether runDesktop enters live-reload PROXY mode, enforcing the loopback rule at RUNTIME rather than trusting the env (invariant: a release build never proxies to a remote origin). Pure + testable. Proxy mode requires ALL of: - a devUrl (the DESKTOP_DEV_URL_ENV value); - execPath being the deno CLI (isDenoCliExecPath), or devBuild (the mark only a denext desktop dev build compiles in) — a packaged app IGNORES the env, so an inherited/hostile env cannot turn a shipped window into a proxy; - a parseable URL whose host is loopback — OR non-loopback WITH lan (the DESKTOP_DEV_LAN_ENV opt-in that only desktop dev --lan sets). allowNonLoopback is true only in that LAN case, and injectToken there requires the dev server's per-run session token on the URL (desktop dev --lan puts it there), so the window's page gets its bridge only from a dev server that gates its other peers. A blocked case returns { proxy: false, refused } so the caller can log why and serve static.
@@ -3058,7 +3064,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 - `applyDesktopUpdate(version: string, config: DesktopUpdaterConfig): Promise<void>` — Promote the staged version to the active overlay and flip the "current" pointer atomically. Re-verifies the staged manifest (version + signature, the downgrade floor and the expiry) and re-hashes every staged file BEFORE the swap. The previous version dir is kept for rollback, the accepted sequence is recorded, every other staging folder is deleted, and the new version starts PENDING — desktopBooted must confirm it or the next resolveDesktopUiDir rolls it back.
 - `interface AppUpdateCheck` — The result of checkForAppUpdate.
-- `class AppUpdateError` — A refusal from the full-app updater, with a machine-readable AppUpdateErrorCode.
+- `class AppUpdateError extends Error` — A refusal from the full-app updater, with a machine-readable AppUpdateErrorCode.
 - `type AppUpdateErrorCode = "unsupported" | "not_configured" | "invalid_manifest" | "signature" | "wrong_app" | "downgrade" | "rejected" | "no_platform" | "expired" | "replayed" | "insecure_url" | "size_exceeded" | "integrity" | "unsafe_archive" | "bundle_mismatch" | "version_mismatch" | "os_signature" | "install_not_writable" | "unsupported_layout" | "not_staged" | "busy" | "io"` — Why a full-app update step refused (the runtime's codes, plus unsupported).
 - `interface AppUpdateProgress` — Download progress, in bytes.
 - `interface AppUpdaterConfig` — Where the signed manifest is and how to reach it.
@@ -3073,7 +3079,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopUiOverlay` — The verified UI overlay a launch serves (see openDesktopUi).
 - `type DesktopUiRead = { readonly status: "ok"; readonly bytes: Uint8Array } | { readonly status: "missing" } | { readonly status: "withdrawn" }` — What reading one file of the served overlay gives (DesktopUiOverlay.read).
 - `interface DesktopUpdateCheck` — The result of checkForDesktopUpdate.
-- `class DesktopUpdateError` — A refusal from the updater, carrying a machine-readable DesktopUpdateErrorCode.
+- `class DesktopUpdateError extends Error` — A refusal from the updater, carrying a machine-readable DesktopUpdateErrorCode.
 - `type DesktopUpdateErrorCode = "network" | "invalid" | "integrity" | "unsigned" | "signature" | "downgrade" | "platform_mismatch" | "app_mismatch" | "expired" | "not_staged" | "rejected"` — The code on a DesktopUpdateError:
 - `interface DesktopUpdatePrepared` — The result of prepareDesktopUpdate.
 - `interface DesktopUpdaterConfig` — Configuration for the desktop UI self-updater.
@@ -3346,7 +3352,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type FileEncoding = "utf8" | "base64"` — How text is carried: "utf8" (plain text, the default) or "base64" (binary data).
 - `interface FileEntry` — One entry of a listDir listing.
 - `interface FileLocationOptions` — Options for deleteFile, listDir and downloadToFile.
-- `class FileTransferError` — A transfer that failed: the code, and for an HTTP failure the status and the body.
+- `class FileTransferError extends Error` — A transfer that failed: the code, and for an HTTP failure the status and the body.
 - `type FileTransferErrorCode = "HTTP" | "NETWORK" | "IO" | "INVALID" | "NOT_FOUND" | "EXISTS" | "CANCELLED"` — The codes a FileTransferError carries.
 - `interface FileTransferEvent extends FileTransferInfo` — One transfer event, for onFileTransfer.
 - `interface FileTransferInfo extends FileTransferProgress` — A transfer as fileTransfers reports it.
@@ -3397,7 +3403,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type KeyboardViewStyle = Readonly<Record<string, string | number | undefined>>` — An inline style object, as the views accept and extend it.
 - `type KeyValueBackend = "native" | "sqlite" | "desktop" | "indexeddb" | "memory"` — Where a KeyValueStore keeps its data: "native" (the DenextStorage plugin), "sqlite" (@capacitor-community/sqlite in the shell), "desktop" (the Deno Desktop runtime's SQLite), "indexeddb" (the browser's; evictable inside a native shell) or "memory" (gone when the page closes).
 - `interface KeyValueStore` — A named, durable string store (openKeyValueStore).
-- `class KeyValueStoreError` — A refusal from an encrypted store: ENCRYPTION_UNAVAILABLE (nothing here can encrypt it, so nothing was written) or WRONG_KEY (the key in secureStore does not open the store's file).
+- `class KeyValueStoreError extends Error` — A refusal from an encrypted store: ENCRYPTION_UNAVAILABLE (nothing here can encrypt it, so nothing was written) or WRONG_KEY (the key in secureStore does not open the store's file).
 - `type KeyValueStoreErrorCode = "ENCRYPTION_UNAVAILABLE" | "WRONG_KEY"` — Why an encrypted store refused a call (KeyValueStoreError.code).
 - `interface KeyValueStoreOptions` — Options for openKeyValueStore.
 - `type LinkAccept = ((url: URL) => boolean) | LinkAllowList` — Which incoming links to act on: a predicate over the parsed URL, or an allow-list.
@@ -3632,7 +3638,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type SqliteBackend = "native" | "opfs" | "memory"` — Where a database lives: the native plugin, OPFS in the browser, or memory.
 - `type SqliteBindValue = string | number | boolean | null | Uint8Array | ArrayBuffer` — A value a statement binds: booleans bind as 1/0, an ArrayBuffer as a blob.
 - `interface SqliteDatabase` — An open database (openSqlite).
-- `class SqliteEncryptionError` — A refused encryption request: ENCRYPTION_UNAVAILABLE (this backing has no SQLCipher, or the plugin has encryption off; nothing ran), WRONG_KEY (another passphrase than the one the plugin keeps), KEY_REQUIRED (the database is encrypted: run PRAGMA key first; or a rekey of a database that was never keyed) or UNSUPPORTED (a key pragma other than PRAGMA key = '…' / PRAGMA rekey = '…' as the first statement, such as PRAGMA hexkey, or a rekey inside a transaction).
+- `class SqliteEncryptionError extends Error` — A refused encryption request: ENCRYPTION_UNAVAILABLE (this backing has no SQLCipher, or the plugin has encryption off; nothing ran), WRONG_KEY (another passphrase than the one the plugin keeps), KEY_REQUIRED (the database is encrypted: run PRAGMA key first; or a rekey of a database that was never keyed) or UNSUPPORTED (a key pragma other than PRAGMA key = '…' / PRAGMA rekey = '…' as the first statement, such as PRAGMA hexkey, or a rekey inside a transaction).
 - `type SqliteEncryptionErrorCode = "ENCRYPTION_UNAVAILABLE" | "WRONG_KEY" | "KEY_REQUIRED" | "UNSUPPORTED"` — Why SqliteEncryptionError was thrown.
 - `interface SqliteOptions` — Options for openSqlite and deleteSqlite.
 - `type SqliteParams = readonly SqliteBindValue[] | Readonly<Record<string, SqliteBindValue>>` — A statement's parameters: positional (?), or named by their placeholder, prefix included ({ $id: 1 } for $id, { ":id": 1 } for :id).
@@ -3927,12 +3933,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DenoSqlClient` — A Deno.SQL client (or one of its reserved connections).
 - `denoSqlHasColumns(): Promise<boolean>` — Whether this runtime's Deno.SQL reports result-set column metadata (result.columns), which the Prisma adapter needs: denext's Deno runtime 3.0.0-rc.1 and later. Probes an in-memory SQLite database, so it needs no permission and touches no file.
 - `interface DenoSqlOptions` — The options new Deno.SQL(url, options) takes that the adapter sets.
-- `class DriverAdapterError` — The error an adapter throws so Prisma reports a typed database error instead of a generic one. Prisma recognizes it by name and cause (no instanceof), so this class needs no import from Prisma.
+- `class DriverAdapterError extends Error` — The error an adapter throws so Prisma reports a typed database error instead of a generic one. Prisma recognizes it by name and cause (no instanceof), so this class needs no import from Prisma.
 - `type ErrorConstraint = { fields: string[] } | { index: string } | { foreignKey: {} }` — A constraint a database error names (fields, an index, or a foreign key).
 - `type IsolationLevel = "READ UNCOMMITTED" | "READ COMMITTED" | "REPEATABLE READ" | "SNAPSHOT" | "SERIALIZABLE"` — The transaction isolation levels Prisma may ask for.
 - `type MappedError = { kind: "GenericJs"; id: number } | { kind: "UnsupportedNativeDataType"; type: string } | { kind: "InvalidIsolationLevel"; level: string } | { kind: "LengthMismatch"; column?: string } | { kind: "UniqueConstraintViolation"; constraint?: ErrorConstraint; table?: string } | { kind: "NullConstraintViolation"; constraint?: ErrorConstraint } | { kind: "ForeignKeyConstraintViolation"; constraint?: ErrorConstraint } | { kind: "RestrictViolation"; constraint?: ErrorConstraint } | { kind: "DatabaseNotReachable"; host?: string; port?: number } | { kind: "DatabaseDoesNotExist"; db?: string } | { kind: "DatabaseAlreadyExists"; db?: string } | { kind: "DatabaseAccessDenied"; db?: string } | { kind: "ConnectionClosed" } | { kind: "TlsConnectionError"; reason: string } | { kind: "AuthenticationFailed"; user?: string } | { kind: "TransactionWriteConflict" } | { kind: "TableDoesNotExist"; table?: string } | { kind: "ColumnNotFound"; column?: string } | { kind: "TooManyConnections"; cause: string } | { kind: "ValueOutOfRange"; cause: string } | { kind: "InvalidInputValue"; message: string } | { kind: "MissingFullTextSearchIndex" } | { kind: "SocketTimeout" } | { kind: "InconsistentColumnData"; cause: string } | { kind: "TransactionAlreadyClosed"; cause: string } | { kind: "postgres"; code: string; severity: string; message: string; detail: string | undefined; column: string | undefined; hint: string | undefined } | { kind: "mysql"; code: number; message: string; state: string; cause?: string } | { kind: "sqlite"; extendedCode: number; message: string } | { kind: "mssql"; code: number; message: string }` — A database error in the form Prisma turns into its own P20xx errors. Each kind is one Prisma knows; postgres / sqlite carry an error it has no dedicated kind for.
 - `postgresConnection(url: string, schemaOption: string | undefined): { url: string; options: DenoSqlOptions; schema: string | undefined }` — A Postgres URL with Prisma's own parameters read into Deno.SQL options and removed, as PrismaDenoSql does before it connects. schema becomes the search_path, connection_limit the pool's max, connect_timeout (or pool_timeout) the connectionTimeout, and pgbouncer=true turns prepared statements off; Prisma-only parameters a server would refuse (socket_timeout, statement_cache_size, sslaccept, …) are dropped. Use it to open a Deno.SQL client of your own from a Prisma DATABASE_URL.
-- `class PrismaDenoSql` — The Prisma driver adapter factory over Deno.SQL, for Postgres and SQLite. Pass it to new PrismaClient({ adapter }).
+- `class PrismaDenoSql implements SqlMigrationAwareDriverAdapterFactory` — The Prisma driver adapter factory over Deno.SQL, for Postgres and SQLite. Pass it to new PrismaClient({ adapter }).
 - `interface PrismaDenoSqlOptions` — Options of PrismaDenoSql.
 - `type Provider = "mysql" | "postgres" | "sqlite" | "sqlserver"` — The databases a Prisma driver adapter may speak to.
 - `interface SqlColumn` — A result column as Deno.SQL describes it (both drivers' fields; see Deno.SQLColumn).
@@ -3983,7 +3989,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `cappedBody(request: Request, maxBytes: number): Request` — request with its body wrapped so that reading past maxBytes errors the stream (the consumer — formData(), json(), a multipart parser — then throws). For streaming consumers that cannot use readCappedBody; a declared content-length over the cap is refused up front.
 - `captureRequestContext(init: { headers?: Record<string, string> }): <T>(fn: () => T) => T` — Capture the current request so its session can be read again later, outside it — what a plugin holding a long-lived connection (a WebSocket it upgraded) uses to re-check who is on the other end: the returned function runs fn in a fresh request context for a copy of this request (its URL, its headers — cookies included — and its client address, with the app's proxy trust and limit policy), so auth(), cookies() and clientIpForLimits() answer as they did for the original. Capture BEFORE Deno.upgradeWebSocket, which consumes the request. Outside a request the function runs fn as it is.
 - `interface Channel<T>` — A channel on the server.
-- `class ChannelAccessError` — Why tapChannelAuthorized refused a subscriber.
+- `class ChannelAccessError extends Error` — Why tapChannelAuthorized refused a subscriber.
 - `interface ChannelContext` — The subscriber's identity handed to authorize (the Live connection context).
 - `interface ChannelTapHandlers<T>` — What tapChannel reports.
 - `interface CommandContext` — The parsed invocation handed to a command's CommandSpec.run.
@@ -3993,6 +3999,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `compileMdxSource(path: string, source: string, opts?: MdxBuildOptions): Promise<string>` — Compile one MDX/Markdown source to a JS module string (React automatic runtime, jsxImportSource: "react" → aliased to denext downstream). With no opts this is the baseline plain-MDX/CommonMark path; when the app configures mdx in denext.config.ts, its unified remark/rehype/recma plugin lists (e.g. Codehike, GFM) are forwarded verbatim to MDX's compile. Exported for unit testing the plugin wiring.
 - `type Component<P> = (props: P & { children?: VNodeChildren }) => VNode | Promise<VNode>` — A component is a function that receives props and returns a renderable node.
 - `createNextCompatServerLoader(base: ModuleLoader, opts: NextCompatServerLoaderOptions): ModuleLoader` — Wrap a base ModuleLoader so route source modules that have a react→denext rewritten server bundle load from that bundle instead of source (a keyed ref resolves to the module's namespace inside the single server bundle).
+- `interface CssAssets` — The generated CSS assets for a set of source files.
 - `interface DenextConfig` — Project configuration exported from denext.config.{ts,js} (as default or named).
 - `interface DenextPlugin` — A denext plugin. Declared in denext.config.ts as plugins: [myPlugin()]; its setup runs once per process, before the first route scan.
 - `DEPLOY_MANIFEST_FILE: "deploy-manifest.json"` — The manifest's file name, under the build directory (.denext/deploy-manifest.json).
@@ -4204,9 +4211,9 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/expo/auth-session`
 
-- `class AccessTokenRequest` — An authorization-code exchange.
+- `class AccessTokenRequest extends TokenRequest<AccessTokenRequestConfig> implements AccessTokenRequestConfig` — An authorization-code exchange.
 - `type AccessTokenRequestConfig = TokenRequestBase & { code: string; redirectUri: string }` — An authorization-code exchange's configuration.
-- `class AuthError` — An error the authorization endpoint returned.
+- `class AuthError extends ResponseError` — An error the authorization endpoint returned.
 - `type AuthErrorConfig = ResponseErrorConfig & { state?: string }` — An authorization error response's parameters (plus the returned state).
 - `class AuthRequest` — One authorization request: its URL, PKCE verifier and state.
 - `interface AuthRequestConfig` — An authorization request's configuration.
@@ -4232,22 +4239,22 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `enum Prompt` — The OpenID Connect prompt values.
 - `type PromptMethod = (options?: AuthRequestPromptOptions) => Promise<AuthSessionResult>` — What useAuthRequestResult's prompt does.
 - `refreshAsync(config: RefreshTokenRequestConfig, discovery: Pick<DiscoveryDocument, "tokenEndpoint">): Promise<TokenResponse>` — Refresh an access token (RefreshTokenRequest).
-- `class RefreshTokenRequest` — A refresh-token grant.
+- `class RefreshTokenRequest extends TokenRequest<RefreshTokenRequestConfig> implements RefreshTokenRequestConfig` — A refresh-token grant.
 - `type RefreshTokenRequestConfig = TokenRequestBase & { refreshToken?: string }` — A refresh's configuration.
 - `class Request<T, B>` — The base of the token-family requests: a config, a body and performAsync.
 - `requestAsync<T>(requestUrl: string, fetchRequest: FetchRequest): Promise<T>` — Expo's small fetch helper: send body as a form (POST) or a query string, and read the answer as JSON (for dataType: "json" or a JSON content type) or text.
 - `resolveDiscoveryAsync(issuerOrDiscovery: IssuerOrDiscovery): Promise<DiscoveryDocument>` — A discovery document: fetched for an issuer URL, returned as is otherwise.
-- `class ResponseError` — An OAuth error response: an authorization redirect's or a token endpoint's.
+- `class ResponseError extends Error` — An OAuth error response: an authorization redirect's or a token endpoint's.
 - `type ResponseErrorConfig = Record<string, string | undefined> & { error: string; error_description?: string; error_uri?: string }` — An OAuth error response's parameters (error, error_description, …).
 - `enum ResponseType` — The OAuth response type.
 - `revokeAsync(config: RevokeTokenRequestConfig, discovery: Pick<DiscoveryDocument, "revocationEndpoint">): Promise<boolean>` — Revoke a token (RevokeTokenRequest).
-- `class RevokeTokenRequest` — A token revocation (RFC 7009).
+- `class RevokeTokenRequest extends Request<RevokeTokenRequestConfig, boolean> implements RevokeTokenRequestConfig` — A token revocation (RFC 7009).
 - `type RevokeTokenRequestConfig = Partial<TokenRequestBase> & { token: string; tokenTypeHint?: TokenTypeHint }` — A revocation's configuration.
-- `class TokenError` — An error a token endpoint returned.
-- `class TokenRequest<T>` — A token-endpoint request: its grant, client and body.
+- `class TokenError extends ResponseError` — An error a token endpoint returned.
+- `class TokenRequest<T> extends Request<T, TokenResponse> implements TokenRequestConfig` — A token-endpoint request: its grant, client and body.
 - `interface TokenRequestBase` — The fields every token call sends.
 - `type TokenRequestConfig = TokenRequestBase` — A token request's configuration.
-- `class TokenResponse` — A set of tokens.
+- `class TokenResponse implements TokenResponseConfig` — A set of tokens.
 - `interface TokenResponseConfig` — A token endpoint response.
 - `enum TokenTypeHint` — Which token a revocation names.
 - `useAuthRequest(config: AuthRequestConfig, discovery: DiscoveryDocument | null): [AuthRequest | null, AuthSessionResult | null, (options?: AuthRequestPromptOptions) => Promise<AuthSessionResult>]` — An AuthRequest for config, its latest result, and the prompt.
@@ -4791,7 +4798,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/expo/expo`
 
-- `class CodedError` — Expo's CodedError (expo-modules-core, re-exported by expo): an Error with a code that tells errors apart without subclassing.
+- `class CodedError extends Error` — Expo's CodedError (expo-modules-core, re-exported by expo): an Error with a code that tells errors apart without subclassing.
 - `createPermissionHook<P, Options>(methods: { getMethod: (options?: Options) => Promise<P>; requestMethod: (options?: Options) => Promise<P> }): (options?: PermissionHookOptions<Options>) => [P | null, () => Promise<P>, () => Promise<P>]` — Expo's createPermissionHook: a hook returning [response, request, get] that reads (or, with request: true, requests) the permission on mount.
 - `createSnapshotFriendlyRef<T>(): { current: T | null }` — A ref object ({ current: null }), as Expo's snapshot-friendly ref is.
 - `disableErrorHandling(): void` — Turn off Expo's global error handler (there is none here): does nothing.
@@ -4803,7 +4810,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `installOnUIRuntime(_uiRuntimeHolder?: object): void` — Install Expo Modules on the worklets UI runtime (there is no UI runtime here): does nothing.
 - `isRunningInExpoGo(): boolean` — Whether the app runs in Expo Go: never.
 - `interface Listenable` — The slice of an emitter useEvent and useEventListener use.
-- `class NativeModule<Events>` — A module implemented in JS (see registerWebModule).
+- `class NativeModule<Events> extends EventEmitter<Events>` — A module implemented in JS (see registerWebModule).
 - `type PermissionExpiration = "never" | number` — When a permission expires: "never", or a timestamp.
 - `type PermissionHookOptions<Options> = Options & { get?: boolean; request?: boolean }` — Options for a permission hook (createPermissionHook).
 - `interface PermissionResponse` — A permission answer, as every Expo permission API returns it.
@@ -4818,10 +4825,10 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `requireNativeModule<T>(moduleName: string): T` — The native module moduleName: the Capacitor plugin of that name inside the iOS/Android shell, or the desktop extension of that name on Deno Desktop. Its functions take Expo's positional arguments and return Promises. Where neither exists (a browser, a test) it returns a stand-in whose functions throw when called, so a module that asks for it at import time still loads (Expo's web build throws at the requireNativeModule call itself).
 - `requireNativeView<P>(moduleName: string, viewName?: string): Component<P>` — A native view as a component: denext/mobile's native view slot for the type nativeViewType names (the DenextNativeViews plugin, denext mobile add native-views). Its JSON props go to the native factory, a native event name calls the on<Name> prop with { nativeEvent }, style styles the slot and its children are drawn over the view. Where that view type is not registered natively (the web), the children render instead.
 - `requireOptionalNativeModule<T>(moduleName: string): T | null` — The native module moduleName when this runtime has it (see requireNativeModule), else null.
-- `class SharedObject<Events>` — An object shared with native code: a JS object here, released explicitly.
-- `class SharedRef<Type, Events>` — A reference to a native resource (an image, a file): a JS object here.
+- `class SharedObject<Events> extends EventEmitter<Events>` — An object shared with native code: a JS object here, released explicitly.
+- `class SharedRef<Type, Events> extends SharedObject<Events>` — A reference to a native resource (an image, a file): a JS object here.
 - `interface Subscription` — What Expo's add…Listener functions return.
-- `class UnavailabilityError` — Expo's UnavailabilityError: a CodedError (ERR_UNAVAILABLE) for a method or property the running platform does not have. The platform is always web here (the Capacitor shell runs the web build).
+- `class UnavailabilityError extends CodedError` — Expo's UnavailabilityError: a CodedError (ERR_UNAVAILABLE) for a method or property the running platform does not have. The platform is always web here (the Capacitor shell runs the web build).
 - `useEvent<T>(emitter: Listenable, eventName: string, initialValue?: T | null): T | null` — The latest payload of eventName on emitter.
 - `useEventListener(emitter: Listenable, eventName: string, listener: (...args: never[]) => void): void` — Call listener for each eventName on emitter while mounted.
 - `useReleasingSharedObject<TSharedObject>(factory: () => TSharedObject, dependencies: DependencyList): TSharedObject` — A shared object for the component's lifetime: factory's result, released on unmount and replaced (the old one released) when dependencies change.
@@ -4837,20 +4844,20 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `DEFAULT_DEBOUNCE_MS: 100` — The watcher debounce default (watchers are not provided; kept for API compatibility).
 - `deleteAsync(_fileUri: string, _options?: Record<string, unknown>): Promise<never>`
 - `deleteLegacyDocumentDirectoryAndroid(): Promise<never>`
-- `class Directory` — A folder (its URI ends with /). The instance is a path: it need not exist.
+- `class Directory extends FileSystemEntry` — A folder (its URI ends with /). The instance is a path: it need not exist.
 - `interface DirectoryCreateOptions` — Options for Directory.create.
 - `interface DirectoryInfo` — What Directory.info reports.
 - `downloadAsync(_uri: string, _fileUri: string, _options?: Record<string, unknown>): Promise<never>`
 - `interface DownloadOptions` — Options for File.downloadFileAsync.
 - `enum EncodingType` — How File.write and the readers carry text.
-- `class File` — A file. The instance is a path: it need not exist.
+- `class File extends FileSystemEntry` — A file. The instance is a path: it need not exist.
 - `type FileCanPreviewOptions = { mimeType?: string }` — Options for File.canPreview.
 - `interface FileCreateOptions` — Options for File.create.
 - `type FileDigestAlgorithm = "MD5" | "SHA-1" | "SHA-256" | "SHA-384" | "SHA-512"` — A hash algorithm File.digest takes.
 - `interface FileInfo` — What File.info reports.
 - `enum FileMode` — A file-handle mode (file handles are not provided; kept for API compatibility).
 - `type FilePreviewOptions = { title?: string; mimeType?: string }` — Options for File.preview.
-- `class FileSystemEntry` — What File and Directory share: the URI, copy and move.
+- `abstract class FileSystemEntry` — What File and Directory share: the URI, copy and move.
 - `interface FileWriteOptions` — Options for File.write.
 - `getContentUriAsync(_fileUri: string): Promise<never>`
 - `getFreeDiskStorageAsync(): Promise<never>`
@@ -4884,11 +4891,11 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type DownloadProgressCallback = FileSystemNetworkTaskProgressCallback<DownloadProgressData>` — A download's progress callback.
 - `type DownloadProgressData = { totalBytesWritten: number; totalBytesExpectedToWrite: number }` — Download progress.
 - `type DownloadResult = FileSystemDownloadResult`
-- `class DownloadResumable` — A native resumable download. Not provided: constructing it throws an error naming denext.
+- `class DownloadResumable extends FileSystemCancellableNetworkTask<DownloadProgressData>` — A native resumable download. Not provided: constructing it throws an error naming denext.
 - `enum EncodingType` — How File.write and the readers carry text.
 - `type FileInfo = { exists: true; uri: string; size: number; isDirectory: boolean; modificationTime: number; md5?: string } | { exists: false; uri: string; isDirectory: false }` — What getInfoAsync reports.
 - `type FileSystemAcceptedUploadHttpMethod = "POST" | "PUT" | "PATCH"` — The HTTP methods an upload may use.
-- `class FileSystemCancellableNetworkTask<T>` — A native network task. Not provided: constructing a subclass throws an error naming denext.
+- `abstract class FileSystemCancellableNetworkTask<T>` — A native network task. Not provided: constructing a subclass throws an error naming denext.
 - `type FileSystemDownloadResult = FileSystemHttpResult & { uri: string; md5?: string }` — What downloadAsync resolves with.
 - `type FileSystemHttpResult = { headers: Record<string, string>; status: number; mimeType: string | null }` — The HTTP part of a download or upload result.
 - `type FileSystemNetworkTaskProgressCallback<T> = (data: T) => void` — A network task's progress callback.
@@ -4916,7 +4923,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type UploadOptionsBinary = { uploadType?: FileSystemUploadType }` — A binary upload.
 - `type UploadOptionsMultipart = { uploadType: FileSystemUploadType; fieldName?: string; mimeType?: string; parameters?: Record<string, string> }` — A multipart upload.
 - `type UploadProgressData = { totalBytesSent: number; totalBytesExpectedToSend: number }` — Upload progress.
-- `class UploadTask` — A native upload task. Not provided: constructing it throws an error naming denext.
+- `class UploadTask extends FileSystemCancellableNetworkTask<UploadProgressData>` — A native upload task. Not provided: constructing it throws an error naming denext.
 - `writeAsStringAsync(fileUri: string, contents: string, options?: WritingOptions): Promise<void>` — Write a whole file (creating missing parent folders), or append to it.
 - `type WritingOptions = { encoding?: EncodingType | "utf8" | "base64"; append?: boolean }` — Options for writeAsStringAsync.
 
@@ -5503,7 +5510,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `DeviceMotion: DeviceMotionSensor` — Device motion: acceleration, rotation and rotation rate together.
 - `interface DeviceMotionMeasurement` — A device-motion reading.
 - `enum DeviceMotionOrientation` — The screen's orientation, as DeviceMotion reports it.
-- `class DeviceMotionSensor` — Device motion.
+- `class DeviceMotionSensor extends DeviceSensor<DeviceMotionMeasurement>` — Device motion.
 - `class DeviceSensor<Measurement>` — The base of every sensor: listeners, the update interval and the permission calls. Its first argument is the reading source (Expo's: the native module).
 - `Gyroscope: DeviceSensor<GyroscopeMeasurement>` — The gyroscope: rotationRate in rad/s.
 - `type GyroscopeMeasurement = Vector3Measurement` — A gyroscope reading (rad/s).
@@ -5588,7 +5595,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface SQLiteProviderProps` — Props of SQLiteProvider.
 - `interface SQLiteRunResult` — What a write reports.
 - `class SQLiteStatement` — A prepared statement (SQLiteDatabase.prepareAsync): the SQL, run on demand.
-- `class SQLiteTaggedQuery<T>` — A tagged-template query (SQLiteDatabase.sql): awaitable, or read as values / first / each.
+- `class SQLiteTaggedQuery<T> implements PromiseLike<T[] | SQLiteRunResult>` — A tagged-template query (SQLiteDatabase.sql): awaitable, or read as values / first / each.
 - `type SQLiteVariadicBindParams = SQLiteBindValue[]` — A statement's parameters spread as arguments.
 - `useSQLiteContext(): SQLiteDatabase` — The database of the nearest SQLiteProvider.
 

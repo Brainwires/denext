@@ -6,10 +6,12 @@ import { join } from "@std/path";
 import { renderMarkdown } from "../packages/content-collections/markdown.ts";
 import { publishedFiles } from "./_published-files.ts";
 import {
+  copyStrippedTree,
   measurePublishSet,
   PUBLISH_GUARD_BYTES,
   publishSizeProblem,
   stripForPublish,
+  strippedCodeProblem,
 } from "../scripts/publish-strip.ts";
 import {
   bumpVersion,
@@ -338,6 +340,7 @@ Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async ()
   const measured = await measurePublishSet();
   if (!measured) return; // not a git checkout: nothing to measure
   assertEquals(publishSizeProblem(measured.after), null);
+  assertEquals(measured.changedCode, []);
   const files = (await publishedFiles())!;
   // The data @denext/docs-corpus carries for denext stays out of it, and the plain-text copies of
   // what ships packed stay unpublished.
@@ -453,6 +456,31 @@ Deno.test("publish stripping leaves a licence notice, vendored code and non-modu
   assertEquals(stripForPublish("src/a.ts", moduleDoc), moduleDoc);
 });
 
+Deno.test("publish stripping never joins the tokens around an inline comment", () => {
+  // Only leading comments (after a line break) are blanked, so code always has whitespace on one
+  // side today; the space keeps a later rule change from joining `a/** x */b` into `ab`.
+  const source = "let a = 1;\nconst b = a\n/** x *//** y */+ 1;\nfunction f(v: number) {\n" +
+    "  return/** c */v;\n}\n";
+  const out = stripForPublish("src/a.ts", source);
+  assert(!out.includes("/** x */") && !out.includes("/** y */"));
+  assertStringIncludes(out, "return/** c */v;"); // a trailing comment is never blanked
+  assertEquals(out.split("\n").length, source.split("\n").length);
+  assertEquals(strippedCodeProblem("src/a.ts", source, out), null);
+});
+
+Deno.test("the publish gate refuses a strip that changed the code", () => {
+  const source = "function f(v: number) {\n  return/** c */v;\n}\n";
+  assertEquals(strippedCodeProblem("src/a.ts", source, source), null);
+  assertEquals(
+    strippedCodeProblem("src/a.ts", source, "function f(v: number) {\n  return\n v;\n}\n"),
+    "src/a.ts: the comment strip changed the code, not just comments",
+  );
+  assertEquals(
+    strippedCodeProblem("src/a.ts", source, "function f(v: number) {\n  return v;\n}\n"),
+    null,
+  );
+});
+
 /** Published generated files over 50 KiB that may ship uncompressed, and why. */
 const UNCOMPRESSED_GENERATED_OK: Readonly<Record<string, string>> = {
   "src/compat/next/font/font-metrics.ts":
@@ -496,4 +524,43 @@ Deno.test("bump: an npm dependency that shares denext's version keeps its own", 
   assertStringIncludes(out, "npm:tus-js-client@4.3.1");
   assertStringIncludes(out, "npm:@scope/x@^4.3.1");
   assertStringIncludes(out, `"14.3.1"`);
+});
+
+Deno.test("the local publish dry-run sees the stripped set, in a copy that leaves the tree alone", async () => {
+  const root = new URL("../", import.meta.url);
+  const dest = await Deno.makeTempDir({ prefix: "denext-strip-copy-" });
+  try {
+    const copied = await copyStrippedTree(dest);
+    assert(copied !== null && copied > 100, `copied the tree (${copied})`);
+    // A published module that carries a stripped-away comment is smaller in the copy ...
+    let path = "";
+    for (const file of (await publishedFiles())!.keys()) {
+      if (!/\.ts$/.test(file) || file.endsWith(".d.ts")) continue;
+      const text = await Deno.readTextFile(new URL(file, root));
+      if (stripForPublish(file, text) !== text) {
+        path = file;
+        break;
+      }
+    }
+    assert(path, "a published module has comments to strip");
+    const original = await Deno.readTextFile(new URL(path, root));
+    const copy = await Deno.readTextFile(join(dest, path));
+    assertEquals(copy, stripForPublish(path, original));
+    assert(copy.length < original.length, "internal comments are blanked in the copy");
+    assertEquals(copy.split("\n").length, original.split("\n").length, "line numbers kept");
+    // ... while the working tree file is untouched, and non-modules arrive byte for byte.
+    assertEquals(original, await Deno.readTextFile(new URL(path, root)));
+    assertEquals(
+      await Deno.readTextFile(join(dest, "deno.json")),
+      await Deno.readTextFile(new URL("deno.json", root)),
+    );
+  } finally {
+    await Deno.remove(dest, { recursive: true });
+  }
+});
+
+Deno.test("the release dry-runs the publish in the stripped copy, never the raw tree", async () => {
+  const script = await Deno.readTextFile(new URL("../scripts/release.ts", import.meta.url));
+  assert(!/run\("deno", "publish"/.test(script), "no publish dry-run over the working tree");
+  assertStringIncludes(script, "copyStrippedTree(dir)");
 });

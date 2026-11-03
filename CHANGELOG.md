@@ -106,6 +106,96 @@ and this project adheres to
   3.0.0-denext.8 the type check keeps it under `DENO_DIR` and removes the old folder. A project
   on an older runtime still wants `"exclude": [".deno/"]`.
 
+## [4.11.13] - 2026-11-02
+
+### Added
+
+- **A channel publish carries the grant it was read under, and `authorize` admits under one.**
+  `channel.publish(key, payload, { grant })` stamps the publish with an opaque text for what it
+  was read as (a digest of a role and claims, say), and `authorize` may answer
+  `{ allow: true, grant }` instead of `true` (`ChannelAdmission`). The Live hub sends a stamped
+  publish only to the subscribers admitted under the same grant — recorded at subscribe and at
+  every re-authorization, matched on whichever instance the publish came from — and an unstamped
+  one to every subscriber as before; a stamped publish logged for replay (`history`) is replayed
+  under the same rule, and `tapChannelAuthorized` applies it to a viewer's tap. The stamp travels
+  between instances and never in a frame to the browser; `authorize`'s answer is read strictly
+  (an object admits only with `allow: true`). The dev panel's channel pushes say how many of a
+  key's subscribers a stamped publish was not for.
+
+### Fixed
+
+- **Re-running a release no longer reports a failed publish as released.** `deno task release X`
+  on a version whose tag already exists now confirms that `@denext/denext@X` is on JSR and that
+  the tag's publish job succeeded before it prints "Released" or hands over the `main` PR. A
+  failed run stops with what to do: rerun the failed run if the cause was transient, or, for a real
+  defect, treat X as burned (tags are never moved or reused), cut the next patch and do not merge
+  `main`. A run still going is waited for. The release's local publish dry-run also checks the set
+  the publish job sends, with internal comments stripped, in a temporary copy that leaves the
+  working tree untouched.
+- **The API reference lists what a class contains.** All 102 class entries had only a name and a
+  summary. Each page at `/docs/api/<module>/<symbol>` and each `denext_read_docs`
+  `api:<module>/<name>` answer now lists the class's public constructors, properties, methods and
+  accessors, with types and doc comments and each static member marked `static`, and the
+  signature and entry name what the class extends and implements, linked when documented. An
+  overloaded method shows its overloads, not the implementation signature behind them.
+- **A parent written as a utility type links the type it comes from.** `Omit<X, "k">`, `Pick<X, …>`,
+  `Partial<X>`, `Required<X>` and `Readonly<X>` link `X` to its page, where they linked nothing.
+- **Every parent the reference names has a page, or is a platform type.** `AriaAttributes`,
+  `DOMAttributes`, `ExoticComponent` and `NamedExoticComponent`, the React types that
+  `HTMLAttributes`, `ForwardRefExoticComponent` and `MemoExoticComponent` extend, are now exported
+  from `denext` as types, as they already were from the `react` alias, and `CssAssets`, the base of
+  `AppCss`, from `denext/plugin-kit`. Each has its own entry.
+- **`denext mobile assets` no longer hangs or crashes on a hostile workspace file.** Looking for a
+  sibling Expo app's icon, it compiled each workspace member glob from `deno.json`,
+  `package.json`, `pnpm-workspace.yaml`, `lerna.json` and `rush.json` into one regular expression,
+  which could backtrack for minutes, and a glob the RegExp constructor rejected threw. Globs are
+  now matched one path segment at a time, stacked `**` are collapsed, a glob over 256 characters,
+  a segment with more than 3 wildcards, a nested extglob group or an invalid glob is skipped with a
+  note, and at most 256 globs are read. Those files are read only when they are regular files of
+  at most 8 MiB, so a FIFO or device under one of their names is never opened.
+- **The publish job proves the published code matches the tag.** Blanking an inline comment now
+  leaves a space where removing it would join two tokens, and every file the comment strip
+  rewrites must compile to the same JavaScript as the tagged file (comments and whitespace aside),
+  or the release stops (`scripts/publish-strip.ts`, run by the release, the CI dry-run and the
+  publish job).
+- **The docs for `openWindow({ capabilities })` say a capability subset is not a security
+  boundary.** Every window shares the app's origin, storage and launch token, so script in a
+  window opened with a subset can still reach every capability the app has. Open only the app's
+  own trusted pages in it.
+
+### Security
+
+- **Realtime: a reconnect under other claims on another instance gets no frame read under the
+  old ones.** 4.11.1 closed the Live hub's flush window for a `useTableChanges` subscriber
+  re-authorized under other claims on the SAME instance (`channel.discard`), but the discard is
+  per instance: with a shared channel transport (`redisChannelTransport`) and no sticky sessions, a
+  frame instance A had read under the old claims could still be fanned out by instance B to the
+  reconnect that landed there. The realtime engine now publishes every frame under the SHA-256 of
+  the grant it was read as and admits every subscriber under the grant it has, so a hub on any
+  instance drops a frame read under another grant; the same-instance discard stays as a local
+  complement. A frame dropped that way shows the subscriber a sequence gap, which `useTableChanges`
+  already answers with `stale` and a re-read. The Supabase Realtime protocol
+  (`/realtime/v1/websocket`) delivers each binding's frames to its own socket in-process and never
+  over the transport, so it was not exposed.
+- **A Live connection can no longer queue mounts without limit.** Mounts on one connection run one
+  at a time, and frames waiting their turn were held in memory with no cap. A connection now holds
+  at most twice `live.limits.maxViewsPerConnection` mounts waiting or running (at least 4); a mount
+  past that is refused with a `limit` error and never queued.
+- **`denext dev --lan` and the desktop runtime's provenance check no longer run a helper found
+  through PATH.** The default-route lookup runs the OS's own `ip` / `route` from `/usr/sbin`,
+  `/sbin`, `/usr/bin` or `/bin` (`System32` on Windows), and the provenance check runs `gh` only
+  from where its installers put it (Homebrew, `/usr/local/bin`, the distro package, Linuxbrew,
+  snap, or `GitHub CLI` under Program Files or the user's `Programs` folder). A `gh` elsewhere is
+  treated as not installed: the SHA-256 pin is still enforced, and `DENEXT_DESKTOP_RUNTIME_ATTEST=1`
+  says the CLI is missing. On macOS, the `plutil` and `codesign` that sign the pinned runtime's
+  bundle come from the OS's own tool folders the same way; one missing there is reported as not
+  found.
+- **`denext migrate --from expo` and `denext mobile assets` read an Expo app config only when it
+  is a regular file.** `app.json` and `app.config.*` were opened whatever they were: a FIFO under
+  that name in a clone blocked the command, and a huge file was read whole. They are now read only
+  when they are a regular file (or a link to one) of at most 8 MiB, as the workspace files the
+  icon search reads already were; anything else counts as missing.
+
 ## [4.11.12] - 2026-11-02
 
 ### Changed
@@ -20780,7 +20870,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.12...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.13...development
+[4.11.13]: https://jsr.io/@denext/denext@4.11.13
 [4.11.12]: https://jsr.io/@denext/denext@4.11.12
 [4.11.11]: https://jsr.io/@denext/denext@4.11.11
 [4.11.10]: https://jsr.io/@denext/denext@4.11.10

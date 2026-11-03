@@ -78,6 +78,7 @@ import {
   corpusReleaseState,
 } from "./lib/docs-corpus-package.ts";
 import { jsrHasVersion, missingPins } from "./lib/jsr-pins.ts";
+import { copyStrippedTree } from "./publish-strip.ts";
 import {
   detectResume,
   gateMarkerName,
@@ -861,8 +862,31 @@ async function runGate(version: string, fullGate: boolean): Promise<void> {
   console.log("\n6. Doc lint + publish dry-run…");
   if (await run("deno", "task", "doc-lint") !== 0) die("doc-lint failed — release aborted.");
   await checkPublishSize();
-  if (await run("deno", "publish", "--dry-run", "--allow-dirty") !== 0) {
+  if (!await publishDryRunStripped()) {
     die("publish dry-run failed — release aborted BEFORE tagging.");
+  }
+}
+
+/**
+ * `deno publish --dry-run` over the set publish.yml sends: the working tree copied into a
+ * temporary directory with the publish set stripped (scripts/publish-strip.ts), so the tree
+ * the release commits is never rewritten. True when the dry-run passes.
+ */
+async function publishDryRunStripped(): Promise<boolean> {
+  const dir = await Deno.makeTempDir({ prefix: "denext-publish-dry-" });
+  try {
+    const copied = await copyStrippedTree(dir);
+    if (copied === null) die("could not list the working tree for the stripped publish dry-run.");
+    const { code } = await new Deno.Command("deno", {
+      args: ["publish", "--dry-run", "--allow-dirty"],
+      cwd: dir,
+      stdout: "inherit",
+      stderr: "inherit",
+      stdin: "null",
+    }).output();
+    return code === 0;
+  } finally {
+    await Deno.remove(dir, { recursive: true }).catch(() => {});
   }
 }
 

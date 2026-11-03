@@ -9,6 +9,7 @@
 import { join } from "@std/path";
 import { unwrap } from "./config-edit.ts";
 import { type Node, swcParse } from "./swc-ast.ts";
+import { readRegularTextFile } from "../utils/read-regular-file.ts";
 
 // --- static evaluation --------------------------------------------------------------------
 
@@ -554,10 +555,15 @@ function pluginNames(value: unknown): string[] {
   return [...new Set(names)];
 }
 
-/** Read `path` as JSON, or null. */
+/**
+ * Read `path` as a JSON object, or null when it is missing, not a regular file, too big
+ * ({@link readRegularTextFile}) or not a JSON object.
+ */
 export async function readJsonFile(path: string): Promise<Record<string, unknown> | null> {
+  const text = await readRegularTextFile(path);
+  if (text === null) return null;
   try {
-    const value = JSON.parse(await Deno.readTextFile(path));
+    const value = JSON.parse(text);
     return value && typeof value === "object" ? value : null;
   } catch {
     return null;
@@ -585,12 +591,8 @@ async function readDynamicConfig(
   notes: string[],
 ): Promise<{ file: string | null; value: Record<string, unknown> | null }> {
   for (const file of APP_CONFIG_FILES) {
-    let source: string;
-    try {
-      source = await Deno.readTextFile(join(dir, file));
-    } catch {
-      continue;
-    }
+    const source = await readRegularTextFile(join(dir, file));
+    if (source === null) continue;
     const value = await readStaticAppConfig(source);
     if (!value) {
       notes.push(

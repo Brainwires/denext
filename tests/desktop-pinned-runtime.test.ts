@@ -30,6 +30,7 @@ import {
   resolveDesktopRuntimeEnv,
   RUNTIME_MARKER,
   RUNTIME_VERIFIED_AT,
+  runtimeProgram,
   runtimeRehashDue,
   verifiedRuntime,
 } from "../src/build/desktop-runtime.ts";
@@ -539,6 +540,20 @@ Deno.test("ghSignedIn: gh auth status's exit code; a missing gh is signed out", 
   assertEquals(seen, [["gh", "auth", "status", "--hostname", "github.com"]]);
   assertEquals(await ghSignedIn(() => Promise.resolve({ code: 1, text: "not logged in" })), false);
   assertEquals(await ghSignedIn(() => Promise.reject(new Deno.errors.NotFound("gh"))), false);
+});
+
+Deno.test("runtimeProgram: macOS plutil / codesign come from the OS's tool folders, never PATH", () => {
+  const only = (...paths: string[]) => (path: string) => paths.includes(path);
+  const mac = only("/usr/bin/plutil", "/usr/bin/codesign", "/opt/homebrew/bin/gh");
+  assertEquals(runtimeProgram("plutil", "darwin", mac), "/usr/bin/plutil");
+  assertEquals(runtimeProgram("codesign", "darwin", mac), "/usr/bin/codesign");
+  assertEquals(runtimeProgram("gh", "darwin", mac), "/opt/homebrew/bin/gh");
+  // A missing tool is NotFound, as a program missing from PATH is; nothing falls back to PATH.
+  assertThrows(() => runtimeProgram("codesign", "darwin", only()), Deno.errors.NotFound);
+  assertThrows(() => runtimeProgram("gh", "linux", only()), Deno.errors.NotFound);
+  // Elsewhere, and for any other program (the runtime's own absolute path), nothing changes.
+  assertEquals(runtimeProgram("plutil", "linux", only()), "plutil");
+  assertEquals(runtimeProgram("/x/deno", "darwin", only()), "/x/deno");
 });
 
 /** A `gh auth status` stub: signed in or not; any other capture is a test error. */

@@ -109,28 +109,52 @@ export function DenextOnlyCallout({ children }: { children?: VNodeChildren }) {
   );
 }
 
-/** The parents an interface inherits members from, each linked to its page when documented. */
-export function ApiParents({ parents }: { parents: ApiParent[] }) {
+/**
+ * One parent as code, linked to its page when documented. A utility type (`Omit<X, "k">`) links
+ * only the name it takes its members from.
+ */
+function ParentType({ parent: p }: { parent: ApiParent }) {
+  if (!p.ref) return <code>{p.type}</code>;
+  const href = `/docs/api/${p.ref}`;
+  const at = p.refName ? p.type.indexOf(p.refName, p.type.indexOf("<")) : -1;
+  if (!p.refName || at < 0) {
+    return (
+      <a href={href}>
+        <code>{p.type}</code>
+      </a>
+    );
+  }
+  const end = at + p.refName.length;
+  return (
+    <code>
+      {p.type.slice(0, at)}
+      <a href={href}>{p.refName}</a>
+      {p.type.slice(end)}
+    </code>
+  );
+}
+
+/**
+ * The parents an interface or class inherits members from, or the interfaces a class implements,
+ * each linked to its page when documented.
+ */
+export function ApiParents(
+  { parents, label = "Inherits the members of" }: { parents: ApiParent[]; label?: string },
+) {
   if (!parents.length) return null;
   return (
     <p class="api-parents">
-      Inherits the members of {parents.map((p, i) => (
+      {label} {parents.map((p, i) => (
         <span key={p.type}>
           {i ? ", " : ""}
-          {p.ref
-            ? (
-              <a href={`/docs/api/${p.ref}`}>
-                <code>{p.type}</code>
-              </a>
-            )
-            : <code>{p.type}</code>}
+          <ParentType parent={p} />
         </span>
       ))}.
     </p>
   );
 }
 
-/** An interface's own members: each signature, its prose, then its `@param` / `@returns` tags. */
+/** An interface's or class's own members: each signature, its prose, then its `@param` / `@returns` tags. */
 export function ApiMembers({ members }: { members: ApiMember[] }) {
   if (!members.length) return null;
   return (

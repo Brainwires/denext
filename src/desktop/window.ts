@@ -1267,7 +1267,10 @@ export interface OpenWindowOptions {
   readonly show?: boolean;
   /**
    * The desktop capabilities its pages may call (default: all the app has; `window` always). Least
-   * privilege for a page that needs little — not isolation: every window shares the app's origin.
+   * privilege for a trusted page that needs little, not a security boundary: every window shares
+   * the app's origin, storage and launch token, so script in this window can still reach every
+   * capability the app has (for example by calling the bridge as the main window). Never open
+   * untrusted content in an app window because of a subset.
    */
   readonly capabilities?: readonly string[];
 }

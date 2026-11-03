@@ -114,6 +114,11 @@ export interface ChannelPushRecord {
   payload: RedactedValue;
   /** Subscribers on this instance when it arrived. */
   subscribers: number;
+  /**
+   * Of those, the ones a publish stamped with a grant is not for (admitted under another grant,
+   * or none): the hub sends it to the rest only. Absent for an unstamped publish and a revoke.
+   */
+  withheld?: number;
 }
 
 /** One cache entry written. */
@@ -158,10 +163,12 @@ export function recordViewMessages(view: string, iid: string, msgs: readonly unk
  *
  * @param ev The event (`publish` and `revoke` are kept).
  * @param subscribers Subscribers on this instance for its channel and key.
+ * @param withheld Of those, the ones a stamped publish is not for (`0`: none, or unstamped).
  */
 export function recordChannelPush(
-  ev: { kind: string; channelId: string; key: string; encoded?: string },
+  ev: { kind: string; channelId: string; key: string; encoded?: string; grant?: string },
   subscribers: number,
+  withheld = 0,
 ): void {
   if (!enabled || (ev.kind !== "publish" && ev.kind !== "revoke")) return;
   let payload: RedactedValue = null;
@@ -180,6 +187,7 @@ export function recordChannelPush(
     bytes: ev.encoded?.length ?? 0,
     payload,
     subscribers,
+    ...(ev.grant !== undefined ? { withheld } : {}),
   });
 }
 

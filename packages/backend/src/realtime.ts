@@ -52,6 +52,7 @@ import {
   bootDdlEnabled,
   bootMigrate,
   BootSchemaError,
+  type ChannelAdmission,
   clientIpForLimits,
   createChannel,
   type Migration,
@@ -144,6 +145,12 @@ type Sink = { channel: string } | { fn: (frame: TableChangesFrame) => void };
  */
 type AudienceMode = "view" | "raw";
 
+/** A frame queued for an audience, with the grant it was read under (its publish's stamp). */
+interface Queued {
+  frame: TableChangesFrame;
+  grant: string;
+}
+
 /** One subscription. */
 interface Audience {
   key: string;
@@ -163,6 +170,12 @@ interface Audience {
    */
   owner: string;
   scope: RlsScope;
+  /**
+   * The stamp of `scope`'s grant ({@linkcode grantStampOf}): what its frames are published under,
+   * and what its subscriber is admitted under — the Live hub delivers a frame only where the two
+   * match, on any instance.
+   */
+  grant: string;
   /** Keys this subscriber may know about (see the module comment). */
   tracked: Set<string>;
   active: boolean;
@@ -171,7 +184,7 @@ interface Audience {
   idleSince: number;
   seq: number;
   sink: Sink;
-  queue: TableChangesFrame[];
+  queue: Queued[];
   pumping: boolean;
   /** The journal position this subscription was delivered up to. */
   position: number;
@@ -368,7 +381,7 @@ export class RealtimeEngine {
   #listening: Promise<void> | null = null;
   #listener: SqlListener | null = null;
   #migrated: Promise<void> | null = null;
-  #publish: (key: string, frame: TableChangesFrame) => Promise<void>;
+  #publish: (key: string, frame: TableChangesFrame, grant: string) => Promise<void>;
   /** Drops the frames of a key not yet fanned out by the Live hub (a regranted reconnect). */
   #discard: (key: string) => void;
   #stopped = false;
@@ -400,13 +413,14 @@ export class RealtimeEngine {
   /**
    * @param options The realtime options.
    * @param client The connecting role's client (throws when Postgres is unavailable).
-   * @param publish Publishes a frame on the realtime channel.
+   * @param publish Publishes a frame on the realtime channel, stamped with the grant it was read
+   *   under (the hub delivers it only to a subscriber admitted under that grant).
    * @param discard Drops a key's published frames the Live hub has not fanned out yet.
    */
   constructor(
     options: RealtimeOptions,
     client: () => SqlClient,
-    publish: (key: string, frame: TableChangesFrame) => Promise<void>,
+    publish: (key: string, frame: TableChangesFrame, grant: string) => Promise<void>,
     discard: (key: string) => void = () => {},
   ) {
     this.config = resolveRealtime(options);
@@ -997,12 +1011,15 @@ export class RealtimeEngine {
    */
   async #deliverGroup(group: Audience[], changes: Map<string, Pending>): Promise<void> {
     const [first] = group;
+    // The group shares one role and claims: read as them, and stamp every frame with that grant
+    // (a rebind meanwhile changes an audience's scope, not what these rows were read under).
+    const { scope, grant } = first;
     const keys = [...changes].filter(([, c]) => c.op !== "delete").map(([key]) => key);
     const byFilter = byFilterOf(group);
     let rows: Map<string, Map<string, unknown>>;
     let open = false;
     try {
-      rows = await this.#reread(first, [...byFilter.values()].map(([a]) => a.filter), keys);
+      rows = await this.#reread(first, scope, [...byFilter.values()].map(([a]) => a.filter), keys);
       open = (await this.#catalog(first.table)).open;
     } catch (error) {
       return await this.#rereadFailed(group, byFilter, changes, error);
@@ -1012,7 +1029,9 @@ export class RealtimeEngine {
       const out = audience.mode === "raw"
         ? rawChanges(audience, changes, seen, this.config.maxTrackedKeys, open)
         : audienceChanges(audience, changes, seen, this.config.maxTrackedKeys);
-      for (const frame of toFrames(out, audience.frameBytes)) this.#enqueue(audience, frame);
+      for (const frame of toFrames(out, audience.frameBytes)) {
+        this.#enqueue(audience, frame, grant);
+      }
     }
   }
 
@@ -1044,6 +1063,7 @@ export class RealtimeEngine {
    */
   async #reread(
     audience: Audience,
+    scope: RlsScope,
     filters: Array<ParsedFilter | undefined>,
     keys: string[],
   ): Promise<Map<string, Map<string, unknown>>> {
@@ -1061,7 +1081,7 @@ export class RealtimeEngine {
           ? rereadQuery(audience.table, batch[0], chunk, types)
           : groupRereadQuery(audience.table, batch, chunk, types);
         this.stats.rereads++;
-        const result = await this.#timed<Record<string, unknown>>(audience.scope, text, params);
+        const result = await this.#timed<Record<string, unknown>>(scope, text, params);
         for (const row of result) sortRow(row, batch, out);
       }
     }
@@ -1113,13 +1133,20 @@ export class RealtimeEngine {
     return await read;
   }
 
-  /** Queue a frame and make sure the audience's pump runs. */
-  #enqueue(audience: Audience, frame: Omit<TableChangesFrame, "seq">): void {
+  /**
+   * Queue a frame, stamped with the grant it was read under (the audience's current one for a
+   * control frame), and make sure the audience's pump runs.
+   */
+  #enqueue(
+    audience: Audience,
+    frame: Omit<TableChangesFrame, "seq">,
+    grant: string = audience.grant,
+  ): void {
     if (audience.queue.length >= MAX_QUEUE) {
       audience.queue.length = 0;
-      audience.queue.push({ seq: 0, resync: true });
+      audience.queue.push({ frame: { seq: 0, resync: true }, grant: audience.grant });
     } else {
-      audience.queue.push({ seq: 0, ...frame });
+      audience.queue.push({ frame: { seq: 0, ...frame }, grant });
     }
     if (!audience.pumping) void this.#pump(audience);
   }
@@ -1141,17 +1168,20 @@ export class RealtimeEngine {
           await sleep(wait);
           continue; // the subscriber may have left meanwhile
         }
-        const frame = audience.queue.shift()!;
+        const { frame, grant } = audience.queue.shift()!;
         frame.seq = ++audience.seq;
-        if (await this.#send(audience, frame)) audience.sentAt = Date.now();
+        if (await this.#send(audience, frame, grant)) audience.sentAt = Date.now();
       }
     } finally {
       audience.pumping = false;
     }
   }
 
-  /** Deliver one frame; a frame over the channel's cap is split (and requeued) instead. */
-  async #send(audience: Audience, frame: TableChangesFrame): Promise<boolean> {
+  /**
+   * Deliver one frame, published under `grant`; a frame over the channel's cap is split (and
+   * requeued, under the same grant) instead.
+   */
+  async #send(audience: Audience, frame: TableChangesFrame, grant: string): Promise<boolean> {
     this.stats.frames++;
     if ("fn" in audience.sink) {
       try {
@@ -1165,7 +1195,7 @@ export class RealtimeEngine {
       return true;
     }
     try {
-      await this.#publish(audience.key, frame);
+      await this.#publish(audience.key, frame, grant);
       return true;
     } catch (error) {
       if (!(error instanceof RangeError)) {
@@ -1174,7 +1204,7 @@ export class RealtimeEngine {
       }
       audience.seq--; // the frame was not sent: its parts take its number
       this.stats.frames--;
-      audience.queue.unshift(...splitFrame(frame));
+      audience.queue.unshift(...splitFrame(frame).map((part) => ({ frame: part, grant })));
       return false;
     }
   }
@@ -1261,24 +1291,27 @@ export class RealtimeEngine {
    * @param key The subscription key.
    * @param peer Whose quota a signed-out subscriber counts against: its client address, or its
    *   Live connection's id when the address is unknown.
-   * @returns Whether the subscriber may receive it.
+   * @returns `false` when it may not; else the admission, under the stamp of its grant — the hub
+   *   then delivers it only the frames published under that stamp, wherever they were read.
    */
-  async authorize(key: string, peer = ""): Promise<boolean> {
+  async authorize(key: string, peer = ""): Promise<false | ChannelAdmission> {
     const parts = decodeSubscriptionKey(key);
     if (!parts) return false;
     try {
       const table = await this.#resolve(parts.table);
       if (!table) return false;
       const scope = await resolveScope();
+      const grant = await grantStampOf(scope);
       const owner = scope.role === "anon" ? `anon:${peer}` : identityOf(scope);
       const existing = this.#audiences.get(key);
       if (existing) {
-        if (!this.#rebind(existing, scope, owner)) return false;
+        if (!this.#rebind(existing, scope, grant, owner)) return false;
         if (existing.regranted) await this.#reseed(existing, scope);
-        return true;
+        return { allow: true, grant };
       }
       const sink = { channel: key };
-      return await this.#admit({ key, table, filter: parts.filter, scope, sink }, owner);
+      const ok = await this.#admit({ key, table, filter: parts.filter, scope, grant, sink }, owner);
+      return ok ? { allow: true, grant } : false;
     } catch (error) {
       this.#warnOnce(error);
       return false;
@@ -1289,7 +1322,7 @@ export class RealtimeEngine {
    * Re-authorization of a known key: same identity only; the claims are refreshed. A signed-out
    * subscriber back on a new connection takes the subscription into that connection's quota.
    */
-  #rebind(audience: Audience, scope: RlsScope, owner: string): boolean {
+  #rebind(audience: Audience, scope: RlsScope, grant: string, owner: string): boolean {
     if (identityOf(scope) !== audience.identity) return false;
     if (owner !== audience.owner) {
       if (!this.#roomFor(owner, audience)) return false;
@@ -1299,15 +1332,17 @@ export class RealtimeEngine {
     // for it was read under the old ones, so it is dropped and the return is a resync.
     // The keys it tracked were seen under the old grant too: none of them may yield a delete
     // (with an `old: "full"` row image) to the new one, so they go now and are re-seeded under it.
-    // So do the frames already handed to the Live hub before the drop (its coalescing window):
-    // fanned out after this reconnect, they would reach it.
-    if (audience.everActive && !audience.active && grantOf(scope) !== grantOf(audience.scope)) {
+    // The frames already handed to this instance's Live hub before the drop (its coalescing
+    // window) are discarded too; one published here or on another instance that the hub still
+    // fans out is stamped with the old grant, so the hub does not send it to the new one.
+    if (audience.everActive && !audience.active && grant !== audience.grant) {
       this.#discard(audience.key);
       audience.queue.length = 0;
       audience.tracked = new Set();
       audience.regranted = true;
     }
     audience.scope = scope;
+    audience.grant = grant;
     return true;
   }
 
@@ -1336,6 +1371,7 @@ export class RealtimeEngine {
     table: ResolvedTable;
     filter?: ParsedFilter;
     scope: RlsScope;
+    grant: string;
     sink: Sink;
     mode?: AudienceMode;
     events?: ReadonlySet<TableEvent>;
@@ -1458,6 +1494,7 @@ export class RealtimeEngine {
       table: resolved,
       filter,
       scope,
+      grant: await grantStampOf(scope),
       sink: { fn: options.onChange },
     }, "");
     if (!ok) {
@@ -1487,6 +1524,7 @@ export class RealtimeEngine {
       table: init.table,
       filter: init.filter,
       scope: init.scope,
+      grant: await grantStampOf(init.scope),
       sink: { fn: init.onFrame },
       mode: "raw",
       events: init.events,
@@ -1494,6 +1532,8 @@ export class RealtimeEngine {
     if (!ok) return null;
     return {
       stop: () => void this.#audiences.delete(key),
+      // A binding's frames go to its own socket's callback in this process, never over the
+      // channel transport, so its grant stamp is not what gates them; the scope alone moves.
       rescope: (scope: RlsScope) => {
         const audience = this.#audiences.get(key);
         if (!audience || identityOf(scope) !== audience.identity) return false;
@@ -1616,6 +1656,20 @@ export function grantOf(scope: RlsScope): string {
     Object.entries(claims ?? {}).filter(([name]) => !VOLATILE_CLAIMS.has(name)),
   );
   return `${scope.role}:${canonical(kept)}`;
+}
+
+/**
+ * The stamp of a scope's grant: the SHA-256 (hex) of {@linkcode grantOf}. Published with every
+ * frame read under the scope and answered by `authorize` for every subscriber admitted under it,
+ * so the Live hub can match the two on any instance without carrying the claims themselves.
+ *
+ * @param scope The scope.
+ * @returns The stamp (64 hex characters).
+ */
+export async function grantStampOf(scope: RlsScope): Promise<string> {
+  const bytes = new TextEncoder().encode(grantOf(scope));
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 /** JSON with every object's keys sorted. */
@@ -2224,7 +2278,7 @@ function subscriberAddress(): string | undefined {
  * reload) takes over the same channel id.
  */
 export function createRealtimeChannel(): {
-  publish(key: string, frame: TableChangesFrame): Promise<void>;
+  publish(key: string, frame: TableChangesFrame, grant: string): Promise<void>;
   discard(key: string): void;
 } {
   const engine = (): RealtimeEngine | undefined => {
@@ -2255,7 +2309,7 @@ export function createRealtimeChannel(): {
   // A denext before `Channel.discard` has none: its hub's window stays open (no worse than before).
   const { discard } = channel as { discard?: (key: string) => void };
   return {
-    publish: (key, frame) => channel.publish(key, frame),
+    publish: (key, frame, grant) => channel.publish(key, frame, { grant }),
     discard: (key) => discard?.call(channel, key),
   };
 }
