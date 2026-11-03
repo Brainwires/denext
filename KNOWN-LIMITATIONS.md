@@ -690,7 +690,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   `openDesktopUi` and read through its overlay's `read`.
 - **No WebRTC on Linux's webview backend:** no distribution builds WebKitGTK with WebRTC, so
   `RTCPeerConnection` is undefined there; `getUserMedia` works, so recording is fine. An app that
-  uses WebRTC sets deno.json `desktop.backend` to `"cef"` (one key for every OS);
+  uses WebRTC sets `desktop: { backend: { linux: "cef" } }` in `denext.config.ts` (macOS and
+  Windows keep the system WebView);
   `denext desktop doctor --linux`, `denext doctor` and a Linux `desktop package` warn
   ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):

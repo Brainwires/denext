@@ -49,7 +49,7 @@ export async function projectLaunchPolicy(dir: string): Promise<LaunchPolicyProb
 
 /**
  * Why the project's Linux build has no WebRTC (`linuxWebRtcProblem`), from its config as data and
- * deno.json `desktop.backend`. `null` when it does not apply, or when the config or the backend
+ * the project's Linux engine (`desktop.backend` for Linux: the config's, else deno.json's). `null` when it does not apply, or when the config or the backend
  * can't be read (the launch-policy check reports an unreadable config).
  */
 export async function projectLinuxWebRtc(dir: string): Promise<string | null> {
@@ -57,7 +57,7 @@ export async function projectLinuxWebRtc(dir: string): Promise<string | null> {
   const config = await readStaticConfig(dir);
   const desktop = config.keys.desktop;
   if (!config.readable || !desktop || desktop.kind !== "editable") return null;
-  const backend = await projectDesktopBackend(dir).catch(() => null);
+  const backend = await projectDesktopBackend(dir, { target: "linux" }).catch(() => null);
   return linuxWebRtcProblem({ desktop: desktop.value }, backend);
 }
 

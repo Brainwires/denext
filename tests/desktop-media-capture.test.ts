@@ -556,7 +556,12 @@ Deno.test("media capture: Linux WebRTC needs the CEF backend", () => {
     linuxWebRtcProblem({ desktop: { capabilities: { microphone: false } } }, "webview"),
     null,
   );
-  assertStringIncludes(LINUX_WEBRTC_FIX, 'desktop.backend to "cef"');
+  assertStringIncludes(
+    LINUX_WEBRTC_FIX,
+    'desktop: { backend: { linux: "cef" } } in denext.config.ts',
+  );
+  assertStringIncludes(LINUX_WEBRTC_FIX, "macOS and Windows keep the system WebView");
+  assert(!LINUX_WEBRTC_FIX.includes("deno.json"), LINUX_WEBRTC_FIX);
 });
 
 Deno.test("media capture: both doctors warn that the Linux webview build has no WebRTC", async () => {
@@ -567,7 +572,10 @@ Deno.test("media capture: both doctors warn that the Linux webview build has no 
     const check = await desktopLinuxWebRtcCheck(dir, BOTH);
     assertEquals([check!.name, check!.ok, check!.critical], ["desktop Linux WebRTC", false, false]);
     assertStringIncludes(check!.detail, "RTCPeerConnection is undefined");
-    assertStringIncludes(check!.detail, 'desktop.backend to "cef"');
+    assertStringIncludes(
+      check!.detail,
+      'desktop: { backend: { linux: "cef" } } in denext.config.ts',
+    );
     assertEquals(await desktopLinuxWebRtcCheck(dir, { desktop: { app: BOTH.desktop.app } }), null);
     // `denext desktop doctor --linux`: the config read as data.
     assertStringIncludes((await projectLinuxWebRtc(dir))!, "microphone / camera is on");
@@ -598,6 +606,33 @@ Deno.test("media capture: both doctors warn that the Linux webview build has no 
   }
 });
 
+Deno.test('media capture: a per-OS desktop.backend with linux: "cef" gives no WebRTC warning', async () => {
+  const perOs = { desktop: { ...BOTH.desktop, backend: { linux: "cef" } } };
+  const { dir } = await project(perOs);
+  try {
+    await Deno.writeTextFile(join(dir, "desktop.ts"), "// entry\n");
+    // deno.json keeps the system WebView (macOS and Windows): the Linux engine is still CEF.
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ desktop: { backend: "webview" } }),
+    );
+    // `denext doctor`: the loaded config.
+    assertEquals(await desktopLinuxWebRtcCheck(dir, perOs), null);
+    // `denext desktop doctor --linux`: the config read as data.
+    assertEquals(await projectLinuxWebRtc(dir), null);
+    // A per-OS value that leaves Linux on the webview still warns, with the per-OS fix.
+    const macCef = { desktop: { ...BOTH.desktop, backend: { macos: "cef" } } };
+    const check = await desktopLinuxWebRtcCheck(dir, macCef);
+    assertStringIncludes(check!.detail, "RTCPeerConnection is undefined");
+    assertStringIncludes(
+      check!.detail,
+      'desktop: { backend: { linux: "cef" } } in denext.config.ts',
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 /** Run `prepareDesktopPackage` for `os` in its own process; its stderr. */
 async function prepareStderr(dir: string, os: "linux" | "windows"): Promise<string> {
   const entry = toFileUrl(join(dir, "scripts", `package-${os}.ts`)).href;
@@ -619,13 +654,23 @@ Deno.test("media capture: a Linux package run warns once that the webview build 
     await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ version: "1.2.3" }));
     const linux = await prepareStderr(dir, "linux");
     assertEquals(linux.split("RTCPeerConnection is undefined").length - 1, 1, linux);
-    assertStringIncludes(linux, 'desktop.backend to "cef"');
+    assertStringIncludes(linux, 'desktop: { backend: { linux: "cef" } } in denext.config.ts');
     // A warning, not a refusal; and only for a Linux target.
     assert(!(await prepareStderr(dir, "windows")).includes("RTCPeerConnection"));
     await Deno.writeTextFile(
       join(dir, "deno.json"),
       JSON.stringify({ version: "1.2.3", desktop: { backend: "cef" } }),
     );
+    assert(!(await prepareStderr(dir, "linux")).includes("RTCPeerConnection"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test('media capture: a Linux package run with desktop.backend { linux: "cef" } does not warn', async () => {
+  const { dir } = await project({ desktop: { ...BOTH.desktop, backend: { linux: "cef" } } });
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ version: "1.2.3" }));
     assert(!(await prepareStderr(dir, "linux")).includes("RTCPeerConnection"));
   } finally {
     await Deno.remove(dir, { recursive: true });

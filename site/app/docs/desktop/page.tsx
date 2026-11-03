@@ -3224,11 +3224,12 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
         WebRTC on Linux needs the CEF backend. No distribution builds WebKitGTK with WebRTC, so on
         the webview backend <code>RTCPeerConnection</code> is undefined in the Linux app;{" "}
         <code>getUserMedia</code>{" "}
-        itself works, so an app that only records is fine. An app that uses WebRTC sets deno.json
+        itself works, so an app that only records is fine. An app that uses WebRTC gives Linux the
+        CEF backend in <code>denext.config.ts</code>:{" "}
+        <code>desktop: {"{"} backend: {"{"} linux: "cef" {"}"} {"}"}</code>{" "}
+        (Chromium, about 150 MB larger, on Linux only; macOS and Windows keep the system WebView,
+        which has WebRTC). <code>denext desktop doctor --linux</code> and <code>denext doctor</code>
         {" "}
-        <code>desktop.backend</code> to <code>"cef"</code>{" "}
-        (Chromium, about 150 MB larger; the one key picks the engine on every OS).{" "}
-        <code>denext desktop doctor --linux</code> and <code>denext doctor</code>{" "}
         warn when the microphone or camera is on with the webview backend, and{" "}
         <code>denext desktop package</code> warns once for a Linux target.
       </p>
@@ -3238,6 +3239,8 @@ desktop: {
   capabilities: {
     microphone: { usageDescription: "Acme listens while you hold the talk key." },
   },
+  // WebRTC on Linux too: Chromium there, the system WebView on macOS and Windows.
+  backend: { linux: "cef" },
 },
 
 // the page

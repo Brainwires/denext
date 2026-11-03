@@ -855,13 +855,14 @@ export async function desktopLaunchPolicyCheck(
  * has no `RTCPeerConnection` (`getUserMedia` works). Advisory, whatever the host: any host can
  * package for Linux.
  *
- * @param dir The project directory (its deno.json `desktop.backend` picks the engine).
- * @param config The loaded project config.
+ * @param dir The project directory.
+ * @param config The loaded project config (its `desktop.backend` for Linux, else deno.json's,
+ *   picks the engine).
  * @returns The check, or `null` when it does not apply.
  */
 export async function desktopLinuxWebRtcCheck(dir: string, config: unknown): Promise<Check | null> {
   if (!await isDesktopProject(dir)) return null;
-  const backend = await projectDesktopBackend(dir).catch(() => null);
+  const backend = await projectDesktopBackend(dir, { target: "linux", config }).catch(() => null);
   const problem = linuxWebRtcProblem(config, backend);
   if (problem === null) return null;
   return {

@@ -1077,7 +1077,10 @@ Deno.test("desktop doctor: the microphone on the webview backend warns that Linu
   assertEquals(linux.findings.map((f) => [f.check, f.level, f.message]), [
     ["webrtc", "warning", problem],
   ]);
-  assertStringIncludes(linux.findings[0].fix, 'desktop.backend to "cef"');
+  assertStringIncludes(
+    linux.findings[0].fix,
+    'desktop: { backend: { linux: "cef" } } in denext.config.ts',
+  );
   assertStringIncludes(formatDesktopDoctor(linux), problem);
 
   // Nothing to say (CEF, or no capture): the check ran and passed.

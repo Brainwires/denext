@@ -197,10 +197,13 @@ export function assertMediaCaptureRuntime(
   }
 }
 
-/** The fix for {@linkcode linuxWebRtcProblem}: the one key that picks the engine. */
-export const LINUX_WEBRTC_FIX = 'an app that uses WebRTC: set deno.json desktop.backend to "cef" ' +
-  "(Chromium; the one key picks the engine on every OS, so macOS and Windows ship CEF too). An " +
-  "app that only records needs nothing";
+/**
+ * The fix for {@linkcode linuxWebRtcProblem}: CEF for Linux only, in `denext.config.ts`'s per-OS
+ * `desktop.backend` (macOS and Windows keep the system WebView, which has WebRTC).
+ */
+export const LINUX_WEBRTC_FIX = "an app that uses WebRTC: set " +
+  'desktop: { backend: { linux: "cef" } } in denext.config.ts (Chromium on Linux only; macOS ' +
+  "and Windows keep the system WebView, which has WebRTC). An app that only records needs nothing";
 
 /**
  * Why WebRTC is missing from the Linux build: the microphone or camera is on and the Linux engine
@@ -209,7 +212,8 @@ export const LINUX_WEBRTC_FIX = 'an app that uses WebRTC: set deno.json desktop.
  * records is fine. The CEF backend (Chromium) has WebRTC on every OS.
  *
  * @param config The project config.
- * @param backend The deno.json `desktop.backend` (`"webview"` or `"cef"`; `null` when unknown).
+ * @param backend The project's Linux engine (`desktop.backend` for Linux: `"webview"` or `"cef"`;
+ *   `null` when unknown).
  * @returns The message (one line), or `null` when it does not apply.
  */
 export function linuxWebRtcProblem(config: unknown, backend: string | null): string | null {

@@ -38,10 +38,10 @@ and this project adheres to
 - **The doctors and Linux packaging say when a capturing app has no WebRTC on Linux.** No
   distribution builds WebKitGTK with WebRTC, so on the webview backend `RTCPeerConnection` is
   undefined in the Linux app (`getUserMedia` itself works). With the microphone or camera on and
-  deno.json `desktop.backend` not `"cef"`, `denext desktop doctor --linux` and `denext doctor`
-  warn, and `denext desktop package` warns once for a Linux target (it still packages: an app that
-  only records is fine). An app that uses WebRTC sets `desktop.backend` to `"cef"`, which applies
-  to every OS. Docs: https://denext.dev/docs/desktop#desktop-media-capture
+  the Linux engine not `"cef"`, `denext desktop doctor --linux` and `denext doctor` warn, and
+  `denext desktop package` warns once for a Linux target (it still packages: an app that only
+  records is fine). An app that uses WebRTC sets `desktop: { backend: { linux: "cef" } }` in
+  `denext.config.ts`, so macOS and Windows keep the system WebView. Docs: https://denext.dev/docs/desktop#desktop-media-capture
 
 ## [4.11.13] - 2026-11-02
 
