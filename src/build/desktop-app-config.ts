@@ -52,10 +52,9 @@ import {
   strictLaunchRuntime,
 } from "./desktop-launch-policy.ts";
 import {
-  desktopMediaCapture,
+  assertMediaCaptureRuntime,
   type DesktopMediaKind,
   mediaCaptureLaunchGrant,
-  mediaCaptureRuntimeProblem,
   withMediaUsageDescriptions,
 } from "./desktop-media-capture.ts";
 
@@ -100,7 +99,9 @@ export interface LaufeyLaunchConfig {
   /**
    * The documents that get the microphone and / or camera (file only, no env var, runtime
    * `3.0.0-denext.9`+): the app origin alone, per kind enabled in `desktop.capabilities`
-   * (`microphone`, `camera`). laufey refuses every other origin, and a sub-frame of another origin.
+   * (`microphone`, `camera`). laufey refuses every other origin, and a sub-frame of another origin
+   * (except on Linux, where WebKitGTK does not say which frame asks: a sub-frame the page delegates
+   * the device to with `allow="microphone"` gets it).
    */
   readonly mediaCapture?: Partial<Record<DesktopMediaKind, string[]>>;
   /**
@@ -500,8 +501,9 @@ async function writeMacBundleKeys(
     await Deno.writeTextFile(plist, withUserActivityTypes(await Deno.readTextFile(plist), types));
   }
   // The text macOS shows when it asks for the microphone / camera: without it macOS ends the app
-  // the first time the page captures. Written whatever the runtime: it costs nothing.
-  if (Object.keys(desktopMediaCapture(config)).length > 0) {
+  // the first time the page captures. Only beside the grant: on a runtime that does not enforce
+  // it, the missing text is what keeps any other origin from capturing (packaging refuses one).
+  if (launch.mediaCapture) {
     await editInfoPlist(plist, (text) => withMediaUsageDescriptions(text, config));
   }
   // Only for a runtime that reads the policy: on one without activation policies an LSUIElement
@@ -525,7 +527,8 @@ export interface LaufeyLaunchWriteOptions {
   readonly activationPolicy?: boolean;
   /**
    * Whether the runtime reads `"mediaCapture"` (default `mediaCaptureRuntime()`: denext's pinned
-   * runtime from `3.0.0-denext.9`).
+   * runtime from `3.0.0-denext.9`). Without it a config with the microphone or camera on is
+   * refused.
    */
   readonly mediaCapture?: boolean;
 }
@@ -536,13 +539,16 @@ export interface LaufeyLaunchWriteOptions {
  * `desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's
  * `NSUserActivityTypes`, and marks an `"accessory"` app `LSUIElement` (no Dock tile at launch;
  * {@linkcode withActivationPolicy}). On macOS call it BEFORE code-signing: both files live inside the sealed
- * bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.
+ * bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused. The
+ * microphone or camera on a runtime that does not enforce the grant is refused
+ * ({@linkcode assertMediaCaptureRuntime}) before anything is written.
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param os The target OS.
  * @param bundle The `.app` (macOS) or bundle directory (Windows / Linux) `deno desktop` wrote.
  * @param options Whether the runtime is strict (default: from the pin and the env).
  * @returns The path written (always written: it carries `inspectable`).
+ * @throws {Error} When the microphone or camera is on and the runtime does not read the grant.
  */
 export async function writeLaufeyLaunchConfig(
   entryUrl: string,
@@ -552,6 +558,7 @@ export async function writeLaufeyLaunchConfig(
 ): Promise<string | null> {
   const config = await loadConfigBeside(entryUrl);
   const mediaKnown = options.mediaCapture ?? mediaCaptureRuntime();
+  assertMediaCaptureRuntime(config, mediaKnown, desktopRuntimeLabel());
   const launch = packagedLaunchConfig(
     config,
     os,
@@ -559,8 +566,6 @@ export async function writeLaufeyLaunchConfig(
     options.activationPolicy ?? activationPolicyRuntime(),
     mediaKnown,
   );
-  const mediaProblem = mediaCaptureRuntimeProblem(config, mediaKnown, desktopRuntimeLabel());
-  if (mediaProblem) console.warn(`  denext: ${mediaProblem}.`);
   if (launch.passkeyRpIds?.length === 0) {
     console.warn(
       "  denext: desktop.capabilities.passkeys lists no relying party, so the packaged app " +

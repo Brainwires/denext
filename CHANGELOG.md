@@ -12,16 +12,17 @@ and this project adheres to
 
 - **Deno Desktop apps can use the microphone and camera.** `denext desktop add microphone` (and
   `camera`) lets the page's own `getUserMedia` reach the device, for the app's own origin only:
-  never another origin the window navigates to, and never a sub-frame of another origin. The
-  packaged app's `laufey-launch.json` carries the grant (`"mediaCapture"`), which the webview
-  backend enforces natively; on macOS the bundle's `Info.plist` gets `NSMicrophoneUsageDescription`
-  / `NSCameraUsageDescription` (from `desktop.capabilities.microphone = { usageDescription }`, else
-  "<app> uses your microphone.") and a signed build the Hardened Runtime entitlements
-  `com.apple.security.device.audio-input` / `com.apple.security.device.camera`. It needs Deno
-  Desktop runtime 3.0.0-denext.9 or later: with an older runtime the packaged app refuses every
-  request (`NotAllowedError`), and the package scripts and `denext doctor` say so. An unpackaged
-  window (`denext desktop run` / `dev`) refuses it too, and says so at launch. Docs:
-  https://denext.dev/docs/desktop#desktop-media-capture
+  never another origin the window navigates to, and never a sub-frame of another origin (except on
+  Linux, where WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to
+  with `allow="microphone"` gets it). The packaged app's `laufey-launch.json` carries the grant
+  (`"mediaCapture"`), which the webview backend enforces natively; on macOS the bundle's
+  `Info.plist` gets `NSMicrophoneUsageDescription` / `NSCameraUsageDescription` (from
+  `desktop.capabilities.microphone = { usageDescription }`, else "<app> uses your microphone.") and
+  a signed build the Hardened Runtime entitlements `com.apple.security.device.audio-input` /
+  `com.apple.security.device.camera`. It needs Deno Desktop runtime 3.0.0-denext.9 or later:
+  `denext desktop package` refuses an older runtime, which cannot restrict capture to the app's
+  origin, and `denext doctor` says so. An unpackaged window (`denext desktop run` / `dev`) gets no
+  grant and says so at launch. Docs: https://denext.dev/docs/desktop#desktop-media-capture
 
 ## [4.11.13] - 2026-11-02
 

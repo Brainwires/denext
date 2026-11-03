@@ -1006,11 +1006,13 @@ export interface DesktopCapabilitiesConfig {
   passkeys?: false | DesktopPasskeysConfig;
   /**
    * The page's `getUserMedia({ audio })` gets the microphone, for the app's own origin only (never
-   * another origin the window navigates to, nor a sub-frame of another origin). The packaged app's
-   * `laufey-launch.json` carries the grant (`"mediaCapture"`, Deno Desktop runtime 3.0.0-denext.9+;
-   * an older runtime refuses every request), macOS's `Info.plist` its
-   * `NSMicrophoneUsageDescription`, and a signed macOS build the
-   * `com.apple.security.device.audio-input` entitlement. macOS still asks the user once.
+   * another origin the window navigates to, nor a sub-frame of another origin, except on Linux,
+   * where WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to with
+   * `allow="microphone"` gets it). The packaged app's `laufey-launch.json` carries the grant
+   * (`"mediaCapture"`), macOS's `Info.plist` its `NSMicrophoneUsageDescription`, and a signed macOS
+   * build the `com.apple.security.device.audio-input` entitlement. It needs Deno Desktop runtime
+   * 3.0.0-denext.9 or later, which enforces the grant: `denext desktop package` refuses an older
+   * one. macOS still asks the user once. The options take `usageDescription` only.
    */
   microphone?: boolean | DesktopMediaCaptureConfig;
   /**

@@ -55,7 +55,7 @@ import {
   projectDesktopBackend,
   resolveDesktopRuntimeEnv,
 } from "../../build/desktop-runtime.ts";
-import { needsNoLegacyAbortFlag } from "../../build/deno-version.ts";
+import { FIRST_MEDIA_CAPTURE_RUNTIME, needsNoLegacyAbortFlag } from "../../build/deno-version.ts";
 import { denoExecutable } from "../../build/bundle.ts";
 import { desktopWindowExitHint } from "../../build/desktop-vc-runtime.ts";
 import { desktopDenoFlags } from "../../desktop/deno-flags.ts";
@@ -212,8 +212,9 @@ async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWi
   if (media.length > 0) {
     console.warn(
       `  denext desktop: desktop.capabilities.${media.join(" / ")} applies to the packaged app ` +
-        "only (its laufey-launch.json grant): this window refuses getUserMedia (NotAllowedError). " +
-        "Try capture in the browser (`denext dev`) or a packaged build.",
+        "only (its laufey-launch.json grant): this window gets no grant, no usage description and " +
+        `no device entitlement (from runtime ${FIRST_MEDIA_CAPTURE_RUNTIME} it refuses getUserMedia ` +
+        "with NotAllowedError). Try capture in the browser (`denext dev`) or a packaged build.",
     );
   }
   const env = {

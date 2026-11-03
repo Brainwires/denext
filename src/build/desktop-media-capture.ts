@@ -3,13 +3,22 @@
 //
 // - `laufey-launch.json` `"mediaCapture"`: the webview backend grants the kinds to the app's own
 //   origin only (exact match: never another origin the window navigates to, nor a sub-frame of
-//   another origin), from runtime `3.0.0-denext.9` (laufey API 53). Without it every request is
-//   refused (`NotAllowedError`).
+//   another origin; on Linux, where WebKitGTK does not say which frame asks, a sub-frame the page
+//   delegates the device to with `allow="microphone"` is honoured), from runtime `3.0.0-denext.9`
+//   (laufey API 53), which refuses every other request (`NotAllowedError`).
 // - macOS `Info.plist` `NSMicrophoneUsageDescription` / `NSCameraUsageDescription`: the text
 //   macOS shows when it asks the user (TCC). Without it macOS ends the app the first time the page
 //   captures.
 // - macOS Hardened Runtime entitlements `com.apple.security.device.audio-input` /
 //   `com.apple.security.device.camera`: without them a signed, hardened app is refused the device.
+//   On the main executable only: TCC checks the responsible process, which for a CEF helper
+//   (Chromium's audio service runs in one) is the app that launched it, so Chromium signs only its
+//   app with them (`chrome/app/app-entitlements.plist`) and its helpers without.
+//
+// An older runtime does not enforce the grant: each engine then asks (or refuses) by its own
+// rules, for whatever origin asks, and the usage strings and entitlements would take away the only
+// barriers left. So packaging with either kind on refuses such a runtime
+// ({@linkcode assertMediaCaptureRuntime}), and nothing here is written for it.
 
 import { parsePlist, type PlistNode, renderPlist } from "./plist-value.ts";
 import { FIRST_MEDIA_CAPTURE_RUNTIME } from "./deno-version.ts";
@@ -137,25 +146,53 @@ export function withMediaUsageDescriptions(text: string, config: unknown): strin
   return renderPlist({ kind: "dict", entries });
 }
 
+/** The enabled kinds, in order. */
+function enabledKinds(config: unknown): DesktopMediaKind[] {
+  const enabled = desktopMediaCapture(config);
+  return DESKTOP_MEDIA_KINDS.filter((k) => enabled[k]);
+}
+
 /**
- * Why a packaged app with the microphone or camera on would still refuse `getUserMedia`: a runtime
- * that does not read the launch file's grant.
+ * Why the microphone or camera cannot be packaged: a runtime that does not enforce the launch
+ * file's grant (`"mediaCapture"`), so the app's own origin could not be the only one that captures.
  *
  * @param config The project config.
  * @param supported Whether the runtime reads `"mediaCapture"` (`mediaCaptureRuntime()`).
- * @param runtime The runtime the build uses, for the message (`3.0.0-denext.7`, "the stock
+ * @param runtime The runtime the build uses, for the message (`runtime 3.0.0-denext.7`, "the stock
  *   runtime").
- * @returns The message, or `null` when nothing is missing.
+ * @returns The message (one line), or `null` when nothing is missing.
  */
 export function mediaCaptureRuntimeProblem(
   config: unknown,
   supported: boolean,
   runtime: string,
 ): string | null {
-  const enabled = desktopMediaCapture(config);
-  const kinds = DESKTOP_MEDIA_KINDS.filter((k) => enabled[k]);
+  const kinds = enabledKinds(config);
   if (kinds.length === 0 || supported) return null;
   return `desktop.capabilities.${kinds.join(" / ")} needs Deno Desktop runtime ` +
-    `${FIRST_MEDIA_CAPTURE_RUNTIME} or later (this build uses ${runtime}): until then the ` +
-    "packaged app refuses every getUserMedia request (NotAllowedError)";
+    `${FIRST_MEDIA_CAPTURE_RUNTIME} or later to package (this build uses ${runtime}): an older ` +
+    "runtime cannot restrict capture to the app's origin";
+}
+
+/**
+ * Refuse to package the microphone or camera on a runtime that does not enforce the grant
+ * ({@linkcode mediaCaptureRuntimeProblem}): `denext desktop package` fails with that one line.
+ *
+ * @param config The project config.
+ * @param supported Whether the runtime reads `"mediaCapture"` (`mediaCaptureRuntime()`).
+ * @param runtime The runtime the build uses, for the message.
+ * @throws {Error} When either kind is on and `supported` is false.
+ */
+export function assertMediaCaptureRuntime(
+  config: unknown,
+  supported: boolean,
+  runtime: string,
+): void {
+  const problem = mediaCaptureRuntimeProblem(config, supported, runtime);
+  if (problem) {
+    throw new Error(
+      `${problem}. Upgrade denext once it pins that runtime (\`denext upgrade\`), or turn the ` +
+        "capability off.",
+    );
+  }
 }

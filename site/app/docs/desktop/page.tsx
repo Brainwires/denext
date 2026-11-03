@@ -3124,8 +3124,8 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
       <p>
         A page captures with the web&apos;s own <code>navigator.mediaDevices.getUserMedia</code>
         {" "}
-        (a voice UI, a video call). The window refuses every request by default.{" "}
-        <code>denext desktop add microphone</code> (and{" "}
+        (a voice UI, a video call). On denext&apos;s runtime the window refuses every request by
+        default. <code>denext desktop add microphone</code> (and{" "}
         <code>camera</code>) grants the device to the app&apos;s own origin alone (<code>
           desktop.app.origin
         </code>, else{" "}
@@ -3139,10 +3139,11 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
         <li>
           the grant in the packaged app&apos;s <code>laufey-launch.json</code>{" "}
           (<code>"mediaCapture"</code>), which the webview backend enforces natively: WKWebView,
-          CEF, WebView2 and WebKitGTK alike. It needs Deno Desktop runtime 3.0.0-denext.9 or later;
-          an older runtime refuses every request with{" "}
-          <code>NotAllowedError</code>, and the package scripts and <code>denext doctor</code>{" "}
-          say so;
+          CEF, WebView2 and WebKitGTK alike. It needs Deno Desktop runtime 3.0.0-denext.9 or later.
+          An older runtime does not enforce it (each engine asks, or refuses, by its own rules, for
+          whatever origin asks), so <code>denext desktop package</code>{" "}
+          refuses to package the microphone or camera on one, and <code>denext doctor</code>{" "}
+          says so;
         </li>
         <li>
           on macOS, <code>NSMicrophoneUsageDescription</code> /{" "}
@@ -3165,8 +3166,9 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
         {" "}
         <code>NotAllowedError</code> too. An unpackaged window (<code>denext desktop run</code> /
         {" "}
-        <code>dev</code>) has no launch file, so it refuses the device: build and test the capture
-        UI in the browser with <code>denext dev</code>, where the browser asks.
+        <code>dev</code>) has no launch file, usage description or entitlement, so it has no grant
+        (from runtime 3.0.0-denext.9 it refuses the device): build and test the capture UI in the
+        browser with <code>denext dev</code>, where the browser asks.
       </p>
       <Code lang="ts">
         {`// denext.config.ts

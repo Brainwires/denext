@@ -2,9 +2,10 @@
 // on the runtime), the macOS usage descriptions and Hardened Runtime entitlements, the config
 // validation, the doctor and the `desktop add` catalog.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
+  assertMediaCaptureRuntime,
   defaultUsageDescription,
   desktopMediaCapture,
   mediaCaptureEntitlements,
@@ -12,14 +13,20 @@ import {
   mediaCaptureRuntimeProblem,
   withMediaUsageDescriptions,
 } from "../src/build/desktop-media-capture.ts";
-import { writeLaufeyLaunchConfig } from "../src/build/desktop-app-config.ts";
+import { laufeyLaunchPath, writeLaufeyLaunchConfig } from "../src/build/desktop-app-config.ts";
 import { desktopMacosSigning } from "../src/build/desktop-macos-signing.ts";
 import {
   desktopRuntimeLabel,
   mediaCaptureRuntime,
   strictLaunchRuntime,
 } from "../src/build/desktop-launch-policy.ts";
-import { FIRST_MEDIA_CAPTURE_RUNTIME, supportsMediaCapture } from "../src/build/deno-version.ts";
+import {
+  FIRST_MEDIA_CAPTURE_RUNTIME,
+  MEDIA_CAPTURE_LAUFEY_API,
+  mediaCapturePinProblem,
+  supportsMediaCapture,
+} from "../src/build/deno-version.ts";
+import pinJson from "../src/build/desktop-runtime-pin.json" with { type: "json" };
 import { dictGet, parsePlist, type PlistDict, renderPlist } from "../src/build/plist-value.ts";
 import { addDesktopCapabilities, DESKTOP_CAPABILITIES } from "../src/build/desktop-capabilities.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
@@ -126,6 +133,23 @@ Deno.test("media capture: Info.plist usage descriptions, the config's text or th
   assertEquals(defaultUsageDescription("camera", " "), "This app uses your camera.");
 });
 
+Deno.test("media capture: a usage description with markup round-trips through Info.plist", () => {
+  const text = `Say "hi" & <b>talk</b> — it's ]]> fine.\tTab\nnext line`;
+  const out = withMediaUsageDescriptions(
+    INFO_PLIST,
+    { desktop: { capabilities: { microphone: { usageDescription: text } } } },
+  );
+  assertEquals(plistValue(out, "NSMicrophoneUsageDescription"), text);
+  assert(!out.includes("<b>"));
+  assertStringIncludes(out, "&lt;b&gt;");
+  assertStringIncludes(out, "&amp;");
+  // Nothing else entered the dict: the text could not open a key of its own.
+  assertEquals(
+    (parsePlist(out) as PlistDict).entries.map(([k]) => k),
+    ["CFBundleName", "CFBundleIdentifier", "NSMicrophoneUsageDescription"],
+  );
+});
+
 Deno.test("media capture: gated on runtime 3.0.0-denext.9", () => {
   assertEquals(FIRST_MEDIA_CAPTURE_RUNTIME, "3.0.0-denext.9");
   assert(supportsMediaCapture("3.0.0-denext.9"));
@@ -149,8 +173,35 @@ Deno.test("media capture: gated on runtime 3.0.0-denext.9", () => {
   assertStringIncludes(problem!, "desktop.capabilities.microphone / camera");
   assertStringIncludes(problem!, "3.0.0-denext.9");
   assertStringIncludes(problem!, "runtime 3.0.0-denext.7");
+  assertStringIncludes(problem!, "cannot restrict capture to the app's origin");
+  assert(!problem!.includes("\n"));
   assertEquals(mediaCaptureRuntimeProblem(BOTH, true, "runtime 3.0.0-denext.9"), null);
   assertEquals(mediaCaptureRuntimeProblem({}, false, "runtime 3.0.0-denext.7"), null);
+
+  // Packaging refuses it, with one plain line.
+  let refused: Error | undefined;
+  try {
+    assertMediaCaptureRuntime(BOTH, false, "the stock runtime");
+  } catch (e) {
+    refused = e as Error;
+  }
+  assertStringIncludes(refused!.message, "needs Deno Desktop runtime 3.0.0-denext.9 or later");
+  assertStringIncludes(refused!.message, "the stock runtime");
+  assert(!refused!.message.includes("\n"));
+  assertMediaCaptureRuntime(BOTH, true, "runtime 3.0.0-denext.9");
+  assertMediaCaptureRuntime({}, false, "the stock runtime");
+});
+
+Deno.test("media capture: a pin past the gate must carry the laufey API that enforces it", () => {
+  assertEquals(MEDIA_CAPTURE_LAUFEY_API, 53);
+  assertEquals(mediaCapturePinProblem("3.0.0-denext.8", 50), null);
+  assertEquals(mediaCapturePinProblem("3.0.0-denext.8", null), null);
+  assertEquals(mediaCapturePinProblem("3.0.0-denext.9", 53), null);
+  assertEquals(mediaCapturePinProblem("3.0.0-denext.10", 54), null);
+  assertStringIncludes(mediaCapturePinProblem("3.0.0-denext.9", 51)!, "laufey API 51");
+  assertStringIncludes(mediaCapturePinProblem("3.0.0-denext.9", null)!, "laufey API none");
+  // The committed pin: bumping it to the gate without the API fails here.
+  assertEquals(mediaCapturePinProblem(pinJson.version, pinJson.laufeyApiVersion ?? null), null);
 });
 
 Deno.test("media capture: the packaged launch file grants the app origin; Info.plist gets the text", async () => {
@@ -167,25 +218,27 @@ Deno.test("media capture: the packaged launch file grants the app origin; Info.p
     assertEquals(plistValue(plist, "NSMicrophoneUsageDescription"), "Talk to the assistant.");
     assertEquals(plistValue(plist, "NSCameraUsageDescription"), "Voice uses your camera.");
 
-    // A runtime without the grant: no key (an older laufey would only report it), a warning, and
-    // the usage text anyway (it costs nothing).
-    const warnings: string[] = [];
-    const warn = console.warn;
-    console.warn = (...args: unknown[]) => warnings.push(args.join(" "));
-    try {
-      await Deno.writeTextFile(join(app, "Contents", "Info.plist"), INFO_PLIST);
-      await writeLaufeyLaunchConfig(entry, "darwin", app, { mediaCapture: false });
-    } finally {
-      console.warn = warn;
-    }
-    assertEquals(JSON.parse(await Deno.readTextFile(written!)).mediaCapture, undefined);
-    assertStringIncludes(warnings.join("\n"), "NotAllowedError");
+    // A runtime without the grant: packaging is refused, and nothing is written (no launch file,
+    // no usage text: without them the OS still refuses an origin the runtime would not).
+    const old = join(dir, "dist", "Old.app");
+    await Deno.mkdir(join(old, "Contents"), { recursive: true });
+    await Deno.writeTextFile(join(old, "Contents", "Info.plist"), INFO_PLIST);
+    const err = await assertRejects(
+      () => writeLaufeyLaunchConfig(entry, "darwin", old, { mediaCapture: false }),
+      Error,
+      "needs Deno Desktop runtime 3.0.0-denext.9 or later to package",
+    );
+    assert(!err.message.includes("\n"));
+    const oldPlist = await Deno.readTextFile(join(old, "Contents", "Info.plist"));
+    assertEquals(oldPlist, INFO_PLIST);
+    assertEquals(plistValue(oldPlist, "NSMicrophoneUsageDescription"), undefined);
+    assertEquals(plistValue(oldPlist, "NSCameraUsageDescription"), undefined);
     assertEquals(
-      plistValue(
-        await Deno.readTextFile(join(app, "Contents", "Info.plist")),
-        "NSMicrophoneUsageDescription",
+      await Deno.stat(laufeyLaunchPath("darwin", old)).then(
+        () => true,
+        () => false,
       ),
-      "Talk to the assistant.",
+      false,
     );
 
     // Linux / Windows: the grant, the default origin when the config names none.
@@ -209,6 +262,75 @@ Deno.test("media capture: the packaged launch file grants the app origin; Info.p
   }
 });
 
+Deno.test("media capture: the grant stays the app origin whatever bridge or navigation origins say", async () => {
+  const cases: unknown[] = [
+    {
+      desktop: {
+        app: { origin: "myapp://app", identifier: "com.example.voice", bridgeOrigins: ["*"] },
+        capabilities: { microphone: true, camera: true },
+      },
+    },
+    {
+      desktop: {
+        app: {
+          origin: "myapp://app",
+          identifier: "com.example.voice",
+          bridgeOrigins: ["https://partner.example", "other://*"],
+          allowedNavigationOrigins: ["https://idp.example"],
+          deepLinks: ["myapp"],
+        },
+        capabilities: { microphone: true, camera: true },
+      },
+    },
+    {
+      desktop: {
+        app: { bridgeOrigins: ["*"], allowedNavigationOrigins: ["https://idp.example"] },
+        capabilities: { microphone: true },
+      },
+    },
+  ];
+  const expected = [
+    { microphone: ["myapp://app"], camera: ["myapp://app"] },
+    { microphone: ["myapp://app"], camera: ["myapp://app"] },
+    { microphone: ["app://localhost"] },
+  ];
+  for (const [i, config] of cases.entries()) {
+    const { dir, entry } = await project(config);
+    try {
+      for (const os of ["darwin", "linux", "windows"] as const) {
+        const out = join(dir, "dist", os === "darwin" ? "Voice.app" : `voice-${os}`);
+        if (os === "darwin") {
+          await Deno.mkdir(join(out, "Contents"), { recursive: true });
+          await Deno.writeTextFile(join(out, "Contents", "Info.plist"), INFO_PLIST);
+        }
+        const written = await writeLaufeyLaunchConfig(entry, os, out, { mediaCapture: true });
+        const launch = JSON.parse(await Deno.readTextFile(written!));
+        assertEquals(launch.mediaCapture, expected[i], `case ${i} on ${os}`);
+        // The bridge did take the wider list: the grant is not derived from it.
+        assert(launch.bridgeOrigins.length >= 1);
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});
+
+Deno.test("media capture: Linux and Windows bundles get no Info.plist edit", async () => {
+  const { dir, entry } = await project(BOTH);
+  try {
+    for (const os of ["linux", "windows"] as const) {
+      const out = join(dir, "dist", os);
+      // A stray Info.plist where a macOS bundle would have one stays as it is.
+      await Deno.mkdir(join(out, "Contents"), { recursive: true });
+      await Deno.writeTextFile(join(out, "Contents", "Info.plist"), INFO_PLIST);
+      await writeLaufeyLaunchConfig(entry, os, out, { mediaCapture: true });
+      assertEquals(await Deno.readTextFile(join(out, "Contents", "Info.plist")), INFO_PLIST);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("media capture: a signed build gets the device entitlements; the config's own win", async () => {
   const { dir, entry } = await project(BOTH);
   const off = await project({
@@ -218,7 +340,7 @@ Deno.test("media capture: a signed build gets the device entitlements; the confi
     },
   });
   try {
-    const out = await desktopMacosSigning(entry, {});
+    const out = await desktopMacosSigning(entry, { mediaCapture: true });
     const signed = parsePlist(await Deno.readTextFile(out.entitlements!)) as PlistDict;
     assertEquals(dictGet(signed, "com.apple.security.device.audio-input"), {
       kind: "bool",
@@ -230,16 +352,72 @@ Deno.test("media capture: a signed build gets the device entitlements; the confi
     });
     await Deno.remove(out.entitlements!);
 
-    const own = await desktopMacosSigning(off.entry, {});
+    const own = await desktopMacosSigning(off.entry, { mediaCapture: true });
     const ownSigned = parsePlist(await Deno.readTextFile(own.entitlements!)) as PlistDict;
     assertEquals(dictGet(ownSigned, "com.apple.security.device.camera"), {
       kind: "bool",
       value: false,
     });
     await Deno.remove(own.entitlements!);
+
+    // A runtime that does not enforce the grant: refused before any entitlement is written.
+    const refused = await assertRejects(
+      () => desktopMacosSigning(entry, { mediaCapture: false }),
+      Error,
+      "needs Deno Desktop runtime 3.0.0-denext.9 or later to package",
+    );
+    assert(!refused.message.includes("\n"));
+    // Without either capability the runtime does not matter.
+    const plain = await project({ desktop: { capabilities: { fs: true } } });
+    try {
+      assertEquals(await desktopMacosSigning(plain.entry, { mediaCapture: false }), {
+        entitlements: undefined,
+      });
+    } finally {
+      await Deno.remove(plain.dir, { recursive: true });
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
     await Deno.remove(off.dir, { recursive: true });
+  }
+});
+
+Deno.test("media capture: the device entitlements merge over DENEXT_ENTITLEMENTS", async () => {
+  const { dir, entry } = await project({ desktop: { capabilities: { microphone: true } } });
+  const base = join(dir, "base.plist");
+  await Deno.writeTextFile(
+    base,
+    renderPlist({
+      kind: "dict",
+      entries: [
+        ["com.apple.security.cs.allow-jit", { kind: "bool", value: true }],
+        ["com.apple.security.network.client", { kind: "bool", value: true }],
+        // A device key the config does not turn on: left as the env plist set it.
+        ["com.apple.security.device.camera", { kind: "bool", value: false }],
+      ],
+    }),
+  );
+  try {
+    const out = await desktopMacosSigning(entry, { entitlements: base, mediaCapture: true });
+    assert(out.entitlements !== base, "a merged copy, not the env plist itself");
+    const signed = parsePlist(await Deno.readTextFile(out.entitlements!)) as PlistDict;
+    assertEquals(dictGet(signed, "com.apple.security.cs.allow-jit"), { kind: "bool", value: true });
+    assertEquals(dictGet(signed, "com.apple.security.network.client"), {
+      kind: "bool",
+      value: true,
+    });
+    assertEquals(dictGet(signed, "com.apple.security.device.audio-input"), {
+      kind: "bool",
+      value: true,
+    });
+    // The camera is off in the config, so the base's key is left as it was.
+    assertEquals(dictGet(signed, "com.apple.security.device.camera"), {
+      kind: "bool",
+      value: false,
+    });
+    await Deno.remove(out.entitlements!);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
   }
 });
 
@@ -265,6 +443,38 @@ Deno.test("media capture: config validation", () => {
     errors({ camera: { usageDescription: 3 } }),
     "desktop.capabilities.camera.usageDescription",
   );
+  // Only usageDescription: `{ enabled: false }` would turn the device ON, `{ origins }` be ignored.
+  assertStringIncludes(errors({ microphone: { enabled: false } }), "microphone.enabled");
+  assertStringIncludes(
+    errors({ camera: { origins: ["https://x.example"] } }),
+    "desktop.capabilities.camera.origins",
+  );
+  assertStringIncludes(
+    errors({ microphone: { usageDescription: "ok", extra: 1 } }),
+    "desktop.capabilities.microphone.extra",
+  );
+  // XML 1.0 cannot hold C0 controls (but tab / newline / CR), U+FFFE / U+FFFF or a lone surrogate.
+  for (const bad of ["Ring\u0001", "a\u0000b", "\u001Fx", "x\uFFFE", "x\uD800y"]) {
+    assertStringIncludes(
+      errors({ microphone: { usageDescription: bad } }),
+      "must not contain control characters",
+      JSON.stringify(bad),
+    );
+  }
+  assertEquals(errors({ microphone: { usageDescription: "Line one\n\tLine two\r\n" } }), "");
+  assertEquals(errors({ camera: { usageDescription: "Emoji 🎙 ok" } }), "");
+});
+
+Deno.test("media capture: the schema closes the options object", async () => {
+  const schema = JSON.parse(
+    await Deno.readTextFile(new URL("../denext.config.schema.json", import.meta.url)),
+  );
+  const caps = schema.properties.desktop.properties.capabilities.properties;
+  for (const kind of ["microphone", "camera"]) {
+    const options = caps[kind].anyOf.find((b: { type?: string }) => b.type === "object");
+    assertEquals(options.additionalProperties, false, kind);
+    assertEquals(Object.keys(options.properties), ["usageDescription"]);
+  }
 });
 
 Deno.test("media capture: `desktop add microphone camera` writes both keys", async () => {
@@ -289,16 +499,40 @@ Deno.test("media capture: `desktop add microphone camera` writes both keys", asy
 
 Deno.test("media capture: the doctor names a runtime without the grant", async () => {
   const { dir } = await project(BOTH);
+  const env = (vars: Record<string, string>) => (k: string) => vars[k];
   try {
     await Deno.writeTextFile(join(dir, "desktop.ts"), "// entry\n");
-    const check = await desktopLaunchPolicyCheck(dir, BOTH);
-    if (mediaCaptureRuntime()) {
-      assert(!check!.detail.includes("getUserMedia"));
-    } else {
-      assert(!check!.ok);
-      assertStringIncludes(check!.detail, "getUserMedia");
-      assertStringIncludes(check!.detail, "denext upgrade");
-    }
+    const bad = await desktopLaunchPolicyCheck(dir, BOTH, {
+      env: env({}),
+      runtimeVersion: "3.0.0-denext.7",
+    });
+    assert(!bad!.ok);
+    assertEquals(bad!.critical, false);
+    assertStringIncludes(bad!.detail, "runtime 3.0.0-denext.7");
+    assertStringIncludes(bad!.detail, "`denext desktop package` refuses it");
+    assertStringIncludes(bad!.detail, "DENEXT_DESKTOP_RUNTIME");
+    assertStringIncludes(bad!.detail, "denext upgrade");
+
+    const stock = await desktopLaunchPolicyCheck(dir, BOTH, {
+      env: env({ DENEXT_DESKTOP_RUNTIME: "stock" }),
+      runtimeVersion: "3.0.0-denext.9",
+    });
+    assertStringIncludes(stock!.detail, "the stock runtime");
+
+    const good = await desktopLaunchPolicyCheck(dir, BOTH, {
+      env: env({}),
+      runtimeVersion: "3.0.0-denext.9",
+    });
+    assert(!good!.detail.includes("needs Deno Desktop runtime"), good!.detail);
+    assert(good!.ok, good!.detail);
+
+    // Without either capability the runtime is no problem.
+    const plain = { desktop: { app: BOTH.desktop.app } };
+    const none = await desktopLaunchPolicyCheck(dir, plain, {
+      env: env({}),
+      runtimeVersion: "3.0.0-denext.7",
+    });
+    assert(!none!.detail.includes("needs Deno Desktop runtime"), none!.detail);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

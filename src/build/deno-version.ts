@@ -315,11 +315,46 @@ export function supportsDesktopCacheToken(version: string): boolean {
 
 /**
  * The first Deno Desktop runtime whose webview backend decides a page's microphone and camera
- * requests (laufey API 53, `feat/media-capture-permission`): it reads `"mediaCapture"` in
- * `laufey-launch.json` and grants `getUserMedia` to the origins listed there. An older runtime
- * refuses every request (or, CEF, leaves it to Chrome's prompt, which the host never shows).
+ * requests (laufey API {@linkcode MEDIA_CAPTURE_LAUFEY_API}, `feat/media-capture-permission`): it
+ * reads `"mediaCapture"` in `laufey-launch.json`, grants `getUserMedia` to the origins listed there
+ * and refuses every other request. An older runtime does not: each engine asks (or refuses) by its
+ * own rules, for whatever origin asks, so `denext desktop package` refuses the microphone and
+ * camera on one.
+ *
+ * A guess until that runtime is cut: the gate is this version, and only holds if the release
+ * carries laufey API {@linkcode MEDIA_CAPTURE_LAUFEY_API} or later. `deno task desktop:pin-runtime`
+ * refuses to pin a release at or above this version whose manifest records an older laufey API (or
+ * none), and tests/desktop-media-capture.test.ts fails when the committed pin does. If the runtime
+ * that ships the API is not this version, move this constant to it.
  */
 export const FIRST_MEDIA_CAPTURE_RUNTIME = "3.0.0-denext.9";
+
+/** The laufey API version that reads `"mediaCapture"` (see {@linkcode FIRST_MEDIA_CAPTURE_RUNTIME}). */
+export const MEDIA_CAPTURE_LAUFEY_API = 53;
+
+/**
+ * Why a Deno Desktop runtime release cannot be pinned: it is at or above
+ * {@linkcode FIRST_MEDIA_CAPTURE_RUNTIME}, so denext would write `"mediaCapture"` and the device
+ * usage strings and entitlements for it, but its laufey API (from the release manifest) is below
+ * {@linkcode MEDIA_CAPTURE_LAUFEY_API}, or unrecorded, so it would not enforce the grant.
+ *
+ * @param version The release's runtime version.
+ * @param laufeyApiVersion The release manifest's `laufey.apiVersion` (`null` when it has none).
+ * @returns The problem, or `null` when the pin is consistent with the gate.
+ */
+export function mediaCapturePinProblem(
+  version: string,
+  laufeyApiVersion: number | null,
+): string | null {
+  if (!supportsMediaCapture(version)) return null;
+  if (laufeyApiVersion !== null && laufeyApiVersion >= MEDIA_CAPTURE_LAUFEY_API) return null;
+  return `runtime ${version} is at or above FIRST_MEDIA_CAPTURE_RUNTIME ` +
+    `(${FIRST_MEDIA_CAPTURE_RUNTIME}) but records laufey API ${
+      laufeyApiVersion ?? "none"
+    }, below ` +
+    `${MEDIA_CAPTURE_LAUFEY_API}: it would not enforce the microphone / camera grant. Move ` +
+    "FIRST_MEDIA_CAPTURE_RUNTIME (src/build/deno-version.ts) to the runtime that ships the API";
+}
 
 /**
  * Whether the Deno Desktop runtime `version` grants the microphone and camera from the launch

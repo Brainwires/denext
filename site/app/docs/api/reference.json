@@ -16877,7 +16877,7 @@
               "kind": "property",
               "name": "microphone",
               "signature": "microphone?: boolean | DesktopMediaCaptureConfig",
-              "doc": "The page's `getUserMedia({ audio })` gets the microphone, for the app's own origin only (never\nanother origin the window navigates to, nor a sub-frame of another origin). The packaged app's\n`laufey-launch.json` carries the grant (`\"mediaCapture\"`, Deno Desktop runtime 3.0.0-denext.9+;\nan older runtime refuses every request), macOS's `Info.plist` its\n`NSMicrophoneUsageDescription`, and a signed macOS build the\n`com.apple.security.device.audio-input` entitlement. macOS still asks the user once."
+              "doc": "The page's `getUserMedia({ audio })` gets the microphone, for the app's own origin only (never\nanother origin the window navigates to, nor a sub-frame of another origin, except on Linux,\nwhere WebKitGTK does not say which frame asks: a sub-frame the page delegates the device to with\n`allow=\"microphone\"` gets it). The packaged app's `laufey-launch.json` carries the grant\n(`\"mediaCapture\"`), macOS's `Info.plist` its `NSMicrophoneUsageDescription`, and a signed macOS\nbuild the `com.apple.security.device.audio-input` entitlement. It needs Deno Desktop runtime\n3.0.0-denext.9 or later, which enforces the grant: `denext desktop package` refuses an older\none. macOS still asks the user once. The options take `usageDescription` only."
             },
             {
               "kind": "property",
@@ -44610,8 +44610,8 @@
           "slug": "buildDesktopBundle",
           "kind": "function",
           "signature": "buildDesktopBundle(entryUrl: string, os: \"linux\" | \"windows\", o: DesktopBundleOptions): Promise<string>",
-          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable.",
-          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable.",
+          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable. The microphone or camera on a runtime that does not enforce the launch file's grant is refused before the build.",
+          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable. The microphone or camera on a\nruntime that does not enforce the launch file's grant is refused before the build.",
           "params": [
             {
               "name": "entryUrl",
@@ -45803,8 +45803,8 @@
           "slug": "desktopMacosSigning-fn",
           "kind": "function",
           "signature": "desktopMacosSigning(entryUrl: string, options?: DesktopMacosSigningOptions): Promise<DesktopMacosSigning>",
-          "doc": "Resolve desktop.macos for a packaging run: check the provisioning profile against the app and write the entitlements to sign with: desktop.macos.entitlements over the microphone / camera capabilities' (com.apple.security.device.audio-input / .camera). With neither a profile nor any of those, the DENEXT_ENTITLEMENTS plist (if any) is passed through unchanged.",
-          "docFull": "Resolve `desktop.macos` for a packaging run: check the provisioning profile against the app and\nwrite the entitlements to sign with: `desktop.macos.entitlements` over the microphone / camera\ncapabilities' (`com.apple.security.device.audio-input` / `.camera`). With neither a profile nor\nany of those, the `DENEXT_ENTITLEMENTS` plist (if any) is passed through unchanged.",
+          "doc": "Resolve desktop.macos for a packaging run: check the provisioning profile against the app and write the entitlements to sign with: desktop.macos.entitlements over the microphone / camera capabilities' (com.apple.security.device.audio-input / .camera). With neither a profile nor any of those, the DENEXT_ENTITLEMENTS plist (if any) is passed through unchanged. The device entitlements need a runtime that enforces the launch file's grant: with either capability on and any other runtime, packaging is refused here, before the build.",
+          "docFull": "Resolve `desktop.macos` for a packaging run: check the provisioning profile against the app and\nwrite the entitlements to sign with: `desktop.macos.entitlements` over the microphone / camera\ncapabilities' (`com.apple.security.device.audio-input` / `.camera`). With neither a profile nor\nany of those, the `DENEXT_ENTITLEMENTS` plist (if any) is passed through unchanged. The device\nentitlements need a runtime that enforces the launch file's grant: with either capability on and\nany other runtime, packaging is refused here, before the build.\n\nWith the device keys and no other entitlements, the plist this writes replaces (in the scripts'\n`macosSigningEntitlements`) what `deno desktop`'s ad-hoc pass signed the main executable with,\ninstead of being merged over it. Nothing is lost: that pass signs it with laufey's\n`cef/macos/entitlements-browser.plist` (exactly {@linkcode V8_ENTITLEMENTS}) on CEF and with\nnone (ad-hoc) on the webview backend, and the scripts add `V8_ENTITLEMENTS` to the plist.",
           "params": [
             {
               "name": "entryUrl",
@@ -45892,6 +45892,12 @@
               "name": "now",
               "signature": "readonly now?: Date",
               "doc": "\"Now\", for the expiry check (tests pass one)."
+            },
+            {
+              "kind": "property",
+              "name": "mediaCapture",
+              "signature": "readonly mediaCapture?: boolean",
+              "doc": "Whether the runtime enforces the launch file's microphone / camera grant (default\n`mediaCaptureRuntime()`). Without it a config with either on is refused."
             }
           ]
         },
@@ -47661,7 +47667,7 @@
               "kind": "property",
               "name": "mediaCapture",
               "signature": "readonly mediaCapture?: boolean",
-              "doc": "Whether the runtime reads `\"mediaCapture\"` (default `mediaCaptureRuntime()`: denext's pinned\nruntime from `3.0.0-denext.9`)."
+              "doc": "Whether the runtime reads `\"mediaCapture\"` (default `mediaCaptureRuntime()`: denext's pinned\nruntime from `3.0.0-denext.9`). Without it a config with the microphone or camera on is\nrefused."
             }
           ]
         },
@@ -49103,8 +49109,8 @@
           "slug": "writeLaufeyLaunchConfig",
           "kind": "function",
           "signature": "writeLaufeyLaunchConfig(entryUrl: string, os: DesktopOs, bundle: string, options?: LaufeyLaunchWriteOptions): Promise<string | null>",
-          "doc": "Write the packaged app's laufey-launch.json (packagedLaunchConfig) from the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes, and marks an \"accessory\" app LSUIElement (no Dock tile at launch; withActivationPolicy). On macOS call it BEFORE code-signing: both files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.",
-          "docFull": "Write the packaged app's `laufey-launch.json` ({@linkcode packagedLaunchConfig}) from the\nproject's `denext.config.ts` (resolved beside `entryUrl`'s directory, like\n`desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's\n`NSUserActivityTypes`, and marks an `\"accessory\"` app `LSUIElement` (no Dock tile at launch;\n{@linkcode withActivationPolicy}). On macOS call it BEFORE code-signing: both files live inside the sealed\nbundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.",
+          "doc": "Write the packaged app's laufey-launch.json (packagedLaunchConfig) from the project's denext.config.ts (resolved beside entryUrl's directory, like desktopPackageFlags). On macOS it also lists desktop.macos.userActivityTypes as the bundle's NSUserActivityTypes, and marks an \"accessory\" app LSUIElement (no Dock tile at launch; withActivationPolicy). On macOS call it BEFORE code-signing: both files live inside the sealed bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused. The microphone or camera on a runtime that does not enforce the grant is refused (assertMediaCaptureRuntime) before anything is written.",
+          "docFull": "Write the packaged app's `laufey-launch.json` ({@linkcode packagedLaunchConfig}) from the\nproject's `denext.config.ts` (resolved beside `entryUrl`'s directory, like\n`desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's\n`NSUserActivityTypes`, and marks an `\"accessory\"` app `LSUIElement` (no Dock tile at launch;\n{@linkcode withActivationPolicy}). On macOS call it BEFORE code-signing: both files live inside the sealed\nbundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused. The\nmicrophone or camera on a runtime that does not enforce the grant is refused\n({@linkcode assertMediaCaptureRuntime}) before anything is written.",
           "params": [
             {
               "name": "entryUrl",

@@ -101,7 +101,7 @@ const PASSKEY_RP_IDS_MANUAL =
 
 /** The by-hand note every media-capture capability prints: which windows get the device. */
 const MEDIA_CAPTURE_RUNTIME_MANUAL = (kind: string) =>
-  `${kind}: only the packaged app (\`denext desktop package\`) has it: its laufey-launch.json grants getUserMedia to the app origin alone (mediaCapture), which needs Deno Desktop runtime ${FIRST_MEDIA_CAPTURE_RUNTIME} or later — an older runtime refuses every request (NotAllowedError, \`denext doctor\` says so). An unpackaged window (\`denext desktop run\` / \`dev\`) refuses it too; build the capture UI in the browser (\`denext dev\`), where the browser asks.`;
+  `${kind}: only the packaged app (\`denext desktop package\`) has it: its laufey-launch.json grants getUserMedia to the app origin alone (mediaCapture), which needs Deno Desktop runtime ${FIRST_MEDIA_CAPTURE_RUNTIME} or later — packaging refuses an older runtime, which cannot restrict capture to the app's origin (\`denext doctor\` says so). An unpackaged window (\`denext desktop run\` / \`dev\`) gets no grant (from that runtime it refuses every request); build the capture UI in the browser (\`denext dev\`), where the browser asks.`;
 
 /** One DNS label of a hostname: letters, digits and inner hyphens, 1–63 characters. */
 const DNS_LABEL = /^(?!-)[a-z0-9-]{1,63}(?<!-)$/;

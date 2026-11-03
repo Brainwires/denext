@@ -39,6 +39,8 @@ import {
 } from "./code-signing.ts";
 import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
 import { runToExit } from "./exited-output.ts";
+import { assertMediaCaptureRuntime } from "./desktop-media-capture.ts";
+import { desktopRuntimeLabel, mediaCaptureRuntime } from "./desktop-launch-policy.ts";
 
 /** A package script's parsed command line. */
 export interface DesktopPackageArgs {
@@ -594,18 +596,26 @@ export async function desktopWithAppVersion<T>(
  * least-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to
  * answer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first
  * existing icon, then
- * the webview backend's `laufey-launch.json` beside the executable.
+ * the webview backend's `laufey-launch.json` beside the executable. The microphone or camera on a
+ * runtime that does not enforce the launch file's grant is refused before the build.
  *
  * @param entryUrl `import.meta.url` of the script.
  * @param os The target OS.
  * @param o The target, output and icon candidates.
  * @returns The bundle directory.
+ * @throws {Error} When the microphone or camera is on and the runtime does not read the grant.
  */
 export async function buildDesktopBundle(
   entryUrl: string,
   os: "linux" | "windows",
   o: DesktopBundleOptions,
 ): Promise<string> {
+  // Before the build: writeLaufeyLaunchConfig would refuse it only after.
+  assertMediaCaptureRuntime(
+    await loadConfigBeside(entryUrl),
+    mediaCaptureRuntime(),
+    desktopRuntimeLabel(),
+  );
   await Deno.remove(o.out, { recursive: true }).catch(() => {});
   // DENORT_DESKTOP_BIN + LAUFEY_DEV_DIR: denext's pinned runtime for this target (verified, cached).
   const env = await desktopRuntimeEnv(entryUrl, o.target);

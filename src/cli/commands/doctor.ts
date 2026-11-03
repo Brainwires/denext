@@ -789,15 +789,26 @@ export async function desktopOriginCheck(dir: string, config: unknown): Promise<
  * `laufey-launch.json` the package scripts write would pin the window's bridge (`bridgeOrigins`)
  * and, with passkeys enabled, their relying parties (`passkeyRpIds`), which the strict launch
  * policy (runtime 3.0.0-denext.1+) otherwise fails closed on; whether the scripts write it at
- * all; and whether the runtime reads the microphone / camera grant (`mediaCapture`). Advisory.
+ * all; and whether the runtime reads the microphone / camera grant (`mediaCapture`), without
+ * which `denext desktop package` refuses the project. Advisory.
+ *
+ * The runtime is resolved as the package scripts resolve it (`mediaCaptureRuntime()`: the pin,
+ * `DENEXT_DESKTOP_RUNTIME`, `DENEXT_DESKTOP_RUNTIME_DIR`), but from this process's environment,
+ * which the message says: a package run with other values may differ.
  *
  * @param dir The project directory.
  * @param config The loaded project config.
+ * @param options The environment and the pinned runtime's version (default: this process's and
+ *   the pin's); tests pass both.
  * @returns The check, or `null` for a project without a desktop target.
  */
 export async function desktopLaunchPolicyCheck(
   dir: string,
   config: unknown,
+  options: {
+    readonly env?: (key: string) => string | undefined;
+    readonly runtimeVersion?: string;
+  } = {},
 ): Promise<Check | null> {
   if (!await isDesktopProject(dir)) return null;
   const problems = launchPolicyProblems(
@@ -805,10 +816,16 @@ export async function desktopLaunchPolicyCheck(
     desktopBridgeOrigins,
     await stalePackageScripts(dir),
   );
-  const media = mediaCaptureRuntimeProblem(config, mediaCaptureRuntime(), desktopRuntimeLabel());
+  const media = mediaCaptureRuntimeProblem(
+    config,
+    mediaCaptureRuntime(options.env, options.runtimeVersion),
+    desktopRuntimeLabel(options.env, options.runtimeVersion),
+  );
   if (media) {
     problems.push({
-      message: media,
+      message: `${media}, so \`denext desktop package\` refuses it (resolved from this shell's ` +
+        "DENEXT_DESKTOP_RUNTIME / DENEXT_DESKTOP_RUNTIME_DIR; a package run with other values " +
+        "may differ)",
       fix:
         "upgrade denext once it pins that runtime (`denext upgrade`), or turn the capability off",
     });
