@@ -16772,6 +16772,44 @@
           ]
         },
         {
+          "name": "DesktopBackendConfig",
+          "slug": "DesktopBackendConfig",
+          "kind": "interface",
+          "signature": "interface DesktopBackendConfig",
+          "doc": "DesktopConfig.backend per OS: each target's window engine. An OS left out takes default, else \"webview\".",
+          "docFull": "{@link DesktopConfig.backend} per OS: each target's window engine. An OS left out takes\n`default`, else `\"webview\"`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "macos",
+              "signature": "macos?: \"webview\" | \"cef\"",
+              "doc": "The macOS app's engine (`\"webview\"`: WKWebView)."
+            },
+            {
+              "kind": "property",
+              "name": "windows",
+              "signature": "windows?: \"webview\" | \"cef\"",
+              "doc": "The Windows app's engine (`\"webview\"`: WebView2)."
+            },
+            {
+              "kind": "property",
+              "name": "linux",
+              "signature": "linux?: \"webview\" | \"cef\"",
+              "doc": "The Linux app's engine (`\"webview\"`: WebKitGTK, which has no WebRTC)."
+            },
+            {
+              "kind": "property",
+              "name": "default",
+              "signature": "default?: \"webview\" | \"cef\"",
+              "doc": "The engine of every OS not named here."
+            }
+          ]
+        },
+        {
           "name": "DesktopCapabilitiesConfig",
           "slug": "DesktopCapabilitiesConfig",
           "kind": "interface",
@@ -16976,6 +17014,12 @@
               "name": "update",
               "signature": "update?: DesktopUpdateConfig",
               "doc": "Full-app self-update (`checkForAppUpdate` … from `denext/desktop/updater`): the whole signed\napp is replaced by a newer signed build. Needs denext's pinned Deno Desktop runtime."
+            },
+            {
+              "kind": "property",
+              "name": "backend",
+              "signature": "backend?: \"webview\" | \"cef\" | DesktopBackendConfig",
+              "doc": "The window engine `deno desktop` builds the app with: `\"webview\"` (the system WebView:\nWKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux) or `\"cef\"` (Chromium, bundled).\nOne engine for every target, or one per OS (`{ linux: \"cef\" }`: Chromium on Linux, where\nWebKitGTK has no WebRTC, and the system WebView elsewhere). The package scripts, `desktop run` /\n`dev`, the runtime download and both doctors resolve it for the OS they build or run for. It\ntakes precedence over deno.json's `desktop.backend`, which `deno desktop` reads as one engine\nand which stays the fallback. Default `\"webview\"`."
             },
             {
               "kind": "property",
@@ -45150,6 +45194,27 @@
           "denextOnly": true
         },
         {
+          "name": "desktopBackendArgs",
+          "slug": "desktopBackendArgs",
+          "kind": "function",
+          "signature": "desktopBackendArgs(entryUrl: string, os: DesktopOs): Promise<string[]>",
+          "doc": "The --backend <engine> args for deno desktop on os: the project's desktop.backend for that OS (denext.config.ts, one engine or per OS, else deno.json's, else \"webview\"). Always passed, so the engine built is the one the runtime was fetched for, whatever deno.json says.",
+          "docFull": "The `--backend <engine>` args for `deno desktop` on `os`: the project's `desktop.backend` for\nthat OS (`denext.config.ts`, one engine or per OS, else deno.json's, else `\"webview\"`). Always\npassed, so the engine built is the one the runtime was fetched for, whatever deno.json says.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of a script in the project's scripts/ folder."
+            },
+            {
+              "name": "os",
+              "doc": "The target OS."
+            }
+          ],
+          "returns": "[\"--backend\", \"webview\" | \"cef\"].",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopBridge",
           "slug": "DesktopBridge",
           "kind": "interface",
@@ -46208,7 +46273,7 @@
           "name": "desktopPackageMeta",
           "slug": "desktopPackageMeta-fn",
           "kind": "function",
-          "signature": "desktopPackageMeta(entryUrl: string, fallbackName: string): Promise<DesktopPackageMeta>",
+          "signature": "desktopPackageMeta(entryUrl: string, fallbackName: string, os?: DesktopOs): Promise<DesktopPackageMeta>",
           "doc": "packageMetaFrom for the project whose scripts/ holds entryUrl.",
           "docFull": "{@linkcode packageMetaFrom} for the project whose `scripts/` holds `entryUrl`.",
           "params": [
@@ -46219,6 +46284,10 @@
             {
               "name": "fallbackName",
               "doc": "The name to use when deno.json names no app."
+            },
+            {
+              "name": "os",
+              "doc": "The target OS, for a per-OS desktop.backend (default: the host's)."
             }
           ],
           "returns": "The metadata.",
@@ -46289,7 +46358,7 @@
               "kind": "property",
               "name": "backend",
               "signature": "readonly backend: string",
-              "doc": "The `deno desktop` backend (`\"webview\"` unless deno.json `desktop.backend` says otherwise)."
+              "doc": "The `deno desktop` backend of the target OS: `desktop.backend` in `denext.config.ts` (one\nengine, or per OS), else deno.json's, else `\"webview\"`."
             },
             {
               "kind": "property",

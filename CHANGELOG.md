@@ -8,6 +8,19 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`desktop.backend` per OS.** `denext.config.ts` `desktop.backend` takes `"webview"`, `"cef"` or
+  `{ macos?, windows?, linux?, default? }` (the keys `desktop.installers` uses), so an app can ship
+  CEF on Linux, where WebKitGTK has no WebRTC, and the system WebView on macOS and Windows. Each
+  reader resolves it for its target: the package scripts pass `--backend` to `deno desktop` and
+  fetch that target's runtime flavour, the Windows CEF signature check and the Linux packages'
+  dependencies follow it, `desktop run` / `dev` and both doctors use the host's, and config
+  validation and the `denext ui` Desktop form know it. deno.json's `desktop.backend` stays the
+  one-engine fallback (`deno desktop` reads it as a string; a per-OS object there is refused with
+  the fix). A `scripts/package-macos.ts` from before this passes no `--backend`: regenerate it
+  (`denext desktop package --regenerate-scripts`) before giving macOS an engine of its own.
+
 ## [4.11.13] - 2026-11-02
 
 ### Added

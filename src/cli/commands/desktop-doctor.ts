@@ -48,7 +48,7 @@ export async function projectLaunchPolicy(dir: string): Promise<LaunchPolicyProb
  * `denext desktop doctor`.
  *
  * @param ctx The command context (`--linux`, `--json`).
- * @param dir The project directory (its deno.json `desktop.backend` picks the runtime build).
+ * @param dir The project directory (its `desktop.backend` for the host picks the runtime build).
  * @param seams Test seams for {@linkcode runDesktopDoctor}.
  * @returns The report (after printing it); the process exits 1 when it has an error.
  */

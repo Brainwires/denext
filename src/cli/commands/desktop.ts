@@ -201,6 +201,8 @@ async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWi
   // Packaging stays strict.
   const runtime = await resolveDesktopRuntimeEnv({
     projectDir: dir,
+    // Its `desktop.backend` for the host picks the runtime flavour the window builds on.
+    config,
     deno: denoExecutable(),
     onDenoMismatch: denoChosenExplicitly() ? "stock" : "fail",
     // An unpackaged window ships nothing: a revoked runtime is a warning here, a refusal when
@@ -307,7 +309,7 @@ async function buildDesktopWindow(
     const bootstrap = os === "windows" &&
       await desktopWindowsBootstrapBundle(
         plan.bundle,
-        await desktopPackageMeta(scriptUrl, await desktopAppName(scriptUrl)),
+        await desktopPackageMeta(scriptUrl, await desktopAppName(scriptUrl), "windows"),
       );
     return { exe: await desktopLaunchExecutable(os, plan.bundle), scratch, bootstrap };
   } catch (err) {
@@ -455,7 +457,8 @@ async function inspectRendererFor(
   const input = {
     value: value === true ? true as const : String(value),
     allowRemote: ctx.flags["inspect-renderer-allow-remote"] === true,
-    backend: await projectDesktopBackend(dir),
+    // The host's engine: a per-OS `desktop.backend` in the loaded config, else deno.json's.
+    backend: await projectDesktopBackend(dir, { config: (await resolveProject(dir)).config }),
     os: hostDesktopOs(),
   };
   // A malformed or refused address fails now, before the build.

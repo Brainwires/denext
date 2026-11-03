@@ -307,6 +307,7 @@ export {
   type DenextCommand,
   type DenextConfig,
   type DesktopAppIcons,
+  type DesktopBackendConfig,
   type DesktopCapabilitiesConfig,
   type DesktopConfig,
   type DesktopEntitlementValue,

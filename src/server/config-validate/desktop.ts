@@ -11,6 +11,7 @@ import {
   parseDesktopAppOrigin,
 } from "../../desktop/app-origin.ts";
 import { desktopDenoFlagError } from "../../desktop/deno-flags.ts";
+import { desktopBackendProblem } from "../../desktop/engine-backend.ts";
 import { permissionListError } from "../../desktop/permission-entries.ts";
 import { desktopTrayProblem } from "../../desktop/tray-config.ts";
 import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
@@ -392,6 +393,12 @@ function validateUserActivityTypes(types: unknown, fail: Fail): void {
   }
 }
 
+/** `desktop.backend`: `"webview"`, `"cef"` or a per-OS `{ macos?, windows?, linux?, default? }`. */
+function validateDesktopBackend(backend: unknown, fail: Fail): void {
+  const problem = desktopBackendProblem(backend);
+  if (problem !== null) fail(problem.field, problem.message);
+}
+
 /** `desktop.windows`: `{ proxy?: "system" | "direct" }`. */
 function validateDesktopWindows(windows: unknown, fail: Fail): void {
   if (windows === undefined) return;
@@ -431,6 +438,7 @@ export function validateDesktop(
   validateDesktopWindowing(desktop as Record<string, unknown>, fail);
   validateDesktopUpdate((desktop as { update?: unknown }).update, fail);
   validateDesktopInstallers((desktop as { installers?: unknown }).installers, fail);
+  validateDesktopBackend((desktop as { backend?: unknown }).backend, fail);
   validateDesktopMacos((desktop as { macos?: unknown }).macos, fail);
   validateDesktopLinux((desktop as { linux?: unknown }).linux, fail);
   validateDesktopWindows((desktop as { windows?: unknown }).windows, fail);
