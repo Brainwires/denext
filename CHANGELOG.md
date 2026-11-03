@@ -206,6 +206,13 @@ and this project adheres to
   `%LOCALAPPDATA%\Programs\GitHub CLI`, which any program the user runs can write. Install the
   GitHub CLI machine-wide (the MSI or `winget install --scope machine GitHub.cli`) where it was
   installed per user.
+- **On macOS and Linux that GitHub CLI runs only when no other user can have replaced it.**
+  `/opt/homebrew/bin` and `/usr/local/bin` can belong to a user other than root, so a `gh` found
+  there (or in any of denext's other install locations) is now run only when the file, the folders
+  above it and the folders above the link that led to it are owned by root or the current user and
+  writable by no other user (macOS's admin group, whose members can become root anyway, and a
+  sticky folder such as `/tmp` excepted). One that fails the check is skipped, and with none left
+  the attestation check reports that `gh` was not run.
 
 ### Fixed
 

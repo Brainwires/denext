@@ -473,12 +473,24 @@ const MACOS_SYSTEM_TOOLS = new Set(["plutil", "codesign"]);
  * @param cmd The program a runner was asked to start.
  * @param os The OS (default: this one).
  * @param isFile Checks a path (default: `Deno.statSync`).
+ * @param trusted Whether a POSIX `gh` may run (default: owned by root or this user and writable by
+ * no other user, see `trustedProgram`).
  * @returns The path to start.
  */
-export function runtimeProgram(cmd: string, os: string = Deno.build.os, isFile?: IsFile): string {
+export function runtimeProgram(
+  cmd: string,
+  os: string = Deno.build.os,
+  isFile?: IsFile,
+  trusted?: (path: string) => boolean,
+): string {
   if (cmd === "gh") {
-    const gh = ghPath(os, isFile);
-    if (gh === null) throw new Deno.errors.NotFound("gh: the GitHub CLI is not installed");
+    const gh = ghPath(os, isFile, undefined, trusted);
+    if (gh === null) {
+      throw new Deno.errors.NotFound(
+        "gh: the GitHub CLI is not installed where denext looks for it, or another user can " +
+          "change it (or a folder it is in), so it is not run",
+      );
+    }
     return gh;
   }
   if (os !== "darwin" || !MACOS_SYSTEM_TOOLS.has(cmd)) return cmd;
@@ -551,8 +563,8 @@ async function shouldAttest(plan: InstallPlan): Promise<boolean> {
   if (mode !== "auto") return mode;
   if (await ghSignedIn(plan.opts.capture ?? capture)) return true;
   plan.log(
-    "  denext: the runtime's build provenance was not checked (the GitHub CLI is not installed or " +
-      "not signed in; the SHA-256 pin was). `gh auth login` checks it on the next download; " +
+    "  denext: the runtime's build provenance was not checked (the GitHub CLI is not installed, " +
+      "another user can change it, or it is not signed in; the SHA-256 pin was). `gh auth login` checks it on the next download; " +
       `${DESKTOP_RUNTIME_ATTEST_ENV}=0 silences this.`,
   );
   return false;

@@ -547,7 +547,9 @@ Deno.test("runtimeProgram: macOS plutil / codesign come from the OS's tool folde
   const mac = only("/usr/bin/plutil", "/usr/bin/codesign", "/opt/homebrew/bin/gh");
   assertEquals(runtimeProgram("plutil", "darwin", mac), "/usr/bin/plutil");
   assertEquals(runtimeProgram("codesign", "darwin", mac), "/usr/bin/codesign");
-  assertEquals(runtimeProgram("gh", "darwin", mac), "/opt/homebrew/bin/gh");
+  assertEquals(runtimeProgram("gh", "darwin", mac, () => true), "/opt/homebrew/bin/gh");
+  // A gh another user could have replaced is not run.
+  assertThrows(() => runtimeProgram("gh", "darwin", mac, () => false), Deno.errors.NotFound);
   // A missing tool is NotFound, as a program missing from PATH is; nothing falls back to PATH.
   assertThrows(() => runtimeProgram("codesign", "darwin", only()), Deno.errors.NotFound);
   assertThrows(() => runtimeProgram("gh", "linux", only()), Deno.errors.NotFound);

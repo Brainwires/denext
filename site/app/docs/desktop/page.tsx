@@ -781,6 +781,14 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         backend (WKWebView) keeps cookies in WebKit&apos;s own store; on Windows CEF uses DPAPI (
         <code>"os"</code>).
       </p>
+      <p id="desktop-cef-macos-x64-quit">
+        <strong>Known issue: CEF on an Intel Mac at quit.</strong>{" "}
+        Under runtime 3.0.0-denext.8 a CEF app on macOS x64 (x86_64) can crash in Chromium&apos;s
+        own teardown when it quits, about once in 5,600 launches. The app has already finished by
+        then, but profile writes still in flight can be lost and macOS keeps a crash report. Apple
+        silicon, the WebView backend and the other OSes are not affected; the fix comes with the
+        next runtime.
+      </p>
       <p>
         The runtime&apos;s own <code>Deno.desktop.clipboard</code> <code>change</code>{" "}
         event may be absent: under CEF on a Wayland compositor without data-control,{" "}
