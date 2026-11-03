@@ -9,6 +9,10 @@ import { generateArtifact, OPTIONAL_NAME_KINDS } from "../src/build/generate.ts"
 import { migrationPlan, slugName } from "../src/build/generate-ops.ts";
 import { fakeSqlClient } from "./helpers/fake-sql-client.ts";
 import { currentDenoIdentity, denoReleaseVersion } from "../src/build/deno-version.ts";
+import { VERSION } from "../src/version.ts";
+
+/** The pinned CLI every generated CI step runs (on denext's Deno toolchain). */
+const CI_CLI = `deno run -A jsr:@denext/denext@^${VERSION}/cli`;
 
 const SERVER_MOD = toFileUrl(join(Deno.cwd(), "src/server/mod.ts")).href;
 
@@ -168,8 +172,8 @@ Deno.test("generate ci: tasks are read from the parsed deno.json(c), not up to t
   try {
     const { written } = await generateArtifact(dir, "ci", "");
     const text = await Deno.readTextFile(written[0]);
-    assert(text.includes("run: deno task check"), text);
-    assert(text.includes("run: deno task build"), text);
+    assert(text.includes(`run: ${CI_CLI} task check`), text);
+    assert(text.includes(`run: ${CI_CLI} task build`), text);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -203,8 +207,8 @@ Deno.test("generate ci: the project's check + build tasks, Deno pinned, valid YA
     };
     const steps = doc.jobs.check.steps;
     assertEquals(steps.filter((s) => s.run).map((s) => s.run), [
-      "deno task check",
-      "deno task build",
+      `${CI_CLI} task check`,
+      `${CI_CLI} task build`,
     ]);
     assertEquals(steps[1].with?.["deno-version"], `v${denoReleaseVersion(currentDenoIdentity())}`);
   } finally {
@@ -223,14 +227,37 @@ Deno.test("generate ci: no check task → fmt/lint/test; a SPA builds with expor
       jobs: { check: { steps: { run?: string }[] } };
     };
     assertEquals(doc.jobs.check.steps.filter((s) => s.run).map((s) => s.run), [
-      "deno fmt --check",
-      "deno lint",
-      "deno test -A",
-      "deno task export",
+      `${CI_CLI} fmt --check`,
+      `${CI_CLI} lint`,
+      `${CI_CLI} test`,
+      `${CI_CLI} task export`,
     ]);
     await assertRejects(() => generateArtifact(dir, "ci", "jenkins"), Error, "unknown CI provider");
   } finally {
     await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("generate ci: no step runs a bare deno (5.0 refuses createTestApp() off the toolchain)", async () => {
+  // A plain `deno test` / `deno task` on setup-deno's upstream Deno refuses a test that builds the
+  // app; every step goes through the pinned denext CLI, which runs it on denext's Deno toolchain.
+  for (const tasks of ['{ "tasks": { "test": "deno test -A" } }', '{ "tasks": {} }']) {
+    const dir = await project({ "deno.json": tasks });
+    try {
+      await generateArtifact(dir, "ci", "");
+      const doc = parseYaml(await Deno.readTextFile(join(dir, ".github/workflows/ci.yml"))) as {
+        jobs: { check: { steps: { run?: string }[] } };
+      };
+      const runs = doc.jobs.check.steps.flatMap((s) => s.run ? [s.run] : []);
+      assert(runs.length > 0);
+      for (const run of runs) assert(run.startsWith(`${CI_CLI} `), run);
+      assert(
+        runs.includes(`${CI_CLI} ${tasks.includes('"test"') ? "task test" : "test"}`),
+        runs.join("\n"),
+      );
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
   }
 });
 

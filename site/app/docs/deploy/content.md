@@ -192,9 +192,9 @@ without it every Server Action posted through a proxy that rewrites `Host` is
 refused as cross-origin (`403`).
 
 **Don't hand-write it.** `denext generate ci` writes a GitHub Actions workflow
-(`.github/workflows/ci.yml`: Deno pinned to the version that generated it, then
-the project's `check` task — else `deno fmt --check`, `deno lint`, `deno test` —
-and its `build` task, or `export` for a SPA). `denext generate docker` writes the `Dockerfile`,
+(`.github/workflows/ci.yml`: `setup-deno` pinned to the Deno release that generated it, then every
+step through the pinned denext CLI on denext's Deno toolchain: the project's `check` task — else
+`fmt --check`, `lint`, `test` — and its `build` task, or `export` for a SPA). `denext generate docker` writes the `Dockerfile`,
 `docker-compose.yml` and `.dockerignore` for you — SSR or static image
 auto-detected from your config — plus, when the project needs them, a database, an object store
 and a migrations step (the [self-hosted stack](#self-hosted-stack-postgres-storage-migrations)

@@ -100,8 +100,9 @@ With `setup-deno`:
 - run: deno run -A jsr:@denext/denext@^5.0.0/cli task check
 ```
 
-The toolchain downloads into `<DENO_DIR>/denext-deno/`, so a job that caches `DENO_DIR` caches it
-too. Then check the workflow for:
+`denext generate ci` writes this second form: every step, `fmt --check` and `lint` included, runs
+`deno run -A jsr:@denext/denext@^<version>/cli <verb>`. The toolchain downloads into
+`<DENO_DIR>/denext-deno/`, so a job that caches `DENO_DIR` caches it too. Then check the workflow for:
 
 - `DENEXT_DENO=stock` or `DENEXT_DESKTOP_RUNTIME=stock` in `env:`: remove it.
 - `deno test` or `deno task` steps that start builds or `createTestApp()`: run them through denext.

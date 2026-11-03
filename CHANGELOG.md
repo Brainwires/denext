@@ -55,6 +55,10 @@ and this project adheres to
   - Crash reports, multi-certificate `start.tls` and the desktop launch-policy gates no longer
     branch on stock Deno: crash reports follow the runtime's version only (the retired `path`
     marker no longer counts), and `DENEXT_DESKTOP_RUNTIME=stock` is no input to the launch file.
+  - The workflow `denext generate ci` writes runs every step through the pinned denext CLI
+    (`deno run -A jsr:@denext/denext@^<version>/cli task check`, or `fmt --check`, `lint`, `test`,
+    then `task build`), so its tests run on the toolchain; `setup-deno` only bootstraps the CLI.
+    The old plain `deno test -A` step refused every test that calls `createTestApp()`.
   - Platforms that run upstream Deno you don't control (Deno Deploy) are unaffected; there
     `Deno.SQL` is missing, so give Postgres `fromPostgresJs(postgres(url))`.
 

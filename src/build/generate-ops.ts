@@ -13,9 +13,11 @@
 //   at its own migration tool instead.
 // - `seed [name]` writes `jobs/seed.ts` (`denext job seed`): a `node:sqlite` seed by
 //   default, a `PrismaClient` one in a Prisma project.
-// - `ci` writes `.github/workflows/ci.yml`: Deno pinned to the version generating it, then the
-//   project's own `check` task (else `deno fmt --check`, `deno lint`, `deno test`) and its
-//   `build` (or, for a SPA, `export`) task.
+// - `ci` writes `.github/workflows/ci.yml`: setup-deno (pinned to the Deno release generating it)
+//   only bootstraps the denext CLI, pinned to this version's range, which runs every step on
+//   denext's Deno toolchain: the project's own `check` task (else `fmt --check`, `lint`, `test`)
+//   and its `build` (or, for a SPA, `export`) task. A bare `deno test` / `deno task` on upstream
+//   Deno would refuse any test that builds the app (`createTestApp()`).
 //
 // Build-time only; never imported by a shipped bundle.
 
@@ -26,6 +28,7 @@ import { parse as parseJsonc } from "@std/jsonc";
 import { join } from "@std/path";
 import { detectDockerMode } from "./docker-template.ts";
 import { currentDenoIdentity, denoReleaseVersion } from "./deno-version.ts";
+import { VERSION } from "../version.ts";
 
 /** One file an ops scaffold would write. */
 export interface OpsPlanFile {
@@ -448,11 +451,23 @@ async function taskNames(projectDir: string): Promise<Set<string>> {
   return new Set();
 }
 
+/**
+ * The pinned denext CLI every workflow step runs: on setup-deno's Deno it re-runs the verb (and,
+ * for `task`, every `deno` the task starts) on denext's Deno toolchain, which it downloads and
+ * SHA-256-verifies into `DENO_DIR` (cached by setup-deno's `cache: true`).
+ */
+const CI_CLI = `deno run -A jsr:@denext/denext@^${VERSION}/cli`;
+
+/** One workflow step running the denext CLI verb `verb`. */
+function cliStep(verb: string): string {
+  return `      - run: ${CI_CLI} ${verb}\n`;
+}
+
 /** The workflow's check steps: the project's `check` task, else fmt + lint + test. */
 function checkSteps(tasks: Set<string>): string {
-  if (tasks.has("check")) return "      - run: deno task check\n";
-  return "      - run: deno fmt --check\n      - run: deno lint\n" +
-    (tasks.has("test") ? "      - run: deno task test\n" : "      - run: deno test -A\n");
+  if (tasks.has("check")) return cliStep("task check");
+  return cliStep("fmt --check") + cliStep("lint") +
+    cliStep(tasks.has("test") ? "task test" : "test");
 }
 
 /**
@@ -470,8 +485,9 @@ export async function ciPlan(projectDir: string, override?: string): Promise<Ops
   const tasks = await taskNames(projectDir);
   const spa = (await detectDockerMode(projectDir)) === "static";
   const buildTask = spa && tasks.has("export") ? "export" : tasks.has("build") ? "build" : null;
-  const contents = `${sentinel("ci", "#")} — Deno pinned to the version that generated it;
-# bump it deliberately.
+  const contents = `${sentinel("ci", "#")} — setup-deno only bootstraps the
+# denext CLI, which runs every step on denext's Deno toolchain. Deno and the CLI are pinned to the
+# versions that generated it; bump them deliberately.
 name: CI
 
 on:
@@ -491,6 +507,6 @@ jobs:
         with:
           deno-version: v${denoReleaseVersion(currentDenoIdentity())}
           cache: true
-${checkSteps(tasks)}${buildTask ? `      - run: deno task ${buildTask}\n` : ""}`;
+${checkSteps(tasks)}${buildTask ? cliStep(`task ${buildTask}`) : ""}`;
   return [{ path: join(projectDir, ".github", "workflows", "ci.yml"), contents }];
 }

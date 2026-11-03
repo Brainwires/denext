@@ -410,9 +410,9 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno install          # from deno.lock
-      - run: deno task check
-      - run: deno run -A jsr:@denext/denext@^4.0.0/cli doctor   # renders every route, exits 1 on a bad document
-      - run: deno run -A jsr:@denext/denext@^4.0.0/cli audit --strict`}
+      - run: deno run -A jsr:@denext/denext@^5.0.0/cli task check   # on denext's Deno toolchain
+      - run: deno run -A jsr:@denext/denext@^5.0.0/cli doctor   # renders every route, exits 1 on a bad document
+      - run: deno run -A jsr:@denext/denext@^5.0.0/cli audit --strict`}
       </Code>
       <p>
         <code>denext doctor</code>{" "}
