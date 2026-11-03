@@ -9,6 +9,8 @@
 //   page sends in a `session.update`);
 // - `tool`: run a function call the model made (voice/tools.ts);
 // - `confirm`: the user's Yes or No to a question a tool asked (voice/confirm.ts);
+// - `pending`: a question the page should ask without a tool call (the browser holds data a page
+//   sent a beat after Loopy's last action), polled while a session is open;
 // - `remember`: keep a finished turn (refused while memory is off); `memories`, `forget`,
 //   `forgetAll`: the settings' memory list (voice/memory.ts).
 //
@@ -18,6 +20,7 @@ import { type ClientSecret, LOOPY_INSTRUCTIONS, mintClientSecret, VoiceError } f
 import type { CapCtx, KeyStore } from "./keys.ts";
 import { parseTurn } from "./memory.ts";
 import type { MemoryRecord } from "./memory-store.ts";
+import type { ConfirmRequest } from "./confirm.ts";
 import {
   createToolRegistry,
   NO_FEATURES,
@@ -52,6 +55,7 @@ export interface VoiceService {
   configure(args: unknown): Promise<SessionTools>;
   tool(args: unknown, ctx?: CapCtx): Promise<ToolCallResult>;
   confirm(args: unknown): Promise<ToolCallResult>;
+  pending(): Promise<{ readonly confirm: ConfirmRequest | null }>;
   remember(args: unknown, ctx?: CapCtx): Promise<{ readonly ok: true }>;
   memories(): Promise<MemoryRecord[]>;
   forget(args: unknown): Promise<{ readonly forgotten: boolean }>;
@@ -74,6 +78,8 @@ export const VOICE_LIMITS = {
   tool: { limit: 120, windowMs: 60_000 },
   /** Memory writes, lists and deletes. */
   memory: { limit: 60, windowMs: 60_000 },
+  /** The page's poll for questions (every second or two while a session is open). */
+  poll: { limit: 120, windowMs: 60_000 },
 } as const satisfies Record<string, RateLimit>;
 
 /**
@@ -189,6 +195,7 @@ export function createVoiceService(options: VoiceServiceOptions): VoiceService {
     key: limiter(VOICE_LIMITS.key),
     tool: limiter(VOICE_LIMITS.tool),
     memory: limiter(VOICE_LIMITS.memory),
+    poll: limiter(VOICE_LIMITS.poll),
   };
   const take = (which: keyof typeof limits) => {
     if (!limits[which].take()) {
@@ -251,6 +258,11 @@ export function createVoiceService(options: VoiceServiceOptions): VoiceService {
       const answer = parseAnswer(args);
       return await tools.confirm(answer.id, answer.approved);
     },
+    pending: () =>
+      sync(() => {
+        take("poll");
+        return { confirm: toolset?.pending() ?? null };
+      }),
     async remember(args, ctx) {
       take("memory");
       if (!toolset || !tools.features().memory) throw memoryOff();

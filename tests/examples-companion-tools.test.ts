@@ -43,7 +43,9 @@ import {
   BrowserError,
   browserTools,
   type HeldPost,
+  heldPrompt,
   MAX_TYPED,
+  pendingQuestion,
 } from "../examples/companion/voice/browser-tools.ts";
 import {
   MAX_QUERY,
@@ -97,7 +99,16 @@ import {
   toPageElement,
   toSnapshot,
 } from "../examples/companion/voice/chrome.ts";
-import { relayToolCalls } from "../examples/companion/lib/tool-relay.ts";
+import { answerLateQuestion, relayToolCalls } from "../examples/companion/lib/tool-relay.ts";
+import {
+  installQuitCleanup,
+  installSignalCleanup,
+  quitLoopy,
+  SHARED_TOOLSET_VERSION,
+  sharedToolset,
+  type SignalDeps,
+  trayAction,
+} from "../examples/companion/voice/lifecycle.ts";
 import { createTurnRecorder } from "../examples/companion/lib/turn-memory.ts";
 import {
   INITIAL_VOICE,
@@ -176,25 +187,30 @@ const page = (elements: PageElement[], text = "Welcome to the shop."): PageSnaps
 });
 
 /** A browser the tools drive, recording what they did. */
-function fakeBrowser(snapshot: PageSnapshot, options: { postOn?: number } = {}) {
+function fakeBrowser(
+  snapshot: PageSnapshot,
+  options: { postOn?: number; sends?: HeldPost[] } = {},
+) {
   const log: string[] = [];
-  let held: HeldPost | null = null;
+  let held: HeldPost[] = [];
   const driver: BrowserDriver = {
     open: (url) => (log.push(`open ${url}`), Promise.resolve()),
     snapshot: () => Promise.resolve(snapshot),
     element: (ref) => Promise.resolve(snapshot.elements.find((e) => e.ref === ref) ?? null),
     click: (ref) => {
       log.push(`click ${ref}`);
-      if (options.postOn === ref) held = { method: "POST", url: "https://shop.example/order" };
+      if (options.postOn === ref) {
+        held = options.sends ?? [{ method: "POST", url: "https://shop.example/order" }];
+      }
       return Promise.resolve();
     },
     fill: (ref, text) => (log.push(`fill ${ref} ${text}`), Promise.resolve()),
     scroll: (d) => (log.push(`scroll ${d}`), Promise.resolve()),
     back: () => (log.push("back"), Promise.resolve()),
-    heldPost: () => held,
-    releasePost: (allow) => {
-      log.push(`release ${allow}`);
-      held = null;
+    heldRequests: () => held,
+    releaseHeld: (allow) => {
+      log.push(`release ${allow} ${held.length}`);
+      held = [];
       return Promise.resolve();
     },
     approved: async (action) => {
@@ -202,7 +218,9 @@ function fakeBrowser(snapshot: PageSnapshot, options: { postOn?: number } = {}) 
       return await action();
     },
   };
-  return { driver, log, closed: 0 };
+  /** A request the page sends with no action of Loopy's around it (a late one). */
+  const send = (r: HeldPost) => void held.push(r);
+  return { driver, log, send };
 }
 
 /** The browser tools over `driver`, by name. */
@@ -242,10 +260,21 @@ function testToolset(fetchFn?: typeof fetch, now?: () => number) {
     memoryFile: file,
     browser: {
       driver: () => Promise.resolve(browser.driver),
+      peek: () => started ? browser.driver : null,
       close: () => (closed++, Promise.resolve()),
+      kill: () => void kills++,
     },
   });
-  return { toolset, browser, file, closes: () => closed };
+  let started = false;
+  let kills = 0;
+  return {
+    toolset,
+    browser,
+    file,
+    closes: () => closed,
+    kills: () => kills,
+    start: () => (started = true),
+  };
 }
 
 // ---------------------------------------------------------------- untrusted data
@@ -377,31 +406,39 @@ Deno.test("loopy browser rules: the page goes to the model wrapped, its elements
 
 // ---------------------------------------------------------------- post gate + confirmations
 
-Deno.test("loopy post gate: posts are held during Loopy's actions only, and go through once approved", () => {
+Deno.test("loopy post gate: every write is held during Loopy's actions and their grace, any type", () => {
   let now = 1_000;
   const gate = createPostGate(() => now);
   const post = { method: "POST", url: "https://x/order" };
-  const get = { method: "GET", url: "https://x/" };
-  assertEquals(gate.decide(post, false), "continue", "the user's own submit, between actions");
+  const writes = ["POST", "put", "PATCH", "DELETE", "PROPFIND"].map((method) => ({
+    method,
+    url: "https://api.x/v1/thing",
+  }));
+  assertEquals(gate.decide(post), "continue", "the user's own submit, between actions");
+  assertEquals(gate.guarding(), false);
   gate.begin();
-  assertEquals(gate.decide(get, false), "continue");
-  assertEquals(gate.decide({ method: "head", url: "https://x/" }, false), "continue");
-  assertEquals(gate.decide(post, false), "hold");
-  assertEquals(gate.decide(post, true), "fail", "a second one while one is held");
+  assertEquals(gate.guarding(), true);
+  for (const method of ["GET", "head", "OPTIONS"]) {
+    assertEquals(gate.decide({ method, url: "https://x/" }), "continue", method);
+  }
+  for (const w of writes) assertEquals(gate.decide(w), "hold", w.method);
+  assertEquals(gate.decide(post), "hold", "a second one is held too, and asked about with it");
   gate.end();
   now += GUARD_GRACE_MS - 1;
-  assertEquals(gate.decide(post, false), "hold", "a script that submits a beat later");
+  assertEquals(gate.guarding(), true);
+  assertEquals(gate.decide(post), "hold", "a script that sends a beat later");
   now += 1;
-  assertEquals(gate.decide(post, false), "continue");
+  assertEquals(gate.guarding(), false);
+  assertEquals(gate.decide(post), "continue");
   gate.begin();
   gate.approve();
-  assertEquals(gate.decide(post, false), "continue", "the user said yes");
+  assertEquals(gate.decide(post), "continue", "the user said yes");
   now += APPROVED_MS;
-  assertEquals(gate.decide(post, false), "hold");
+  assertEquals(gate.decide(post), "hold");
   gate.end();
   gate.end(); // never below zero
   now += GUARD_GRACE_MS;
-  assertEquals(gate.decide(post, false), "continue");
+  assertEquals(gate.decide(post), "continue");
 });
 
 Deno.test("loopy confirmations: only a Yes runs the held action; No, expiry and a new question cancel", async () => {
@@ -547,13 +584,75 @@ Deno.test("loopy browser tools: a click that starts a post is held until the use
   });
   const { run, confirmations } = toolsOver(fake.driver);
   const asked = await run("browser_click", { ref: 1 });
-  assertEquals(asked.confirm?.prompt, "Loopy is about to send data to shop.example. Go ahead?");
+  assertEquals(
+    asked.confirm?.prompt,
+    "Loopy's browser wants to send data: POST https://shop.example/order. Allow it?",
+  );
   assertEquals(await confirmations.answer(asked.confirm!.id, false), { output: DECLINED });
-  assertEquals(fake.log, ["click 1", "release false"]);
+  assertEquals(fake.log, ["click 1", "release false 1"]);
   const yes = (await run("browser_click", { ref: 1 })).confirm!;
   const done = await confirmations.answer(yes.id, true);
-  assertEquals(fake.log.slice(2), ["click 1", "release true"]);
+  assertEquals(fake.log.slice(2), ["click 1", "release true 1"]);
   assertEquals((done.output as { submitted: boolean }).submitted, true);
+});
+
+Deno.test("loopy browser tools: a plain div whose handler sends several writes asks once about all", async () => {
+  const sends = [
+    { method: "POST", url: "https://api.evil.example/collect?x=1" },
+    { method: "PUT", url: "https://shop.example/cart/items" },
+    { method: "DELETE", url: "https://shop.example/account" },
+    { method: "POST", url: "https://beacon.example/b" },
+    { method: "PATCH", url: "https://shop.example/me" },
+  ];
+  const fake = fakeBrowser(page([el({ ref: 1, tag: "div", role: "button", text: "Show more" })]), {
+    postOn: 1,
+    sends,
+  });
+  const { run, confirmations } = toolsOver(fake.driver);
+  const asked = await run("browser_click", { ref: 1 });
+  assertEquals(
+    asked.confirm?.prompt,
+    "Loopy's browser wants to send data 5 times: POST https://api.evil.example/collect, " +
+      "PUT https://shop.example/cart/items, DELETE https://shop.example/account and 2 more. " +
+      "Allow them?",
+  );
+  assertEquals(await confirmations.answer(asked.confirm!.id, false), { output: DECLINED });
+  assertEquals(fake.log, ["click 1", "release false 5"], "No fails every one of them");
+  assertEquals(
+    heldPrompt([{ method: "post", url: "not a url" }]),
+    "Loopy's browser wants to send data: POST not a url. Allow it?",
+  );
+});
+
+Deno.test("loopy browser tools: data a page sends after Loopy's call returned is asked about, never left held", async () => {
+  const fake = fakeBrowser(page([el({ ref: 1, tag: "a", text: "Home", href: "https://s/" })]));
+  const { run, confirmations } = toolsOver(fake.driver);
+  await run("browser_read");
+  assertEquals(pendingQuestion(fake.driver, confirmations), null, "nothing held");
+  assertEquals(pendingQuestion(null, confirmations), null, "no browser yet");
+  fake.send({ method: "POST", url: "https://shop.example/late" });
+  const q = pendingQuestion(fake.driver, confirmations)!;
+  assertEquals(
+    q.prompt,
+    "Loopy's browser wants to send data: POST https://shop.example/late. Allow it?",
+  );
+  assertEquals(pendingQuestion(fake.driver, confirmations), q, "the same question until answered");
+  assertEquals((await confirmations.answer(q.id, true)).output, { ok: true, sent: true });
+  assertEquals(fake.log, ["release true 1"]);
+  // A late one is also asked about before the next tool call does anything.
+  fake.send({ method: "POST", url: "https://shop.example/late2" });
+  const first = await run("browser_click", { ref: 1 });
+  assertExists(first.confirm);
+  assertEquals(fake.log, ["release true 1"], "nothing clicked yet");
+  await confirmations.answer(first.confirm.id, false);
+  assertEquals(fake.log, ["release true 1", "release false 1"]);
+  const asked = await run("browser_click", { ref: 1 });
+  assertEquals(asked.confirm, undefined);
+  assertEquals(fake.log.at(-1), "click 1");
+  fake.send({ method: "POST", url: "https://shop.example/late3" });
+  const before = (await run("browser_read")).confirm!;
+  const read = await confirmations.answer(before.id, true);
+  assertMatch((read.output as { page: string }).page, /Home/, "Yes runs the call it held up");
 });
 
 Deno.test("loopy browser tools: a browser failure is an output the model can read", async () => {
@@ -1397,4 +1496,181 @@ Deno.test("loopy page backend: the new operations over the dev route", async () 
     { id: 4, op: "forget" },
     { op: "forgetAll" },
   ]);
+});
+
+// ---------------------------------------------------------------- late questions + lifecycle
+
+Deno.test("loopy pending: the backend hands the page a question no tool call is waiting on", async () => {
+  const t = testToolset();
+  const service = createVoiceService({
+    keys: {
+      source: "env",
+      get: () => Promise.resolve(null),
+      set: () => Promise.resolve(),
+      clear: () => Promise.resolve(),
+    },
+    toolset: t.toolset,
+  });
+  assertEquals(await service.pending(), { confirm: null }, "browser off");
+  t.toolset.registry.configure({ webSearch: false, browser: true, memory: false });
+  assertEquals(await service.pending(), { confirm: null }, "no browser running");
+  t.start();
+  assertEquals(await service.pending(), { confirm: null }, "nothing held");
+  t.browser.send({ method: "POST", url: "https://a.example/x" });
+  const { confirm } = await service.pending();
+  assertExists(confirm);
+  assertMatch(confirm.prompt, /POST https:\/\/a\.example\/x/);
+  assertEquals(
+    JSON.parse((await service.confirm({ id: confirm.id, approved: false })).output),
+    DECLINED,
+  );
+  assertEquals(t.browser.log, ["release false 1"]);
+  // The page polls: its own budget, apart from tool calls.
+  for (let i = 4; i < 120; i++) await service.pending();
+  assertEquals((await service.pending().catch((e) => e)).code, "rate_limited");
+  assertEquals(
+    (await service.tool({ name: "set_mood", arguments: '{"mood":"love"}' })).mood,
+    "love",
+  );
+  t.toolset.killBrowser();
+  assertEquals(t.kills(), 1);
+  const route = createVoiceRoute(
+    createVoiceService({
+      keys: keychainKeyStore({ name: "secureStore", methods: {} }),
+      toolset: t.toolset,
+    }),
+  );
+  const res = await route(
+    new Request("http://localhost:3000/api/voice", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ op: "pending" }),
+    }),
+  );
+  assertEquals(await res.json(), { confirm: null });
+  const caps = voiceCapabilities([], DesktopCapError, undefined, t.toolset as Toolset);
+  assertEquals(await caps[0].methods.pending.handler({}, {} as never), { confirm: null });
+  await t.toolset.close();
+});
+
+Deno.test("loopy late question: asked in the bubble, answered to the backend, and told to the model", async () => {
+  const sent: Record<string, unknown>[] = [];
+  const confirms: [string, boolean][] = [];
+  const asked: string[] = [];
+  const opts = {
+    ask: (p: string) => (asked.push(p), Promise.resolve(true)),
+    confirm: (
+      id: string,
+      a: boolean,
+    ) => (confirms.push([id, a]), Promise.resolve({ output: "{}" })),
+    send: (e: Record<string, unknown>) => void sent.push(e),
+  };
+  assertEquals(await answerLateQuestion({ id: "q", prompt: "Send it?" }, opts), true);
+  assertEquals([asked, confirms], [["Send it?"], [["q", true]]]);
+  assertEquals(sent[0].type, "conversation.item.create");
+  assertMatch(JSON.stringify(sent[0]), /answered yes/);
+  const no = await answerLateQuestion({ id: "r", prompt: "?" }, {
+    ...opts,
+    ask: () => Promise.reject(new Error("bubble closed")),
+    confirm: () => Promise.reject(new Error("offline")),
+  });
+  assertEquals(no, false, "no answer is a No");
+  assertMatch(JSON.stringify(sent[1]), /answered no/);
+  const page = routeBackend(fakeFetch(() => Response.json({ confirm: null })).fn);
+  assertEquals(await page.pending(), { confirm: null });
+});
+
+/** A signal API that records what happened. */
+function fakeSignals() {
+  const listeners = new Map<string, Set<() => void>>();
+  const resent: string[] = [];
+  const deps: SignalDeps = {
+    signals: ["SIGINT", "SIGTERM"],
+    add: (s, h) => void (listeners.get(s) ?? listeners.set(s, new Set()).get(s)!).add(h),
+    remove: (s, h) => void listeners.get(s)?.delete(h),
+    resend: (s) => void resent.push(s),
+  };
+  const fire = (s: string) => [...(listeners.get(s) ?? [])].forEach((h) => h());
+  const count = () => [...listeners.values()].reduce((n, set) => n + set.size, 0);
+  return { deps, fire, count, resent };
+}
+
+Deno.test("loopy dev server: Ctrl-C kills Chrome, then the signal takes its course", () => {
+  const sig = fakeSignals();
+  let kills = 0;
+  installSignalCleanup(() => kills++, sig.deps);
+  assertEquals(sig.count(), 2);
+  sig.fire("SIGINT");
+  assertEquals(kills, 1);
+  assertEquals(sig.count(), 0, "stops listening");
+  assertEquals(sig.resent, ["SIGINT"], "re-sent, so the server stops as it would have");
+  sig.fire("SIGTERM");
+  assertEquals(kills, 1);
+  const uninstall = installSignalCleanup(() => kills++, sig.deps);
+  uninstall();
+  sig.fire("SIGTERM");
+  assertEquals(kills, 1);
+});
+
+Deno.test("loopy dev server: one toolset survives hot reloads; a newer one closes the old Chrome", async () => {
+  const holder: Record<symbol, unknown> = {};
+  const sig = fakeSignals();
+  const made: ReturnType<typeof testToolset>[] = [];
+  const create = () => {
+    const t = testToolset();
+    made.push(t);
+    return t.toolset;
+  };
+  const a = sharedToolset(create, holder, sig.deps);
+  assertEquals(sharedToolset(create, holder, sig.deps), a, "a hot reload reuses it");
+  assertEquals(made.length, 1);
+  assertEquals(sig.count(), 2);
+  const b = sharedToolset(create, holder, sig.deps, SHARED_TOOLSET_VERSION + 1);
+  assert(b !== a);
+  assertEquals(made[0].kills(), 1, "the old Chrome is killed");
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(made[0].closes(), 1, "and the old toolset closed");
+  assertEquals(sig.count(), 2, "one signal handler, the new one's");
+  sig.fire("SIGTERM");
+  assertEquals([made[0].kills(), made[1].kills()], [1, 1]);
+});
+
+Deno.test("loopy desktop: every quit path kills Chrome first", () => {
+  const app = new EventTarget() as EventTarget & { quit?: () => boolean };
+  const target = new EventTarget();
+  const log: string[] = [];
+  installQuitCleanup(() => log.push("kill"), app, target);
+  app.dispatchEvent(new Event("beforequit")); // the page's Quit (quitApp)
+  target.dispatchEvent(new Event("unload"));
+  assertEquals(log, ["kill", "kill"]);
+  installQuitCleanup(() => log.push("kill2"), undefined, target);
+  target.dispatchEvent(new Event("unload"));
+  assertEquals(log.slice(-2), ["kill", "kill2"]);
+
+  log.length = 0;
+  app.quit = () => (log.push("quit"), true);
+  const tray = (id: string) =>
+    trayAction(id, {
+      show: () => log.push("show"),
+      hide: () => log.push("hide"),
+      quit: () => quitLoopy(() => log.push("kill"), app, () => log.push("exit")),
+    });
+  tray("show");
+  tray("hide");
+  tray("nope");
+  tray("quit");
+  assertEquals(log, ["show", "hide", "kill", "quit"], "the tray's Quit kills Chrome, then quits");
+  log.length = 0;
+  quitLoopy(() => log.push("kill"), undefined, (code) => log.push(`exit ${code}`));
+  assertEquals(log, ["kill", "exit 0"], "no runtime quit: the process ends");
+
+  // The tray's Quit is Loopy's own item (a role item would quit without asking desktop.ts), and
+  // desktop.ts wires every path.
+  const menu = (companionConfig.desktop?.tray as { menu: { id?: string; role?: string }[] }).menu;
+  assert(!menu.some((m) => m.role === "quit"));
+  assert(menu.some((m) => m.id === "quit"));
+  const entry = Deno.readTextFileSync(new URL("../examples/companion/desktop.ts", import.meta.url));
+  assertMatch(entry, /installQuitCleanup\(\(\) => toolset\.killBrowser\(\), desktopApi\)/);
+  assertMatch(entry, /quit: \(\) => quitLoopy\(\(\) => toolset\.killBrowser\(\), desktopApi\)/);
+  assertMatch(entry, /voiceCapabilities\([\s\S]*toolset,\s*\)/);
 });

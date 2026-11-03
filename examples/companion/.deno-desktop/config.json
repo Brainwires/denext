@@ -40,7 +40,8 @@
           "separator": true
         },
         {
-          "role": "quit"
+          "id": "quit",
+          "label": "Quit Loopy"
         }
       ]
     },

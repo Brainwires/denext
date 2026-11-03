@@ -89,6 +89,7 @@ function voiceCapability(service: VoiceService, CapError: CapErrorClass): Capabi
         permissions: OPENAI,
         handler: (args, ctx) => run(() => service.remember(args, ctx)),
       },
+      pending: { handler: () => run(() => service.pending()) },
       memories: { handler: () => run(() => service.memories()) },
       forget: { handler: (args) => run(() => service.forget(args)) },
       forgetAll: { handler: () => run(() => service.forgetAll()) },

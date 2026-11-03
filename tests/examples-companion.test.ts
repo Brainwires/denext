@@ -1233,6 +1233,7 @@ Deno.test("loopy voice desktop: the page's bridge loses secureStore; loopyVoice 
     "forget",
     "forgetAll",
     "memories",
+    "pending",
     "remember",
     "session",
     "setKey",

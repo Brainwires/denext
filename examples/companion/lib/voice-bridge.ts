@@ -19,6 +19,7 @@ function bridgeBackend(): VoiceBackend {
     configure: (features) => wrap(ext.configure({ features })),
     tool: (c) => wrap(ext.tool({ name: c.name, arguments: c.arguments })),
     confirm: (id, approved) => wrap(ext.confirm({ id, approved })),
+    pending: () => wrap(ext.pending({})),
     remember: (turn) => wrap(ext.remember({ user: turn.user, assistant: turn.assistant })),
     memories: () => wrap(ext.memories({})),
     forget: (id) => wrap(ext.forget({ id })),

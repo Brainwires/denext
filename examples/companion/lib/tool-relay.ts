@@ -100,3 +100,39 @@ export async function relayToolCalls(event: ServerEvent, options: RelayOptions):
   options.send({ type: "response.create" });
   return true;
 }
+
+/** What {@linkcode answerLateQuestion} needs. */
+export interface LateQuestionOptions {
+  /** Asks the user (Loopy's bubble with Yes / No). */
+  readonly ask: (prompt: string) => Promise<boolean>;
+  /** Sends the answer to the backend. */
+  readonly confirm: (id: string, approved: boolean) => Promise<ToolAnswer>;
+  /** Sends a client event on the data channel. */
+  readonly send: (event: Record<string, unknown>) => void;
+}
+
+/**
+ * Ask the user a question no tool call is waiting on (the browser holds data a page sent after
+ * Loopy's last action), send the answer to the backend, and tell the model what happened.
+ *
+ * @returns The user's answer.
+ */
+export async function answerLateQuestion(
+  question: { readonly id: string; readonly prompt: string },
+  options: LateQuestionOptions,
+): Promise<boolean> {
+  const approved = await options.ask(question.prompt).catch(() => false);
+  await options.confirm(question.id, approved).catch(failure);
+  options.send({
+    type: "conversation.item.create",
+    item: {
+      type: "message",
+      role: "system",
+      content: [{
+        type: "input_text",
+        text: `The user was asked "${question.prompt}" and answered ${approved ? "yes" : "no"}.`,
+      }],
+    },
+  });
+  return approved;
+}

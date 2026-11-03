@@ -60,6 +60,8 @@ export interface VoiceBackend {
   tool(call: { readonly name: string; readonly arguments: string }): Promise<ToolAnswer>;
   /** The user's answer to a tool's question. */
   confirm(id: string, approved: boolean): Promise<ToolAnswer>;
+  /** A question to ask without a tool call (data a page sent after Loopy's last action). */
+  pending(): Promise<{ readonly confirm: { readonly id: string; readonly prompt: string } | null }>;
   /** Keep a finished turn (refused while memory is off). */
   remember(turn: { readonly user: string; readonly assistant: string }): Promise<unknown>;
   /** The kept memories, newest first. */
@@ -113,6 +115,7 @@ export function routeBackend(fetchFn: typeof fetch = fetch): VoiceBackend {
     configure: (features) => call("configure", { features }),
     tool: (c) => call("tool", { name: c.name, arguments: c.arguments }),
     confirm: (id, approved) => call("confirm", { id, approved }),
+    pending: () => call("pending"),
     remember: (turn) => call("remember", { user: turn.user, assistant: turn.assistant }),
     memories: () => call("memories"),
     forget: (id) => call("forget", { id }),

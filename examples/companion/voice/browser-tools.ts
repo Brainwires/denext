@@ -23,11 +23,11 @@ import {
   submitLike,
   typingRefusal,
 } from "./browser-safety.ts";
-import type { Confirmations } from "./confirm.ts";
+import type { Confirmations, ConfirmRequest } from "./confirm.ts";
 import type { ToolResult, VoiceTool } from "./tools.ts";
 import { clip, tidy, UNTRUSTED_NOTE } from "./untrusted.ts";
 
-/** A navigation that posts, held until the user answers. */
+/** A request that writes (a form submit, a script's POST), held until the user answers. */
 export interface HeldPost {
   readonly method: string;
   readonly url: string;
@@ -46,11 +46,11 @@ export interface BrowserDriver {
   fill(ref: number, text: string): Promise<void>;
   scroll(direction: "up" | "down"): Promise<void>;
   back(): Promise<void>;
-  /** The posting navigation the last action started, if the browser is holding one. */
-  heldPost(): HeldPost | null;
-  /** Let the held navigation go on and wait for it to load, or fail it. */
-  releasePost(allow: boolean): Promise<void>;
-  /** Run `action` with posting navigations allowed (the user said yes). */
+  /** The writing requests the browser is holding (Loopy's last action, or just after it). */
+  heldRequests(): readonly HeldPost[];
+  /** Let every held request go on (and wait for the page to settle), or fail them all. */
+  releaseHeld(allow: boolean): Promise<void>;
+  /** Run `action` with writing requests allowed (the user said yes). */
   approved<T>(action: () => Promise<T>): Promise<T>;
 }
 
@@ -84,30 +84,84 @@ async function pageResult(
   };
 }
 
-/** The result of an action: the user's question when it started a post, else the page. */
+/** How many held requests a question names before it says "and N more". */
+const NAMED_REQUESTS = 3;
+
+/** One held request as the question names it: its method, origin and path. */
+function requestLabel(r: HeldPost): string {
+  try {
+    const url = new URL(r.url);
+    return `${r.method.toUpperCase()} ${url.origin}${clip(url.pathname, 60)}`;
+  } catch {
+    return `${r.method.toUpperCase()} ${clip(r.url, 80)}`;
+  }
+}
+
+/** The one question about every request held at once. */
+export function heldPrompt(held: readonly HeldPost[]): string {
+  const named = held.slice(0, NAMED_REQUESTS).map(requestLabel);
+  const more = held.length - named.length;
+  const list = more > 0 ? `${named.join(", ")} and ${more} more` : named.join(", ");
+  return held.length === 1
+    ? `Loopy's browser wants to send data: ${list}. Allow it?`
+    : `Loopy's browser wants to send data ${held.length} times: ${list}. Allow them?`;
+}
+
+/** Ask the user about the requests `d` holds: Yes lets them all go, No fails them all. */
+function askHeld(
+  d: BrowserDriver,
+  confirmations: Confirmations,
+  answer: () => Promise<ToolResult>,
+): ToolResult {
+  return confirmations.ask(heldPrompt(d.heldRequests()), {
+    run: async () => {
+      await d.releaseHeld(true);
+      return await answer();
+    },
+    cancel: () => d.releaseHeld(false),
+  });
+}
+
+/** The result of an action: the user's question when it sent data, else the page. */
 async function afterAction(
   d: BrowserDriver,
   confirmations: Confirmations,
   extra?: Record<string, unknown>,
 ): Promise<ToolResult> {
-  const held = d.heldPost();
-  if (!held) return await pageResult(d, extra);
-  return confirmations.ask(`Loopy is about to send data to ${hostOf(held.url)}. Go ahead?`, {
-    run: async () => {
-      await d.releasePost(true);
-      return await pageResult(d, { submitted: true });
-    },
-    cancel: () => d.releasePost(false),
-  });
+  if (d.heldRequests().length === 0) return await pageResult(d, extra);
+  return askHeld(d, confirmations, () => pageResult(d, { ...extra, submitted: true }));
 }
 
-/** Run `step` against the browser, turning a failure into an output the model can read. */
+/**
+ * The question about requests held after Loopy's last tool call returned (a script that sent a
+ * beat late), for the page to ask without a tool call (`pending`): the question already waiting,
+ * else one about what `d` holds, else `null`.
+ */
+export function pendingQuestion(
+  d: BrowserDriver | null,
+  confirmations: Confirmations,
+): ConfirmRequest | null {
+  const waiting = confirmations.current();
+  if (waiting) return waiting;
+  if (!d || d.heldRequests().length === 0) return null;
+  return askHeld(d, confirmations, () => Promise.resolve({ output: { ok: true, sent: true } }))
+    .confirm ?? null;
+}
+
+/**
+ * Run `step` against the browser, turning a failure into an output the model can read. Requests
+ * still held from before are asked about first: nothing else happens until the user answers.
+ */
 async function guarded(
   options: BrowserToolsOptions,
   step: (d: BrowserDriver) => Promise<ToolResult>,
 ): Promise<ToolResult> {
   try {
-    return await step(await options.driver());
+    const d = await options.driver();
+    if (d.heldRequests().length > 0) {
+      return askHeld(d, options.confirmations, () => step(d));
+    }
+    return await step(d);
   } catch (err) {
     return refused(err instanceof BrowserError ? err.message : "The browser didn't respond.");
   }
@@ -231,9 +285,8 @@ function typeTool(o: BrowserToolsOptions): VoiceTool {
         const refusal = typingRefusal(t.el);
         if (refusal) return refused(refusal);
         await d.fill(t.el.ref, text);
-        const held = d.heldPost();
-        return held
-          ? await afterAction(d, o.confirmations)
+        return d.heldRequests().length > 0
+          ? await afterAction(d, o.confirmations, { typed: t.el.ref })
           : { output: { ok: true, typed: t.el.ref } };
       });
     },

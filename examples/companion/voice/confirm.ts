@@ -36,6 +36,8 @@ export interface Confirmations {
   ask(prompt: string, action: HeldAction): ToolResult;
   /** The user's answer: runs the action on Yes, cancels it on No. */
   answer(id: string, approved: boolean): Promise<ToolResult>;
+  /** The question waiting for an answer, if one is (and hasn't expired). */
+  current(): ConfirmRequest | null;
   /** Cancel whatever is waiting (the browser closed, the feature was switched off). */
   cancelAll(): Promise<void>;
 }
@@ -60,7 +62,7 @@ export function createConfirmations(
   now: () => number = Date.now,
   ttlMs: number = CONFIRM_TTL_MS,
 ): Confirmations {
-  let pending: { id: string; action: HeldAction; expires: number } | null = null;
+  let pending: { request: ConfirmRequest; action: HeldAction; expires: number } | null = null;
   const drop = async () => {
     const held = pending;
     pending = null;
@@ -70,15 +72,16 @@ export function createConfirmations(
     ask(prompt, action) {
       void drop();
       const id = crypto.randomUUID();
-      pending = { id, action, expires: now() + ttlMs };
       const question = prompt.length > MAX_PROMPT ? `${prompt.slice(0, MAX_PROMPT - 1)}…` : prompt;
+      const request = { id, prompt: question };
+      pending = { request, action, expires: now() + ttlMs };
       return {
         output: { ok: false, waiting: "Loopy asked the user to confirm." },
-        confirm: { id, prompt: question },
+        confirm: request,
       };
     },
     async answer(id, approved) {
-      if (pending === null || pending.id !== id) return { output: EXPIRED };
+      if (pending === null || pending.request.id !== id) return { output: EXPIRED };
       if (now() > pending.expires) {
         await drop();
         return { output: EXPIRED };
@@ -91,6 +94,7 @@ export function createConfirmations(
       pending = null;
       return await action.run();
     },
+    current: () => pending && now() <= pending.expires ? pending.request : null,
     cancelAll: drop,
   };
 }

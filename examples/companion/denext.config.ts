@@ -51,7 +51,8 @@ export default {
         { id: "show", label: "Show Loopy" },
         { id: "hide", label: "Hide Loopy" },
         { separator: true },
-        { role: "quit" },
+        // Loopy's own Quit (desktop.ts): it kills the browser, then quits the app.
+        { id: "quit", label: "Quit Loopy" },
       ],
     },
     // The inbox file (token + port), the memory database and the browser profile go in the app's

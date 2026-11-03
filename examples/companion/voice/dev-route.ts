@@ -1,5 +1,5 @@
 // Loopy's voice backend for the browser (`denext task dev`): `POST /api/voice` with
-// `{ "op": "status" | "session" | "configure" | "tool" | "confirm" | "setKey" | "clearKey" |
+// `{ "op": "status" | "session" | "configure" | "tool" | "confirm" | "pending" | "setKey" | "clearKey" |
 // "remember" | "memories" | "forget" | "forgetAll", ... }`, answered as JSON. The key is the dev
 // server's `OPENAI_API_KEY` (voice/keys.ts); `setKey` / `clearKey` answer 409 there.
 //
@@ -46,6 +46,7 @@ const OPS: Readonly<
   configure: (s, b) => s.configure(b),
   tool: (s, b) => s.tool(b),
   confirm: (s, b) => s.confirm(b),
+  pending: (s) => s.pending(),
   setKey: (s, b) => s.setKey(b),
   clearKey: (s) => s.clearKey(),
   remember: (s, b) => s.remember(b),

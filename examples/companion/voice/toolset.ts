@@ -5,8 +5,13 @@
 // feature is switched off; `close` shuts everything down. The browser and the memory file are
 // injected in the tests (a fake browser, an in-memory database).
 
-import { browserTools, type DriverSource } from "./browser-tools.ts";
-import { type Confirmations, createConfirmations } from "./confirm.ts";
+import {
+  type BrowserDriver,
+  browserTools,
+  type DriverSource,
+  pendingQuestion,
+} from "./browser-tools.ts";
+import { type Confirmations, type ConfirmRequest, createConfirmations } from "./confirm.ts";
 import { createMemory, type Memory, recallTool } from "./memory.ts";
 import { type MemoryFile, memoryFile } from "./memory-store.ts";
 import { LOOPY_INSTRUCTIONS } from "./realtime.ts";
@@ -22,7 +27,11 @@ import { webSearchTool } from "./web-search.ts";
 /** The browser as the toolset holds it (voice/chrome.ts's `ChromeBrowser`). */
 export interface BrowserHandle {
   readonly driver: DriverSource;
+  /** The driver of a browser already running, without starting one (`null`: none). */
+  peek(): BrowserDriver | null;
   close(): Promise<void>;
+  /** Kill the browser now, synchronously (quitting, a signal). */
+  kill(): void;
 }
 
 /** The memory file's name in the data folder. */
@@ -51,6 +60,13 @@ export interface Toolset {
   readonly confirmations: Confirmations;
   /** The session's instructions for the features on (with the memories when memory is on). */
   instructions(): string;
+  /**
+   * A question for the user about requests the browser holds that no tool call asked about (a
+   * page that sent data a beat after Loopy's last action), or the question already waiting.
+   */
+  pending(): ConfirmRequest | null;
+  /** Kill the browser now, synchronously (the app is quitting, a signal arrived). */
+  killBrowser(): void;
   /** Close the browser and the memory file. */
   close(): Promise<void>;
 }
@@ -74,13 +90,16 @@ const inside = (dir: string, name: string) => `${dir.replace(/[\\/]+$/, "")}/${n
 /** Chrome, its module loaded only when the browser is first used. */
 function lazyChrome(profileDir: string): BrowserHandle {
   let chrome: Promise<BrowserHandle> | null = null;
+  let loaded: BrowserHandle | null = null;
   const get = () =>
-    chrome ??= import("./chrome.ts").then((m) => m.createChromeBrowser({ profileDir }));
+    chrome ??= import("./chrome.ts").then((m) => loaded = m.createChromeBrowser({ profileDir }));
   return {
     driver: async () => await (await get()).driver(),
+    peek: () => loaded?.peek() ?? null,
     close: async () => {
       if (chrome) await (await chrome).close();
     },
+    kill: () => loaded?.kill(),
   };
 }
 
@@ -122,6 +141,9 @@ export function createToolset(options: ToolsetOptions): Toolset {
       const remembered = on.memory ? memory.sessionContext() : "";
       return [parts.join(" "), remembered].filter(Boolean).join("\n\n");
     },
+    pending: () =>
+      registry.features().browser ? pendingQuestion(browser.peek(), confirmations) : null,
+    killBrowser: () => browser.kill(),
     async close() {
       await confirmations.cancelAll();
       await browser.close();

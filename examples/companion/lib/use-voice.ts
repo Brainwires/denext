@@ -16,7 +16,7 @@ import {
   openMicrophone,
   type RealtimeConnection,
 } from "./realtime-client.ts";
-import { relayToolCalls } from "./tool-relay.ts";
+import { answerLateQuestion, relayToolCalls } from "./tool-relay.ts";
 import { createTurnRecorder } from "./turn-memory.ts";
 import type { VoiceBackend, VoiceFeatures } from "./voice-backend.ts";
 import { INITIAL_VOICE, type ServerEvent, type VoiceModel, voiceReducer } from "./voice-machine.ts";
@@ -217,6 +217,8 @@ export function useVoice(
       dispatch({ type: "ask", prompt });
     });
 
+  useLateQuestions(backend, session, voice.phase !== "off" && features.browser, ask);
+
   const remember = (event: ServerEvent) => {
     const turn = recorder.current.onEvent(event);
     if (turn && featuresRef.current.memory) void backend.remember(turn).catch(() => {});
@@ -326,6 +328,41 @@ export function useVoice(
     },
     answer: (approved) => settleQuestion(session.current, approved),
   };
+}
+
+/** How often an open session asks the backend for a question no tool call is waiting on. */
+const PENDING_POLL_MS = 1_500;
+
+/**
+ * While a session is open with the browser on, ask the backend now and then whether the browser
+ * holds data a page sent after Loopy's last action, and ask the user about it (No fails it).
+ */
+function useLateQuestions(
+  backend: VoiceBackend,
+  session: { current: Session },
+  on: boolean,
+  ask: (prompt: string) => Promise<boolean>,
+): void {
+  const askRef = useRef(ask);
+  askRef.current = ask;
+  useEffect(() => {
+    if (!on) return;
+    let busy = false;
+    const timer = setInterval(() => {
+      const s = session.current;
+      if (busy || s.asking) return;
+      busy = true;
+      backend.pending().then(async ({ confirm }) => {
+        if (!confirm || session.current.asking) return;
+        await answerLateQuestion(confirm, {
+          ask: (p) => askRef.current(p),
+          confirm: (id, approved) => backend.confirm(id, approved),
+          send: (e) => session.current.conn?.send(e),
+        });
+      }).catch(() => {}).finally(() => (busy = false));
+    }, PENDING_POLL_MS);
+    return () => clearInterval(timer);
+  }, [backend, on]);
 }
 
 /**

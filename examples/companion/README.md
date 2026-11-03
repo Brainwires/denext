@@ -203,10 +203,13 @@ that open in your own browser (`openExternal`; on desktop the `shell` capability
 
 **The browser** (`voice/browser-tools.ts`, `voice/chrome.ts`, `@astral/astral`): your installed
 Google Chrome or Chromium, started visible on first use with a fresh profile in Loopy's data folder
-(`.loopy/browser-profile` in dev), and closed when Loopy quits or the switch goes off. The model
-opens a page, reads it (its text and a numbered list of links, buttons and inputs), then clicks,
-types, scrolls or goes back by number. The rules are enforced in code (`voice/browser-safety.ts`,
-`voice/post-gate.ts`, `voice/confirm.ts`):
+(`.loopy/browser-profile` in dev), and closed when the switch goes off. It is killed when Loopy
+quits (the tray's **Quit Loopy**, the page's Quit through the runtime's `beforequit`, and `unload`)
+and, under the dev server, on Ctrl-C or SIGTERM; the dev server keeps one toolset across hot reloads
+(`voice/lifecycle.ts`), so a reload never starts a second Chrome. The model opens a page, reads it
+(its text and a numbered list of links, buttons and inputs), then clicks, types, scrolls or goes
+back by number. The rules are enforced in code (`voice/browser-safety.ts`, `voice/post-gate.ts`,
+`voice/confirm.ts`):
 
 - only `http:` and `https:` addresses open;
 - page content goes back to the model wrapped in `<untrusted_page_data>` and labelled as data, not
@@ -216,9 +219,13 @@ types, scrolls or goes back by number. The rules are enforced in code (`voice/br
   no implicit submit); field values are never read back;
 - a click on anything submit-like (a submit button, a button in a form that posts, anything labelled
   like Pay, Send, Delete or Place order) asks first: Loopy's bubble shows the question with **Yes**
-  / **No**, and only Yes clicks. A navigation that posts data while Loopy acts is held in the
-  browser (DevTools `Fetch` interception of documents) and asked about the same way; what you do in
-  the window yourself is never held;
+  / **No**, and only Yes clicks. Every request that writes (anything but GET, HEAD or a CORS
+  preflight: a form, a script's `fetch` / XHR, a beacon, of any resource type) made while Loopy acts
+  or in the 1.5 s after is held in the browser (DevTools `Fetch` interception of every request) and
+  asked about in one question naming each method, origin and path; No fails them all. One the page
+  sends after Loopy's tool call returned is asked about too: the page polls the backend (`pending`)
+  while a session is open, and the next browser tool call asks first. What you do in the window
+  yourself between Loopy's actions is never held;
 - no downloads (`Browser.setDownloadBehavior: deny`), no file uploads (file inputs are refused and
   file choosers never answered), no pop-ups (`--block-new-web-contents`), and JavaScript dialogs are
   dismissed.

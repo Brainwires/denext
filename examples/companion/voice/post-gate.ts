@@ -1,49 +1,52 @@
-// Which page navigations Loopy's browser lets through while it acts. A navigation that posts (a
-// form submitted by a click, or by the page's own script after one) is held while one of Loopy's
-// actions runs and for a moment after, until the user says yes; a GET goes through, and so does
-// everything the user does in the window themselves between Loopy's actions. A confirmed action
-// runs with posts allowed. Pure apart from the clock, so it is unit-tested; voice/chrome.ts feeds
-// it Chrome's paused requests (CDP `Fetch.requestPaused`).
+// Which requests Loopy's browser lets through while it acts. Every request that isn't a plain read
+// — a form submit, a script's `fetch` / XHR POST, a beacon, of any resource type — is held while one
+// of Loopy's actions runs and for a moment after, until the user says yes; a GET, HEAD or CORS
+// preflight goes through, and so does everything the page does while Loopy isn't acting (the user's
+// own clicks in the window). A confirmed action runs with writes allowed. Pure apart from the
+// clock, so it is unit-tested; voice/chrome.ts feeds it Chrome's paused requests (CDP
+// `Fetch.requestPaused`) and the tools ask the user about what it holds (voice/browser-tools.ts).
 
-/** How long after an action a post it caused is still held (a script may submit a beat later). */
+/** How long after an action a write it caused is still held (a script may send a beat later). */
 export const GUARD_GRACE_MS = 1_500;
 
-/** How long a confirmed action may post. */
+/** How long a confirmed action may write. */
 export const APPROVED_MS = 10_000;
 
-/** A paused navigation request. */
+/** A paused request. */
 export interface PausedRequest {
   readonly method: string;
   readonly url: string;
 }
 
-/** What to do with a paused navigation. */
-export type GateDecision = "continue" | "hold" | "fail";
+/** What to do with a paused request. */
+export type GateDecision = "continue" | "hold";
 
 /** The gate. */
 export interface PostGate {
-  /** An action starts (posts are held from now). */
+  /** An action starts (writes are held from now). */
   begin(): void;
-  /** The action ended (posts stay held for {@linkcode GUARD_GRACE_MS}). */
+  /** The action ended (writes stay held for {@linkcode GUARD_GRACE_MS}). */
   end(): void;
-  /** Allow posts for {@linkcode APPROVED_MS} (the user said yes). */
+  /** Allow writes for {@linkcode APPROVED_MS} (the user said yes). */
   approve(): void;
+  /** Whether writes are being held now (an action runs, or its grace hasn't passed). */
+  guarding(): boolean;
   /**
-   * The decision for a paused navigation: `continue` for a GET or HEAD, outside an action, or
-   * while approved; `hold` for the first post during an action; `fail` for another one while one
-   * is already held.
+   * The decision for a paused request: `continue` for a read (GET, HEAD, OPTIONS), outside an
+   * action and its grace, or while approved; else `hold`.
    */
-  decide(request: PausedRequest, holding: boolean): GateDecision;
+  decide(request: PausedRequest): GateDecision;
 }
 
-/** Whether `method` only reads. */
-const reads = (method: string) => method === "GET" || method === "HEAD";
+/** The methods that only read (OPTIONS: a CORS preflight; the request it clears is held). */
+const READS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-/** A post gate on `now`. */
+/** A gate on `now`. */
 export function createPostGate(now: () => number = Date.now): PostGate {
   let active = 0;
   let guardUntil = 0;
   let approvedUntil = 0;
+  const guarding = () => active > 0 || now() < guardUntil;
   return {
     begin() {
       active++;
@@ -55,12 +58,11 @@ export function createPostGate(now: () => number = Date.now): PostGate {
     approve() {
       approvedUntil = now() + APPROVED_MS;
     },
-    decide(request, holding) {
-      if (reads(request.method.toUpperCase())) return "continue";
-      const t = now();
-      if (t < approvedUntil) return "continue";
-      if (active === 0 && t >= guardUntil) return "continue";
-      return holding ? "fail" : "hold";
+    guarding,
+    decide(request) {
+      if (READS.has(request.method.toUpperCase())) return "continue";
+      if (now() < approvedUntil || !guarding()) return "continue";
+      return "hold";
     },
   };
 }
