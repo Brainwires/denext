@@ -220,21 +220,31 @@ function outcomeJson(
   o: UpgradeOutcome,
   files: { changedFiles: string[]; unresolved: string[]; outside: string[] },
 ): Record<string, unknown> {
+  const optional: Record<string, unknown> = {
+    removedExclude: nonEmpty(o.stripped),
+    denextExemptions: nonEmpty(o.exemptions),
+    lockRefreshed: o.lock,
+    editorSettings: o.editor,
+    denoExclude: o.denoExclude,
+    jailExceptions: o.jail && { action: o.jail.action, lines: o.jail.lines },
+    nativeTemplates: nonEmpty(o.nativeTemplates),
+    unresolvedMembers: nonEmpty(files.unresolved),
+    outsideMembers: nonEmpty(files.outside),
+  };
   return {
     config: o.path,
     ...o.plan,
     written: o.written,
     files: files.changedFiles,
-    ...(o.stripped.length ? { removedExclude: o.stripped } : {}),
-    ...(o.exemptions.length ? { denextExemptions: o.exemptions } : {}),
-    ...(o.lock === undefined ? {} : { lockRefreshed: o.lock }),
-    ...(o.editor ? { editorSettings: o.editor } : {}),
-    ...(o.denoExclude ? { denoExclude: o.denoExclude } : {}),
-    ...(o.jail ? { jailExceptions: { action: o.jail.action, lines: o.jail.lines } } : {}),
-    ...(o.nativeTemplates.length ? { nativeTemplates: o.nativeTemplates } : {}),
-    ...(files.unresolved.length ? { unresolvedMembers: files.unresolved } : {}),
-    ...(files.outside.length ? { outsideMembers: files.outside } : {}),
+    ...Object.fromEntries(
+      Object.entries(optional).filter(([, v]) => v !== undefined && v !== null),
+    ),
   };
+}
+
+/** A list, or undefined when it is empty (left out of the `--json` document). */
+function nonEmpty<T>(list: readonly T[]): readonly T[] | undefined {
+  return list.length ? list : undefined;
 }
 
 /** Print the outcome: one JSON document, or the human report. */
