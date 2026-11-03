@@ -41,6 +41,7 @@ import {
   launchPolicyProblems,
   mediaCaptureRuntime,
   readProjectDenoJson as readDenoJson,
+  staleBackendPackageScripts,
   stalePackageScripts,
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
@@ -819,6 +820,7 @@ export async function desktopLaunchPolicyCheck(
     config,
     desktopBridgeOrigins,
     await stalePackageScripts(dir),
+    await staleBackendPackageScripts(dir),
   );
   const media = mediaCaptureRuntimeProblem(
     config,
@@ -877,7 +879,7 @@ export async function desktopLinuxWebRtcCheck(dir: string, config: unknown): Pro
 async function desktopChecks(dir: string, config: unknown): Promise<Check[]> {
   const checks = [
     await desktopOriginCheck(dir, config),
-    await desktopRuntimeCheck(dir),
+    await desktopRuntimeCheck(dir, { config }),
     await desktopLaunchPolicyCheck(dir, config),
     await desktopLinuxWebRtcCheck(dir, config),
   ];

@@ -235,6 +235,7 @@ export {
 export {
   buildDesktopBundle,
   desktopAppName,
+  desktopBackendArgs,
   type DesktopBundleOptions,
   desktopExportEnv,
   desktopHasTool,

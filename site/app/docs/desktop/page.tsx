@@ -209,6 +209,55 @@ export default {
           the build.
         </li>
       </ul>
+      <h3 id="desktop-backend">The window engine, per OS</h3>
+      <p>
+        <code>desktop.backend</code> picks the engine <code>deno desktop</code>{" "}
+        builds the window with: <code>"webview"</code>{" "}
+        (the default: the system WebView, WKWebView on macOS, WebView2 on Windows, WebKitGTK on
+        Linux) or <code>"cef"</code> (Chromium, bundled with the app). In{" "}
+        <code>denext.config.ts</code>{" "}
+        it takes one engine for every target, or one per OS with the keys{" "}
+        <code>desktop.installers</code> uses (<code>macos</code>, <code>windows</code>,{" "}
+        <code>linux</code>, and <code>default</code>{" "}
+        for an OS left out). An app that needs WebRTC on Linux, where no distribution builds
+        WebKitGTK with it, ships Chromium there and the system WebView elsewhere:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    backend: { linux: "cef" }, // macOS and Windows: "webview"
+  },
+};`}
+      </Code>
+      <ul>
+        <li>
+          Each build resolves it for its own target: the package scripts pass <code>--backend</code>
+          {" "}
+          to <code>deno desktop</code>{" "}
+          for the OS they package, fetch that target&apos;s runtime flavour, and gate the CEF-only
+          steps (the Windows CEF signature check and target note, the Linux packages&apos;
+          dependencies) on it; <code>denext desktop run</code> and <code>dev</code>{" "}
+          use the host&apos;s; <code>denext desktop doctor</code> and <code>denext doctor</code>
+          {" "}
+          check the host&apos;s (the Keychain cookie store, the CEF sandbox).
+        </li>
+        <li>
+          deno.json&apos;s <code>desktop.backend</code>{" "}
+          still works as one engine for every target, and is used when the config sets none.{" "}
+          <code>deno desktop</code>{" "}
+          reads that key itself and takes only a string there, so a per-OS object belongs in{" "}
+          <code>denext.config.ts</code>; one in deno.json is refused with that fix.
+        </li>
+        <li>
+          A <code>scripts/package-macos.ts</code> written before per-OS backends passes no{" "}
+          <code>--backend</code>: both doctors flag it, and <code>denext desktop package</code>{" "}
+          refuses to run it while the config gives macOS an engine other than deno.json&apos;s (it
+          would fetch one engine&apos;s runtime and build the other). Regenerate it with{" "}
+          <code>denext desktop package --regenerate-scripts</code>. The Linux and Windows builds
+          read it through <code>denext/desktop</code>.
+        </li>
+      </ul>
       <h3 id="desktop-deno-flags">Extra deno desktop flags</h3>
       <p>
         A project that needs extra <code>deno desktop</code> flags to build at all lists them in
@@ -321,9 +370,10 @@ denext desktop dev --inspect-renderer=127.0.0.1:9339  # on a port of your choice
         profile. With no address it picks a free loopback port. It prints the endpoint before the
         window opens and, on the Chrome DevTools Protocol, the page&apos;s{" "}
         <code>webSocketDebuggerUrl</code> and a <code>devtools://</code>{" "}
-        URL to open in Chrome once the page has loaded. What it opens depends on the webview backend
-        (deno.json <code>desktop.backend</code>), with the same environment the runtime&apos;s own
-        {" "}
+        URL to open in Chrome once the page has loaded. What it opens depends on the host&apos;s
+        backend (<a href="#desktop-backend">
+          <code>desktop.backend</code>
+        </a>), with the same environment the runtime&apos;s own{" "}
         <code>deno desktop --inspect-renderer</code> sets:
       </p>
       <table class="table">
@@ -3680,8 +3730,10 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         </li>
         <li>
           <strong>Downloaded once, verified before use.</strong>{" "}
-          The archive for your target and backend (<code>desktop.backend</code> in{" "}
-          <code>deno.json</code>, <code>webview</code> by default, or{" "}
+          The archive for your target and its backend (<a href="#desktop-backend">
+            <code>desktop.backend</code>
+          </a>{" "}
+          for that OS, <code>webview</code> by default, or{" "}
           <code>cef</code>) is pinned in denext by URL, size and SHA-256. It streams to a temp file,
           is refused the moment it outgrows its pinned size, and is extracted only after its size
           and SHA-256 match. Extraction refuses absolute paths, <code>..</code>{" "}

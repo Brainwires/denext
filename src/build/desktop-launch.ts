@@ -31,7 +31,11 @@ import {
 } from "./desktop-capabilities.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
 import { desktopAppName, desktopIconArgs } from "./desktop-package-script.ts";
-import { desktopNetSplit, desktopRuntimeDenoFlags } from "./desktop-runtime.ts";
+import {
+  desktopNetSplit,
+  desktopRuntimeDenoFlags,
+  projectDesktopBackend,
+} from "./desktop-runtime.ts";
 
 /** The file name of the generated `desktop dev` entry (written into the project's `.denext/`). */
 export const DESKTOP_DEV_ENTRY_FILE = "desktop-dev-entry.ts";
@@ -277,7 +281,8 @@ export interface DesktopLaunchBuildPlan {
 /**
  * Plan the `deno desktop` build of `desktop run` / `dev`, reading the project the way the
  * packaging scripts do (a script URL in its `scripts/` folder): the permissions from
- * `desktop.capabilities`, the extension modules, the npm args, the icon and the app name.
+ * `desktop.capabilities`, the extension modules, the npm args, the backend for the host, the icon
+ * and the app name.
  *
  * @param input The project, config, host OS and scratch directory.
  * @returns The args and the bundle path.
@@ -302,6 +307,9 @@ export async function desktopLaunchBuildPlan(
     extraArgs: [
       ...await desktopIncludeArgs(scriptUrl, input.os),
       ...await desktopNpmArgs(scriptUrl),
+      // The host's engine, as the runtime was fetched for (a per-OS `desktop.backend`).
+      "--backend",
+      await projectDesktopBackend(input.projectDir, { target: input.os, config: input.config }),
     ],
     iconArgs: await desktopIconArgs(scriptUrl, input.os),
     includeOut: !input.dev,

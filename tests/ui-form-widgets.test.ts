@@ -390,3 +390,27 @@ Deno.test("a union of nothing but finite scalars is one control, not a picker", 
   assertEquals(specAt("hsts").kind, "union");
   assertEquals(specAt("cache", "store").kind, "union");
 });
+
+// The Desktop panel edits `desktop.backend` with widgets, never a text box: one engine for every
+// target, or a per-OS object whose keys are each a closed choice.
+Deno.test("denext ui: desktop.backend is a choice of shape, each OS a closed set", async () => {
+  const schema = JSON.parse(
+    await Deno.readTextFile(new URL("../denext.config.schema.json", import.meta.url)),
+  );
+  const node = schema.properties.desktop.properties.backend;
+  const spec = widgetFor(node, ["desktop", "backend"], false);
+  assertEquals(spec.kind, "union");
+  const labels = spec.branches!.map((b) => b.label);
+  assertEquals(labels, ["webview", "cef", "object"]);
+  const byOs = spec.branches!.find((b) => b.label === "object")!.spec;
+  assertEquals(byOs.kind, "group");
+  for (const child of byOs.children ?? []) {
+    assert(child.kind === "segmented" || child.kind === "select", `${child.path}: ${child.kind}`);
+  }
+  assertEquals((byOs.children ?? []).map((c) => c.path.at(-1)), [
+    "macos",
+    "windows",
+    "linux",
+    "default",
+  ]);
+});

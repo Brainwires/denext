@@ -471,6 +471,9 @@ See [Writing a plugin](/docs/plugins).
   `sidecars` ([backends next to the window](/docs/desktop#desktop-sidecars)),
   `preload`, `inspectable`, the first window (`window`, `titleBar`, `backdrop`,
   `minSize`, `maxSize`), `installers`, `linux`, `extraPermissions` and `denoFlags`.
+  `desktop.backend` is the window engine, `"webview"` (default) or `"cef"`, for every
+  target or per OS (`{ macos?, windows?, linux?, default? }`); see
+  [Desktop apps › The window engine, per OS](/docs/desktop#desktop-backend).
 - **`mobile`** — `MobileConfig`. Capacitor shell settings for
   `denext mobile build` and `denext mobile assets`, such as build `flavors`
   (per-flavor app id, name, server URL, icon and splash) and the source `icon`

@@ -706,7 +706,8 @@ leaves it to `confirmAppUpdate()`. Packaging is least-privilege: `scripts/packag
 and a diff for each changed file). Installers: `desktop.installers.{macos,linux,windows}` (or
 `denext desktop package --format …`) — macOS `.dmg` (+ a signed `.pkg`), Linux `.tar.gz` + `.deb`
 (+ `.rpm`, AppImage), Windows a per-user-or-machine `.msi` (+ `.zip`); an empty list builds just
-the bundle.
+the bundle. The engine: `desktop.backend` (`"webview"` | `"cef"`, or per OS `{ linux: "cef" }` in
+denext.config.ts; deno.json's takes one string), resolved for each build's target.
 A stable window origin: `desktop.app.origin: "myapp://app"` (a custom scheme; it requires
 `desktop.app.identifier`) — the scripts write `.deno-desktop/app.json` + `compile.include` and the
 packaged `laufey-launch.json` (its `bridgeOrigins` limits the window's native JS bridge to the app

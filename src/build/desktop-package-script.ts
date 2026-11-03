@@ -16,6 +16,7 @@ import {
   desktopNetSplitFor,
   desktopRuntimeDenoFlags,
   desktopRuntimeEnv,
+  projectDesktopBackend,
 } from "./desktop-runtime.ts";
 import {
   type DesktopInstallerPlan,
@@ -356,7 +357,7 @@ export async function prepareDesktopPackage(
   await Deno.mkdir("dist", { recursive: true });
   if (args.export) await desktopRun(["deno", "task", "export"], desktopExportEnv(os));
   await syncDesktopAppConfig(entryUrl);
-  const meta = await desktopPackageMeta(entryUrl, appName);
+  const meta = await desktopPackageMeta(entryUrl, appName, os);
   for (const line of await desktopPackageMetaWarnings(entryUrl, meta)) console.warn(line);
   const webrtc = os === "linux"
     ? linuxWebRtcProblem(await loadConfigBeside(entryUrl), meta.backend)
@@ -513,6 +514,22 @@ export async function desktopIconArgs(
 }
 
 /**
+ * The `--backend <engine>` args for `deno desktop` on `os`: the project's `desktop.backend` for
+ * that OS (`denext.config.ts`, one engine or per OS, else deno.json's, else `"webview"`). Always
+ * passed, so the engine built is the one the runtime was fetched for, whatever deno.json says.
+ *
+ * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
+ * @param os The target OS.
+ * @returns `["--backend", "webview" | "cef"]`.
+ * @throws {Error} When the configured value is not a backend setting.
+ */
+export async function desktopBackendArgs(entryUrl: string, os: DesktopOs): Promise<string[]> {
+  const config = await loadConfigBeside(entryUrl);
+  const root = new URL(entryUrl).protocol === "file:" ? projectRootOf(entryUrl) : ".";
+  return ["--backend", await projectDesktopBackend(root, { target: os, config })];
+}
+
+/**
  * A filesystem-safe base name (spaces/punctuation → hyphens) for artifact paths.
  *
  * @param name The app name.
@@ -572,6 +589,8 @@ export async function desktopBundleCommand(
     ...await desktopNpmArgs(entryUrl),
     "--target",
     o.target,
+    // The target OS's engine (a per-OS `desktop.backend` can differ from deno.json's).
+    ...await desktopBackendArgs(entryUrl, os),
     ...await desktopIconArgs(entryUrl, os, o.icons),
   ];
   cmd.push("--output", o.out, "desktop.ts");
@@ -634,7 +653,7 @@ export async function buildDesktopBundle(
   if (os === "windows") {
     await desktopWindowsCefLayout(
       o.out,
-      await desktopPackageMeta(entryUrl, await desktopAppName(entryUrl)),
+      await desktopPackageMeta(entryUrl, await desktopAppName(entryUrl), "windows"),
     );
   }
   await writeLaufeyLaunchConfig(entryUrl, os, o.out);

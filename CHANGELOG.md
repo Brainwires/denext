@@ -10,6 +10,18 @@ and this project adheres to
 
 ### Added
 
+- **`desktop.backend` per OS.** `denext.config.ts` `desktop.backend` takes `"webview"`, `"cef"` or
+  `{ macos?, windows?, linux?, default? }` (the keys `desktop.installers` uses), so an app can ship
+  CEF on Linux, where WebKitGTK has no WebRTC, and the system WebView on macOS and Windows. Each
+  reader resolves it for its target: the package scripts pass `--backend` to `deno desktop` and
+  fetch that target's runtime flavour, the Windows CEF signature check and the Linux packages'
+  dependencies follow it, `desktop run` / `dev` and both doctors use the host's, and config
+  validation and the `denext ui` Desktop form know it. deno.json's `desktop.backend` stays the
+  one-engine fallback (`deno desktop` reads it as a string; a per-OS object there is refused with
+  the fix). A `scripts/package-macos.ts` from before this passes no `--backend`: `denext doctor`
+  and `denext desktop doctor` flag it, `denext desktop package` warns of it and refuses to run it
+  while the config gives macOS another engine than deno.json's (it would fetch one engine's runtime
+  and build the other); `denext desktop package --regenerate-scripts` fixes it.
 - **Deno Desktop apps can use the microphone and camera.** `denext desktop add microphone` (and
   `camera`) lets the page's own `getUserMedia` reach the device, for the app's own origin only:
   never another origin the window navigates to, and never a sub-frame of another origin (except on
