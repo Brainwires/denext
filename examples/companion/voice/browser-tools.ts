@@ -31,7 +31,17 @@ import { clip, tidy, UNTRUSTED_NOTE } from "./untrusted.ts";
 export interface HeldPost {
   readonly method: string;
   readonly url: string;
+  /**
+   * `request` (default): a paused request, sent on Yes. `connection`: a WebSocket, WebTransport
+   * or peer connection the page tried to open; it was refused, and Yes lets it through only when
+   * the page tries again.
+   */
+  readonly kind?: "request" | "connection";
 }
+
+/** What the model hears after a Yes when the page's connections had been refused. */
+export const RETRY_NOTE = "The page's connection attempt was refused while you acted; the user " +
+  "allowed it, so repeat the action within a few seconds if it is still needed.";
 
 /** The browser, as the tools drive it (voice/chrome.ts over Chrome, a fake in tests). */
 export interface BrowserDriver {
@@ -113,10 +123,16 @@ function askHeld(
   confirmations: Confirmations,
   answer: () => Promise<ToolResult>,
 ): ToolResult {
-  return confirmations.ask(heldPrompt(d.heldRequests()), {
+  const held = d.heldRequests();
+  const refused = held.some((h) => h.kind === "connection");
+  return confirmations.ask(heldPrompt(held), {
     run: async () => {
       await d.releaseHeld(true);
-      return await answer();
+      const result = await answer();
+      const output = result.output as Record<string, unknown> | null;
+      return refused && typeof output === "object" && output !== null
+        ? { ...result, output: { ...output, connections: RETRY_NOTE } }
+        : result;
     },
     cancel: () => d.releaseHeld(false),
   });

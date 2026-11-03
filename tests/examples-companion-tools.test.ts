@@ -5,7 +5,7 @@
 // the bubble's sources and question, the settings' tools and memories). Nothing here calls OpenAI
 // or needs an API key. The rest of Loopy is tests/examples-companion.test.ts.
 
-import { assert, assertEquals, assertExists, assertMatch } from "@std/assert";
+import { assert, assertEquals, assertExists, assertMatch, assertThrows } from "@std/assert";
 import { DatabaseSync } from "node:sqlite";
 import { join } from "@std/path";
 import { h } from "../src/jsx/jsx-runtime.ts";
@@ -46,6 +46,7 @@ import {
   heldPrompt,
   MAX_TYPED,
   pendingQuestion,
+  RETRY_NOTE,
 } from "../examples/companion/voice/browser-tools.ts";
 import {
   MAX_QUERY,
@@ -96,10 +97,20 @@ import {
   findChrome,
   PAGE_SCRIPT,
   pageCall,
+  targetIdOf,
   toPageElement,
   toSnapshot,
 } from "../examples/companion/voice/chrome.ts";
 import { answerLateQuestion, relayToolCalls } from "../examples/companion/lib/tool-relay.ts";
+import {
+  type Cdp,
+  type CdpEvent,
+  createTargetGuard,
+  guardScript,
+  guardSwitch,
+  type HeldItem,
+} from "../examples/companion/voice/cdp-guard.ts";
+import { cdpClient, CdpError, type SocketLike } from "../examples/companion/voice/cdp-client.ts";
 import {
   installQuitCleanup,
   installSignalCleanup,
@@ -1673,4 +1684,418 @@ Deno.test("loopy desktop: every quit path kills Chrome first", () => {
   assertMatch(entry, /installQuitCleanup\(\(\) => toolset\.killBrowser\(\), desktopApi\)/);
   assertMatch(entry, /quit: \(\) => quitLoopy\(\(\) => toolset\.killBrowser\(\), desktopApi\)/);
   assertMatch(entry, /voiceCapabilities\([\s\S]*toolset,\s*\)/);
+});
+
+// ---------------------------------------------------------------- targets, workers and connections
+
+/** A DevTools connection that records commands and answers them from `answers`. */
+function fakeCdp(
+  answers: Record<string, (params: Record<string, unknown>, session?: string) => unknown> = {},
+) {
+  const calls: { method: string; params: Record<string, unknown>; session?: string }[] = [];
+  const listeners: ((e: CdpEvent) => void)[] = [];
+  const cdp: Cdp = {
+    send(method, params = {}, session) {
+      calls.push({ method, params, session });
+      try {
+        return Promise.resolve(answers[method] ? answers[method](params, session) : {});
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    },
+    onEvent: (l) => void listeners.push(l),
+  };
+  const emit = (method: string, params: Record<string, unknown>, sessionId?: string) =>
+    listeners.forEach((l) => l({ method, params, ...(sessionId ? { sessionId } : {}) }));
+  const of = (session: string) => calls.filter((c) => c.session === session).map((c) => c.method);
+  return { cdp, calls, emit, of };
+}
+
+/** Let queued promise callbacks run. */
+const ticks = () => new Promise((r) => setTimeout(r, 0));
+
+Deno.test("loopy guard: the page and every target it starts are guarded before they run", async () => {
+  const f = fakeCdp({ "Page.addScriptToEvaluateOnNewDocument": () => ({ identifier: "s1" }) });
+  const gate = createPostGate();
+  const held: HeldItem[] = [];
+  const guard = createTargetGuard({ cdp: f.cdp, gate, token: "T0k", onHold: (i) => held.push(i) });
+  await guard.attachPage("P", "tP");
+  assertEquals(f.of("P"), [
+    "Fetch.enable",
+    "Runtime.addBinding",
+    "Page.enable",
+    "Page.addScriptToEvaluateOnNewDocument",
+    "Runtime.enable",
+    "Target.setAutoAttach",
+  ]);
+  const fetchEnable = f.calls.find((c) => c.method === "Fetch.enable")!;
+  assertEquals(fetchEnable.params, { patterns: [{ urlPattern: "*", requestStage: "Request" }] });
+  const auto = f.calls.find((c) => c.method === "Target.setAutoAttach")!;
+  assertEquals(auto.params, { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+  const script = f.calls.find((c) => c.method === "Page.addScriptToEvaluateOnNewDocument")!;
+  assertEquals(script.params.source, guardScript("T0k"));
+  assertEquals(script.params.runImmediately, true);
+
+  // A cross-site iframe: guarded like the page, then resumed.
+  f.emit("Target.attachedToTarget", {
+    sessionId: "I",
+    targetInfo: { type: "iframe", targetId: "tI" },
+    waitingForDebugger: true,
+  }, "P");
+  await ticks();
+  assertEquals(f.of("I").at(-1), "Runtime.runIfWaitingForDebugger");
+  assert(f.of("I").indexOf("Fetch.enable") < f.of("I").indexOf("Runtime.runIfWaitingForDebugger"));
+  // A dedicated worker: no Fetch of its own (its parent's catches its requests); the guard script
+  // and the binding are queued before it resumes.
+  f.emit("Target.attachedToTarget", {
+    sessionId: "W",
+    targetInfo: { type: "worker", targetId: "tW" },
+  }, "I");
+  await ticks();
+  assertEquals(f.of("W"), [
+    "Runtime.addBinding",
+    "Target.setAutoAttach",
+    "Runtime.evaluate",
+    "Runtime.runIfWaitingForDebugger",
+  ]);
+  const workerScript = f.calls.find((c) => c.session === "W" && c.method === "Runtime.evaluate")!;
+  assertMatch(String(workerScript.params.expression), /__loopyGuard\?\.\("T0k", false\)/);
+  // A service worker: its own Fetch first, then the same.
+  f.emit("Target.attachedToTarget", {
+    sessionId: "S",
+    targetInfo: { type: "service_worker", targetId: "tS" },
+  });
+  await ticks();
+  assertEquals(f.of("S")[0], "Fetch.enable");
+  assertEquals(f.of("S").at(-1), "Runtime.runIfWaitingForDebugger");
+  assertEquals(guard.sessions().map((s) => [s.id, s.kind, s.intercepted]), [
+    ["P", "page", true],
+    ["I", "page", true],
+    ["W", "worker", true],
+    ["S", "other", true],
+  ]);
+  f.emit("Target.detachedFromTarget", { sessionId: "S" });
+  assertEquals(guard.sessions().length, 3);
+});
+
+Deno.test("loopy guard: a target that can't be guarded is closed and never resumed", async () => {
+  const f = fakeCdp({
+    "Fetch.enable": (_p, s) => {
+      if (s === "SH") throw new Error("'Fetch.enable' wasn't found");
+      return {};
+    },
+    "Runtime.evaluate": (_p, s) => s === "W2" ? { exceptionDetails: { text: "boom" } } : {},
+  });
+  const guard = createTargetGuard({
+    cdp: f.cdp,
+    gate: createPostGate(),
+    token: "t",
+    onHold: () => {},
+  });
+  await guard.attachPage("P", "tP");
+  // A shared worker whose requests can't be intercepted.
+  f.emit("Target.attachedToTarget", {
+    sessionId: "SH",
+    targetInfo: { type: "shared_worker", targetId: "tSH" },
+  }, "P");
+  // A dedicated worker under a target Loopy never attached (its requests reach no interception).
+  f.emit("Target.attachedToTarget", {
+    sessionId: "W1",
+    targetInfo: { type: "worker", targetId: "tW1" },
+  }, "X");
+  await ticks();
+  for (const s of ["SH", "W1"]) {
+    assert(!f.of(s).includes("Runtime.runIfWaitingForDebugger"), `${s} stays paused`);
+  }
+  const closedTargets = f.calls.filter((c) => c.method === "Target.closeTarget").map((c) =>
+    c.params.targetId
+  );
+  assertEquals(closedTargets.sort(), ["tSH", "tW1"]);
+  // A worker whose guard script failed is closed too (it had to be resumed for the script to run).
+  f.emit("Target.attachedToTarget", {
+    sessionId: "W2",
+    targetInfo: { type: "worker", targetId: "tW2" },
+  }, "P");
+  await ticks();
+  await ticks();
+  assert(f.calls.some((c) => c.method === "Target.closeTarget" && c.params.targetId === "tW2"));
+  assertEquals(guard.sessions().map((s) => s.id), ["P"]);
+});
+
+Deno.test("loopy guard: writes from any target are held, connections reported, reads go on", async () => {
+  const f = fakeCdp();
+  let now = 0;
+  const gate = createPostGate(() => now);
+  const held: HeldItem[] = [];
+  const guard = createTargetGuard({ cdp: f.cdp, gate, token: "t", onHold: (i) => held.push(i) });
+  await guard.attachPage("P", "tP");
+  const pause = (session: string, requestId: string, method: string, url: string) =>
+    f.emit(
+      "Fetch.requestPaused",
+      { requestId, request: { method, url }, resourceType: "XHR" },
+      session,
+    );
+  pause("P", "r0", "POST", "https://a.example/outside");
+  gate.begin();
+  pause("P", "r1", "GET", "https://a.example/read");
+  pause("I", "r2", "POST", "https://b.example/collect");
+  pause("S", "r3", "PUT", "https://a.example/sw");
+  f.emit("Runtime.bindingCalled", {
+    name: "__loopyAttempt",
+    payload: JSON.stringify({ kind: "WebSocket", url: "wss://evil.example/x" }),
+  }, "W");
+  f.emit("Runtime.bindingCalled", { name: "other", payload: "{}" }, "W");
+  f.emit("Runtime.bindingCalled", { name: "__loopyAttempt", payload: "not json" }, "W");
+  await ticks();
+  const continued = f.calls.filter((c) => c.method === "Fetch.continueRequest")
+    .map((c) => [c.session, c.params.requestId]);
+  assertEquals(continued, [["P", "r0"], ["P", "r1"]], "outside Loopy's action, and reads, go on");
+  assertEquals(held, [
+    {
+      kind: "request",
+      sessionId: "I",
+      requestId: "r2",
+      method: "POST",
+      url: "https://b.example/collect",
+    },
+    {
+      kind: "request",
+      sessionId: "S",
+      requestId: "r3",
+      method: "PUT",
+      url: "https://a.example/sw",
+    },
+    { kind: "connection", sessionId: "W", method: "WebSocket", url: "wss://evil.example/x" },
+    { kind: "connection", sessionId: "W", method: "connection", url: "" },
+  ]);
+  await guard.release(held[0], false);
+  await guard.release(held[1], true);
+  await guard.release(held[2], true); // a refused connection has nothing to resume
+  const last = f.calls.slice(-2).map((
+    c,
+  ) => [c.method, c.session, c.params.requestId, c.params.errorReason]);
+  assertEquals(last, [
+    ["Fetch.failRequest", "I", "r2", "BlockedByClient"],
+    ["Fetch.continueRequest", "S", "r3", undefined],
+  ]);
+  now += 1;
+});
+
+Deno.test("loopy guard: switching it reaches every document and worker, and documents started meanwhile", async () => {
+  let id = 0;
+  const f = fakeCdp({
+    "Page.addScriptToEvaluateOnNewDocument": () => ({ identifier: `s${++id}` }),
+  });
+  const guard = createTargetGuard({
+    cdp: f.cdp,
+    gate: createPostGate(),
+    token: "Tk",
+    onHold: () => {},
+  });
+  await guard.attachPage("P", "tP");
+  f.emit(
+    "Runtime.executionContextCreated",
+    { context: { id: 1, auxData: { isDefault: true } } },
+    "P",
+  );
+  f.emit(
+    "Runtime.executionContextCreated",
+    { context: { id: 2, auxData: { isDefault: false } } },
+    "P",
+  );
+  f.emit(
+    "Runtime.executionContextCreated",
+    { context: { id: 3, auxData: { isDefault: true } } },
+    "P",
+  );
+  f.emit("Runtime.executionContextDestroyed", { executionContextId: 3 }, "P");
+  f.emit("Target.attachedToTarget", {
+    sessionId: "W",
+    targetInfo: { type: "worker", targetId: "tW" },
+  }, "P");
+  await ticks();
+  f.calls.length = 0;
+  await guard.setActing(true);
+  const on = f.calls.map((
+    c,
+  ) => [c.method, c.session, c.params.contextId ?? c.params.source ?? c.params.expression]);
+  assertEquals(on, [
+    ["Page.addScriptToEvaluateOnNewDocument", "P", guardSwitch("Tk", true)],
+    ["Runtime.evaluate", "W", guardSwitch("Tk", true)],
+    ["Runtime.evaluate", "P", 1],
+  ]);
+  f.calls.length = 0;
+  await guard.setActing(true); // already on: no second start script
+  assertEquals(
+    f.calls.filter((c) => c.method === "Page.addScriptToEvaluateOnNewDocument").length,
+    0,
+  );
+  f.calls.length = 0;
+  await guard.setActing(false);
+  assertEquals(f.calls.map((c) => c.method).sort(), [
+    "Page.removeScriptToEvaluateOnNewDocument",
+    "Runtime.evaluate",
+    "Runtime.evaluate",
+  ]);
+  assertEquals(
+    f.calls.find((c) => c.method === "Page.removeScriptToEvaluateOnNewDocument")?.params,
+    {
+      identifier: "s2",
+    },
+  );
+  f.emit("Runtime.executionContextsCleared", {}, "P");
+  f.calls.length = 0;
+  await guard.setActing(false);
+  assertEquals(f.calls.map((c) => c.session), ["W"], "a cleared page has no contexts to switch");
+  // A target attached while acting starts switched on.
+  await guard.setActing(true);
+  f.emit("Target.attachedToTarget", {
+    sessionId: "W9",
+    targetInfo: { type: "worker", targetId: "t9" },
+  }, "P");
+  await ticks();
+  const w9 = f.calls.find((c) => c.session === "W9" && c.method === "Runtime.evaluate")!;
+  assertMatch(String(w9.params.expression), /\("Tk", true\)/);
+});
+
+/** Run the guard script in a fake global scope (no browser): its constructors, its binding. */
+function guardedScope(token: string) {
+  const reports: string[] = [];
+  class FakeSocket {
+    constructor(readonly url: string) {}
+  }
+  class FakePeer {
+    createDataChannel(label: string) {
+      return { label };
+    }
+  }
+  const scope: Record<string, unknown> = {
+    WebSocket: FakeSocket,
+    WebTransport: class {
+      constructor(readonly url: string) {}
+    },
+    RTCPeerConnection: FakePeer,
+    __loopyAttempt: (payload: string) => void reports.push(payload),
+  };
+  new Function("globalThis", "DOMException", guardScript(token))(scope, DOMException);
+  const set = (t: string, on: boolean) =>
+    (scope.__loopyGuard as (t: string, on: boolean) => void)(t, on);
+  return { scope, reports, set, FakeSocket, FakePeer };
+}
+
+Deno.test("loopy guard script: connections are refused and reported only while Loopy acts", () => {
+  const { scope, reports, set, FakeSocket } = guardedScope("secret");
+  const WS = scope.WebSocket as new (url: string) => { url: string };
+  assertEquals(
+    new WS("wss://ok.example/").url,
+    "wss://ok.example/",
+    "works outside Loopy's windows",
+  );
+  assert(new WS("wss://x/") instanceof FakeSocket);
+  set("wrong", true);
+  assertEquals(new WS("wss://still.ok/").url, "wss://still.ok/", "only the token switches it");
+  set("secret", true);
+  const refused = (fn: () => unknown) => {
+    try {
+      fn();
+      return false;
+    } catch (e) {
+      return (e as DOMException).name === "NotAllowedError";
+    }
+  };
+  assert(refused(() => new WS("wss://evil.example/a")));
+  const ctor =
+    (FakeSocket.prototype as unknown as { constructor: new (u: string) => unknown }).constructor;
+  assert(refused(() => new ctor("wss://evil.example/proto")), "prototype.constructor is the guard");
+  const WT = scope.WebTransport as new (url: string) => unknown;
+  assert(refused(() => new WT("https://evil.example/wt")));
+  const Peer = scope.RTCPeerConnection as new () => { createDataChannel(l: string): unknown };
+  assert(refused(() => new Peer()));
+  set("secret", false);
+  const peer = new Peer();
+  set("secret", true);
+  assert(refused(() => peer.createDataChannel("exfil")), "a data channel on an existing peer");
+  assertEquals(reports.map((r) => JSON.parse(r)), [
+    { kind: "WebSocket", url: "wss://evil.example/a" },
+    { kind: "WebSocket", url: "wss://evil.example/proto" },
+    { kind: "WebTransport", url: "https://evil.example/wt" },
+    { kind: "RTCPeerConnection", url: "a peer-to-peer connection" },
+    { kind: "RTCDataChannel", url: "exfil" },
+  ]);
+  // The page can't undo it: the wrappers are locked, and running the script again does nothing.
+  assertThrows(() => (scope.WebSocket = FakeSocket), TypeError, "read only");
+  assert(refused(() => new (scope.WebSocket as typeof WS)("wss://evil.example/b")));
+  assertEquals(Object.getOwnPropertyDescriptor(scope, "__loopyGuard")?.configurable, false);
+  new Function("globalThis", "DOMException", guardScript("other"))(scope, DOMException);
+  set("secret", false);
+  assertEquals(new WS("wss://fine/").url, "wss://fine/", "the first install's token still rules");
+  assertEquals(guardSwitch('a"b', true), 'globalThis.__loopyGuard?.("a\\"b", true)');
+});
+
+Deno.test("loopy cdp client: commands carry their session; answers, errors and events come back", async () => {
+  const sent: Record<string, unknown>[] = [];
+  const target = new EventTarget();
+  let closedSocket = false;
+  const socket: SocketLike = {
+    send: (d) => void sent.push(JSON.parse(d)),
+    addEventListener: (t, l) => target.addEventListener(t, l),
+    close: () => void (closedSocket = true),
+  };
+  const client = cdpClient(socket);
+  const events: CdpEvent[] = [];
+  client.onEvent((e) => events.push(e));
+  const message = (data: unknown) =>
+    target.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(data) }));
+  const a = client.send("Fetch.enable", { patterns: [] }, "S1");
+  const b = client.send("Target.getTargets");
+  assertEquals(sent, [
+    { id: 1, method: "Fetch.enable", params: { patterns: [] }, sessionId: "S1" },
+    { id: 2, method: "Target.getTargets", params: {} },
+  ]);
+  message({ id: 2, result: { targetInfos: [] } });
+  message({ id: 1, error: { message: "'Fetch.enable' wasn't found" } });
+  message({ method: "Fetch.requestPaused", params: { requestId: "r" }, sessionId: "S1" });
+  message({ method: "Target.targetCreated" });
+  target.dispatchEvent(new MessageEvent("message", { data: "not json" }));
+  assertEquals(await b, { targetInfos: [] });
+  const err = await a.catch((e) => e);
+  assert(err instanceof CdpError);
+  assertEquals(err.message, "'Fetch.enable' wasn't found");
+  assertEquals(events, [
+    { method: "Fetch.requestPaused", params: { requestId: "r" }, sessionId: "S1" },
+    { method: "Target.targetCreated", params: {} },
+  ]);
+  const hanging = client.send("Runtime.evaluate");
+  target.dispatchEvent(new Event("close"));
+  assert(
+    (await hanging.catch((e) => e)) instanceof CdpError,
+    "a closed connection fails what waits",
+  );
+  assert((await client.send("X").catch((e) => e)) instanceof CdpError);
+  client.close();
+  assert(closedSocket);
+  assertEquals(targetIdOf("ws://127.0.0.1:9/devtools/page/ABC123?x"), "ABC123");
+  assertEquals(targetIdOf("ws://127.0.0.1:9/devtools/browser/x"), null);
+});
+
+Deno.test("loopy browser tools: a refused connection is asked about, and Yes says to try again", async () => {
+  const fake = fakeBrowser(page([el({ ref: 1, tag: "div", role: "button", text: "Chat" })]), {
+    postOn: 1,
+    sends: [{ method: "WebSocket", url: "wss://evil.example/live", kind: "connection" }],
+  });
+  const { run, confirmations } = toolsOver(fake.driver);
+  const asked = await run("browser_click", { ref: 1 });
+  assertEquals(
+    asked.confirm?.prompt,
+    "Loopy's browser wants to send data: WEBSOCKET wss://evil.example/live. Allow it?",
+  );
+  const yes = await confirmations.answer(asked.confirm!.id, true);
+  assertEquals((yes.output as { connections: string }).connections, RETRY_NOTE);
+  const post = fakeBrowser(page([el({ ref: 1, tag: "a", text: "Go", href: "https://s/" })]), {
+    postOn: 1,
+  });
+  const t = toolsOver(post.driver);
+  const q = (await t.run("browser_click", { ref: 1 })).confirm!;
+  const plain = (await t.confirmations.answer(q.id, true)).output as Record<string, unknown>;
+  assertEquals("connections" in plain, false, "a plain write needs no retry");
 });

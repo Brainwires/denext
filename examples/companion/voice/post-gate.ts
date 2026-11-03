@@ -31,6 +31,8 @@ export interface PostGate {
   approve(): void;
   /** Whether writes are being held now (an action runs, or its grace hasn't passed). */
   guarding(): boolean;
+  /** Whether the user's yes still lets writes through. */
+  approvedNow(): boolean;
   /**
    * The decision for a paused request: `continue` for a read (GET, HEAD, OPTIONS), outside an
    * action and its grace, or while approved; else `hold`.
@@ -59,6 +61,7 @@ export function createPostGate(now: () => number = Date.now): PostGate {
       approvedUntil = now() + APPROVED_MS;
     },
     guarding,
+    approvedNow: () => now() < approvedUntil,
     decide(request) {
       if (READS.has(request.method.toUpperCase())) return "continue";
       if (now() < approvedUntil || !guarding()) return "continue";

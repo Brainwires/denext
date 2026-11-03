@@ -219,13 +219,19 @@ back by number. The rules are enforced in code (`voice/browser-safety.ts`, `voic
   no implicit submit); field values are never read back;
 - a click on anything submit-like (a submit button, a button in a form that posts, anything labelled
   like Pay, Send, Delete or Place order) asks first: Loopy's bubble shows the question with **Yes**
-  / **No**, and only Yes clicks. Every request that writes (anything but GET, HEAD or a CORS
-  preflight: a form, a script's `fetch` / XHR, a beacon, of any resource type) made while Loopy acts
-  or in the 1.5 s after is held in the browser (DevTools `Fetch` interception of every request) and
-  asked about in one question naming each method, origin and path; No fails them all. One the page
-  sends after Loopy's tool call returned is asked about too: the page polls the backend (`pending`)
-  while a session is open, and the next browser tool call asks first. What you do in the window
-  yourself between Loopy's actions is never held;
+  / **No**, and only Yes clicks. Loopy's page and everything it starts (cross-site iframes,
+  dedicated, shared and service workers) are attached paused, guarded and only then resumed
+  (`Target.setAutoAttach` with `waitForDebuggerOnStart`, recursively, `voice/cdp-guard.ts`); a
+  target that can't be guarded is closed. Every request that writes (anything but GET, HEAD or a
+  CORS preflight: a form, a script's `fetch` / XHR, a beacon, of any resource type, from any of
+  those targets) made while Loopy acts or in the 1.5 s after is held (DevTools `Fetch` interception
+  of every request), and so is every WebSocket, WebTransport, RTCPeerConnection and RTCDataChannel
+  the page tries to open then (a script run before the target's own code refuses them; outside
+  Loopy's windows they work as usual). Held items are asked about in one question naming each
+  method, origin and path; No fails them all (a refused connection can only be retried: Yes allows
+  it for a few seconds). One the page sends after Loopy's tool call returned is asked about too: the
+  page polls the backend (`pending`) while a session is open, and the next browser tool call asks
+  first. What you do in the window yourself between Loopy's actions is never held;
 - no downloads (`Browser.setDownloadBehavior: deny`), no file uploads (file inputs are refused and
   file choosers never answered), no pop-ups (`--block-new-web-contents`), and JavaScript dialogs are
   dismissed.

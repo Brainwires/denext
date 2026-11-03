@@ -7,9 +7,11 @@
 // Guards that live in the browser itself:
 // - downloads are denied (`Browser.setDownloadBehavior`), and file choosers are intercepted and
 //   never answered, so nothing is downloaded or uploaded;
-// - every request the page makes (documents, `fetch` / XHR, beacons, any resource type) passes
-//   through the post gate (voice/post-gate.ts): one that writes, made while Loopy acts or just
-//   after, is held until the user answers;
+// - the page and everything it starts (cross-site iframes, workers, service workers) are attached
+//   paused and guarded before they run (voice/cdp-guard.ts): every request (documents, `fetch` /
+//   XHR, beacons, any resource type) passes through the post gate (voice/post-gate.ts), and
+//   WebSocket, WebTransport and peer connections are refused, while Loopy acts or just after,
+//   until the user answers; a target that can't be guarded is closed;
 // - pop-ups and new windows are blocked (`--block-new-web-contents`), links open in the same tab;
 // - JavaScript dialogs are dismissed.
 //
@@ -20,8 +22,10 @@ import { connect } from "@astral/astral";
 import type { Browser, Page } from "@astral/astral";
 import type { PageElement, PageSnapshot } from "./browser-safety.ts";
 import { MAX_ELEMENTS } from "./browser-safety.ts";
-import { type BrowserDriver, BrowserError, type HeldPost } from "./browser-tools.ts";
-import { createPostGate, type PausedRequest } from "./post-gate.ts";
+import { type BrowserDriver, BrowserError } from "./browser-tools.ts";
+import { cdpClient } from "./cdp-client.ts";
+import { createTargetGuard, type HeldItem, type TargetGuard } from "./cdp-guard.ts";
+import { createPostGate, GUARD_GRACE_MS } from "./post-gate.ts";
 
 /** The OS names Deno reports. */
 type Os = "darwin" | "windows" | "linux";
@@ -218,6 +222,10 @@ const LOAD_TIMEOUT_MS = 15_000;
 interface Running {
   readonly child: Deno.ChildProcess;
   readonly browser: Browser;
+  /** Loopy's own protocol connection, with flattened sessions (voice/cdp-client.ts). */
+  readonly cdp: ReturnType<typeof cdpClient>;
+  /** The guards over Loopy's page and everything it starts. */
+  readonly guard: TargetGuard;
   page: Page | null;
 }
 
@@ -243,7 +251,7 @@ async function readEndpoint(child: Deno.ChildProcess): Promise<string> {
 }
 
 /** Start Chrome visible on a fresh profile and connect to it. */
-async function launch(chromePath: string, profileDir: string): Promise<Running> {
+async function launch(chromePath: string, profileDir: string, held: Held): Promise<Running> {
   await Deno.remove(profileDir, { recursive: true }).catch(() => {});
   await Deno.mkdir(profileDir, { recursive: true });
   const child = new Deno.Command(chromePath, {
@@ -258,7 +266,19 @@ async function launch(chromePath: string, profileDir: string): Promise<Running> 
     void child.stderr.pipeTo(new WritableStream()).catch(() => {});
     const browser = await connect({ endpoint });
     await browser.unsafelyGetCelestialBindings().Browser.setDownloadBehavior({ behavior: "deny" });
-    return { child, browser, page: null };
+    const socket = new WebSocket(endpoint);
+    await new Promise((resolve, reject) => {
+      socket.addEventListener("open", resolve, { once: true });
+      socket.addEventListener("error", reject, { once: true });
+    });
+    const cdp = cdpClient(socket);
+    const guard = createTargetGuard({
+      cdp,
+      gate: GATE,
+      token: crypto.randomUUID(),
+      onHold: (item) => void held.list.push(item),
+    });
+    return { child, browser, cdp, guard, page: null };
   } catch (err) {
     try {
       child.kill("SIGKILL");
@@ -281,11 +301,6 @@ async function settle(page: Page): Promise<void> {
   }
 }
 
-/** The paused-navigation events Chrome sends (`Fetch.requestPaused`, the fields used). */
-interface PausedEvent {
-  readonly detail: { readonly requestId: string; readonly request: PausedRequest };
-}
-
 /** What {@linkcode createChromeBrowser} needs. */
 export interface ChromeOptions {
   /** The profile folder (wiped at each launch). */
@@ -306,21 +321,24 @@ export interface ChromeBrowser {
   kill(): void;
 }
 
-/** A held request and its paused id. */
-interface HeldRequest extends HeldPost {
-  readonly requestId: string;
-}
-
-/** The requests held now. */
+/** The requests and connections held now. */
 interface Held {
-  list: HeldRequest[];
+  list: HeldItem[];
 }
 
 /** The post gate for the browser's page (one browser per process). */
 const GATE = createPostGate();
 
-/** Make the page Loopy drives: dialogs dismissed, every request through the gate. */
-async function preparePage(running: Running, held: Held) {
+/** The target id in a page's DevTools address (`…/devtools/page/<id>`). */
+export function targetIdOf(wsUrl: string): string | null {
+  return wsUrl.match(/\/devtools\/page\/([^/?#]+)/)?.[1] ?? null;
+}
+
+/**
+ * Make the page Loopy drives: dialogs dismissed, and the page attached on Loopy's own connection
+ * and guarded (voice/cdp-guard.ts) with everything it starts.
+ */
+async function preparePage(running: Running) {
   const browserCdp = running.browser.unsafelyGetCelestialBindings();
   const before = await browserCdp.Target.getTargets({}).catch(() => ({ targetInfos: [] }));
   const page = await running.browser.newPage();
@@ -331,26 +349,30 @@ async function preparePage(running: Running, held: Held) {
     }
   }
   page.addEventListener("dialog", (e) => void e.detail.dismiss().catch(() => {}));
-  const cdp = page.unsafelyGetCelestialBindings();
-  cdp.addEventListener("Fetch.requestPaused", (e) => {
-    const { requestId, request } = (e as unknown as PausedEvent).detail;
-    if (GATE.decide(request) === "hold") {
-      held.list.push({ requestId, method: request.method, url: request.url });
-    } else void cdp.Fetch.continueRequest({ requestId }).catch(() => {});
-  });
-  // Every request, of every resource type, at the request stage.
-  await cdp.Fetch.enable({ patterns: [{ urlPattern: "*", requestStage: "Request" }] });
+  const targetId = targetIdOf(page.unsafelyGetCelestialBindings().ws.url);
+  if (!targetId) throw new BrowserError("Loopy's browser couldn't guard its page.");
+  const attached = await running.cdp.send("Target.attachToTarget", { targetId, flatten: true }) as {
+    sessionId?: string;
+  };
+  if (!attached.sessionId) throw new BrowserError("Loopy's browser couldn't guard its page.");
+  await running.guard.attachPage(attached.sessionId, targetId);
   return page;
 }
 
-/** Wait out an action's grace: until a request is held or the gate stops holding. */
+/** Wait out an action's grace: until something is held or the gate stops holding. */
 async function graceOver(held: Held): Promise<void> {
   while (held.list.length === 0 && GATE.guarding()) await sleep(100);
 }
 
+/** Switch the connection guard off once the gate has stopped holding (no newer action began). */
+function guardOffLater(guard: TargetGuard): void {
+  setTimeout(() => {
+    if (!GATE.guarding()) void guard.setActing(false).catch(() => {});
+  }, GUARD_GRACE_MS + 50);
+}
+
 /** The driver over `page`. */
-function pageDriver(page: Page, held: Held): BrowserDriver {
-  const cdp = page.unsafelyGetCelestialBindings();
+function pageDriver(page: Page, held: Held, guard: TargetGuard): BrowserDriver {
   const run = async (mode: string, arg: unknown): Promise<unknown> => {
     try {
       return await page.evaluate(pageCall(mode, arg));
@@ -362,26 +384,25 @@ function pageDriver(page: Page, held: Held): BrowserDriver {
     const list = held.list;
     held.list = [];
     if (list.length === 0) return;
-    if (allow) GATE.approve();
-    await Promise.all(
-      list.map((h) =>
-        (allow
-          ? cdp.Fetch.continueRequest({ requestId: h.requestId })
-          : cdp.Fetch.failRequest({ requestId: h.requestId, errorReason: "BlockedByClient" }))
-          .catch(() => {})
-      ),
-    );
+    if (allow) {
+      GATE.approve();
+      await guard.setActing(false);
+    }
+    await Promise.all(list.map((item) => guard.release(item, allow)));
     if (allow) await settle(page);
   };
-  // An action holds writes while it runs and through its grace, then returns: whatever it made
-  // the page send is in `held` by then, for the tools to ask about.
+  // An action holds writes and refuses connections while it runs and through its grace, then
+  // returns: whatever it made the page send is in `held` by then, for the tools to ask about.
   const act = async <T>(action: () => Promise<T>): Promise<T> => {
     GATE.begin();
+    await guard.setActing(!GATE.approvedNow());
     try {
       return await action();
     } finally {
       GATE.end();
       await graceOver(held);
+      if (!GATE.guarding()) await guard.setActing(false).catch(() => {});
+      else guardOffLater(guard);
     }
   };
   return {
@@ -415,7 +436,7 @@ function pageDriver(page: Page, held: Held): BrowserDriver {
           throw new BrowserError("There's no page to go back to.");
         });
       }),
-    heldRequests: () => held.list.map(({ method, url }) => ({ method, url })),
+    heldRequests: () => held.list.map(({ method, url, kind }) => ({ method, url, kind })),
     releaseHeld: release,
     approved: async (action) => {
       GATE.approve();
@@ -444,7 +465,7 @@ export function createChromeBrowser(options: ChromeOptions): ChromeBrowser {
     running = null;
     const path = (options.find ?? findChrome)();
     if (!path) throw new BrowserError("Loopy's browser needs Google Chrome or Chromium installed.");
-    starting ??= launch(path, options.profileDir).finally(() => (starting = null));
+    starting ??= launch(path, options.profileDir, held).finally(() => (starting = null));
     return running = await starting;
   };
 
@@ -453,14 +474,14 @@ export function createChromeBrowser(options: ChromeOptions): ChromeBrowser {
       const r = await ensure();
       if (!r.page || closed(r.page.unsafelyGetCelestialBindings().ws)) {
         held.list = [];
-        r.page = await preparePage(r, held);
+        r.page = await preparePage(r);
       }
-      return pageDriver(r.page, held);
+      return pageDriver(r.page, held, r.guard);
     },
     peek() {
       const page = running?.page;
-      return page && !closed(page.unsafelyGetCelestialBindings().ws)
-        ? pageDriver(page, held)
+      return page && running && !closed(page.unsafelyGetCelestialBindings().ws)
+        ? pageDriver(page, held, running.guard)
         : null;
     },
     async close() {
@@ -468,6 +489,7 @@ export function createChromeBrowser(options: ChromeOptions): ChromeBrowser {
       running = null;
       held.list = [];
       if (!r) return;
+      r.cdp.close();
       await r.browser.close().catch(() => {});
       try {
         r.child.kill("SIGTERM");
