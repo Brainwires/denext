@@ -18,8 +18,10 @@ and this project adheres to
   dependencies follow it, `desktop run` / `dev` and both doctors use the host's, and config
   validation and the `denext ui` Desktop form know it. deno.json's `desktop.backend` stays the
   one-engine fallback (`deno desktop` reads it as a string; a per-OS object there is refused with
-  the fix). A `scripts/package-macos.ts` from before this passes no `--backend`: regenerate it
-  (`denext desktop package --regenerate-scripts`) before giving macOS an engine of its own.
+  the fix). A `scripts/package-macos.ts` from before this passes no `--backend`: `denext doctor`
+  and `denext desktop doctor` flag it, `denext desktop package` warns of it and refuses to run it
+  while the config gives macOS another engine than deno.json's (it would fetch one engine's runtime
+  and build the other); `denext desktop package --regenerate-scripts` fixes it.
 
 ## [4.11.13] - 2026-11-02
 

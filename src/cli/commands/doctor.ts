@@ -39,6 +39,7 @@ import {
   isDesktopProject,
   launchPolicyProblems,
   readProjectDenoJson as readDenoJson,
+  staleBackendPackageScripts,
   stalePackageScripts,
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
@@ -801,6 +802,7 @@ export async function desktopLaunchPolicyCheck(
     config,
     desktopBridgeOrigins,
     await stalePackageScripts(dir),
+    await staleBackendPackageScripts(dir),
   );
   const pinned = desktopPasskeyRpIds(config) === null
     ? "bridgeOrigins"

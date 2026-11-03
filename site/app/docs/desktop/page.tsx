@@ -251,10 +251,11 @@ export default {
         </li>
         <li>
           A <code>scripts/package-macos.ts</code> written before per-OS backends passes no{" "}
-          <code>--backend</code>: regenerate it (
-          <code>denext desktop package --regenerate-scripts</code>) before giving macOS an engine
-          other than deno.json&apos;s. The Linux and Windows builds read it through{" "}
-          <code>denext/desktop</code>.
+          <code>--backend</code>: both doctors flag it, and <code>denext desktop package</code>{" "}
+          refuses to run it while the config gives macOS an engine other than deno.json&apos;s (it
+          would fetch one engine&apos;s runtime and build the other). Regenerate it with{" "}
+          <code>denext desktop package --regenerate-scripts</code>. The Linux and Windows builds
+          read it through <code>denext/desktop</code>.
         </li>
       </ul>
       <h3 id="desktop-deno-flags">Extra deno desktop flags</h3>

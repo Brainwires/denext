@@ -27,7 +27,9 @@ import { desktopLaunchBuildPlan } from "../src/build/desktop-launch.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import { runDesktopDoctor } from "../src/build/desktop-doctor.ts";
-import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
+import { desktopLaunchPolicyCheck, desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
+import { projectLaunchPolicy } from "../src/cli/commands/desktop-doctor.ts";
+import { staleBackendMismatch } from "../src/cli/commands/desktop.ts";
 
 const LINUX_CEF = { desktop: { backend: { linux: "cef" } } } as const;
 const LINUX = "x86_64-unknown-linux-gnu";
@@ -273,4 +275,55 @@ Deno.test("config validation: desktop.backend takes an engine or a per-OS object
   assertThrows(() => validate({ linux: "chromium" }), Error, "`desktop.backend.linux` must be");
   assertThrows(() => validate({ android: "cef" }), Error, 'unknown key "android"');
   assertThrows(() => validate("gtk"), Error, "`desktop.backend` must be");
+});
+
+/** The macOS template with its desktopBackendArgs call taken out (a script from before it). */
+const STALE_MACOS_SCRIPT = MACOS_PACKAGE_SCRIPT
+  .replace(/^.*desktop\.backend.*\n.*desktopBackendArgs.*\n/m, "")
+  .replace(/^.*The macOS engine.*\n.*desktopBackendArgs.*\n/m, "");
+
+Deno.test("both doctors flag a macOS package script that never passes desktop.backend", async () => {
+  assert(!STALE_MACOS_SCRIPT.includes("desktopBackendArgs"), "template shape moved");
+  const { dir } = await project(CONFIG_SOURCE, { desktop: { backend: "webview" } });
+  try {
+    const script = join(dir, "scripts", "package-macos.ts");
+    await Deno.writeTextFile(script, MACOS_PACKAGE_SCRIPT);
+    assertEquals(await projectLaunchPolicy(dir), []);
+    assertEquals((await desktopLaunchPolicyCheck(dir, LINUX_CEF))!.ok, true);
+    await Deno.writeTextFile(script, STALE_MACOS_SCRIPT);
+    const [problem] = (await projectLaunchPolicy(dir))!;
+    assertStringIncludes(problem.message, "scripts/package-macos.ts never passes desktop.backend");
+    assertEquals(problem.fix, "denext desktop package --regenerate-scripts");
+    const check = (await desktopLaunchPolicyCheck(dir, LINUX_CEF))!;
+    assertEquals(check.ok, false);
+    assertStringIncludes(check.detail, "never passes desktop.backend");
+    assertStringIncludes(check.detail, "--regenerate-scripts");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("staleBackendMismatch: refused only while macOS's engine differs from deno.json's", async () => {
+  const { dir } = await project(null, { desktop: { backend: "webview" } });
+  try {
+    // macOS keeps the system WebView either way: the stale script builds the right engine.
+    assertEquals(await staleBackendMismatch(dir, LINUX_CEF, "package-macos.ts"), null);
+    assertEquals(await staleBackendMismatch(dir, undefined, "package-macos.ts"), null);
+    const refused = await staleBackendMismatch(
+      dir,
+      { desktop: { backend: { macos: "cef" } } },
+      "package-macos.ts",
+    );
+    assertStringIncludes(refused!, "scripts/package-macos.ts does not pass desktop.backend");
+    assertStringIncludes(refused!, 'build deno.json\'s "webview" engine on the "cef" runtime');
+    assertStringIncludes(refused!, "--regenerate-scripts");
+    // One engine for every OS that matches deno.json's: nothing to refuse.
+    await Deno.writeTextFile(join(dir, "deno.json"), '{ "desktop": { "backend": "cef" } }');
+    assertEquals(
+      await staleBackendMismatch(dir, { desktop: { backend: "cef" } }, "package-macos.ts"),
+      null,
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
