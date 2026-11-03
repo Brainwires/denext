@@ -16875,6 +16875,18 @@
             },
             {
               "kind": "property",
+              "name": "microphone",
+              "signature": "microphone?: boolean | DesktopMediaCaptureConfig",
+              "doc": "The page's `getUserMedia({ audio })` gets the microphone, for the app's own origin only (never\nanother origin the window navigates to, nor a sub-frame of another origin). The packaged app's\n`laufey-launch.json` carries the grant (`\"mediaCapture\"`, Deno Desktop runtime 3.0.0-denext.9+;\nan older runtime refuses every request), macOS's `Info.plist` its\n`NSMicrophoneUsageDescription`, and a signed macOS build the\n`com.apple.security.device.audio-input` entitlement. macOS still asks the user once."
+            },
+            {
+              "kind": "property",
+              "name": "camera",
+              "signature": "camera?: boolean | DesktopMediaCaptureConfig",
+              "doc": "The page's `getUserMedia({ video })` gets the camera, as {@link microphone} the microphone\n(`NSCameraUsageDescription`, `com.apple.security.device.camera`)."
+            },
+            {
+              "kind": "property",
               "name": "echo",
               "signature": "echo?: boolean",
               "doc": "The `echo` diagnostic capability (bridge connectivity check)."
@@ -17208,6 +17220,26 @@
               "name": "userActivityTypes",
               "signature": "userActivityTypes?: string[]",
               "doc": "The user activity types the app continues (Handoff from another device, a Spotlight result):\nreverse-DNS names, written to the bundle's `NSUserActivityTypes` by the package script. A type\n`setUserActivity` (in `denext/desktop/app`) sets must be listed here for\n`onUserActivityContinued` to receive it."
+            }
+          ]
+        },
+        {
+          "name": "DesktopMediaCaptureConfig",
+          "slug": "DesktopMediaCaptureConfig",
+          "kind": "interface",
+          "signature": "interface DesktopMediaCaptureConfig",
+          "doc": "desktop.capabilities.microphone / camera options.",
+          "docFull": "`desktop.capabilities.microphone` / `camera` options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "usageDescription",
+              "signature": "usageDescription?: string",
+              "doc": "What macOS shows when it asks the user for the device (`NSMicrophoneUsageDescription` /\n`NSCameraUsageDescription`). Default: \"<app name> uses your microphone.\" / \"… camera.\"."
             }
           ]
         },
@@ -45771,8 +45803,8 @@
           "slug": "desktopMacosSigning-fn",
           "kind": "function",
           "signature": "desktopMacosSigning(entryUrl: string, options?: DesktopMacosSigningOptions): Promise<DesktopMacosSigning>",
-          "doc": "Resolve desktop.macos for a packaging run: check the provisioning profile against the app and write the entitlements to sign with. With neither a profile nor config entitlements, the DENEXT_ENTITLEMENTS plist (if any) is passed through unchanged.",
-          "docFull": "Resolve `desktop.macos` for a packaging run: check the provisioning profile against the app and\nwrite the entitlements to sign with. With neither a profile nor config entitlements, the\n`DENEXT_ENTITLEMENTS` plist (if any) is passed through unchanged.",
+          "doc": "Resolve desktop.macos for a packaging run: check the provisioning profile against the app and write the entitlements to sign with: desktop.macos.entitlements over the microphone / camera capabilities' (com.apple.security.device.audio-input / .camera). With neither a profile nor any of those, the DENEXT_ENTITLEMENTS plist (if any) is passed through unchanged.",
+          "docFull": "Resolve `desktop.macos` for a packaging run: check the provisioning profile against the app and\nwrite the entitlements to sign with: `desktop.macos.entitlements` over the microphone / camera\ncapabilities' (`com.apple.security.device.audio-input` / `.camera`). With neither a profile nor\nany of those, the `DENEXT_ENTITLEMENTS` plist (if any) is passed through unchanged.",
           "params": [
             {
               "name": "entryUrl",
@@ -47624,6 +47656,12 @@
               "name": "activationPolicy",
               "signature": "readonly activationPolicy?: boolean",
               "doc": "Whether the runtime reads `\"activationPolicy\"` (default `activationPolicyRuntime()`: denext's\npinned runtime from `3.0.0-denext.6`)."
+            },
+            {
+              "kind": "property",
+              "name": "mediaCapture",
+              "signature": "readonly mediaCapture?: boolean",
+              "doc": "Whether the runtime reads `\"mediaCapture\"` (default `mediaCaptureRuntime()`: denext's pinned\nruntime from `3.0.0-denext.9`)."
             }
           ]
         },

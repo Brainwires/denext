@@ -36,12 +36,15 @@ import {
 } from "../../build/desktop-app-config.ts";
 import {
   desktopPasskeyRpIds,
+  desktopRuntimeLabel,
   isDesktopProject,
   launchPolicyProblems,
+  mediaCaptureRuntime,
   readProjectDenoJson as readDenoJson,
   stalePackageScripts,
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
+import { mediaCaptureRuntimeProblem } from "../../build/desktop-media-capture.ts";
 import { DENEXT_EXCLUDE, denextExemptions } from "../../build/dep-age.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
 import {
@@ -785,8 +788,8 @@ export async function desktopOriginCheck(dir: string, config: unknown): Promise<
  * The packaged launch-policy check, for a desktop project (null otherwise): whether the
  * `laufey-launch.json` the package scripts write would pin the window's bridge (`bridgeOrigins`)
  * and, with passkeys enabled, their relying parties (`passkeyRpIds`), which the strict launch
- * policy (runtime 3.0.0-denext.1+) otherwise fails closed on; and whether the scripts write it at
- * all. Advisory.
+ * policy (runtime 3.0.0-denext.1+) otherwise fails closed on; whether the scripts write it at
+ * all; and whether the runtime reads the microphone / camera grant (`mediaCapture`). Advisory.
  *
  * @param dir The project directory.
  * @param config The loaded project config.
@@ -802,6 +805,14 @@ export async function desktopLaunchPolicyCheck(
     desktopBridgeOrigins,
     await stalePackageScripts(dir),
   );
+  const media = mediaCaptureRuntimeProblem(config, mediaCaptureRuntime(), desktopRuntimeLabel());
+  if (media) {
+    problems.push({
+      message: media,
+      fix:
+        "upgrade denext once it pins that runtime (`denext upgrade`), or turn the capability off",
+    });
+  }
   const pinned = desktopPasskeyRpIds(config) === null
     ? "bridgeOrigins"
     : "bridgeOrigins + passkeyRpIds";

@@ -32,4 +32,6 @@ export const DESKTOP_ADD_CAPABILITY_KEYS = [
   "globalShortcuts",
   "launchAtLogin",
   "updates",
+  "microphone",
+  "camera",
 ] as const;

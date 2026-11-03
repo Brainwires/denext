@@ -46,6 +46,7 @@ import { desktopDoctor } from "./desktop-doctor.ts";
 import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
 import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
+import { desktopMediaCapture } from "../../build/desktop-media-capture.ts";
 import {
   DESKTOP_RUNTIME_ATTEST_ENV,
   DESKTOP_RUNTIME_PIN,
@@ -207,6 +208,14 @@ async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWi
     // packaging.
     ship: false,
   });
+  const media = Object.keys(desktopMediaCapture(config));
+  if (media.length > 0) {
+    console.warn(
+      `  denext desktop: desktop.capabilities.${media.join(" / ")} applies to the packaged app ` +
+        "only (its laufey-launch.json grant): this window refuses getUserMedia (NotAllowedError). " +
+        "Try capture in the browser (`denext dev`) or a packaged build.",
+    );
+  }
   const env = {
     ...unpackagedLaunchEnv(config, dev ? "dev" : "run"),
     ...(dev ? await devPreloadEnv(paths) : {}),

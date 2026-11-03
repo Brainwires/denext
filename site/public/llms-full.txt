@@ -632,7 +632,7 @@ https://denext.dev/docs/navigation-native
 **Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
 (`secure-store`, `fs`, `sqlite`, `context-menu`, `shell`, `dialogs`, `notifications`,
-`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`; written to
+`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`, `microphone`, `camera`; written to
 `desktop.capabilities`), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
@@ -1898,6 +1898,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopInstallersConfig` — DesktopConfig.installers: the installer formats per OS, and what they say about the app.
 - `interface DesktopLinuxConfig` — DesktopConfig.linux: Linux launch settings of the packaged app.
 - `interface DesktopMacosConfig` — DesktopConfig.macos: the macOS provisioning profile and entitlements.
+- `interface DesktopMediaCaptureConfig` — desktop.capabilities.microphone / camera options.
 - `interface DesktopPasskeysConfig` — desktop.capabilities.passkeys options.
 - `interface DesktopShellConfig` — The shell desktop capability's scoped options (an allowlist per action).
 - `interface DesktopSidecarConfig` — One DesktopConfig.sidecars entry: a backend the app runs and supervises (the data form of defineSidecar from denext/desktop, whose runDesktop({ sidecars }) also takes functions and a bootstrap value).
@@ -2942,7 +2943,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `type DesktopInstallerFormat = (typeof DESKTOP_INSTALLER_FORMATS)[keyof typeof DESKTOP_INSTALLER_FORMATS][number]` — One installer format (desktop.installers.<os> entries, --format values).
 - `desktopInstallerPlan(entryUrl: string, os: DesktopOs, requested?: readonly string[], add?: readonly string[]): Promise<DesktopInstallerPlan>` — planDesktopInstallers for the project whose scripts/ holds entryUrl (its denext.config.ts supplies desktop.installers).
 - `interface DesktopInstallerPlan` — What a package script builds.
-- `desktopMacosSigning(entryUrl: string, options?: DesktopMacosSigningOptions): Promise<DesktopMacosSigning>` — Resolve desktop.macos for a packaging run: check the provisioning profile against the app and write the entitlements to sign with. With neither a profile nor config entitlements, the DENEXT_ENTITLEMENTS plist (if any) is passed through unchanged.
+- `desktopMacosSigning(entryUrl: string, options?: DesktopMacosSigningOptions): Promise<DesktopMacosSigning>` — Resolve desktop.macos for a packaging run: check the provisioning profile against the app and write the entitlements to sign with: desktop.macos.entitlements over the microphone / camera capabilities' (com.apple.security.device.audio-input / .camera). With neither a profile nor any of those, the DENEXT_ENTITLEMENTS plist (if any) is passed through unchanged.
 - `interface DesktopMacosSigning` — What desktop.macos resolves to for one packaging run.
 - `interface DesktopMacosSigningOptions` — Options for desktopMacosSigning.
 - `type DesktopMainThreadFn = Deno.UnsafeFnPointer<any> | Deno.UnsafeCallback<any> | Deno.PointerObject` — A C function void* fn(void* context) that DesktopCapCtx.runOnMainThread calls on the UI thread: a Deno.UnsafeFnPointer, a Deno.UnsafeCallback, or a function pointer.

@@ -2080,6 +2080,37 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
             </td>
             <td>none</td>
           </tr>
+          <tr>
+            <td>
+              <code>microphone</code>
+            </td>
+            <td>
+              the page&apos;s own{" "}
+              <code>getUserMedia({"{ audio: true }"})</code>, for the app origin only
+              (<a href="#desktop-media-capture">packaged app</a>; runtime 3.0.0-denext.9+)
+            </td>
+            <td>
+              none (the webview captures; macOS: <code>NSMicrophoneUsageDescription</code> and the
+              {" "}
+              <code>audio-input</code> entitlement)
+            </td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td>
+              <code>camera</code>
+            </td>
+            <td>
+              the page&apos;s own{" "}
+              <code>getUserMedia({"{ video: true }"})</code>, for the app origin only
+              (<a href="#desktop-media-capture">packaged app</a>; runtime 3.0.0-denext.9+)
+            </td>
+            <td>
+              none (macOS: <code>NSCameraUsageDescription</code> and the <code>camera</code>{" "}
+              entitlement)
+            </td>
+            <td>none</td>
+          </tr>
         </tbody>
       </table>
       <Callout kind="note">
@@ -3087,6 +3118,66 @@ const { globalShortcuts, userBinds } = await shortcutCapabilities(); // userBind
 
 const state = await setLaunchAtLogin(true);
 if (state === "requires-approval") hint("Allow Acme in System Settings › Login Items");`}
+      </Code>
+
+      <h3 id="desktop-media-capture">The microphone and camera</h3>
+      <p>
+        A page captures with the web&apos;s own <code>navigator.mediaDevices.getUserMedia</code>
+        {" "}
+        (a voice UI, a video call). The window refuses every request by default.{" "}
+        <code>denext desktop add microphone</code> (and{" "}
+        <code>camera</code>) grants the device to the app&apos;s own origin alone (<code>
+          desktop.app.origin
+        </code>, else{" "}
+        <code>app://localhost</code>): never another origin the window navigates to, and never a
+        sub-frame of another origin, even one the page delegates the device to with{" "}
+        <code>allow="microphone"</code>{" "}
+        (on Linux, where WebKitGTK does not say which frame asks, such a delegation is honoured).
+        Packaging writes three things:
+      </p>
+      <ul>
+        <li>
+          the grant in the packaged app&apos;s <code>laufey-launch.json</code>{" "}
+          (<code>"mediaCapture"</code>), which the webview backend enforces natively: WKWebView,
+          CEF, WebView2 and WebKitGTK alike. It needs Deno Desktop runtime 3.0.0-denext.9 or later;
+          an older runtime refuses every request with{" "}
+          <code>NotAllowedError</code>, and the package scripts and <code>denext doctor</code>{" "}
+          say so;
+        </li>
+        <li>
+          on macOS, <code>NSMicrophoneUsageDescription</code> /{" "}
+          <code>NSCameraUsageDescription</code> in{" "}
+          <code>Info.plist</code>: the text macOS shows when it asks the user, from{" "}
+          <code>{"{ usageDescription }"}</code>{" "}
+          (default: &quot;&lt;app&gt; uses your microphone.&quot;). Without it macOS would end the
+          app the first time the page captures;
+        </li>
+        <li>
+          on a signed macOS build, the Hardened Runtime entitlements{" "}
+          <code>com.apple.security.device.audio-input</code> /{" "}
+          <code>com.apple.security.device.camera</code> (a <code>false</code> in{" "}
+          <code>desktop.macos.entitlements</code> wins).
+        </li>
+      </ul>
+      <p>
+        The OS still asks the user: macOS once per app (System Settings › Privacy &amp; Security),
+        Windows through its privacy switches for desktop apps. A refusal there reaches the page as
+        {" "}
+        <code>NotAllowedError</code> too. An unpackaged window (<code>denext desktop run</code> /
+        {" "}
+        <code>dev</code>) has no launch file, so it refuses the device: build and test the capture
+        UI in the browser with <code>denext dev</code>, where the browser asks.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  capabilities: {
+    microphone: { usageDescription: "Acme listens while you hold the talk key." },
+  },
+},
+
+// the page
+const stream = await navigator.mediaDevices.getUserMedia({ audio: true });`}
       </Code>
 
       <h3 id="desktop-devtools">DevTools</h3>

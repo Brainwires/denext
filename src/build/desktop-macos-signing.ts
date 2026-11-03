@@ -20,6 +20,7 @@ import {
 } from "./plist-value.ts";
 import { loadConfigBeside, readDenoJson } from "./desktop-installers.ts";
 import { runToExit } from "./exited-output.ts";
+import { mediaCaptureEntitlements } from "./desktop-media-capture.ts";
 
 /** One entitlement's value as `desktop.macos.entitlements` writes it. */
 type EntitlementValue = string | number | boolean | string[];
@@ -366,8 +367,9 @@ async function profileEntitlements(
 
 /**
  * Resolve `desktop.macos` for a packaging run: check the provisioning profile against the app and
- * write the entitlements to sign with. With neither a profile nor config entitlements, the
- * `DENEXT_ENTITLEMENTS` plist (if any) is passed through unchanged.
+ * write the entitlements to sign with: `desktop.macos.entitlements` over the microphone / camera
+ * capabilities' (`com.apple.security.device.audio-input` / `.camera`). With neither a profile nor
+ * any of those, the `DENEXT_ENTITLEMENTS` plist (if any) is passed through unchanged.
  *
  * @param entryUrl `import.meta.url` of `scripts/package-macos.ts` (the project is its parent).
  * @param options The signing identity, `DENEXT_ENTITLEMENTS`, `DENEXT_PROVISIONING_PROFILE`.
@@ -386,8 +388,13 @@ export async function desktopMacosSigning(
     ? macos.provisioningProfile
     : undefined;
   const setting = options.provisioningProfile || configured;
-  const overlay = macos.entitlements as Record<string, EntitlementValue> | undefined;
-  if (!setting && Object.keys(overlay ?? {}).length === 0) {
+  // The microphone / camera capabilities' Hardened Runtime entitlements, under the config's own
+  // (an explicit `false` there wins).
+  const overlay: Record<string, EntitlementValue> = {
+    ...mediaCaptureEntitlements(config),
+    ...macos.entitlements as Record<string, EntitlementValue> | undefined,
+  };
+  if (!setting && Object.keys(overlay).length === 0) {
     return { entitlements: options.entitlements };
   }
   let entitlements = mergeEntitlements(await readBaseEntitlements(options.entitlements), overlay);

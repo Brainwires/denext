@@ -313,6 +313,25 @@ export function supportsDesktopCacheToken(version: string): boolean {
   return compareDenoVersions(version, FIRST_DESKTOP_CACHE_TOKEN_RUNTIME) >= 0;
 }
 
+/**
+ * The first Deno Desktop runtime whose webview backend decides a page's microphone and camera
+ * requests (laufey API 53, `feat/media-capture-permission`): it reads `"mediaCapture"` in
+ * `laufey-launch.json` and grants `getUserMedia` to the origins listed there. An older runtime
+ * refuses every request (or, CEF, leaves it to Chrome's prompt, which the host never shows).
+ */
+export const FIRST_MEDIA_CAPTURE_RUNTIME = "3.0.0-denext.9";
+
+/**
+ * Whether the Deno Desktop runtime `version` grants the microphone and camera from the launch
+ * file (from {@linkcode FIRST_MEDIA_CAPTURE_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether `"mediaCapture"` is read.
+ */
+export function supportsMediaCapture(version: string): boolean {
+  return compareDenoVersions(version, FIRST_MEDIA_CAPTURE_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 
