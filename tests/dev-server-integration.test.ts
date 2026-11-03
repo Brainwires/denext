@@ -316,8 +316,6 @@ const STEPS: Array<[string, (ctx: Ctx) => Promise<void> | void]> = [
 
 Deno.test({
   name: "dev server (unbundled default-on) serves the full dev + app surface",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   // DENEXT_EDITOR=true → the open-in-editor endpoint spawns the harmless `true`
   // binary instead of launching the developer's real editor. DEV_TYPECHECK=0 keeps

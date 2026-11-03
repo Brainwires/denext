@@ -19,6 +19,7 @@
 
 import type { CommandRegistry, CommandSpec } from "../command.ts";
 import { forwardedDenoVerbs } from "../deno-verbs.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** One completion row: a verb and its one-line summary. */
 interface Row {
@@ -145,12 +146,7 @@ const emit: Record<string, (reg: CommandRegistry) => string> = {
 /** Build the `completions` verb bound to `reg` (so it lists the real verb set). */
 export function makeCompletionsCommand(reg: CommandRegistry): CommandSpec {
   return {
-    name: "completions",
-    summary: "Print a shell completion script (bash|zsh|fish)",
-    usage: "Completes denext's verbs, the Deno verbs denext forwards and the project's own as\n" +
-      "`denext commands` last listed them (it never imports the project's config).\n" +
-      "Deno's own completion script (`deno completions`): `denext deno completions <shell>`.",
-    positionals: [{ name: "shell", help: "bash | zsh | fish", required: true }],
+    ...commandMeta("completions"),
     run: (ctx) => {
       const shell = ctx.positionals[0];
       const script = emit[shell ?? ""];

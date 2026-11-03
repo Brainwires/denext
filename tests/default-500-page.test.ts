@@ -4,7 +4,7 @@
 // request id); a request that doesn't take HTML still gets the plain text.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 

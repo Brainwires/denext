@@ -190,10 +190,16 @@ Deno.test("expo-print: the printer plugin in the shell; an iframe on the web", a
       },
     },
   };
-  await withGlobals({ document, print: () => printed.push("page") }, async () => {
-    await Print.printAsync({ html: "<p>Receipt</p>" });
-    await Print.printAsync({});
-  });
+  // The frame's removal a second after printing runs at once here (a timer left for it would
+  // outlive the test).
+  const removeAtOnce = (fn: () => void) => (fn(), 0);
+  await withGlobals(
+    { document, print: () => printed.push("page"), setTimeout: removeAtOnce },
+    async () => {
+      await Print.printAsync({ html: "<p>Receipt</p>" });
+      await Print.printAsync({});
+    },
+  );
   assertEquals(printed, ["frame:<p>Receipt</p>", "page"]);
   assert(appended[0].style.cssText.includes("width:0"));
   // The caller's HTML is sandboxed: it may print (modals; same origin so the page can call

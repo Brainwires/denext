@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno run --allow-read --allow-env=HOME,USERPROFILE,APPDATA,XDG_DATA_HOME,LOOPY_INBOX --allow-net=127.0.0.1 /path/to/denext/examples/companion/scripts/loopy-say.ts --from-hook"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "deno run --allow-read --allow-env=HOME,USERPROFILE,APPDATA,XDG_DATA_HOME,LOOPY_INBOX --allow-net=127.0.0.1 /path/to/denext/examples/companion/scripts/loopy-say.ts --from-hook"
+          }
+        ]
+      }
+    ]
+  }
+}

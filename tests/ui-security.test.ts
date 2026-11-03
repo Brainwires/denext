@@ -24,6 +24,10 @@ import {
 import { startUiServer, type UiServer } from "../src/ui/server.ts";
 import { uiHandshake } from "./helpers/ui-session.ts";
 import { FILE_SYMLINKS, symlinkDir } from "./helpers/symlink.ts";
+import { releaseFetchBodies } from "./helpers/unread-bodies.ts";
+
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
 
 /**
  * A started server, handshaken: `cookie` is the `Cookie` header value the exchange minted and

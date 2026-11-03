@@ -39,8 +39,6 @@ const releaseAndRead = (release: string, id: string) =>
 
 Deno.test({
   name: "asyncContext e2e: a lazily imported module's async transition keeps its scope",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const built = await runDeno(["run", "-A", CLI, "build", "."], FIXTURE, 600_000);
     if (!built.ok) throw new Error(`denext build failed:\n${built.out}`);

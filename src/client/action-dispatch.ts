@@ -58,6 +58,8 @@ interface ActionReply {
   redirect?: string;
   replace?: boolean;
   error?: string;
+  /** A `notFound()` / `forbidden()` / `unauthorized()` the action threw (action-handler.ts). */
+  signal?: string;
   refresh?: true;
   updatedTags?: string[];
 }
@@ -94,6 +96,8 @@ export async function dispatchAction(
     navigate(data.redirect, data.replace);
     return undefined;
   }
+  const signal = accessSignal(data.signal);
+  if (signal) throw signal;
   failIfRefused(res, data);
   storage()?.removeItem(RELOAD_FLAG);
   // Read-your-writes: if the action revalidated tags or asked for a refresh,
@@ -103,6 +107,34 @@ export async function dispatchAction(
   }
   // A result the server flagged `enc` carries wire-codec tags (Date/Map/Set/BigInt/…).
   return data.enc === WIRE_ENC ? decode(data.result) : data.result;
+}
+
+/** Each access signal's HTTP status (the `NEXT_HTTP_ERROR_FALLBACK;<status>` digest). */
+const SIGNAL_STATUS: Record<string, number> = { notFound: 404, forbidden: 403, unauthorized: 401 };
+
+/**
+ * The reply's `signal` as the error `notFound()` / `forbidden()` / `unauthorized()` throws: the
+ * same message, Next's `digest`, and denext's global brand (`Symbol.for("denext.<signal>")`, what
+ * `isNotFound()` and friends test), so `unstable_rethrow` passes it on; and marked as a Server
+ * Action's (`Symbol.for("denext.actionSignal")`), for which the client renders the nearest
+ * `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx`. Built here rather than
+ * imported: this on-demand chunk imports nothing (see the top of the file).
+ *
+ * @param signal The reply's `signal` field.
+ * @returns The branded error, or `undefined` for no (or an unknown) signal.
+ */
+function accessSignal(signal: string | undefined): Error | undefined {
+  if (!signal || !Object.hasOwn(SIGNAL_STATUS, signal)) return undefined;
+  const err = new Error(
+    "NEXT_" + signal.replace(/[A-Z]/g, (c) => "_" + c).toUpperCase(),
+  ) as Error & { digest: string };
+  err.name = signal[0].toUpperCase() + signal.slice(1) + "Error";
+  err.digest = "NEXT_HTTP_ERROR_FALLBACK;" + SIGNAL_STATUS[signal];
+  const brands = err as unknown as Record<symbol, boolean>;
+  brands[Symbol.for("denext." + signal)] = true;
+  // Raised by a Server Action: the client tree renders it (fiber/boundaries.ts).
+  brands[Symbol.for("denext.actionSignal")] = true;
+  return err;
 }
 
 /**

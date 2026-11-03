@@ -241,6 +241,7 @@ async function discover(dir: string, offline: boolean): Promise<UiCommandList> {
       cwd: dir,
       onLine: (line) => lines.push(line),
       signal: AbortSignal.timeout(discoveryDeadlineMs()),
+      jsonDocument: {},
     });
   } catch {
     return { commands: [], timedOut: true };

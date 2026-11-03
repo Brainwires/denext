@@ -20,6 +20,7 @@ import { denoCacheDir, renameRetrying } from "../desktop-runtime.ts";
 import { denoToolchainTarget, toolchainEsbuild } from "../deno-toolchain.ts";
 import type { DenoToolchainPin } from "../deno-toolchain.ts";
 import { acquireCacheLock } from "../project-locks.ts";
+import { lockTask } from "../file-lock.ts";
 import { extractArchive } from "../safe-extract.ts";
 import {
   assertTrustedCacheDirs,
@@ -29,6 +30,7 @@ import {
   sweepLeftovers,
 } from "../verified-download.ts";
 import { ESBUILD_VERSION } from "./version.ts";
+import { type StockDeprecationDeps, warnStockDeprecation } from "../stock-deprecation.ts";
 
 /** esbuild's own override: the binary to run, unverified. */
 export const ESBUILD_BINARY_PATH_ENV = "ESBUILD_BINARY_PATH";
@@ -112,6 +114,22 @@ export interface ResolvedEsbuildBinary {
   readonly source: EsbuildBinarySource;
   /** Say this once (the toolchain's esbuild was refused and the npm one runs instead). */
   readonly warning?: string;
+}
+
+/**
+ * Say that the npm esbuild — the fallback for stock Deno and a missing toolchain, gone in 5.0 —
+ * is deprecated, once per process tree. Silent for the toolchain's esbuild and
+ * `ESBUILD_BINARY_PATH`.
+ *
+ * @param binary What {@linkcode resolveEsbuildBinary} chose.
+ * @param deps Seams for the notice (default: the process).
+ * @returns Whether the notice was printed.
+ */
+export function noteStockEsbuild(
+  binary: Pick<ResolvedEsbuildBinary, "source">,
+  deps?: StockDeprecationDeps,
+): boolean {
+  return binary.source === "npm" && warnStockDeprecation("esbuild", deps);
 }
 
 /** Env reader. */
@@ -302,7 +320,11 @@ function stampVouches(stamp: NpmStamp | null, a: EsbuildNpmArtifact, mtime: numb
  * @param options Seams.
  * @returns The binary's path.
  */
-export async function ensureNpmEsbuild(options: ResolveEsbuildBinaryOptions = {}): Promise<string> {
+export function ensureNpmEsbuild(options: ResolveEsbuildBinaryOptions = {}): Promise<string> {
+  return lockTask(() => ensureNpmEsbuildInTask(options));
+}
+
+async function ensureNpmEsbuildInTask(options: ResolveEsbuildBinaryOptions): Promise<string> {
   const env = options.env ?? processEnv;
   const target = options.target ?? denoToolchainTarget();
   const a = npmArtifact(options.npm ?? ESBUILD_NPM, target);

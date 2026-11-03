@@ -85,8 +85,6 @@ Deno.test("fumadocs-mdx: detection needs BOTH source.config.* and the package", 
 
 Deno.test({
   name: "fumadocs-mdx: queried MDX/meta imports compile through the hosted loader",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const app = await writeApp();
   await Deno.writeTextFile(join(app, "source.config.ts"), "export default {};");
@@ -113,7 +111,7 @@ Deno.test({
     // An unqueried .mdx still compiles through fumadocs (collection null).
     assertStringIncludes(out, `"collection": null`);
   } finally {
-    disposeFumadocsHosts();
+    await disposeFumadocsHosts();
     await esbuild.stop();
     await removeTempDir(app); // the disposed loader worker lets go of its files a beat later
   }

@@ -14,6 +14,7 @@ import {
   type PluginNames,
   resolvePluginNames,
 } from "../../build/plugin-install.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** Run `deno <sub> <spec>` in `cwd`, returning its exit code (does not exit). */
 async function runDeno(
@@ -185,36 +186,7 @@ function pluginAction(raw: string | undefined): "add" | "remove" | "list" {
 }
 
 export const pluginCommand: CommandSpec = {
-  name: "plugin",
-  summary: "Manage denext plugins (add, remove, list)",
-  usage: "  denext plugin add <pkg> [dir]\n" +
-    "  denext plugin remove <pkg> [dir]\n" +
-    "  denext plugin list [dir]\n\n" +
-    "  add     adds the dependency (deno add) and wires the plugin into denext.config.ts\n" +
-    "  remove  unwires the plugin from denext.config.ts and drops the dependency\n" +
-    "  list    show the plugins wired into denext.config.ts\n\n" +
-    "  denext plugin add @denext/htmx\n" +
-    "  denext plugin remove @denext/htmx\n" +
-    "  denext plugin list\n" +
-    "  denext plugin add my-plugin --export configureMyPlugin",
-  positionals: [
-    { name: "action", help: "add | remove | list", required: true },
-    { name: "pkg", help: "Plugin package for add/remove (e.g. @denext/htmx)" },
-    { name: "dir", help: "Project directory (default: .)" },
-  ],
-  flags: [
-    {
-      name: "export",
-      type: "string",
-      valueName: "<name>",
-      help: "Factory export name (default: camelCased package name)",
-    },
-    {
-      name: "no-call",
-      type: "boolean",
-      help: "Plugin is a ready value, not a factory — omit ()",
-    },
-  ],
+  ...commandMeta("plugin"),
   run: async (ctx) => {
     const action = pluginAction(ctx.positionals[0]);
     if (action === "list") {

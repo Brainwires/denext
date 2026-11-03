@@ -32,11 +32,13 @@ import { withPrerender } from "../runtime/prerender.ts";
 import { Suspense } from "../runtime/suspense.ts";
 import {
   ErrorBoundary,
+  forbidden,
   isForbidden,
   isNotFound,
   isUnauthorized,
   notFound,
   toClientError,
+  unauthorized,
 } from "../runtime/error-boundary.ts";
 import { matchSlot, type PageMatch } from "../router/match.ts";
 import { recordSlotState } from "./slot-state.ts";
@@ -259,6 +261,29 @@ function trackRecordReads<T extends SearchParamsProp>(record: T, tracked: URLSea
   return view(record);
 }
 
+/** The signal each `x-denext-signal` status raises. */
+const RAISED_SIGNALS: Record<string, () => never> = {
+  404: notFound,
+  403: forbidden,
+  401: unauthorized,
+};
+
+/**
+ * The page a soft navigation asks to render as an access signal (`x-denext-signal: 404 | 403 |
+ * 401`): one that throws it, so the nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx`
+ * (the page's own level first) renders under the layouts, with the signal's status. The client
+ * runtime sends it when a Server Action's `notFound()` / `forbidden()` / `unauthorized()`
+ * reaches its tree: Next's client boundaries. A soft navigation is never
+ * cached (no ISR read or write, `no-store`), so the variant reaches no other request.
+ *
+ * @returns The throwing page, or `undefined` for a request that asks for none.
+ */
+function raisedSignalPage(request: Request): (() => never) | undefined {
+  if (request.headers.get("x-denext-nav") !== "1") return undefined;
+  const status = request.headers.get("x-denext-signal");
+  return status && Object.hasOwn(RAISED_SIGNALS, status) ? RAISED_SIGNALS[status] : undefined;
+}
+
 /**
  * Compose a matched page with its layout chain, loading/error boundaries,
  * templates, and locale messages into a render-ready VNode tree, and resolve its
@@ -293,7 +318,8 @@ export async function buildPageContext(
   const staticParamsNotFound = config.dynamicParams === false &&
     await isStaticParamDisallowed(match, load);
 
-  const page = h(pageModule.default, props as never);
+  const raised = raisedSignalPage(request);
+  const page = raised ? h(raised as never, {}) : h(pageModule.default, props as never);
   options.signal?.throwIfAborted();
   const soft = request.headers.get("x-denext-nav") === "1";
   const signal: SignalSink = { status: 0 };

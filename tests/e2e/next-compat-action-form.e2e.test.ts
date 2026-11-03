@@ -54,8 +54,6 @@ const itemsInclude = (title: string) =>
 
 Deno.test({
   name: "e2e: next-compat Server Action form with no client module works with JavaScript off",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ncform_e2e_" });
   await writeActionFormFixture(dir, false);
@@ -94,8 +92,6 @@ Deno.test({
 
 Deno.test({
   name: "e2e: next-compat Server Action form beside a client component submits through the client",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ncform_island_e2e_" });
   await writeActionFormFixture(dir, true);

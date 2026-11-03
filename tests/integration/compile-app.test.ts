@@ -364,8 +364,6 @@ async function serve(bin: string, cwd: string, env: Record<string, string>): Pro
 
 Deno.test({
   name: "denext build --compile: one executable serves the app with its project deleted",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async (t) => {
     const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_compile_" }));
     const project = join(root, "project");

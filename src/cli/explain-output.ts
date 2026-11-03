@@ -8,15 +8,7 @@ import {
   RAW_DIAGNOSTICS_ENV,
   rawDiagnostics,
 } from "../build/explain/mod.ts";
-import type { CommandContext, FlagSpec } from "./command.ts";
-
-/** The `--raw` flag of the verbs that explain diagnostics. */
-export const RAW_FLAG: FlagSpec = {
-  name: "raw",
-  type: "boolean",
-  help:
-    `Print diagnostics exactly as Deno reports them, without explanations (also ${RAW_DIAGNOSTICS_ENV}=1)`,
-};
+import type { CommandContext } from "./command.ts";
 
 /** `--raw` given: switch explanations off for this whole process (dev server included). */
 export function applyRawFlag(ctx: CommandContext): void {

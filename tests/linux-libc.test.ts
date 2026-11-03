@@ -10,6 +10,8 @@ import {
   linuxLibcProblem,
   minGlibcFor,
   probeLinuxLibc,
+  SUPPORTED_LINUX,
+  supportedLinux,
 } from "../src/build/linux-libc.ts";
 import { ensureDenoToolchain } from "../src/build/deno-toolchain.ts";
 import { ensureDesktopRuntime } from "../src/build/desktop-runtime.ts";
@@ -71,6 +73,23 @@ Deno.test("linuxLibcProblem / minGlibcFor: musl and an older glibc fail; unknown
   assertEquals(linuxLibcProblem({ kind: "glibc", version: "2.40" }, "2.35"), null);
   assertEquals(linuxLibcProblem({ kind: "glibc", version: "3.0" }, "2.35"), null);
   assertEquals(linuxLibcProblem({ kind: "unknown" }, "2.35"), null);
+});
+
+Deno.test("supportedLinux: the hosts named follow the pin's glibc floor", async () => {
+  assertEquals(supportedLinux("2.35"), SUPPORTED_LINUX);
+  assertStringIncludes(supportedLinux("2.27"), "glibc 2.27 or later: Ubuntu 18.04+");
+  assertStringIncludes(supportedLinux("2.27"), "RHEL / Rocky / AlmaLinux 8+");
+  assertStringIncludes(supportedLinux("2.31"), "glibc 2.31 or later (not musl");
+  // The pinned toolchain's own floor reaches the refusal message.
+  const err = await assertRejects(
+    () =>
+      assertLinuxLibc("the thing", "2.27", {
+        os: "linux",
+        libc: { kind: "glibc", version: "2.17" },
+      }),
+    Error,
+  );
+  assertStringIncludes(err.message, "glibc 2.27 or later: Ubuntu 18.04+");
 });
 
 Deno.test("assertLinuxLibc: names the distributions; a no-op off Linux", async () => {
@@ -149,5 +168,6 @@ Deno.test("denext doctor: the linux libc check (Linux only)", async () => {
   assertStringIncludes(ok!.detail, "glibc 2.39");
   const bad = await linuxLibcCheck({ os: "linux", libc: { kind: "musl" } });
   assertEquals([bad?.name, bad?.ok, bad?.critical], ["linux libc", false, false]);
-  assertStringIncludes(bad!.detail, "Debian 12+");
+  // The supported hosts follow the pinned toolchain's glibc floor.
+  assertStringIncludes(bad!.detail, "supported: glibc-based distributions with glibc 2.27");
 });

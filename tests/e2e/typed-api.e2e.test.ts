@@ -13,8 +13,6 @@ const EXAMPLE = fromFileUrl(new URL("../../examples/typed-api", import.meta.url)
 
 Deno.test({
   name: "e2e: examples/typed-api pushes a typed create to a second tab",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   const browser = await launchBrowser();

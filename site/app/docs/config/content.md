@@ -324,6 +324,25 @@ itself (it reads neither the config keys nor the env vars for them).
   systemd unit on denext's Deno from runtime 3.0.0-rc.5; never for `dev`, tests
   or jobs; glibc Linux only. See
   [Deployment targets › Idle memory trim](/docs/deployment-targets#idle-memory-trim).
+  `start.limits` — `{ memory?, cpuSeconds?, deadlineSeconds? }`: process
+  resource limits on denext's Deno from runtime 3.0.0-rc.2. `memory` caps the
+  main thread's JavaScript heap (a number of megabytes, or `"512m"` / `"2g"`; at
+  least 32 MB; exit 137), `cpuSeconds` the process CPU time (exit 152) and
+  `deadlineSeconds` its wall-clock lifetime (exit 124), each a whole number of
+  seconds from 1 up. Applied by `denext start` (to the process that serves,
+  never a CLI re-run before it), baked into the `build --compile` binary (whose
+  `job` and `db` run under them too: the runtime can't lift them) and written
+  into the generated Docker image / systemd unit; never for `dev`, tests or
+  `denext job`; not applied on stock Deno (a warning says so). See
+  [Deployment targets › Resource limits](/docs/deployment-targets#resource-limits).
+  `start.tls` — `{ certificates: { hostnames, certFileEnv, keyFileEnv }[] }`:
+  serve HTTPS without a proxy. Each certificate lists the host names it serves
+  (exact, a one-label `*.` wildcard, or `"*"` for any other name and a client
+  without SNI) and names the environment variables holding its PEM certificate
+  and key files' paths, read when the server starts. One certificate works on
+  any Deno; several are picked per connection by SNI on denext's Deno from
+  runtime 3.0.0-denext.3 with `"unstable": ["net"]` in `deno.json`. See
+  [Deployment targets › HTTPS without a proxy](/docs/deployment-targets#https-without-a-proxy).
 
 ```ts
 export default {
@@ -686,6 +705,11 @@ every `--platform` target included.
   strict default CSP with no `workerSrc` or `scriptSrc` opt-in. App Router pages are supported
   (Next limits it to `pages/`), and a worker script a client component renders later, on a page
   that loaded `boot.js`, is handed to Partytown too (on any other page it takes the fallback).
+  SPA mode (`mode: "spa"`) works too wherever denext serves the shell (`denext dev`, `denext
+  start`): each shell response carries the boot tag and a fresh nonce on its scripts, and a
+  `spa.csp` policy lists it, so the worker scripts the app renders in the browser take the same
+  nonce. A static `denext export` of a SPA has no response to mint a nonce for, so its worker
+  scripts run on the main thread.
   Only denext's own worker scripts run: each carries a per-response nonce the page's CSP lists, so
   an injected `text/partytown` script is left inert (see
   [Security](/docs/security#script-strategyworker-partytown-and-html-injection)). Partytown's

@@ -282,6 +282,9 @@ Deno.test("custom providers: OIDC — discovery at save, id_token verified with 
       },
     });
     assertEquals(mismatched.status, 400, "the document's issuer must match");
+    // The discovered userinfo_endpoint is read too; a conformant one names the id_token's
+    // subject (OIDC Core 5.3.2: `sub` MUST be in the response and MUST match).
+    idp.state.userinfo = { sub: "oidc-1", name: "Oidc" };
     const { back } = await signInRound(app, "custom:corp", idp);
     assertEquals(back.status, 303);
     const fragment = new URLSearchParams(new URL(back.headers.get("location")!).hash.slice(1));
@@ -301,6 +304,14 @@ Deno.test("custom providers: OIDC — discovery at save, id_token verified with 
       ),
       null,
     );
+    // A userinfo about another subject than the verified id_token's is refused.
+    idp.state.userinfo = { sub: "someone-else", email: "other@example.com" };
+    const other = await signInRound(app, "custom:corp", idp);
+    const otherFragment = new URLSearchParams(
+      new URL(other.back.headers.get("location")!).hash.slice(1),
+    );
+    assertEquals(otherFragment.get("access_token"), null);
+    assertEquals(otherFragment.get("error"), "server_error");
   });
 });
 

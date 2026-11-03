@@ -61,8 +61,6 @@ Deno.test({
   name:
     `platform on a real Postgres: vault, queues + pgmq_public, consumer, pgvector, webhooks${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn(t) {
     const env = await environment();
     const root = await Deno.makeTempDir({ prefix: "dnx-platform-pg-" });
@@ -395,8 +393,6 @@ Deno.test({
 Deno.test({
   name: `denext db on a real Postgres: push, status, diff against a shadow database, reset${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const { DB_ACTIONS } = await import("../src/cli/commands/db.ts");
     const env = await environment();
@@ -488,8 +484,6 @@ Deno.test({
 Deno.test({
   name: `supabase-js rpc to pgmq_public on a real Postgres: grants and row-level security${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const { createClient } = await import("@supabase/supabase-js");
     const { generateSupabaseKeys, resolveSupabaseKeys, signSupabaseJwt } = await import(
@@ -594,8 +588,6 @@ Deno.test({
 Deno.test({
   name: `vault SQL mode on a real Postgres: Supabase's SQL surface, one format both ways${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const { DB_ACTIONS } = await import("../src/cli/commands/db.ts");
     const env = await environment();

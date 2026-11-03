@@ -15,8 +15,6 @@ const FIXTURE = fromFileUrl(new URL("./fixtures/use-api-ppr", import.meta.url));
 
 Deno.test({
   name: "e2e: useApi on a cacheComponents isomorphic route hydrates from the PPR shell, no fetch",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

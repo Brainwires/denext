@@ -252,8 +252,6 @@ const PAGE_STEPS: Array<[string, (ctx: Ctx) => Promise<void> | void]> = [
 
 Deno.test({
   name: "e2e: pages-router hydrates, is interactive, and soft-navigates (SSR data + code-split)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServeViaCli(EXAMPLE);
   const browser = await launchBrowser();

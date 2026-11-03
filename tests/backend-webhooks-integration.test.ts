@@ -35,8 +35,6 @@ Deno.test({
     reason ? ` (skipped: ${reason})` : ""
   }`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const env = await postgresEnvironment(true, SQL!, URL_!);
     try {

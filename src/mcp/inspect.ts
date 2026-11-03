@@ -14,7 +14,7 @@
 // config the MCP server picks up when launched from the project directory (the normal case).
 
 import { isAbsolute, relative, resolve, SEPARATOR, toFileUrl } from "@std/path";
-import { resolveProject } from "../build/paths.ts";
+import { resolveProjectLayout } from "../build/paths.ts";
 import { realPathOfNearest, within } from "../ui/security.ts";
 import { scanRoutes } from "../router/manifest.ts";
 import type { PageRoute, RouteManifest } from "../router/manifest.ts";
@@ -300,7 +300,7 @@ export function formatRouteMap(map: RouteMapData): string {
  * @returns A compact text map, or a "no match" hint.
  */
 export async function routeMap(dir: string, path: string): Promise<string> {
-  const paths = await resolveProject(dir);
+  const paths = await resolveProjectLayout(dir);
   const manifest = await scanRoutes(paths.appDir);
   return formatRouteMap(routeMapData(manifest, paths.appDir, path));
 }

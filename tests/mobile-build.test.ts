@@ -34,6 +34,7 @@ import {
   withDisplayName,
 } from "../src/build/mobile-flavor.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
+import { installFakeCapacitorCli } from "./_capacitor-cli.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 
 const PBXPROJ = await Deno.readTextFile(
@@ -80,6 +81,7 @@ async function project(): Promise<string> {
     await Deno.mkdir(join(dir, path, ".."), { recursive: true });
     await Deno.writeTextFile(join(dir, path), content);
   }
+  await installFakeCapacitorCli(dir);
   return dir;
 }
 
@@ -166,7 +168,7 @@ Deno.test("mobile build: Android plans — debug, unsigned release, keystore via
     assertEquals(unsigned.signing.mode, "unsigned");
     assert(unsigned.warnings[0].includes("unsigned"));
     assert(unsigned.artifact.endsWith("Receipts-release-unsigned.aab"));
-    assertEquals(unsigned.commands[0].args, ["cap", "sync", "android"]);
+    assertEquals(unsigned.commands[0].args, ["--no", "cap", "sync", "android"]);
 
     const signed = await planMobileBuild(options(dir, {
       release: true,
@@ -431,17 +433,29 @@ Deno.test("mobile build --release: refuses a dev server.url / cleartext or a lef
       "exited with 1",
     );
     await Deno.remove(join(dir, ".denext", "mobile-dev-backup.json"));
-    // A flavor that sets the server on purpose passes the gate (and reaches the build).
+    // A flavor's plain-http serverUrl (a LAN dev server) is refused before anything runs.
     await Deno.writeTextFile(
       cap,
       JSON.stringify({ ...base, server: { url: "http://10.0.0.2:8080", cleartext: true } }),
     );
-    const flavored = await planMobileBuild(options(dir, {
+    const lab = await planMobileBuild(options(dir, {
       release: true,
       skipExport: true,
       flavor: { name: "lab", config: { serverUrl: "http://10.0.0.2:8080" } },
     }));
     ran.length = 0;
+    await assertRejects(
+      () => runMobileBuild(lab, {}, deps),
+      Error,
+      "serverUrl (http://10.0.0.2:8080) is not https",
+    );
+    assertEquals(ran, []);
+    // A flavor that sets an https server on purpose passes the gate (and reaches the build).
+    const flavored = await planMobileBuild(options(dir, {
+      release: true,
+      skipExport: true,
+      flavor: { name: "hosted", config: { serverUrl: "https://app.example" } },
+    }));
     await assertRejects(() => runMobileBuild(flavored, {}, deps), Error, "exited with 1");
     assertEquals(ran, ["npx"]);
   } finally {

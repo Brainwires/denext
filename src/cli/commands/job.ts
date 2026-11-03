@@ -22,6 +22,7 @@ import {
   runJob,
   type ScheduledEntry,
 } from "../../server/jobs.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** Discover this project's jobs, keeping the resolved paths the caller also needs. */
 async function loadJobs(ctx: CommandContext): Promise<{ names: string[]; paths: ProjectPaths }> {
@@ -231,39 +232,10 @@ function printListing(
 }
 
 export const jobCommand: CommandSpec = {
-  name: "job",
-  summary: "Run a background job by name, or list them (--list)",
-  loadsModules: true,
-  flags: [
-    { name: "list", alias: "l", type: "boolean", help: "List the app's jobs and exit" },
-    {
-      name: "history",
-      type: "boolean",
-      help: "Print the run history (jobs.history) through its configured store",
-    },
-    {
-      name: "clear-history",
-      type: "boolean",
-      help: "Delete every recorded run through the configured history store",
-    },
-    {
-      name: "read-only",
-      type: "boolean",
-      help: "With --history: read without changing anything; refuses --clear-history",
-    },
-    {
-      name: "payload",
-      type: "string",
-      valueName: "<json>",
-      help: "JSON passed to the job's ctx.payload",
-    },
-  ],
-  positionals: [{ name: "name", help: "Job name (its path under jobs/, e.g. cleanup)" }],
+  ...commandMeta("job"),
   // The positional is the JOB name, not a directory — resolve the project from `--cwd`/cwd so
   // the CLI's module-loading gate doesn't treat the job name as the project dir.
   moduleDir: (ctx) => resolve(ctx.global.cwd ?? "."),
-  usage: "denext job <name> [--payload '<json>']\ndenext job --list [--json]\n" +
-    "denext job --history [--read-only] [--json]\ndenext job --clear-history [--json]",
   run: async (ctx: CommandContext) => {
     if (ctx.flags.history === true || ctx.flags["clear-history"] === true) {
       // No job module is imported for this: only the config (and its store) is needed.

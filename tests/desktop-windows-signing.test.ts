@@ -64,6 +64,33 @@ Deno.test("desktopPeFiles: every PE file in the bundle, found by its MZ/PE heade
   }
 });
 
+Deno.test("desktopPeFiles: takes a PE file exactly as the runtime's update check does, whatever its e_lfanew", async () => {
+  // The runtime's `is_pe_image` puts no bounds on `e_lfanew`, and refuses an update with an
+  // unsigned PE file in it: a file it calls PE must be one denext signs.
+  const dir = await Deno.makeTempDir({ prefix: "denext_win_pe_rule_" });
+  try {
+    await Deno.writeFile(join(dir, "low.dll"), pe(0x10)); // PE header inside the DOS header's span
+    await Deno.writeFile(join(dir, "zero.dll"), pe(0)); // e_lfanew 0: `MZ` is not `PE\0\0`
+    const big = 65 * 1024 * 1024; // past the 64 MiB a bounded check would stop at
+    const head = new Uint8Array(64);
+    head.set([0x4d, 0x5a]);
+    new DataView(head.buffer).setUint32(0x3c, big, true);
+    await Deno.writeFile(join(dir, "far.dll"), head);
+    await Deno.truncate(join(dir, "far.dll"), big);
+    await Deno.writeFile(join(dir, "far.dll"), new Uint8Array([0x50, 0x45, 0, 0]), {
+      append: true,
+    });
+    const past = new Uint8Array(64); // e_lfanew past the end of the file: not PE
+    past.set([0x4d, 0x5a]);
+    new DataView(past.buffer).setUint32(0x3c, 4096, true);
+    await Deno.writeFile(join(dir, "past.dll"), past);
+    await Deno.writeFile(join(dir, "short.dll"), new Uint8Array([0x4d, 0x5a, 0, 0])); // under 64 bytes
+    assertEquals(await desktopPeFiles(dir), [join(dir, "far.dll"), join(dir, "low.dll")]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 const THUMB = "AB".repeat(20);
 
 /** A fake PowerShell for the certificate-store import: records each call's stdin. */

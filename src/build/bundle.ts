@@ -6,7 +6,8 @@
 // intact, which separate dynamic imports would break.
 
 import { quietThenExplain, runToExit } from "./exited-output.ts";
-import { boundedOutput, childDeadlineMs, retryOnStall } from "./serial-child.ts";
+import { boundedSpawn } from "./child-probe.ts";
+import { childDeadlineMs, retryOnStall } from "./serial-child.ts";
 import { denoVersionOk, MIN_DENO_VERSION } from "./deno-version.ts";
 import { denoExecutable } from "./deno-executable.ts";
 export { denoExecutable };
@@ -1800,19 +1801,14 @@ async function runDenoBundle(
   // it stalls (see serial-child.ts). Each attempt starts with no `outDir`, as the first does. The
   // output goes to `outDir`, so stdout is discarded, and stderr too unless the bundle fails (see
   // quietThenExplain): a quiet pipe held for the bundle's whole life starves other children's
-  // reads on Windows.
+  // reads on Windows. Under DENEXT_CHILD_PROBE a stall reports the bundler's debug log and CPU
+  // samples (child-probe.ts).
   const output = await quietThenExplain((mode) =>
     retryOnStall("deno bundle", args, async (deadline) => {
       await Deno.remove(outDir, { recursive: true }).catch(() => {});
-      const child = new Deno.Command(denoExecutable(), {
-        args,
-        stdin: "null",
-        stdout: "null",
-        stderr: mode,
-      }).spawn();
-      return await boundedOutput(
-        child,
-        { stdout: false, stderr: mode === "piped" },
+      return await boundedSpawn(
+        denoExecutable(),
+        { args, stdin: "null", stdout: "null", stderr: mode },
         deadline,
         "deno bundle",
       );

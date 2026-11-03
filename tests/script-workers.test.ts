@@ -404,7 +404,6 @@ Deno.test("the production handler serves the build's Partytown files below baseP
 
 Deno.test({
   name: "denext export publishes Partytown below basePath and the pages point at it",
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext-pt-export-" });
   try {

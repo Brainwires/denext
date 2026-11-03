@@ -44,6 +44,7 @@ on:
       # The CLI and manifest modules those import directly (tests/workflow-path-filters.test.ts
       # fails when a direct import of the window test, the desktop verbs or src/build is missing).
       - "src/cli/command.ts"
+      - "src/cli/command-meta.ts"
       - "src/cli/commands/start-options.ts"
       - "src/cli/dev-attach.ts"
       - "src/cli/explain-output.ts"

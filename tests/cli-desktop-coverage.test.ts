@@ -561,9 +561,6 @@ Deno.test("desktop add --list is dispatched from the desktop verb", async () => 
 Deno.test({
   name:
     "desktop dev: attaches to a running dev server, opens the window in proxy mode, ends with it",
-  // The session listens for Ctrl-C for its whole life; that listener outlives this test.
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await tempDir("denext_desktop_dev_attach_");
     const withPreload = await tempDir("denext_desktop_dev_preload_ok_");

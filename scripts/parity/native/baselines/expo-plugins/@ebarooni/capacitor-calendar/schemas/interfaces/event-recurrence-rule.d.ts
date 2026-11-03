@@ -6,7 +6,7 @@ export interface EventRecurrenceRule {
      *
      * @example [1, 7]  // Means in January and July.
      *
-     * @platform Android, iOS, Web
+     * @platform Android, iOS
      * @since 7.1.0
      */
     byMonth?: number[];
@@ -16,7 +16,7 @@ export interface EventRecurrenceRule {
      *
      * @example [1, 15] // The 1st and 15th of each month.
      *
-     * @platform Android, iOS, Web
+     * @platform Android, iOS
      * @since 7.1.0
      */
     byMonthDay?: number[];
@@ -27,7 +27,7 @@ export interface EventRecurrenceRule {
      *
      * @example [1, 3, 5] // Every Monday, Wednesday and Friday
      *
-     * @platform Android, iOS, Web
+     * @platform Android, iOS
      * @since 7.3.0
      */
     byWeekDay?: number[];
@@ -38,7 +38,7 @@ export interface EventRecurrenceRule {
      *
      * @example 10
      *
-     * @platform Android, iOS, Web
+     * @platform Android, iOS
      * @since 7.3.0
      */
     count?: number;
@@ -47,7 +47,7 @@ export interface EventRecurrenceRule {
      *
      * @example [1, 100, 364]
      *
-     * @platform iOS, Web
+     * @platform iOS
      * @since 7.3.0
      */
     daysOfTheYear?: number[];
@@ -59,7 +59,7 @@ export interface EventRecurrenceRule {
      * date.setMonth(date.getMonth() + 1);
      * const end = date.getTime();
      *
-     * @platform Android, iOS, Web
+     * @platform Android, iOS
      * @since 7.1.0
      */
     end?: number;
@@ -68,7 +68,7 @@ export interface EventRecurrenceRule {
      *
      * @example 'weekly'
      *
-     * @platform Android, iOS, Web
+     * @platform Android, iOS
      * @since 7.3.0
      */
     frequency: RecurrenceFrequency;
@@ -80,7 +80,7 @@ export interface EventRecurrenceRule {
      * @example 2
      *
      * @default 1
-     * @platform Android, iOS, Web
+     * @platform Android, iOS
      * @since 7.3.0
      */
     interval?: number;
@@ -89,7 +89,7 @@ export interface EventRecurrenceRule {
      *
      * @example [1, 53]
      *
-     * @platform iOS, Web
+     * @platform iOS
      * @since 7.3.0
      */
     weeksOfTheYear?: number[];

@@ -14,8 +14,6 @@ import { PUBLIC_VALUE, SECRET_VALUE, writeFreshParityApp } from "../helpers/fres
 
 Deno.test({
   name: "Fresh Partials: an f-partial button and link swap their regions in place",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-fresh-partials-" }));
   try {

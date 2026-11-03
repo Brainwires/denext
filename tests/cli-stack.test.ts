@@ -5,7 +5,7 @@
 import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { dockerProbe, fillEnv, runStack, stackStatus } from "../src/cli/commands/stack.ts";
 import { parsePs, type StackIo } from "../src/cli/commands/stack-io.ts";
-import { runBounded } from "./helpers/bounded-command.ts";
+import { inChild } from "./helpers/isolated.ts";
 
 const PS = JSON.stringify([
   {
@@ -293,26 +293,26 @@ Deno.test({
         `sleep 600 &\necho $! > "${pidFile}"\nwait\n`,
     );
     await Deno.chmod(`${bin}/docker`, 0o755);
-    const stack = new URL("../src/cli/commands/stack.ts", import.meta.url).href;
-    const code = `const { dockerCli } = await import(${JSON.stringify(stack)});
-const t = Date.now();
-try { await dockerCli(["compose", "-f", "docker-compose.yml", "ps", "--format", "json"], ".", true, 500); console.log("answered"); }
-catch (error) { console.log(error.message); }
-console.log("probe-ms=" + (Date.now() - t));
+    // In a child (its PATH is the fake's), whose coverage joins the run's under the coverage tasks.
+    const { value } = await inChild<{ probe: string; probeMs: number; up: number }>({
+      imports: `import { dockerCli } from "@repo/src/cli/commands/stack.ts";`,
+      body: `const t = Date.now();
+let probe = "answered";
+try { await dockerCli(["compose", "-f", "docker-compose.yml", "ps", "--format", "json"], ".", true, 500); }
+catch (error) { probe = error.message; }
+const probeMs = Date.now() - t;
 const up = await dockerCli(["compose", "-f", "docker-compose.yml", "up", "-d"], ".", true, 200);
-console.log("up=" + up.code);`;
-    const out = await runBounded(Deno.execPath(), ["eval", "--no-check", code], {
+return { probe, probeMs, up: up.code };`,
       env: { PATH: `${bin}:/usr/bin:/bin` },
       timeoutMs: 120_000,
     });
-    assert(!out.timedOut, `dockerCli hung on a hung docker:\n${out.output}`);
     assertStringIncludes(
-      out.stdout,
+      value.probe,
       "Docker did not answer `docker compose -f docker-compose.yml ps",
     );
-    assertStringIncludes(out.stdout, "the Docker engine looks unresponsive");
-    assert(Number(/probe-ms=(\d+)/.exec(out.stdout)?.[1]) < 60_000, out.stdout);
-    assertStringIncludes(out.stdout, "up=0", "a long `up` ran to its end past the probe deadline");
+    assertStringIncludes(value.probe, "the Docker engine looks unresponsive");
+    assert(value.probeMs < 60_000, `the probe took ${value.probeMs} ms`);
+    assertEquals(value.up, 0, "a long `up` ran to its end past the probe deadline");
     // The hung docker's own child (holding its pipes) was killed with it.
     const child = Number((await Deno.readTextFile(pidFile)).trim());
     let alive = true;
@@ -325,6 +325,39 @@ console.log("up=" + up.code);`;
     assert(!alive, `the hung docker's child ${child} is still running`);
   } finally {
     await Deno.remove(bin, { recursive: true });
+  }
+});
+
+Deno.test({
+  name: "dockerCli: a probe Docker answers returns its output; with no docker it says so",
+  ignore: Deno.build.os === "windows", // the fake `docker` is a shell script
+}, async () => {
+  const bin = await Deno.makeTempDir({ prefix: "dnx-answering-docker-" });
+  const empty = await Deno.makeTempDir({ prefix: "dnx-no-docker-probe-" });
+  try {
+    await Deno.writeTextFile(
+      `${bin}/docker`,
+      `#!/bin/sh\nprintf '{"ServerVersion":"27.0.0"}'\nprintf 'warned' >&2\nexit 4\n`,
+    );
+    await Deno.chmod(`${bin}/docker`, 0o755);
+    const imports = `import { dockerCli } from "@repo/src/cli/commands/stack.ts";`;
+    const { value: answered } = await inChild<{ code: number; stdout: string; stderr: string }>({
+      imports,
+      body: `return await dockerCli(["info", "--format", "{{json .}}"], ".", true);`,
+      env: { PATH: `${bin}:/usr/bin:/bin` },
+    });
+    assertEquals(answered, { code: 4, stdout: '{"ServerVersion":"27.0.0"}', stderr: "warned" });
+    // A probe spawns rather than calling output(); a missing binary still gets the install hint.
+    const { value: missing } = await inChild<string>({
+      imports,
+      body: `try { await dockerCli(["version"], ".", true); return "ran"; }
+catch (error) { return error.message; }`,
+      env: { PATH: empty },
+    });
+    assertStringIncludes(missing, "docker is not on PATH");
+  } finally {
+    await Deno.remove(bin, { recursive: true });
+    await Deno.remove(empty, { recursive: true });
   }
 });
 

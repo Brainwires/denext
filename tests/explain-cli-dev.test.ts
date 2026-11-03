@@ -67,7 +67,6 @@ async function cli(args: string[], cwd: string, env: Record<string, string>) {
 Deno.test({
   name: "denext check explains each type error; --raw and DENEXT_RAW_DIAGNOSTICS=1 don't",
   ignore: !posix,
-  sanitizeResources: false,
   fn: async () => {
     const { dir, raw } = await project("possibly-undefined", "possibly-undefined.ts");
     try {
@@ -106,7 +105,6 @@ Deno.test({
 Deno.test({
   name: "denext lint explains a denext rule report; --json output is left alone",
   ignore: !posix,
-  sanitizeResources: false,
   fn: async () => {
     const { dir, raw } = await project("lint-rules-of-hooks", "lint-rules-of-hooks.tsx");
     try {

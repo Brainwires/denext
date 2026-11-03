@@ -42,6 +42,7 @@ import {
   type ViewSummary,
 } from "./live-views.ts";
 import { getLiveViewStore } from "./live-view-store.ts";
+import { DEFAULT_VIEW_TOKEN_MAX_AGE_SECONDS } from "../runtime/live-view.ts";
 import { createLustreViewHub, type LustreHub, type LustreViewInstance } from "./lustre-views.ts";
 import {
   broadcastInvalidation,
@@ -213,6 +214,7 @@ const DEFAULT_LIMITS: Required<LiveLimits> = {
   maxViewBytesPerConnection: 1024 * 1024,
   viewResumeSeconds: 30,
   maxParkedViews: 1000,
+  viewTokenMaxAgeSeconds: DEFAULT_VIEW_TOKEN_MAX_AGE_SECONDS,
 };
 let limits: Required<LiveLimits> = DEFAULT_LIMITS;
 
@@ -260,8 +262,17 @@ export function withDeadline<T>(
     () => ctrl.abort(new DOMException("live render deadline exceeded", "TimeoutError")),
     ms,
   );
+  let work: Promise<T>;
+  try {
+    work = fn(ctrl.signal);
+  } catch (err) {
+    // A resolver that throws before returning a promise: a rejection like any other failure,
+    // and its deadline timer is not left armed for the whole render timeout.
+    clearTimeout(timer);
+    return Promise.reject(err);
+  }
   return Promise.race([
-    fn(ctrl.signal),
+    work,
     new Promise<never>((_, reject) =>
       ctrl.signal.addEventListener(
         "abort",
@@ -334,6 +345,15 @@ export function sanitizeLimits(overrides?: LiveLimits): Required<LiveLimits> {
     }
   }
   return out;
+}
+
+/**
+ * Resolves once the live-view store writes in flight have landed: a socket that closes parks
+ * its views and seals each one's snapshot into the view store in the background, which can
+ * still be running when the hub is torn down. The server awaits it before its teardowns.
+ */
+export function liveViewStoreSettled(): Promise<void> {
+  return viewHub.settled();
 }
 
 /** Tear down the hub (tests / shutdown): clear the cache hook and drop connections. */

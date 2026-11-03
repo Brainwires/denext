@@ -278,6 +278,7 @@ Deno.test("onBack (web): a sentinel entry turns the browser's back into the hand
       assertEquals(nav.index(), 0, "stopping pops the sentinel");
       assertEquals(routed, ["https://app.test/a"], "…without the router seeing it");
       nav.history.back(); // nothing before: no event, and nothing listening anyway
+      await tick(100); // the driver's and the history's last timers end inside the test
     });
   } finally {
     globalThis.removeEventListener("popstate", router);
@@ -297,7 +298,7 @@ Deno.test("onBack (web): a pop to another entry passes through untouched", async
     await tick();
     assertEquals(calls, 0);
     off();
-    await tick(20);
+    await tick(100); // the driver's and the history's last timers end inside the test
   });
   resetBackForTesting();
   // Without history (an odd embedder), onBack registers but installs nothing.

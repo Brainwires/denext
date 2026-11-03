@@ -10,14 +10,16 @@
 // `denext.N` above every `rc.N` (semver alone would not: `d` < `r`), so every comparison goes
 // through {@linkcode compareDenoVersions}.
 //
-// Upstream Deno releases a 3.0.0 too, so a version no longer says whose runtime a Deno is. From
-// 3.0.0-rc.3 denext's Deno carries an identity marker (`Deno.build.denext`, and a
+// There is no upstream Deno 3.0 (upstream stays on 2.9), so denext's `3.0.0-*` versions are its own;
+// a version still isn't proof of whose runtime a Deno is, so denext tells its runtime apart by an
+// identity marker. From 3.0.0-rc.3 denext's Deno carries an identity marker (`Deno.build.denext`, and a
 // `denext <version> (Brainwires)` line in `deno --version`), and a running Deno is recognised by it
 // ({@linkcode isDenextDenoVersion}); the version alone counts only for the runtimes from before the
 // marker ({@linkcode isPreMarkerDenextVersion}). A version read from denext's own pins or release
 // manifests is denext's by where it came from ({@linkcode isDenextReleaseVersion}).
 
 import toolchainPin from "./deno-toolchain-pin.json" with { type: "json" };
+import { runToExit } from "./exited-output.ts";
 
 /** The minimum supported Deno version. */
 export const MIN_DENO_VERSION = "2.9.0";
@@ -158,6 +160,159 @@ export function supportsIdleTrim(version: string): boolean {
   return compareDenoVersions(version, FIRST_IDLE_TRIM_RUNTIME) >= 0;
 }
 
+/**
+ * The first release of denext's Deno with the process resource limits (Brainwires/deno DENEXT.md
+ * item 92: `--max-memory`, `--max-cpu-time` and `--max-time` on `deno run` and `deno compile`).
+ */
+export const FIRST_RESOURCE_LIMITS_RUNTIME = "3.0.0-rc.2";
+
+/**
+ * Whether denext's Deno of `version` takes the resource-limit flags (from
+ * {@linkcode FIRST_RESOURCE_LIMITS_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A version of denext's Deno (`3.0.0-rc.N`, `3.0.0-denext.N`, `2.9.7-denext.N`).
+ * @returns Whether it accepts `--max-memory` / `--max-cpu-time` / `--max-time`.
+ */
+export function supportsResourceLimits(version: string): boolean {
+  return compareDenoVersions(version, FIRST_RESOURCE_LIMITS_RUNTIME) >= 0;
+}
+
+/**
+ * The first release of denext's Deno whose `Deno.serve` / `Deno.listenTls` take
+ * `resolveCertificate`, a certificate per server name (Brainwires/deno DENEXT.md item 159; behind
+ * `--unstable-net`), which `start.tls` with several certificates needs.
+ */
+export const FIRST_RESOLVE_CERTIFICATE_RUNTIME = "3.0.0-denext.3";
+
+/**
+ * Whether denext's Deno of `version` takes `resolveCertificate` (from
+ * {@linkcode FIRST_RESOLVE_CERTIFICATE_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A version of denext's Deno (`3.0.0-denext.N`, `3.0.0-rc.N`).
+ * @returns Whether it serves a certificate per server name.
+ */
+export function supportsResolveCertificate(version: string): boolean {
+  return compareDenoVersions(version, FIRST_RESOLVE_CERTIFICATE_RUNTIME) >= 0;
+}
+
+/**
+ * The first release of denext's Deno that applies deno.json's `patchedDependencies` to npm
+ * packages on install (Brainwires/deno DENEXT.md item 161), which `denext patch` registers its npm
+ * patches in.
+ */
+export const FIRST_PATCHED_DEPENDENCIES_RUNTIME = "3.0.0-denext.3";
+
+/**
+ * Whether denext's Deno of `version` applies `patchedDependencies` (from
+ * {@linkcode FIRST_PATCHED_DEPENDENCIES_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A version of denext's Deno.
+ * @returns Whether its npm installer applies deno.json's `patchedDependencies`.
+ */
+export function supportsPatchedDependencies(version: string): boolean {
+  return compareDenoVersions(version, FIRST_PATCHED_DEPENDENCIES_RUNTIME) >= 0;
+}
+
+/**
+ * The first release of denext's Deno that sends opt-in crash reports from the CLI and `denort`
+ * (`DENEXT_CRASH_REPORT_URL`, `DENEXT_CRASH_REPORT_APP`, `DENEXT_CRASH_REPORT_SELFTEST`;
+ * Brainwires/deno DENEXT.md item 180).
+ */
+export const FIRST_CRASH_REPORT_RUNTIME = "3.0.0-denext.5";
+
+/**
+ * Whether denext's Deno of `version` sends crash reports (from
+ * {@linkcode FIRST_CRASH_REPORT_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A version of denext's Deno.
+ * @returns Whether it reads `DENEXT_CRASH_REPORT_URL`.
+ */
+export function supportsCrashReports(version: string): boolean {
+  return compareDenoVersions(version, FIRST_CRASH_REPORT_RUNTIME) >= 0;
+}
+
+/**
+ * The first Deno Desktop runtime with overlay windows, tray events with detail, the activation
+ * policy and OS text to speech (Brainwires/deno DENEXT.md item 183, laufey API 50): it reads
+ * `"activationPolicy"` in `laufey-launch.json` (and `LAUFEY_ACTIVATION_POLICY`), fires the
+ * `contextmenu` / `auxclick` / `mouseenter` / `mouseleave` tray events with a `TrayMouseEvent`,
+ * and has `Tray.popUpMenu()`, `Tray.capabilities()`, `Deno.dock.setActivationPolicy()`, the
+ * `overlay` / `skipTaskbar` window options and `Deno.desktop.speech`. The page-side bindings
+ * feature-detect each API; the launch file and the dev env carry the policy only from here on.
+ */
+export const FIRST_OVERLAY_TRAY_RUNTIME = "3.0.0-denext.6";
+
+/**
+ * Whether the Deno Desktop runtime `version` has the overlay, tray-event and activation-policy
+ * APIs (from {@linkcode FIRST_OVERLAY_TRAY_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether it reads the launch file's `"activationPolicy"`.
+ */
+export function supportsOverlayTray(version: string): boolean {
+  return compareDenoVersions(version, FIRST_OVERLAY_TRAY_RUNTIME) >= 0;
+}
+
+/**
+ * The first Deno Desktop runtime that reads `initialWindow.overlay` and `name` in
+ * `.deno-desktop/app.json` (Brainwires/deno `fix/wayland-overlay-panel`): the window the app starts
+ * with can be a Wayland layer-shell overlay (`desktop.window.overlay`), and an untitled window is
+ * titled with the app's name (`desktop.app.name`) rather than the bundle's file name. An older
+ * runtime refuses either key (its app.json has no unknown keys), so the packager writes them only
+ * from here on.
+ */
+export const FIRST_INITIAL_OVERLAY_RUNTIME = "3.0.0-denext.7";
+
+/**
+ * Whether the Deno Desktop runtime `version` reads `initialWindow.overlay` and `name` in
+ * `.deno-desktop/app.json` (from {@linkcode FIRST_INITIAL_OVERLAY_RUNTIME}). A version that does
+ * not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether the packager may write the keys.
+ */
+export function supportsInitialOverlay(version: string): boolean {
+  return compareDenoVersions(version, FIRST_INITIAL_OVERLAY_RUNTIME) >= 0;
+}
+
+/**
+ * The first release of denext's Deno whose `process.execArgv` holds the run's Deno flags under
+ * `deno run` / `deno serve` (`[]` in a compiled program and under `deno test`), so a child started
+ * as `deno run ...process.execArgv <script>` gets the parent's scoped grants, unstable features and
+ * config (Brainwires/deno DENEXT.md item 188).
+ */
+export const FIRST_EXEC_ARGV_RUNTIME = "3.0.0-denext.8";
+
+/**
+ * Whether denext's Deno of `version` fills `process.execArgv` with the run's Deno flags (from
+ * {@linkcode FIRST_EXEC_ARGV_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A version of denext's Deno (`Deno.build.denext`).
+ * @returns Whether a child can be started from `process.execArgv`.
+ */
+export function supportsExecArgv(version: string): boolean {
+  return compareDenoVersions(version, FIRST_EXEC_ARGV_RUNTIME) >= 0;
+}
+
+/**
+ * The first Deno Desktop runtime that expands `$DENO_DESKTOP_CACHE` at the start of a baked
+ * `--allow-read` / `--allow-write` / `--allow-run` value (and the matching `--deny-*`) to the
+ * app's cache folder, `desktopAppDirs(<desktop.app.identifier>).cache` (Brainwires/deno DENEXT.md
+ * item 189). An allow entry it cannot expand is dropped, never widened.
+ */
+export const FIRST_DESKTOP_CACHE_TOKEN_RUNTIME = "3.0.0-denext.8";
+
+/**
+ * Whether the Deno Desktop runtime `version` expands `$DENO_DESKTOP_CACHE` in baked permissions
+ * (from {@linkcode FIRST_DESKTOP_CACHE_TOKEN_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether a program sidecar's grant may be scoped to its copy in the cache folder.
+ */
+export function supportsDesktopCacheToken(version: string): boolean {
+  return compareDenoVersions(version, FIRST_DESKTOP_CACHE_TOKEN_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 
@@ -174,7 +329,7 @@ function oldSchemeRelease(version: string): string | null {
 /**
  * The first release of denext's Deno that carries its identity marker: `Deno.build.denext` in
  * process and a `denext <version> (Brainwires)` line in `deno --version` (Brainwires/deno
- * DENEXT.md item 99). Upstream Deno releases a 3.0.0 too, so from here on the marker, never the
+ * DENEXT.md item 99). There is no upstream Deno 3.0, but from here on the marker, never the
  * version, says whose runtime a Deno is.
  */
 export const FIRST_MARKER_RUNTIME = "3.0.0-rc.3";
@@ -230,6 +385,25 @@ export function parseDenoVersionOutput(text: string): DenoIdentity | null {
   if (!first) return null;
   const marker = MARKER_LINE.exec(text);
   return marker ? { deno: first[1], denext: marker[1] } : { deno: first[1] };
+}
+
+/**
+ * `<bin> --version`'s output.
+ *
+ * @param bin The Deno binary.
+ * @returns The output, or null (not runnable, or no answer within 10 s).
+ */
+export async function denoVersionOutput(bin: string): Promise<string | null> {
+  try {
+    const out = await runToExit(bin, {
+      args: ["--version"],
+      stderr: "null",
+      signal: AbortSignal.timeout(10_000),
+    });
+    return out.success ? new TextDecoder().decode(out.stdout) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

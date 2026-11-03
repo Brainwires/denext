@@ -12,8 +12,9 @@
  * - In a Deno Desktop window the runtime runs a download (`fs.download`); the page tracks it
  *   (listed, evented, paused through `fs.pauseDownload`, resumed through `fs.resumeDownload`,
  *   cancelled through `fs.cancelDownload`). The runtime keeps a paused or interrupted download's
- *   partial file, so a resume (or the same download started again, after a restart too)
- *   continues it with a range request.
+ *   partial file and, like the plugin, its record (`fs.listDownloads`), so after a restart
+ *   {@linkcode fileTransfers} lists it and {@linkcode resumeFileTransfer} continues it with a
+ *   range request.
  * - Elsewhere it runs in the page: `fetch` with the body read as a stream (download progress,
  *   pause and a range-request resume) and `XMLHttpRequest` for uploads (upload progress), so it
  *   lasts as long as the page does.
@@ -21,6 +22,7 @@
  * @module
  */
 
+import { type DesktopNative, onDesktop, viaDesktop } from "./desktop-branch.ts";
 import { withLocalNetworkHint } from "./local-network.ts";
 import { listenerDisposer, type ListenerHandle, nativePlugin } from "./plugin.ts";
 
@@ -52,7 +54,12 @@ export interface FileTransferInfo extends FileTransferProgress {
   readonly path: string;
   /** Where it is. */
   readonly state: FileTransferState;
-  /** Whether a paused or failed download can continue where it stopped. */
+  /**
+   * Whether the download can continue where it stopped: a paused one through
+   * {@linkcode resumeFileTransfer}; a failed one only through the native plugin's, which retries a
+   * failure. A failed web download is not resumable (its bytes so far are dropped), and on the web
+   * and on Deno Desktop only a paused download resumes.
+   */
   readonly resumable: boolean;
   /** The HTTP status, once the server answered. */
   readonly status?: number;
@@ -125,7 +132,12 @@ export class FileTransferError extends Error {
   readonly status?: number;
   /** An HTTP failure's response body, when there was one. */
   readonly body?: string;
-  /** Whether {@linkcode resumeFileTransfer} can continue it where it stopped. */
+  /**
+   * Whether the download's bytes so far can be continued from. Only the native plugin's
+   * {@linkcode resumeFileTransfer} retries a failed transfer; on the web and on Deno Desktop it
+   * resolves `false` for one, and a failed web download is never resumable (its bytes so far are
+   * dropped).
+   */
   readonly resumable: boolean;
 
   /**
@@ -444,12 +456,31 @@ function throttled(ms: number, fn: (bytes: number, total: number | null) => void
   };
 }
 
-/** Where a page download writes: opened anew, or to append at `at` bytes. */
+/**
+ * Where a page download writes: opened anew, or to append at `at` bytes. With `commit`, the bytes
+ * land somewhere of their own until the download is done, so the file it replaces is untouched
+ * until then.
+ */
 export interface DownloadSink {
+  /**
+   * The writes go straight into the file, staged by the writer until it is finished (a picked
+   * file in a browser without OPFS): the download cannot pause, and a stop before the end drops
+   * the staged writes, so the file keeps its contents.
+   */
+  readonly direct?: boolean;
   open(at: number): Promise<{
     write(chunk: Uint8Array<ArrayBuffer>): Promise<void>;
+    /** Keep what was written (a pause, a failure, the end, unless the writer has `finish`). */
     close(): Promise<void>;
+    /** Let go without keeping this opening's writes (a cancel); else it is closed. */
+    abort?(): Promise<void>;
+    /** Commit the writes once the whole body has arrived (in place of `close`). */
+    finish?(): Promise<void>;
   }>;
+  /** Put the finished download in place of the file (once its writer has closed). */
+  commit?(): Promise<void>;
+  /** Delete what the download wrote (a cancelled or failed one's), once the writer has let go. */
+  remove?(): Promise<void>;
 }
 
 /** The parts of a page transfer the filesystem module passes in. */
@@ -544,20 +575,18 @@ function pageInfo(spec: PageTransferSpec, id: string, kind: FileTransferKind): F
 }
 
 /**
- * The failure of an attempt at `url`: a write (IO) or the network, resumable when bytes are
- * kept. A network failure iOS's Local Network permission may cause carries the hint.
+ * The failure of an attempt at `url`: a write (IO) or the network. A network failure iOS's Local
+ * Network permission may cause carries the hint.
  */
-function attemptFailure(err: unknown, canResume: boolean, url: string): {
+function attemptFailure(err: unknown, url: string): {
   code: FileTransferErrorCode;
   message: string;
-  resumable: boolean;
 } {
   const code = err instanceof WriteFailure ? "IO" : "NETWORK";
   const message = String((err as Error)?.message ?? err);
   return {
     code,
     message: code === "NETWORK" ? withLocalNetworkHint(message, url, err) : message,
-    resumable: code === "NETWORK" && canResume,
   };
 }
 
@@ -576,6 +605,11 @@ abstract class SettlingDownload<T> implements PageTransfer {
   info: FileTransferInfo;
   /** The current request's controller (a new one per attempt). */
   protected controller = new AbortController();
+  /**
+   * Why the current request was stopped: a cancel overrides a pause still landing (its write in
+   * flight), which the aborted signal's first reason alone would lose.
+   */
+  protected why: AbortWhy | null = null;
   #settle: Settle<T>;
   #onAbort = () => cancelPage(this.info.id, "caller");
 
@@ -587,7 +621,8 @@ abstract class SettlingDownload<T> implements PageTransfer {
   /** Run the download's request (`resume`: continue a paused one). */
   protected abstract attempt(resume: boolean): Promise<void>;
 
-  start(): void {
+  /** Start the download (`resume`: continue one an earlier launch recorded, from its bytes). */
+  start(resume = false): void {
     const { signal } = this.spec.options;
     pageTransfers.set(this.info.id, this);
     if (signal?.aborted) {
@@ -596,22 +631,35 @@ abstract class SettlingDownload<T> implements PageTransfer {
     }
     signal?.addEventListener("abort", this.#onAbort, { once: true });
     pageEvent(this, "started");
-    void this.attempt(false);
+    void this.attempt(resume);
   }
 
   abort(reason: AbortWhy): void {
+    if (reason !== "pause" || !this.why) this.why = reason;
     this.controller.abort(reason);
   }
 
   resume(): void {
     this.controller = new AbortController();
+    this.why = null;
     pageEvent(this, "started", { state: "running" });
     void this.attempt(true);
   }
 
   cancelPaused(why: "cancel" | "caller"): void {
     pageEvent(this, "cancelled", { state: "cancelled", resumable: false });
-    this.fail(cancelError("downloadToFile", this.info.id, why, this.spec.options.signal));
+    const err = cancelError("downloadToFile", this.info.id, why, this.spec.options.signal);
+    void this.discard().then(() => this.fail(err));
+  }
+
+  /** Drop what a cancelled download kept (its promise rejects once it is gone). */
+  protected discard(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  /** Whether the current request was cancelled (by a cancel or the caller's signal). */
+  protected get cancelled(): boolean {
+    return this.why === "cancel" || this.why === "caller";
   }
 
   /** Reject the download's promise. */
@@ -631,6 +679,11 @@ abstract class SettlingDownload<T> implements PageTransfer {
 class PageDownload extends SettlingDownload<number> {
   #validator: string | null = null;
   #progress;
+  /** A pause asked for and not yet landed: whether the request stopped paused. */
+  #pausing: Promise<boolean> | null = null;
+  #onPaused: (paused: boolean) => void = () => {};
+  /** Whether this download has opened its file (so a cancel or a failure has bytes to drop). */
+  #opened = false;
 
   constructor(
     spec: PageTransferSpec,
@@ -662,12 +715,34 @@ class PageDownload extends SettlingDownload<number> {
       if (!res.ok) return await this.#httpError(res);
       this.succeed(await this.#receive(res));
     } catch (err) {
-      this.#stopped(err);
+      await this.#stopped(err);
     }
+    this.#paused(false);
+  }
+
+  /**
+   * Pause: abort the request, and answer once it has stopped (a write in flight lands first):
+   * `false` when it finished, failed or was cancelled instead, and at once for a
+   * {@linkcode DownloadSink.direct} sink, which keeps no partial bytes to resume from.
+   */
+  pause(): Promise<boolean> {
+    if (this.sink.direct) return Promise.resolve(false);
+    if (!this.#pausing) {
+      this.#pausing = new Promise((resolve) => (this.#onPaused = resolve));
+      this.abort("pause");
+    }
+    return this.#pausing;
+  }
+
+  /** Answer a pending pause. */
+  #paused(paused: boolean): void {
+    this.#onPaused(paused);
+    this.#pausing = null;
   }
 
   async #httpError(res: Response): Promise<void> {
     const body = await res.text().catch(() => "");
+    await this.discard();
     pageEvent(this, "failed", {
       state: "failed",
       status: res.status,
@@ -692,7 +767,10 @@ class PageDownload extends SettlingDownload<number> {
     this.#validator = ifRangeValidator(res.headers);
     const total = announced(res, start);
     const writer = await writing(() => this.sink.open(start));
+    this.#opened = true;
     let bytes = start;
+    let ended = false;
+    let finished = false;
     try {
       this.#progress.flush(bytes, total);
       const chunks = (res.body ?? []) as AsyncIterable<Uint8Array<ArrayBuffer>>;
@@ -702,9 +780,22 @@ class PageDownload extends SettlingDownload<number> {
         this.info = { ...this.info, bytes };
         this.#progress.report(bytes, total);
       }
+      ended = true;
     } finally {
-      await writer.close();
+      // A cancel lets go without committing; a pause or a failure keeps the bytes written (a
+      // direct sink's writer drops them on close); the whole body is finished where it can be.
+      if (this.cancelled && writer.abort) await writer.abort();
+      else if (ended && writer.finish) {
+        await writer.finish();
+        finished = true;
+      } else await writer.close();
     }
+    // A cancel landing during the last write or the close errored nothing (the body had all
+    // arrived): it still cancels, unless the writer had already finished (committed) the file.
+    if (this.cancelled && !finished) throw this.why;
+    // Once the bytes are moving into place a cancel is too late: the download finishes.
+    await writing(() => this.sink.commit?.() ?? Promise.resolve());
+    this.#opened = false;
     this.#progress.flush(bytes, total ?? bytes);
     pageEvent(this, "done", {
       state: "done",
@@ -717,28 +808,36 @@ class PageDownload extends SettlingDownload<number> {
     return bytes;
   }
 
+  /** A cancel or a failure drops what this download wrote (nothing when it never opened a file). */
+  protected override async discard(): Promise<void> {
+    if (!this.#opened) return;
+    this.#opened = false;
+    try {
+      await this.sink.remove?.();
+    } catch {
+      // Already gone, or the browser cannot delete it: the cancel or the failure stands.
+    }
+  }
+
   /** The request stopped: a pause, a cancel, or a failure. */
-  #stopped(err: unknown): void {
-    const reason = this.controller.signal.reason;
+  async #stopped(err: unknown): Promise<void> {
+    const reason = this.why;
     if (reason === "pause") {
       pageEvent(this, "paused", { state: "paused", resumable: this.#validator !== null });
-      return;
+      return this.#paused(true);
     }
     if (reason === "cancel" || reason === "caller") {
       pageEvent(this, "cancelled", { state: "cancelled", resumable: false });
+      await this.discard();
       return this.fail(
         cancelError("downloadToFile", this.info.id, reason, this.spec.options.signal),
       );
     }
-    const { code, message, resumable } = attemptFailure(
-      err,
-      this.#validator !== null && this.info.bytes > 0,
-      this.spec.url,
-    );
-    pageEvent(this, "failed", { state: "failed", code, error: message, resumable });
-    this.fail(
-      new FileTransferError(`downloadToFile: ${message}`, { code, id: this.info.id, resumable }),
-    );
+    // The bytes so far are dropped (the file it replaces is kept): it is not resumable.
+    const { code, message } = attemptFailure(err, this.spec.url);
+    pageEvent(this, "failed", { state: "failed", code, error: message, resumable: false });
+    await this.discard();
+    this.fail(new FileTransferError(`downloadToFile: ${message}`, { code, id: this.info.id }));
   }
 }
 
@@ -817,6 +916,8 @@ function failedPatch(error: unknown): Partial<FileTransferEvent> {
  */
 class TrackedDownload extends SettlingDownload<{ path: string }> {
   #pausing = false;
+  /** The current run, settled once its outcome (done, paused, cancelled, failed) is handled. */
+  #run: Promise<void> = Promise.resolve();
 
   constructor(
     spec: PageTransferSpec,
@@ -827,24 +928,37 @@ class TrackedDownload extends SettlingDownload<{ path: string }> {
     super(spec, id, settle);
   }
 
+  /**
+   * Pause through the engine, and answer once the run it stopped has settled here: the engine's
+   * answer can arrive before its run's rejection, and a resume (or the end of a test) that came in
+   * between would find the transfer still running, its request still in flight. `false` when it
+   * finished, failed or was cancelled instead.
+   */
   async pause(): Promise<boolean> {
     this.#pausing = true;
     let paused = false;
     try {
       paused = await this.engine.pause(this.info.id);
-      return paused;
     } finally {
       // Not paused (it had already settled, or the call failed): a later stop is not a pause.
       if (!paused) this.#pausing = false;
     }
+    if (!paused) return false;
+    await this.#run;
+    return this.info.state === "paused";
   }
 
-  override cancelPaused(why: "cancel" | "caller"): void {
-    super.cancelPaused(why);
-    void this.engine.discard(this.info.id).catch(() => {});
+  /** A cancel while paused: the engine drops the partial file it kept, then the promise rejects. */
+  protected override discard(): Promise<void> {
+    return this.engine.discard(this.info.id).catch(() => {});
   }
 
-  protected async attempt(resume: boolean): Promise<void> {
+  protected attempt(resume: boolean): Promise<void> {
+    this.#run = this.#attempt(resume);
+    return this.#run;
+  }
+
+  async #attempt(resume: boolean): Promise<void> {
     const { id } = this.info;
     const progress = (bytes: number, total: number | null) => {
       pageEvent(this, "progress", { bytes, total });
@@ -866,25 +980,28 @@ class TrackedDownload extends SettlingDownload<{ path: string }> {
       });
       this.succeed(done);
     } catch (err) {
-      this.#stopped(err);
+      await this.#stopped(err);
     } finally {
       this.#pausing = false;
     }
   }
 
   /** The run stopped: a pause (the promise stays pending), a cancel, or a failure. */
-  #stopped(err: unknown): void {
+  async #stopped(err: unknown): Promise<void> {
     const pause = this.#pausing ? this.engine.paused(err) : undefined;
-    if (pause) {
+    if (pause && !this.cancelled) {
       pageEvent(this, "paused", { state: "paused", ...pause });
       return;
     }
+    // A cancel that landed while the pause was settling: the engine kept the partial file, which
+    // goes before the promise rejects.
+    if (pause) await this.discard();
     this.fail(this.#failure(err));
   }
 
   /** The error the download rejects with (its event sent; none when the engine is absent). */
   #failure(err: unknown): unknown {
-    const reason = this.controller.signal.reason;
+    const reason = this.why;
     if (reason === "cancel" || reason === "caller") {
       pageEvent(this, "cancelled", { state: "cancelled", resumable: false });
       return cancelError("downloadToFile", this.info.id, reason, this.spec.options.signal);
@@ -921,6 +1038,176 @@ export function trackedDownload(
   return new Promise((resolve, reject) => {
     new TrackedDownload(spec, engine, id, { resolve, reject }).start();
   });
+}
+
+// --- Deno Desktop downloads (the runtime's `fs` capability) -----------------------------------
+
+/** The runtime's `fs.download` failure codes, as the {@linkcode FileTransferError} codes. */
+const DESKTOP_TRANSFER_CODES: Readonly<Record<string, FileTransferErrorCode>> = {
+  download_failed: "HTTP",
+  network: "NETWORK",
+  io: "IO",
+  too_large: "IO",
+  validation: "INVALID",
+  exists: "EXISTS",
+  cancelled: "CANCELLED",
+};
+
+/** The {@linkcode FileTransferError} code for a runtime `fs.download` code, if it has one. */
+function transferCodeOf(code: unknown): FileTransferErrorCode | undefined {
+  return typeof code === "string" && Object.hasOwn(DESKTOP_TRANSFER_CODES, code)
+    ? DESKTOP_TRANSFER_CODES[code]
+    : undefined;
+}
+
+/** An HTTP failure's `status` and `body` from the runtime's error data. */
+function httpDetail(raw: unknown): { status?: number; body?: string } {
+  const data = (raw ?? {}) as { status?: unknown; body?: unknown };
+  const out: { status?: number; body?: string } = {};
+  if (typeof data.status === "number") out.status = data.status;
+  if (typeof data.body === "string") out.body = data.body;
+  return out;
+}
+
+/**
+ * A desktop download's failure as the mobile path's: a {@linkcode FileTransferError} for the
+ * transfer failures (`HTTP` with the status and body, `NETWORK`, `IO`, `INVALID`, `EXISTS`,
+ * `CANCELLED`); anything else (`unavailable`, `forbidden`, …) unchanged.
+ */
+function desktopTransferError(err: unknown, id: string): unknown {
+  const e = err as { code?: unknown; message?: unknown; data?: unknown } | null;
+  const code = transferCodeOf(e?.code);
+  if (!code) return err;
+  const message = String(e?.message ?? "failed").replace(/^desktop fs\.download: \w+: /, "");
+  return new FileTransferError(`downloadToFile: ${message}`, { code, id, ...httpDetail(e?.data) });
+}
+
+/** Where a desktop download's `paused` rejection says it stopped (`undefined` for another error). */
+function desktopPause(err: unknown): TrackedDownloadPause | undefined {
+  const e = err as { code?: unknown; data?: unknown } | null;
+  if (e?.code !== "paused") return undefined;
+  const d = (e.data ?? {}) as { bytes?: unknown; total?: unknown; resumable?: unknown };
+  return {
+    bytes: typeof d.bytes === "number" ? d.bytes : 0,
+    total: typeof d.total === "number" ? d.total : null,
+    resumable: d.resumable === true,
+  };
+}
+
+/** The folder a desktop download writes into: an app folder, or a picked one. */
+type DesktopDirectory = Parameters<DesktopNative["fsDownload"]>[2];
+
+/** The engine of a download the Deno Desktop runtime runs (`fs.download` and its controls). */
+function desktopEngine(
+  desktop: DesktopNative,
+  spec: PageTransferSpec,
+  directory: DesktopDirectory,
+): TrackedDownloadEngine {
+  const headers = { ...(spec.options.headers ?? {}) };
+  return {
+    run: ({ id, signal, onProgress, resume }) =>
+      desktop.fsDownload(spec.url, spec.path, directory, {
+        id,
+        headers,
+        signal,
+        onProgress,
+        resume,
+      }),
+    error: desktopTransferError,
+    absent: (err) => (err as { code?: unknown } | null)?.code === "unavailable",
+    pause: (id) => desktop.fsPauseDownload(id),
+    paused: desktopPause,
+    discard: async (id) => void await desktop.fsCancelDownload(id),
+  };
+}
+
+/**
+ * A download in a Deno Desktop window: the runtime fetches it with the request `headers` and
+ * reports progress. It is a tracked transfer (`fileTransfers()`, `onFileTransfer`,
+ * `pauseFileTransfer`, `resumeFileTransfer`, `cancelFileTransfer`): a pause sends
+ * `fs.pauseDownload` (the runtime keeps the partial file), a resume `fs.resumeDownload` (a range
+ * request guarded by `If-Range`), and a cancel, or `signal` aborting, `fs.cancelDownload` (the
+ * partial file is dropped). Its failures are the mobile path's {@linkcode FileTransferError}s.
+ *
+ * @param desktop The desktop module.
+ * @param spec The transfer (`directory` as the page shows it).
+ * @param directory The folder the runtime writes into.
+ * @returns The file's path, once done.
+ */
+export function desktopDownload(
+  desktop: DesktopNative,
+  spec: PageTransferSpec,
+  directory: DesktopDirectory,
+): Promise<{ path: string }> {
+  return trackedDownload(spec, desktopEngine(desktop, spec, directory));
+}
+
+/** The runtime's records (an earlier launch's downloads included); none off desktop or without `fs`. */
+async function desktopRecords(): Promise<FileTransferInfo[]> {
+  if (!onDesktop()) return [];
+  const out = await viaDesktop("fs", (d) => d.fsListDownloads());
+  return (out?.value ?? []).map((raw) => infoOf(fromNative(raw as RawTransfer)));
+}
+
+/** Runtime record `id` (one no page transfer of this page has taken over), if there is one. */
+async function desktopRecord(id: string): Promise<FileTransferInfo | undefined> {
+  const found = (await desktopRecords()).find((r) => r.id === id);
+  return found && !pageTransfers.has(id) ? found : undefined;
+}
+
+/**
+ * Resume a download the runtime recorded and this page does not track (an earlier launch's, or a
+ * reloaded page's): paused, or failed. It becomes this page's tracked transfer, continuing from
+ * its partial file with the request headers the runtime kept. `undefined` off desktop.
+ */
+async function resumeDesktopRecord(id: string): Promise<boolean | undefined> {
+  if (!onDesktop()) return undefined;
+  const record = await desktopRecord(id);
+  if (!record) return undefined;
+  if (record.state !== "paused" && record.state !== "failed") return false;
+  const out = await viaDesktop("fs", (desktop) => {
+    // Taken over meanwhile (a resume racing this one): that one runs it.
+    if (pageTransfers.has(id)) return Promise.resolve(false);
+    const spec: PageTransferSpec = {
+      id,
+      url: record.url,
+      directory: record.directory,
+      path: record.path,
+      options: {},
+    };
+    const directory = record.directory as DesktopDirectory;
+    const done = new Promise<{ path: string }>((resolve, reject) => {
+      const t = new TrackedDownload(spec, desktopEngine(desktop, spec, directory), id, {
+        resolve,
+        reject,
+      });
+      t.info = { ...t.info, bytes: record.bytes, total: record.total };
+      t.start(true);
+    });
+    // Nobody awaits it (the page that started it is gone): its events and record report it.
+    done.catch(() => {});
+    return Promise.resolve(true);
+  });
+  return out?.value;
+}
+
+/**
+ * Cancel (`forget: false`) or forget a download the runtime recorded and this page does not
+ * track: the runtime drops its record and kept partial file. A cancel sends `cancelled`.
+ */
+async function settleDesktopRecord(id: string, forget: boolean): Promise<boolean | undefined> {
+  if (!onDesktop()) return undefined;
+  const record = await desktopRecord(id);
+  if (!record) return undefined;
+  const out = await viaDesktop(
+    "fs",
+    (d) => forget ? d.fsForgetDownload(id) : d.fsCancelDownload(id),
+  );
+  const ok = out?.value === true;
+  if (ok && !forget) {
+    dispatch({ ...record, type: "cancelled", state: "cancelled", resumable: false });
+  }
+  return ok;
 }
 
 /** Cancel a page transfer; `caller` when the caller's own signal aborted it. */
@@ -1108,7 +1395,7 @@ class PageUpload implements PageTransfer {
       pageEvent(this, "cancelled", { state: "cancelled" });
       return cancelError("uploadFile", this.info.id, reason, this.spec.options.signal);
     }
-    const { message } = attemptFailure(err, false, this.spec.url);
+    const { message } = attemptFailure(err, this.spec.url);
     pageEvent(this, "failed", { state: "failed", code: "NETWORK", error: message });
     return new FileTransferError(`uploadFile: ${message}`, { code: "NETWORK", id: this.info.id });
   }
@@ -1216,7 +1503,10 @@ export function nativeTransfer(
 /**
  * Every transfer this page knows: in the shell, the plugin's records (running, paused, and
  * finished ones not yet forgotten — those that finished while the page was gone included);
- * on the web and in a Deno Desktop window, the ones this page started.
+ * in a Deno Desktop window, the ones this page started and the runtime's records (an earlier
+ * launch's paused, failed and recently done downloads included: a download the app quit during
+ * is `failed`, `resumable` when its partial file can continue); on the web, the ones this page
+ * started.
  *
  * @returns The transfers.
  */
@@ -1225,7 +1515,9 @@ export async function fileTransfers(): Promise<FileTransferInfo[]> {
   const native = plugin
     ? ((await plugin.list()).transfers ?? []).map((raw) => infoOf(fromNative(raw ?? {})))
     : [];
-  return [...native, ...[...pageTransfers.values()].map((t) => t.info)];
+  const page = [...pageTransfers.values()].map((t) => t.info);
+  const recorded = (await desktopRecords()).filter((r) => !pageTransfers.has(r.id));
+  return [...native, ...recorded, ...page];
 }
 
 /**
@@ -1238,7 +1530,9 @@ export async function fileTransfers(): Promise<FileTransferInfo[]> {
  * request guarded by `If-Range`.
  *
  * @param id The transfer's id.
- * @returns Whether it paused.
+ * @returns Whether it paused: `false` too for a download that finished, failed or was cancelled
+ * before the pause landed, and for a page download into a picked file without OPFS (it writes
+ * straight through the picked file's stream, which keeps no partial bytes to resume from).
  */
 export async function pauseFileTransfer(id: string): Promise<boolean> {
   const page = pageTransfers.get(id);
@@ -1253,11 +1547,22 @@ export async function pauseFileTransfer(id: string): Promise<boolean> {
 }
 
 /**
- * Resume a paused download, or retry a failed transfer (a download from its bytes so far when it
- * is `resumable`).
+ * Continue a paused download from its bytes so far (a range request where the server allows one,
+ * else from the start).
+ *
+ * In the iOS / Android shell with the `DenextTransfer` plugin (`denext mobile add file-transfer`)
+ * it also retries a failed transfer: a download from its bytes so far when it is `resumable`,
+ * else anew, and an upload from the start. On the web and in a Deno Desktop window only a paused
+ * download resumes: a failed transfer resolves `false` (start it again with `downloadToFile`; on
+ * Deno Desktop the same URL to the same file continues from the partial file the runtime kept).
+ * After a restart, a Deno Desktop download started with a credential header (`Authorization`,
+ * `Cookie`, an API key) is refused here, since the runtime never writes one to disk: start it again
+ * with `downloadToFile` and its headers (the same id, URL and file), which continues from its
+ * partial file.
  *
  * @param id The transfer's id.
- * @returns Whether it resumed.
+ * @returns Whether it resumed: `false` for an id with no record, a transfer that is neither
+ *   paused nor (with the plugin) failed, or, outside the plugin, a failed one.
  */
 export async function resumeFileTransfer(id: string): Promise<boolean> {
   const page = pageTransfers.get(id);
@@ -1266,19 +1571,24 @@ export async function resumeFileTransfer(id: string): Promise<boolean> {
     page.resume();
     return true;
   }
+  const recorded = await resumeDesktopRecord(id);
+  if (recorded !== undefined) return recorded;
   const plugin = transferPlugin();
   return plugin ? (await plugin.resume({ id })).resumed === true : false;
 }
 
 /**
- * Cancel a running or paused transfer; a download's partial file is dropped. Its promise
- * rejects with a {@linkcode FileTransferError} of code `"CANCELLED"`.
+ * Cancel a running or paused transfer; a download's partial file is dropped (on the web, the
+ * OPFS part file it was writing, what a pause kept included; a file it was to replace keeps its
+ * contents). Its promise rejects with a {@linkcode FileTransferError} of code `"CANCELLED"`.
  *
  * @param id The transfer's id.
  * @returns Whether it was cancelled.
  */
 export async function cancelFileTransfer(id: string): Promise<boolean> {
   if (pageTransfers.has(id)) return cancelPage(id, "cancel");
+  const recorded = await settleDesktopRecord(id, false);
+  if (recorded !== undefined) return recorded;
   const plugin = transferPlugin();
   return plugin ? (await plugin.cancel({ id })).cancelled === true : false;
 }
@@ -1294,8 +1604,12 @@ export async function forgetFileTransfer(id: string): Promise<boolean> {
   if (page) {
     if (page.info.state === "running" || page.info.state === "paused") return false;
     pageTransfers.delete(id);
+    // The runtime's record of it, on desktop, goes too (else it would be listed again).
+    if (onDesktop()) await viaDesktop("fs", (d) => d.fsForgetDownload(id)).catch(() => {});
     return true;
   }
+  const recorded = await settleDesktopRecord(id, true);
+  if (recorded !== undefined) return recorded;
   const plugin = transferPlugin();
   return plugin ? (await plugin.forget({ id })).forgotten === true : false;
 }

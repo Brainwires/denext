@@ -6,6 +6,14 @@ import { join } from "@std/path";
 import { renderMarkdown } from "../packages/content-collections/markdown.ts";
 import { publishedFiles } from "./_published-files.ts";
 import {
+  copyStrippedTree,
+  measurePublishSet,
+  PUBLISH_GUARD_BYTES,
+  publishSizeProblem,
+  stripForPublish,
+  strippedCodeProblem,
+} from "../scripts/publish-strip.ts";
+import {
   bumpVersion,
   currentVersionPattern,
   docSpecifierPattern,
@@ -100,6 +108,7 @@ Deno.test("prepareRelease (dry) reports the bump, the golden refresh and the cha
   const out = await captured(() => prepareRelease("99.0.0-test.1", true));
   assertStringIncludes(out, "1. Bump");
   assertStringIncludes(out, "1b. ");
+  assertStringIncludes(out, "1c. revocation floor (skipped — dry run)");
   assertStringIncludes(out, "2. CHANGELOG: rolled [Unreleased] → [99.0.0-test.1]");
 });
 
@@ -295,20 +304,186 @@ Deno.test("the release gate re-checks only the release's own changes unless --fu
 Deno.test("the @denext/denext package stays clear of JSR's 20 MiB cap", async () => {
   // JSR refuses a package over 20 MiB at upload (its hard limit), after the tag is pushed
   // (4.0.0's first two publishes). Sum what `deno publish` sends against a guard below that limit.
-  // 4.9.0 reached 19.4 MiB; 5.0 moved the auth layer into @denext/auth (packages/auth, published
-  // on its own), which brought it to about 17.3 MiB, and the guard back to 19 MiB.
-  const files = await publishedFiles();
-  if (!files) return; // not a git checkout: nothing to measure
-  const mib = [...files.values()].reduce((a, b) => a + b, 0) / 1024 / 1024;
-  assert(mib < 19, `the package is ${mib.toFixed(2)} MiB; JSR refuses anything over 20 MiB`);
+  // The guard was 19 MiB; 4.9.0 grew past it, so it was 19.6 MiB while the quota increase asked of
+  // JSR on 2026-10-25 is pending. Raised to 19.85 MiB on 2026-10-29 for the 4.10-c train
+  // (19.545 → 19.79 MiB, all of it source: the OTA app binding and desktop overlay verification,
+  // the lock rework, the resource limits, the next.config sandbox's contained read, the child
+  // probe, the react-reconciler context bridge, the mobile build / doctor checks). Nothing in the
+  // publish set is outside the import graph of an export but the React Native modules that
+  // resolveAlias reaches by path, so there was nothing to drop; 0.15 MiB of headroom to 20 MiB is
+  // left. Splitting the package (the auth package first) is 5.0 work. Raised to 19.9 MiB on
+  // 2026-10-30 for the 4.10-d train (19.79 → 19.85 MiB: workspace globs, desktop transfer
+  // records, the child-exit grace, React Router render middleware). Lowered to 19.75 MiB for the
+  // 4.10-e train (20.03 MiB with its merges, the revoked-runtimes list, start.tls and the Prisma
+  // 7 migration among them, → 19.70 MiB): the packed native templates moved into
+  // @denext/docs-corpus, which denext pins at exactly its own version and every release publishes
+  // first (scripts/lib/docs-corpus-package.ts CORPUS_DATA_MODULES; a checkout reads its own copy),
+  // and the config schema, the CLI's verb descriptions and the Google Fonts families ship
+  // Brotli-packed. Those three moved to docs-corpus first, which broke the CLI run from a checkout
+  // outside its workspace: it resolved the corpus from JSR, where the commit's modules were not
+  // published yet, or not past Deno's minimum dependency age. The 4.10-f train (19.73 MiB) packed
+  // the `denext ui` assets, the dev page scripts, the scaffolded desktop packaging scripts and the
+  // expo / React Native manifests in-package (scripts/gen-packed-texts.ts, tests/packed-texts.test.ts)
+  // → 19.59 MiB; the guard stays at 19.75 MiB for the trains merging after it. The 4.11.1 trains
+  // (19.747 MiB) moved the fastlane files, the widget / Live Activity / native-module sources, the
+  // composed MainActivity's blocks and the scaffolded desktop packaging scripts into the
+  // docs-corpus pack (holes filled by `fillTemplate`), packed the fallow init texts (the coverage
+  // converter is read from scripts/coverage-to-istanbul.ts, no longer pasted), front-coded the font
+  // metrics, moved the doc-lint list to scripts/doc-lint.ts and stopped publishing MISSION.md and
+  // POLICIES.md → 19.65 MiB; 0.25 MiB above that is past 19.75, so the guard stays. The CLI verbs'
+  // help text stopped shipping twice (plain in src/cli/commands/*.ts and packed in
+  // src/cli/command-meta.packed.ts): the readable copy moved to the unpublished
+  // src/cli/commands/meta/ → 19.55 MiB; 0.25 MiB above that is still past 19.75, so the guard
+  // stays. Nothing else in the set was data, so scripts/publish-strip.ts now blanks internal
+  // comments at publish (19.61 → 16.48 MiB); the guard is on that size, at 18.5 MiB. Raise it
+  // only with the reason. 5.0 moved the auth layer into @denext/auth (packages/auth, published
+  // on its own), about 2 MiB of source out of this package.
+  const measured = await measurePublishSet();
+  if (!measured) return; // not a git checkout: nothing to measure
+  assertEquals(publishSizeProblem(measured.after), null);
+  assertEquals(measured.changedCode, []);
+  const files = (await publishedFiles())!;
+  // The data @denext/docs-corpus carries for denext stays out of it, and the plain-text copies of
+  // what ships packed stay unpublished.
+  for (
+    const file of [
+      "denext.config.schema.json",
+      "src/build/native-templates/ota.ts",
+      "src/compat/next/font/google-families.ts",
+      "src/plugin/catalog.json",
+      "src/cli/commands/meta/desktop.ts",
+    ]
+  ) assert(!files.has(file), `${file} is published again`);
+  for (
+    const file of ["src/build/native-templates.packed.ts", "src/cli/command-table.generated.ts"]
+  ) {
+    assert((files.get(file) ?? 0) < 16 * 1024, `${file} carries its data again`);
+  }
+  for (
+    const file of [
+      "src/cli/command-meta.packed.ts",
+      "src/ui/form/config-schema.packed.ts",
+      "src/compat/next/font/google-families.packed.ts",
+      "src/plugin/catalog.packed.ts",
+    ]
+  ) assert(files.has(file), `${file} is not published`);
+});
+
+Deno.test("the size guard stops a package over 18.5 MiB and names the size", () => {
+  assertEquals(publishSizeProblem(PUBLISH_GUARD_BYTES), null);
+  assertEquals(PUBLISH_GUARD_BYTES, 18.5 * 1024 * 1024);
+  const problem = publishSizeProblem(PUBLISH_GUARD_BYTES + 1024 * 1024);
+  assertStringIncludes(problem ?? "", "19.50 MiB");
+  assertStringIncludes(problem ?? "", "18.50 MiB guard");
+});
+
+Deno.test("publish stripping blanks internal comments and keeps lines, API docs and tools'", () => {
+  const source = [
+    "// internal note",
+    "/** Internal helper. */",
+    "function helper(): string {",
+    "  /** Inside a body. */",
+    "  const url = `",
+    "  // inside a template",
+    "  /** inside a template */`;",
+    "  return url + '// in a string'; // trailing stays",
+    "}",
+    "/**",
+    " * Public, over",
+    " * two lines.",
+    " */",
+    "export function pub(): string {",
+    "  // deno-lint-ignore no-explicit-any",
+    "  // @ts-ignore a reason",
+    "  return helper();",
+    "}",
+    "/** Named by an export list. */",
+    "const listed = 1;",
+    "export { listed };",
+    "/** A private type in a public signature. */",
+    "interface Shape {",
+    "  /** A member. */",
+    "  a: string;",
+    "}",
+    "export const shape: Shape = { a: '' };",
+    "/** Assigned onto the function. */",
+    "(pub as unknown as Record<string, number>).size = 1;",
+    "/** Stays private. */",
+    "interface Hidden {",
+    "  /** Private member. */",
+    "  b: string;",
+    "}",
+  ].join("\n");
+  const out = stripForPublish("src/a.ts", source);
+  assertEquals(out.split("\n").length, source.split("\n").length);
+  for (
+    const gone of [
+      "internal note",
+      "Internal helper",
+      "Inside a body",
+      "Stays private",
+      "Private member",
+    ]
+  ) assert(!out.includes(gone), gone);
+  for (
+    const kept of [
+      "// inside a template",
+      "/** inside a template */",
+      "// in a string",
+      "// trailing stays",
+      " * Public, over",
+      "// deno-lint-ignore no-explicit-any",
+      "// @ts-ignore a reason",
+      "/** Named by an export list. */",
+      "/** A private type in a public signature. */",
+      "/** A member. */",
+      "/** Assigned onto the function. */",
+    ]
+  ) assertStringIncludes(out, kept);
+});
+
+Deno.test("publish stripping leaves a licence notice, vendored code and non-modules alone", () => {
+  const body = "// note\nconst a = 1;\n";
+  assertEquals(stripForPublish("src/a.ts", body), "\nconst a = 1;\n");
+  for (
+    const [path, text] of [
+      ["src/a.ts", `// Copyright 2026 Someone\n${body}`],
+      ["src/build/esbuild/vendor/common.ts", body],
+      ["README.md", body],
+      ["src/a.d.ts", body],
+    ]
+  ) assertEquals(stripForPublish(path, text), text);
+  const moduleDoc = "/**\n * Doc.\n * @module\n */\nimport './b.ts';\n";
+  assertEquals(stripForPublish("src/a.ts", moduleDoc), moduleDoc);
+});
+
+Deno.test("publish stripping never joins the tokens around an inline comment", () => {
+  // Only leading comments (after a line break) are blanked, so code always has whitespace on one
+  // side today; the space keeps a later rule change from joining `a/** x */b` into `ab`.
+  const source = "let a = 1;\nconst b = a\n/** x *//** y */+ 1;\nfunction f(v: number) {\n" +
+    "  return/** c */v;\n}\n";
+  const out = stripForPublish("src/a.ts", source);
+  assert(!out.includes("/** x */") && !out.includes("/** y */"));
+  assertStringIncludes(out, "return/** c */v;"); // a trailing comment is never blanked
+  assertEquals(out.split("\n").length, source.split("\n").length);
+  assertEquals(strippedCodeProblem("src/a.ts", source, out), null);
+});
+
+Deno.test("the publish gate refuses a strip that changed the code", () => {
+  const source = "function f(v: number) {\n  return/** c */v;\n}\n";
+  assertEquals(strippedCodeProblem("src/a.ts", source, source), null);
+  assertEquals(
+    strippedCodeProblem("src/a.ts", source, "function f(v: number) {\n  return\n v;\n}\n"),
+    "src/a.ts: the comment strip changed the code, not just comments",
+  );
+  assertEquals(
+    strippedCodeProblem("src/a.ts", source, "function f(v: number) {\n  return v;\n}\n"),
+    null,
+  );
 });
 
 /** Published generated files over 50 KiB that may ship uncompressed, and why. */
 const UNCOMPRESSED_GENERATED_OK: Readonly<Record<string, string>> = {
-  "denext.config.schema.json":
-    "imported as JSON by the project UI and read by editors as-is; already minified",
-  "src/cli/command-table.generated.ts":
-    "read by every CLI start: decoding it would load node:zlib for `denext --version`",
   "src/compat/next/font/font-metrics.ts":
     "next/font can run in a browser bundle, which has no node:zlib; already one compact row string",
 };
@@ -350,4 +525,43 @@ Deno.test("bump: an npm dependency that shares denext's version keeps its own", 
   assertStringIncludes(out, "npm:tus-js-client@4.3.1");
   assertStringIncludes(out, "npm:@scope/x@^4.3.1");
   assertStringIncludes(out, `"14.3.1"`);
+});
+
+Deno.test("the local publish dry-run sees the stripped set, in a copy that leaves the tree alone", async () => {
+  const root = new URL("../", import.meta.url);
+  const dest = await Deno.makeTempDir({ prefix: "denext-strip-copy-" });
+  try {
+    const copied = await copyStrippedTree(dest);
+    assert(copied !== null && copied > 100, `copied the tree (${copied})`);
+    // A published module that carries a stripped-away comment is smaller in the copy ...
+    let path = "";
+    for (const file of (await publishedFiles())!.keys()) {
+      if (!/\.ts$/.test(file) || file.endsWith(".d.ts")) continue;
+      const text = await Deno.readTextFile(new URL(file, root));
+      if (stripForPublish(file, text) !== text) {
+        path = file;
+        break;
+      }
+    }
+    assert(path, "a published module has comments to strip");
+    const original = await Deno.readTextFile(new URL(path, root));
+    const copy = await Deno.readTextFile(join(dest, path));
+    assertEquals(copy, stripForPublish(path, original));
+    assert(copy.length < original.length, "internal comments are blanked in the copy");
+    assertEquals(copy.split("\n").length, original.split("\n").length, "line numbers kept");
+    // ... while the working tree file is untouched, and non-modules arrive byte for byte.
+    assertEquals(original, await Deno.readTextFile(new URL(path, root)));
+    assertEquals(
+      await Deno.readTextFile(join(dest, "deno.json")),
+      await Deno.readTextFile(new URL("deno.json", root)),
+    );
+  } finally {
+    await Deno.remove(dest, { recursive: true });
+  }
+});
+
+Deno.test("the release dry-runs the publish in the stripped copy, never the raw tree", async () => {
+  const script = await Deno.readTextFile(new URL("../scripts/release.ts", import.meta.url));
+  assert(!/run\("deno", "publish"/.test(script), "no publish dry-run over the working tree");
+  assertStringIncludes(script, "copyStrippedTree(dir)");
 });

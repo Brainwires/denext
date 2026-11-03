@@ -249,7 +249,20 @@ checks the token and `authorize`, runs Lustre's server-component runtime with
 the flags, one runtime per mounted view per connection, and streams Lustre's own
 messages (the whole view, then patches). Lustre's own reconciler applies them,
 from the app's island chunk, never an inline script, so the strict default CSP
-holds. DOM events go back as Lustre's events and are checked before Lustre's
+holds.
+
+The first paint is **adopted**, not replaced. Lustre's own server-component
+client empties its root and renders the whole view again; denext instead walks
+the server's whole view against the nodes the page already has, gives them the
+metadata Lustre's reconciler would have given nodes it created, and has the
+reconciler attach the event handlers and properties HTML can't carry. So the
+nodes stay the same nodes, and a field the visitor focused or typed into before
+the view mounted keeps its focus, caret and text; the field's `input` and
+`change` are sent once the view is live, so the server's model learns what was
+typed (as Lustre's own client hydration does). A page whose markup does not fit
+the view (another tag where the view has an element) is re-rendered, as before,
+with one console warning. A later whole view (a reconnect, or the resync after a
+patch that did not apply) is rendered anew. DOM events go back as Lustre's events and are checked before Lustre's
 decoders see them: Lustre's `EventFired` message only, a bounded path and name,
 a small plain-JSON event, then the view's optional `events` schema.
 
@@ -267,6 +280,10 @@ a small plain-JSON event, then the view's optional `events` schema.
   reconnect that lands on another instance, or comes later, runs `init` again.
 - **shutdown**: a view's runtime stops when the page leaves it, when its resume
   window ends, and when the server drains.
+- **not carried**: Lustre's contexts (`provide` / `subscribe` between the view
+  and the page around it) are not carried over Live, and there are no host
+  attribute or property changes to send: a view's input is its signed props, so
+  other props render another view.
 
 ### Fixes to Lustre's runtimes
 

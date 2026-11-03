@@ -10,7 +10,9 @@
 //     listing (`.denext/commands.json`, fingerprinted against the config, `deno.json` and
 //     `deno.lock`) still matches and names it. A missing or stale listing runs Deno's, with a hint
 //     when the directory is a denext project.
-//   - Every other name may be a project verb, so the CLI discovers them (it is "unknown" otherwise).
+//   - Every other name may be a project verb. Whether that is worth importing the config for is
+//     decided next, from its text (`unknownVerbAction` in unknown-verb.ts): this module stays
+//     out of the startup graph's parser.
 
 import { hasDenextConfig, readCommandCache } from "./command-cache.ts";
 import { type DenoForward, denoForwardFor } from "./deno-forward.ts";
@@ -30,7 +32,7 @@ export type VerbRoute =
     readonly unlisted: boolean;
   }
   | {
-    /** Discover the project's verbs (importing its config), then dispatch. */
+    /** A name that may be the project's: `unknownVerbAction` decides whether to discover it. */
     readonly kind: "project";
   };
 

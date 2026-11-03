@@ -201,7 +201,9 @@ Deno.test("desktop useOpenFile: subscribes on mount, calls the latest callback, 
   });
 });
 
-const PKCE = "&code_challenge=abc&code_challenge_method=S256";
+/** RFC 7636 Appendix B's S256 challenge: a well-formed PKCE pair. */
+const PKCE =
+  "&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256";
 
 Deno.test("usesSchemeCallback: custom redirect or callbackPrefix → scheme flow; loopback → loopback", () => {
   const url = (redirect: string) =>
@@ -256,7 +258,7 @@ Deno.test("desktop openAuthSession (custom scheme): codes map through, the handl
   for (const [start, code, handler] of cases) {
     await inDesktop({ authSession: { start } }, async () => {
       const err = await assertRejects(() =>
-        openAuthSession("https://idp.example/a?redirect_uri=myapp%3A%2F%2Fcb", {
+        openAuthSession("https://idp.example/a?redirect_uri=myapp%3A%2F%2Fcb" + PKCE, {
           callbackScheme: "myapp",
         })
       ) as { code: string; handler?: string; message: string };
@@ -267,7 +269,7 @@ Deno.test("desktop openAuthSession (custom scheme): codes map through, the handl
   // The capability is off (or the stock runtime): `unsupported` naming the fix.
   await inDesktop({}, async () => {
     const err = await assertRejects(() =>
-      openAuthSession("https://idp.example/a?redirect_uri=myapp%3A%2F%2Fcb", {
+      openAuthSession("https://idp.example/a?redirect_uri=myapp%3A%2F%2Fcb" + PKCE, {
         callbackScheme: "myapp",
       })
     ) as { code: string; message: string };
@@ -294,7 +296,7 @@ Deno.test("desktop openAuthSession (custom scheme): aborting the signal cancels 
     },
   }, async (rt) => {
     const abort = new AbortController();
-    const run = openAuthSession("https://idp.example/a?redirect_uri=myapp%3A%2F%2Fcb", {
+    const run = openAuthSession("https://idp.example/a?redirect_uri=myapp%3A%2F%2Fcb" + PKCE, {
       callbackScheme: "myapp",
       signal: abort.signal,
     });
@@ -307,7 +309,7 @@ Deno.test("desktop openAuthSession (custom scheme): aborting the signal cancels 
     const pre = new AbortController();
     pre.abort();
     const early = await assertRejects(() =>
-      openAuthSession("https://idp.example/a?redirect_uri=myapp%3A%2F%2Fcb", {
+      openAuthSession("https://idp.example/a?redirect_uri=myapp%3A%2F%2Fcb" + PKCE, {
         callbackScheme: "myapp",
         signal: pre.signal,
       })
@@ -321,7 +323,7 @@ Deno.test("desktop openAuthSession: a loopback redirect keeps the loopback endpo
     // The fake has no auth-session endpoint, so the loopback flow fails — but it never calls the
     // scheme RPC.
     await assertRejects(() =>
-      openAuthSession("https://idp.example/a?redirect_uri=http%3A%2F%2F127.0.0.1%2Fcb", {
+      openAuthSession("https://idp.example/a?redirect_uri=http%3A%2F%2F127.0.0.1%2Fcb" + PKCE, {
         callbackScheme: "myapp",
       })
     );

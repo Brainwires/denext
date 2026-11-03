@@ -387,8 +387,6 @@ async function exercise(t: Deno.TestContext, server: RunningServer, label: strin
 
 Deno.test({
   name: "e2e: Reanimated 4 + gesture-handler run in React Native mode without the Babel plugin",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   if (!dir) return;

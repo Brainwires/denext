@@ -5,6 +5,7 @@
 import { join } from "@std/path";
 import type { CommandContext } from "../command.ts";
 import { parseEnv } from "../../server/env.ts";
+import { runToExit } from "../../build/exited-output.ts";
 
 /** Options for {@linkcode StackIo.pipe}: what feeds `docker`'s stdin and where stdout goes. */
 export interface PipeOptions {
@@ -357,7 +358,7 @@ export async function hostFreeBytes(dir: string): Promise<number | undefined> {
     ]
     : ["df", ["-Pk", dir]];
   try {
-    const out = await new Deno.Command(cmd, { args, stdout: "piped", stderr: "null" }).output();
+    const out = await runToExit(cmd, { args, stderr: "null" });
     if (!out.success) return undefined;
     const text = new TextDecoder().decode(out.stdout);
     return windows ? parseWindowsFree(text) : parseDfAvailable(text);

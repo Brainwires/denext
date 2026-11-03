@@ -50,6 +50,8 @@ async function defaultRunner(
       cwd: dir,
       stdin: JSON.stringify(envelope),
       signal,
+      // Waited for to its exit (or the deadline), never settled early on a quiet document: a
+      // statement or a migration may run silently after project code printed JSON of its own.
     });
     const reply = parseJsonDocument<DbReply>(result.stdout);
     if (reply && typeof reply.ok === "boolean") return reply;

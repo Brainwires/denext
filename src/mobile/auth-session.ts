@@ -28,8 +28,8 @@ import { nativePlugin } from "./plugin.ts";
  *
  * - `scheme_not_declared`: `callbackScheme` is not in `desktop.app.deepLinks`;
  * - `pkce_required`: the URL has no `code_challenge` + `code_challenge_method=S256` (every
- *   platform: the iOS / Android shell and the web popup too), and `pkce: "not-applicable"` was not
- *   given;
+ *   platform: the iOS / Android shell, the web popup and Deno Desktop's loopback flow too), and
+ *   `pkce: "not-applicable"` was not given;
  * - `scheme_owned_by_other_app`: another app handles the scheme (its identity in
  *   {@linkcode AuthSessionError.handler}): use the loopback flow, or ask the user and call
  *   `claimDeepLinkScheme` (`denext/desktop/client`);
@@ -104,10 +104,11 @@ export interface AuthSessionOptions {
   readonly callbackPrefix?: string;
   /**
    * PKCE (S256) is mandatory (the iOS / Android shell, the web popup, and Deno Desktop's
-   * custom-scheme callback) unless this is `"not-applicable"`, for a provider that binds the
-   * callback to the initiating client another way; then {@linkcode AuthSessionOptions.reason}
-   * says how. Without PKCE another app that registers the same callback scheme could take the
-   * `code` and redeem it.
+   * loopback and custom-scheme callbacks) unless this is `"not-applicable"`, for a provider that
+   * binds the callback to the initiating client another way; then
+   * {@linkcode AuthSessionOptions.reason} says how. Without PKCE another app that registers the
+   * same callback scheme, or another local process that answers the loopback redirect, could take
+   * the `code` and redeem it.
    */
   readonly pkce?: "not-applicable";
   /** Why PKCE does not apply (required with `pkce: "not-applicable"`; kept with the session). */
@@ -542,13 +543,13 @@ async function within(session: RunningSession, timeoutMs: number | undefined): P
  *   a sheet on the app's window with a real `cancelled`, private with `preferEphemeral`); on Windows
  *   and Linux the system browser, and the callback comes back as a deep link. While the system
  *   browser has the sign-in, a Cancel overlay covers the app (`cancelOverlay`), since the browser
- *   reports no cancellation. Either way `callbackScheme` must be declared in
- *   `desktop.app.deepLinks`, the URL must carry PKCE S256 (unless `pkce: "not-applicable"` with a
- *   `reason`), the callback must match the `redirect_uri` (or `callbackPrefix`) exactly and carry
- *   the same `state`, and another app handling the scheme is refused
- *   (`scheme_owned_by_other_app`) rather than handed the callback. The callback never reaches
- *   {@linkcode onDeepLink}. Needs `denext desktop add auth-session` (and, for a custom scheme,
- *   denext's pinned runtime).
+ *   reports no cancellation. Both flows require PKCE S256 in the URL (unless
+ *   `pkce: "not-applicable"` with a `reason`; `pkce_required` otherwise). With a custom scheme,
+ *   `callbackScheme` must be declared in `desktop.app.deepLinks`, the callback must match the
+ *   `redirect_uri` (or `callbackPrefix`) exactly and carry the same `state`, and another app
+ *   handling the scheme is refused (`scheme_owned_by_other_app`) rather than handed the callback.
+ *   The callback never reaches {@linkcode onDeepLink}. Needs `denext desktop add auth-session`
+ *   (and, for a custom scheme, denext's pinned runtime).
  *
  * Only one session is open at a time (`busy` otherwise). The URL must carry PKCE S256 (a
  * `code_challenge` and `code_challenge_method=S256`; `pkce_required` otherwise) unless
@@ -592,22 +593,16 @@ export async function openAuthSession(
 ): Promise<AuthSessionResult> {
   const target = checkUrl(url);
   const timeoutMs = checkTimeout(options?.timeoutMs);
+  // PKCE S256 on every platform, Deno Desktop's loopback and custom-scheme flows included (the
+  // runtime checks it again).
+  checkPkce(target, options);
   // Deno Desktop: the system browser, with the callback coming back either to a loopback listener
   // (a loopback `redirect_uri`; the default) or as a deep link with a scheme from
   // `desktop.app.deepLinks`. Dynamic import keeps the desktop client out of web/mobile bundles.
   if (runtimePlatform() === "desktop") {
-    const desktop = await import("../desktop/auth-session.ts");
-    return desktop.usesSchemeCallback(target, options)
-      ? await desktop.startDesktopSchemeAuthSession(target, { ...options, timeoutMs })
-      : await desktop.startDesktopAuthSession(target, {
-        timeoutMs,
-        ...(options?.signal ? { signal: options.signal } : {}),
-        ...(options?.cancelOverlay !== undefined ? { cancelOverlay: options.cancelOverlay } : {}),
-        ...(options?.loopbackPort !== undefined ? { loopbackPort: options.loopbackPort } : {}),
-      });
+    return await openDesktopAuthSession(target, options, timeoutMs);
   }
   const scheme = checkScheme(options?.callbackScheme);
-  checkPkce(target, options);
   if (active) throw authSessionError("busy", "another auth session is still open");
   active = true;
   try {
@@ -616,6 +611,26 @@ export async function openAuthSession(
   } finally {
     active = false;
   }
+}
+
+/** {@linkcode openAuthSession} in a Deno Desktop window: the custom-scheme or the loopback flow. */
+async function openDesktopAuthSession(
+  target: string,
+  options: AuthSessionOptions,
+  timeoutMs: number | undefined,
+): Promise<AuthSessionResult> {
+  const desktop = await import("../desktop/auth-session.ts");
+  if (desktop.usesSchemeCallback(target, options)) {
+    return await desktop.startDesktopSchemeAuthSession(target, { ...options, timeoutMs });
+  }
+  const { signal, cancelOverlay, loopbackPort, pkce, reason } = options ?? {};
+  return await desktop.startDesktopAuthSession(target, {
+    timeoutMs,
+    ...(signal ? { signal } : {}),
+    ...(cancelOverlay !== undefined ? { cancelOverlay } : {}),
+    ...(loopbackPort !== undefined ? { loopbackPort } : {}),
+    ...(pkce !== undefined ? { pkce, reason } : {}),
+  });
 }
 
 /**

@@ -13,11 +13,16 @@
 // and the subscription is live, the log's entries for ITS key after that cursor are sent first
 // (re-authorizing if the TTL lapsed), every frame carries its cursor, a frame at or before the
 // subscriber's last cursor is skipped (replay and live never double up), a burst is fanned out
-// whole, and a back-pressured subscriber resumes from the log once its socket drains.
+// whole, and a back-pressured subscriber resumes from the log once its socket drains. A publish
+// stamped with a `grant` (what it was read under) goes only to a subscription `authorize`
+// admitted under the same grant — recorded at subscribe and at every re-authorization — whichever
+// instance published it; a publish with no stamp goes to every subscriber as before.
 
 import { liveDevtoolsEnabled, recordChannelPush } from "./live-devtools.ts";
 import {
+  admissionOf,
   type ChannelEvent,
+  channelEventDiscarded,
   type ChannelIdleReason,
   channelInstanceId,
   channelLog,
@@ -37,6 +42,12 @@ export interface ChannelSub {
   key: string;
   /** Epoch ms after which the next frame triggers a re-authorization. */
   authExpires: number;
+  /**
+   * The grant `authorize` admitted it under (`{ allow: true, grant }`; refreshed by each
+   * re-authorization): a publish stamped with another grant is not sent to it. Unset for a plain
+   * `true`, which gets no stamped publish.
+   */
+  grant?: string;
   /** An unlogged frame held back (back-pressure or pending re-auth); latest wins. */
   pending?: string;
   /** An `ordered` channel's held frames, oldest first (bounded; see `ORDERED_HOLD_LIMIT`). */
@@ -312,18 +323,21 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
   /** May the replay go on? Still this connection's sub, and allowed (re-checked past the TTL). */
   const replayAllowed = async (conn: C, subId: string, sub: ChannelSub): Promise<boolean> => {
     if (sub.authExpires > Date.now()) return true;
-    const decision = await deps.withRenderSlot(() => authorizeSub(conn, sub));
+    const { decision, grant } = await deps.withRenderSlot(() => authorizeSub(conn, sub));
     if (conn.channelSubs.get(subId) !== sub) return false;
     if (decision !== "allow") {
       deps.sendError(conn, "denied", "channel access revoked", { subId });
       remove(conn, subId);
       return false;
     }
-    sub.authExpires = Date.now() + ttlMs(sub.channelId);
+    admit(sub, grant);
     return true;
   };
 
-  /** Send logged entries in order; `false` once the sub is gone (or an entry is malformed). */
+  /**
+   * Send logged entries in order; `false` once the sub is gone (or an entry is malformed). One
+   * logged under another grant than the sub's is skipped, as the live publish would be.
+   */
   const sendEntries = (
     conn: C,
     subId: string,
@@ -332,6 +346,10 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
   ): boolean => {
     for (const e of entries) {
       if (conn.channelSubs.get(subId) !== sub || !isJsonText(e.encoded)) return false;
+      if (e.grant !== undefined && e.grant !== sub.grant) {
+        if (!sub.cursor || compareCursors(e.cursor, sub.cursor) > 0) sub.cursor = e.cursor;
+        continue;
+      }
       const text = frameText(subId, 0, e.encoded, e.enc, e.cursor);
       sendTo(conn, subId, sub, text, { type: "channel", subId, seq: 0, value: null }, e.cursor);
     }
@@ -342,7 +360,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
   const startReauth = (conn: C, subId: string, sub: ChannelSub): void => {
     if (sub.reauth) return;
     sub.reauth = deps.withRenderSlot(() => authorizeSub(conn, sub))
-      .then((decision) => {
+      .then(({ decision, grant }) => {
         sub.reauth = undefined;
         if (!conn.channelSubs.has(subId)) return;
         if (decision !== "allow") {
@@ -350,7 +368,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
           remove(conn, subId);
           return;
         }
-        sub.authExpires = Date.now() + ttlMs(sub.channelId);
+        admit(sub, grant);
         flushHeld(conn, subId, sub);
       })
       .catch(() => {
@@ -363,20 +381,30 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
   const ttlMs = (channelId: string): number =>
     (getChannel(channelId)?.authTtlSeconds ?? deps.limits().channelAuthTtlSeconds) * 1000;
 
+  /** Record an allowed (re-)authorization: the TTL from now, and the grant it admitted under. */
+  const admit = (sub: ChannelSub, grant: string | undefined): void => {
+    sub.authExpires = Date.now() + ttlMs(sub.channelId);
+    if (grant === undefined) delete sub.grant;
+    else sub.grant = grant;
+  };
+
   const authorizeSub = async (
     conn: C,
     sub: ChannelSub,
-  ): Promise<"allow" | "deny" | "no-policy"> => {
+  ): Promise<{ decision: "allow" | "deny" | "no-policy"; grant?: string }> => {
     const ch = getChannel(sub.channelId);
-    if (!ch || typeof ch.authorize !== "function") return ch ? "no-policy" : "deny";
+    if (!ch || typeof ch.authorize !== "function") {
+      return { decision: ch ? "no-policy" : "deny" };
+    }
     try {
-      const ok = await deps.withConnContext(
+      const answer = await deps.withConnContext(
         conn,
         () => ch.authorize!(deps.connContext(conn), sub.key),
       );
-      return ok ? "allow" : "deny";
+      const { allow, grant } = admissionOf(answer);
+      return allow ? { decision: "allow", grant } : { decision: "deny" };
     } catch {
-      return "deny";
+      return { decision: "deny" };
     }
   };
 
@@ -389,7 +417,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
 
   const fanOut = (ev: ChannelEvent): void => {
     const subs = index.get(ev.channelId)?.get(ev.key);
-    if (!subs || subs.size === 0) return;
+    if (!subs || subs.size === 0 || channelEventDiscarded(ev)) return;
     // The frame is assembled by interpolation for speed; the transport is trusted by design,
     // but a malformed event (a non-numeric seq, a non-JSON payload) must not corrupt it.
     if (!Number.isFinite(ev.seq) || !isJsonText(ev.encoded)) return;
@@ -397,9 +425,28 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     for (const { conn, subId } of [...subs]) {
       const sub = conn.channelSubs.get(subId);
       if (!sub) continue;
+      // Read under a grant this subscription was not admitted under (it was re-authorized under
+      // other claims — here or on another instance — or admitted with no grant): not for it. The
+      // stamp stays server-side: `frameText` carries none of it. A lapsed admission is still
+      // re-checked by the traffic, so a subscriber whose claims changed is matched against what
+      // it may read now from the next publish on (this one is not held: it is not theirs).
+      if (ev.grant !== undefined && ev.grant !== sub.grant) {
+        if (sub.authExpires <= Date.now()) startReauth(conn, subId, sub);
+        continue;
+      }
       const text = frameText(subId, ev.seq, ev.encoded ?? "null", ev.enc, cursor);
       sendTo(conn, subId, sub, text, { type: "channel", subId, seq: ev.seq, value: null }, cursor);
     }
+  };
+
+  /** Subscribers of the event's key on this instance that a stamped publish is not for. */
+  const withheldFrom = (ev: ChannelEvent): number => {
+    if (ev.kind !== "publish" || ev.grant === undefined) return 0;
+    let n = 0;
+    for (const { conn, subId } of index.get(ev.channelId)?.get(ev.key) ?? []) {
+      if (conn.channelSubs.get(subId)?.grant !== ev.grant) n++;
+    }
+    return n;
   };
 
   const revokeAll = (ev: ChannelEvent): void => {
@@ -425,13 +472,13 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
       const ch = getChannel(channelId);
       if (!ch || !ch.keyOk(key)) return deps.refuse(conn, "deny", "channel", { subId });
       const sub: ChannelSub = { channelId, key, authExpires: 0 };
-      const decision = await authorizeSub(conn, sub);
+      const { decision, grant } = await authorizeSub(conn, sub);
       if (decision !== "allow") return deps.refuse(conn, decision, "channel", { subId });
       if (!deps.isConnected(conn)) return;
       if (atCap(conn, subId)) {
         return deps.sendError(conn, "limit", "too many subscriptions", { subId });
       }
-      sub.authExpires = Date.now() + ttlMs(channelId);
+      admit(sub, grant);
       // A re-subscribe under the same id replaces the old one — indexed first, so re-subscribing
       // to the same key never takes it through idle (and the channel's per-key state with it).
       const replaced = conn.channelSubs.get(subId);
@@ -465,7 +512,7 @@ export function createChannelHub<C extends ChannelConn>(deps: ChannelHubDeps<C>)
     },
     deliver(ev) {
       if (liveDevtoolsEnabled()) {
-        recordChannelPush(ev, index.get(ev.channelId)?.get(ev.key)?.size ?? 0);
+        recordChannelPush(ev, index.get(ev.channelId)?.get(ev.key)?.size ?? 0, withheldFrom(ev));
       }
       if (ev.kind === "revoke") return revokeAll(ev);
       // Latest publish wins in the window — except a logged one, and every publish of an

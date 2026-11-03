@@ -286,12 +286,9 @@ async function devModules(origin: string): Promise<Map<string, string>> {
 
 const SPELLINGS: Spelling[] = ["alias", "hash", "barrel", "platform"];
 
-const opts = { sanitizeOps: false, sanitizeResources: false };
-
 for (const spelling of SPELLINGS) {
   Deno.test({
     name: `denext build + start: an action imported by ${spelling} ships as its stub`,
-    ...opts,
   }, async () => {
     const dir = await app(spelling);
     try {
@@ -315,7 +312,7 @@ for (const spelling of SPELLINGS) {
   });
 
   Deno.test(
-    { name: `denext export: an action imported by ${spelling} ships as its stub`, ...opts },
+    { name: `denext export: an action imported by ${spelling} ships as its stub` },
     async () => {
       const dir = await app(spelling);
       try {
@@ -335,7 +332,6 @@ for (const spelling of SPELLINGS) {
 
   Deno.test({
     name: `denext dev: an action imported by ${spelling} is served as its stub`,
-    ...opts,
   }, async () => {
     const dir = await app(spelling);
     const srv = await server(dir, "dev");
@@ -362,7 +358,6 @@ for (const spelling of SPELLINGS) {
 // it imports, even relatively, ships as its stub and is called on the server.
 Deno.test({
   name: "denext build: a whole-route bundle ships an action it imports as its stub",
-  ...opts,
 }, async () => {
   const dir = await app("alias");
   try {
@@ -390,7 +385,7 @@ Deno.test({
 });
 
 Deno.test(
-  { name: 'SPA mode: a bundle that reaches a "use server" module is refused', ...opts },
+  { name: 'SPA mode: a bundle that reaches a "use server" module is refused' },
   async () => {
     const dir = await app("alias", true);
     try {
@@ -409,7 +404,7 @@ Deno.test(
   },
 );
 
-Deno.test({ name: "SPA dev: the action module is served as its stub", ...opts }, async () => {
+Deno.test({ name: "SPA dev: the action module is served as its stub" }, async () => {
   const dir = await app("alias", true);
   const srv = await server(dir, "dev");
   try {
@@ -449,7 +444,6 @@ async function variantApp(): Promise<string> {
 for (const verb of ["start", "dev"] as const) {
   Deno.test({
     name: `denext ${verb}: an action whose module reaches a .web variant runs the variant`,
-    ...opts,
   }, async () => {
     const dir = await variantApp();
     try {

@@ -1,6 +1,6 @@
 {
   "name": "@denext/auth",
-  "version": "4.9.0",
+  "version": "4.11.13",
   "license": "MIT",
   "exports": {
     ".": "./mod.ts",
@@ -115,7 +115,7 @@
     "./next-auth/providers/zoom": "./next-auth/providers/zoom.ts"
   },
   "imports": {
-    "@denext/denext": "jsr:@denext/denext@4.9.0",
+    "@denext/denext": "jsr:@denext/denext@4.11.13",
     "@std/encoding": "jsr:@std/encoding@^1.0.0",
     "@std/path": "jsr:@std/path@^1.0.0"
   },

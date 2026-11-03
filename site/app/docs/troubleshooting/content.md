@@ -18,7 +18,7 @@ process. Your app's `node_modules` is untouched — the compat layer still loads
 your npm React libraries from it.
 
 ```sh
-deno run --node-modules-dir=none -A jsr:@denext/denext/cli migrate
+deno run --no-config --node-modules-dir=none -A jsr:@denext/denext/cli migrate
 ```
 
 See [Migrating from Next.js](/docs/migrating) § 3.
@@ -155,20 +155,27 @@ See the [changelog](/docs/changelog) for 2.4.2, which fixed two of these.
 
 ## Prisma: "driverAdapters preview not enabled" / a native engine binary is requested
 
-**Cause.** The schema is using the legacy `prisma-client-js` generator, which
-expects a native engine binary and rejects `{ adapter }` under Deno.
+**Cause.** The schema is using the legacy `prisma-client-js` generator, or a
+Prisma 6 client, which expects a native engine binary and rejects `{ adapter }`
+under Deno unless its `queryCompiler` and `driverAdapters` preview features are
+on.
 
-**Fix.** Use the Rust-free query compiler with driver adapters.
+**Fix.** Move to Prisma 7, whose `prisma-client` generator runs the Rust-free
+query compiler through a driver adapter with no preview features, and give the
+datasource URL to `prisma.config.ts` (Prisma 7 rejects a `url` in the schema).
 
 ```prisma
 generator client {
-  provider        = "prisma-client"
-  previewFeatures = ["queryCompiler", "driverAdapters"]
+  provider     = "prisma-client"
+  output       = "../generated/client"
+  runtime      = "deno"
+  moduleFormat = "esm"
 }
 ```
 
-`denext migrate` writes this generator block for you; run `deno task
-prisma:setup` once afterwards. See [Database](/docs/database) → Prisma.
+`denext migrate` writes this generator block and the `prisma.config.ts` for
+you; run `deno task prisma:setup` once afterwards. See
+[Database](/docs/database) → Prisma.
 
 ## `denext dev` answers on `localhost`, not `127.0.0.1`
 
@@ -619,6 +626,20 @@ platform-specific files builds each platform its own.
 which picks the export by the `x-denext-ota-platform` header the app sends. See
 [Over-the-air updates](/docs/platform-files#over-the-air-updates).
 
+### An over-the-air update is refused with `app_mismatch`
+
+**Cause.** The manifest's signed `appId` names another app (a feed misrouted, or another app that
+shares the signing key), or it names none while the app verifies signatures: an app binary that
+embeds a public key, or a Deno Desktop overlay with `desktop.app.identifier`. A manifest signed
+before denext added the app id names none.
+
+**Fix.** Sign each app's release for that app: a signed `spa.ota` export, `denext mobile build`
+and `denext ota manifest out --sign <key>` stamp the Capacitor `appId` (a desktop export stamps
+`desktop.app.identifier`); otherwise pass `--app-id <id>` or set `DENEXT_OTA_APP_ID`. Re-sign the
+release the feed serves now: `denext ota manifest out --app-id com.example.app --sign ota.key`.
+Binaries from before the app id verify the same manifest unchanged. See
+[Over-the-air updates](/docs/mobile#over-the-air-ui-updates).
+
 ### An over-the-air update is refused with `expired`
 
 **Cause.** The manifest's signed `expiresAt` has passed (`denext ota manifest --sign` stamps 30
@@ -688,8 +709,8 @@ shell's `ios` / `android` key when the spec has no `web` key. See
 
 ## `deno info (pid …) was still running after 120 s and was killed` during a build
 
-**Cause.** `denext build` runs its module-graph crawl (`deno info`, 120 s) and its client bundle
-(`deno bundle`, 300 s) one at a time, each with a deadline after which it is killed and started
+**Cause.** `denext build` runs its module-graph crawl and the esbuild loader's module lookups
+(`deno info`, 120 s) and its client bundle (`deno bundle`, 300 s) one at a time, each with a deadline after which it is killed and started
 once more; a second overrun fails the build with `ChildStallError`. A first build with a cold
 cache on a slow link (a Docker `RUN denext task build` that downloads every npm package) can
 take longer than that without being stuck.
@@ -697,6 +718,21 @@ take longer than that without being stuck.
 **Fix.** Set `DENEXT_CHILD_DEADLINE_MS` for that build: a number of milliseconds replaces both
 deadlines (`DENEXT_CHILD_DEADLINE_MS=900000` for 15 minutes), and `0` removes them. Warm the
 cache in an earlier layer (`RUN denext install`) so later builds don't pay for it.
+
+## `deno info (pid …): output complete; the process did not exit` during a build
+
+**Cause.** A `deno info --json` child of the build wrote its whole JSON output and then went
+silent without exiting (seen on loaded Windows machines: the process spins in its teardown). After
+`DENEXT_CHILD_EXIT_GRACE_MS` (5 s) of silence with a complete document, denext kills it and uses
+that output, so the build goes on. The line is a warning, not a failure. `denext ui` does the
+same for its listing children (`denext commands --json`, `denext job --list` / `--history` /
+`--clear-history --json`), whose document must end their output. Its `denext db-admin` and
+`denext doctor --json` children are always waited for to their exit or deadline: they run project
+work that may print JSON of its own and then stay silent while it works.
+
+**Fix.** Nothing is needed. To report it, rebuild with `DENEXT_CHILD_PROBE=1`: the line then
+carries the child's CPU samples and the tail of its debug log. `DENEXT_CHILD_EXIT_GRACE_MS=0`
+waits for the exit instead, up to the child's deadline.
 
 ## Docker: `required variable … is missing a value: set it in .env`
 

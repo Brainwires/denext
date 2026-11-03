@@ -39,8 +39,6 @@ export const config = { matcher: ["/dashboard/:path*"] };
 
 Deno.test({
   name: "next-compat: a Next 16 proxy.ts with `export function proxy` gates its matcher",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nc_proxy_" });
   const controller = new AbortController();

@@ -21,7 +21,7 @@ import type { PageRoute, RouteManifest } from "../src/router/manifest.ts";
 import { scanRoutes } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { PageMatch } from "../src/router/match.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { PageProps } from "../src/server/types.ts";
 
 // ---- In-tree metadata hoisting --------------------------------------------

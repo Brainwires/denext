@@ -12,12 +12,12 @@ import {
   spawnDenoAndExit,
   spawnDenoExplainedAndExit,
 } from "../shared.ts";
-import { RAW_FLAG } from "../explain-output.ts";
 import { join } from "@std/path";
 import { denoExecutable } from "../../build/deno-executable.ts";
 import { currentDenoIdentity, isDenextDenoVersion } from "../../build/deno-version.ts";
 import { clearCoverageProfiles, coverageDir, findVitestFiles, planTestRun } from "./test-passes.ts";
 import { rawDiagnostics } from "../../build/explain/mod.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /**
  * Forward to `deno <sub> [...leading] [...positionals] [...passthrough]` in the
@@ -93,17 +93,7 @@ async function runTests(ctx: CommandContext): Promise<never> {
 }
 
 export const testCommand: CommandSpec = {
-  name: "test",
-  summary: "Run the app's tests (deno test)",
-  passthrough: true,
-  usage: "Forwards to `deno test -A`. Extra args/paths pass through. With no path named, the\n" +
-    "project's `*.vitest.ts` files run as a second pass, and --coverage reports both as one.\n" +
-    "  denext test                  Run every test (Deno.test files, then *.vitest.ts)\n" +
-    "  denext test --watch          Re-run on change (deno test --watch)\n" +
-    "  denext test --coverage=cov   Collect coverage from both passes into one report\n" +
-    "  denext test --filter Auth    Forward deno test flags\n" +
-    "  denext test routes/          Restrict to a path",
-  positionals: [{ name: "paths", help: "Test files/dirs (default: all)" }],
+  ...commandMeta("test"),
   // `--coverage[=<dir>]` writes a coverage profile: lock that output dir, so two runs never
   // delete or interleave each other's profiles.
   locks: (ctx) => {
@@ -114,38 +104,16 @@ export const testCommand: CommandSpec = {
 };
 
 export const lintCommand: CommandSpec = {
-  name: "lint",
-  summary: "Lint the app (deno lint)",
-  passthrough: true,
-  usage: "Forwards to `deno lint`; each denext rule report is explained with a fix " +
-    "(--raw for Deno's output unchanged).",
-  flags: [RAW_FLAG],
-  positionals: [{
-    name: "paths",
-    help: "Files/dirs to lint (default: project)",
-  }],
+  ...commandMeta("lint"),
   run: (ctx) => runDenoExplained("lint", ctx, true),
 };
 
 export const fmtCommand: CommandSpec = {
-  name: "fmt",
-  summary: "Format the app (deno fmt)",
-  passthrough: true,
-  usage: "Forwards to `deno fmt`. Pass `--check` to verify without writing.",
-  positionals: [{
-    name: "paths",
-    help: "Files/dirs to format (default: project)",
-  }],
+  ...commandMeta("fmt"),
   run: (ctx) => runDeno("fmt", ctx),
 };
 
 export const checkCommand: CommandSpec = {
-  name: "check",
-  summary: "Type-check the app (deno check)",
-  passthrough: true,
-  usage: "Forwards to `deno check`; each type error is explained in plain language with a " +
-    "suggested fix, the original kept under it (--raw for Deno's output unchanged).",
-  flags: [RAW_FLAG],
-  positionals: [{ name: "paths", help: "Entry files to check" }],
+  ...commandMeta("check"),
   run: (ctx) => runDenoExplained("check", ctx),
 };

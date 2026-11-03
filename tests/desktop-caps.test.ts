@@ -711,11 +711,18 @@ Deno.test("sqlite: a query that keeps producing rows stops at its time budget", 
       DesktopCapError,
     );
     assertEquals(err.code, "timeout");
-    // A bounded query still works on the same handle.
-    const ok = await call(cap, "query", { handle, sql: "SELECT 1 AS one" }) as {
-      columns: string[];
-      rows: unknown[][];
-    };
+    // A bounded query still works on the same handle. Its one row is checked against the same
+    // 5 ms budget, which a loaded machine's scheduling stall mid-query can pass: the clock is held
+    // still for it, as the timeout above already proved the budget.
+    const realNow = Date.now;
+    const frozen = realNow();
+    Date.now = () => frozen;
+    let ok: unknown;
+    try {
+      ok = await call(cap, "query", { handle, sql: "SELECT 1 AS one" });
+    } finally {
+      Date.now = realNow;
+    }
     assertEquals(ok, { columns: ["one"], rows: [[1]] });
     await call(cap, "close", { handle });
   } finally {
@@ -2475,8 +2482,10 @@ Deno.test("fs.download: progress events carry the id; a failure's code says what
     const dl = (url: string) => call(cap, "download", { url, path: "n.bin", directory: "data" });
     assertEquals(await rejectCode(dl("https://files.test/offline")), "network");
     assertEquals(await rejectCode(dl("https://files.test/cut")), "network");
-    // A cut connection keeps the bytes so far (and the sidecar) for a resume.
+    // A cut connection keeps the bytes so far (and the sidecar) for a resume. (`dl-1`'s record
+    // is in the runtime's reserved folder.)
     assertEquals((await Array.fromAsync(Deno.readDir(root))).map((e) => e.name).sort(), [
+      "denext-transfers",
       "f.bin",
       "g.bin",
       "n.bin.part",

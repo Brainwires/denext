@@ -58,6 +58,10 @@ export default {
 
 denext downloads and runs the Tailwind standalone binary for you; override the
 binary with `TAILWIND_BIN`, or pin a version with `DENEXT_TAILWIND_VERSION`.
+The download is checked against its SHA-256 before it is cached; on macOS, denext then recomputes
+the page hashes of the binary's ad-hoc code signature (Tailwind's macOS releases ship with a stale
+one that Apple Silicon kernels can kill at launch), so the cached file differs from the release
+asset in those hash bytes only.
 `denext create --tailwind` sets all of this up.
 
 In a compat build (`compatibilityMode`, as in a migrated Vite, Remix or TanStack Start app), a

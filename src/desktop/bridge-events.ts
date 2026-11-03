@@ -21,6 +21,8 @@ interface LoggedEvent {
   readonly id: number;
   /** The SSE `data:` payload, `{ cap, event, data }` serialized once at append. */
   readonly json: string;
+  /** The one window it is for (`undefined`: every window). */
+  readonly target?: string;
 }
 
 /** A live subscriber's sink: called with each new event once it is connected. */
@@ -57,8 +59,12 @@ export class DesktopEventLog {
    * @throws {TypeError} when `data` is not JSON-serializable (a `BigInt`, a cycle). It is serialized
    *   here, before anything is retained, so such an event can neither poison the replay buffer
    *   (every later subscriber's backlog) nor silently detach the live subscribers.
+   * @param cap The capability the event belongs to.
+   * @param event The event name.
+   * @param data Its payload (JSON-serializable).
+   * @param target The one window it is for (a window id); every window's stream when omitted.
    */
-  append(cap: string, event: string, data: unknown): number {
+  append(cap: string, event: string, data: unknown, target?: string): number {
     let json: string;
     try {
       json = JSON.stringify({ cap, event, data });
@@ -69,7 +75,11 @@ export class DesktopEventLog {
         }`,
       );
     }
-    const logged: LoggedEvent = { id: ++this.#nextId, json };
+    const logged: LoggedEvent = {
+      id: ++this.#nextId,
+      json,
+      ...(target !== undefined ? { target } : {}),
+    };
     this.#buffer.push(logged);
     if (this.#buffer.length > this.#max) this.#buffer.shift();
     for (const sink of [...this.#sinks]) {
@@ -96,9 +106,11 @@ export class DesktopEventLog {
    * the heartbeat.
    *
    * @param lastEventId The `Last-Event-ID` the page sent, if any (a non-negative integer).
+   * @param window The subscriber's window: it gets the events for every window and its own
+   *   (default `"main"`).
    * @returns A `text/event-stream` body.
    */
-  open(lastEventId: string | null): ReadableStream<Uint8Array> {
+  open(lastEventId: string | null, window: string = "main"): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
     const afterId = parseCursor(lastEventId);
     let sink: Sink | undefined;
@@ -112,6 +124,7 @@ export class DesktopEventLog {
     return new ReadableStream<Uint8Array>({
       start: (controller) => {
         const send = (event: LoggedEvent) => {
+          if (event.target !== undefined && event.target !== window) return;
           const frame = `id: ${event.id}\ndata: ${event.json}\n\n`;
           controller.enqueue(encoder.encode(frame));
         };

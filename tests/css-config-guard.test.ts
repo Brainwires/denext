@@ -215,6 +215,7 @@ Deno.test({
       assertStringIncludes(await Deno.readTextFile(configPath), "css-shims");
       child.kill("SIGTERM");
       const status = await child.status;
+      await child.stdout.cancel(); // the rest of its output, never read
       assertEquals(status.code, signalExitCode("SIGTERM"));
       assertEquals(await Deno.readTextFile(configPath), original);
       let bak = true;

@@ -458,3 +458,38 @@ Deno.test("toolchainRemove: the project's pins come from jsr.io; this denext's f
     await Deno.remove(dir, { recursive: true });
   }
 });
+
+Deno.test("toolchainRemove: prune keeps the pins' rollback releases (what a revoked pin falls back to)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-prune-rollback-" });
+  try {
+    const roots = await fakeCache(join(dir, "cache"), [
+      ["deno", "1.0.0-denext.1", 10],
+      ["deno", "1.0.0-denext.2", 20],
+      ["deno", "1.0.0-denext.3", 30],
+      ["desktop", "1.0.0-denext.1", 5],
+      ["desktop", "1.0.0-denext.2", 5],
+    ]);
+    const deps = {
+      roots,
+      ownPins: () => ({
+        deno: "1.0.0-denext.3",
+        desktopRuntime: "1.0.0-denext.3",
+        gleam: null,
+        fastlane: null,
+        rollback: { deno: "1.0.0-denext.2", desktopRuntime: "1.0.0-denext.2" },
+      }),
+      pinsOf: () => Promise.resolve(null),
+    };
+    const json = JSON.parse(
+      await captured(() => toolchainRemove(ctxOf(["prune"], dir, {}, true), deps)),
+    );
+    assertEquals(
+      json.removed.map((e: { kind: string; version: string }) => `${e.kind} ${e.version}`).sort(),
+      ["deno 1.0.0-denext.1", "desktop-runtime 1.0.0-denext.1"],
+    );
+    assert(await exists(join(roots.deno, "1.0.0-denext.2")), "the rollback stays");
+    assert(await exists(join(roots.desktop, "1.0.0-denext.2")));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});

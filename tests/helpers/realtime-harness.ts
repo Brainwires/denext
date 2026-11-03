@@ -5,7 +5,7 @@
 // tests.
 
 import { type ChannelConn, createChannelHub } from "../../src/server/live-channels.ts";
-import { watchChannelTransport } from "../../src/runtime/channel.ts";
+import { type ChannelEvent, watchChannelTransport } from "../../src/runtime/channel.ts";
 import { createRequestContext, runWithContext } from "../../src/server/request-context.ts";
 import {
   limitAddrOf,
@@ -53,6 +53,8 @@ export interface TestConn extends ChannelConn {
   limitIp?: string;
   /** Every `channel` frame's value, in order. */
   frames: TableChangesFrame[];
+  /** Every frame's text as sent to the socket, in order (what the browser would see). */
+  raw: string[];
   /** Every refusal / error code. */
   errors: string[];
   /** `channel-ready` acks. */
@@ -88,20 +90,37 @@ export interface Harness {
    * flight while frames arrive, as on a loaded server.
    */
   holdAuth(): () => void;
+  /**
+   * Hold the transport's events from the hub until the returned release is called: frames handed
+   * to the Live hub that its flush has not fanned out yet. `held()` counts them.
+   */
+  holdDelivery(): { held(): number; release(): void };
 }
 
 let peers = 0;
 
+/** Options of {@linkcode realtimeHarness}. */
+export interface HarnessOptions {
+  /**
+   * Run this hub as another instance of the app: every event it takes from the (shared) transport
+   * is marked as published by `instance`, as one that reached it from another process would be —
+   * a hub on a second replica behind a shared transport, with no sticky sessions.
+   */
+  instance?: string;
+}
+
 /**
  * Build the harness.
  *
+ * @param options Which instance the hub stands for (default: this process).
  * @returns The harness.
  */
-export function realtimeHarness(): Harness {
+export function realtimeHarness(options: HarnessOptions = {}): Harness {
   let authHeld: Promise<void> = Promise.resolve();
   const hub = createChannelHub<TestConn>({
     limits: () => ({ maxChannelsPerConnection: 64, channelAuthTtlSeconds: 300 }),
     sendFrame: (conn, text) => {
+      conn.raw.push(text);
       const msg = JSON.parse(text);
       if (msg.type === "channel") conn.frames.push(msg.value);
       if (msg.type === "channel-ready") conn.readies++;
@@ -123,7 +142,13 @@ export function realtimeHarness(): Harness {
     armRecover: () => {},
   });
   const { current, stop } = watchChannelTransport(() => {});
-  const unsubscribe = current.subscribe((ev) => hub.deliver(ev));
+  let queued: ChannelEvent[] | null = null;
+  const { instance } = options;
+  const unsubscribe = current.subscribe((raw) => {
+    const ev = instance === undefined ? raw : { ...raw, instance };
+    if (queued) queued.push(ev);
+    else hub.deliver(ev);
+  });
   return {
     conn(cookie = "", ip, upgrade = {}) {
       const handshake = new Request(`${ORIGIN}/_denext/live`, { headers: upgrade.headers });
@@ -136,6 +161,7 @@ export function realtimeHarness(): Harness {
         cookie,
         ip,
         frames: [],
+        raw: [],
         errors: [],
         readies: 0,
       };
@@ -159,6 +185,16 @@ export function realtimeHarness(): Harness {
       return () => {
         authHeld = Promise.resolve();
         resolve();
+      };
+    },
+    holdDelivery() {
+      const events: ChannelEvent[] = queued = [];
+      return {
+        held: () => events.length,
+        release() {
+          queued = null;
+          for (const ev of events) hub.deliver(ev);
+        },
       };
     },
     dispose() {

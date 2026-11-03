@@ -70,8 +70,6 @@ async function stepReconcileInPlace(page: Page): Promise<void> {
 
 Deno.test({
   name: "e2e: examples/hello builds, hydrates, is interactive, and code-splits an ssr:false island",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(EXAMPLE);
   const browser = await launchBrowser();

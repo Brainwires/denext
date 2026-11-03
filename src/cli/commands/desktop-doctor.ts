@@ -2,7 +2,7 @@
 // (or with `--linux`), what the session provides, with a fix for each missing piece
 // (../../build/desktop-doctor.ts). Exits 1 when a finding is an error.
 
-import type { CommandContext, FlagSpec } from "../command.ts";
+import type { CommandContext } from "../command.ts";
 import {
   type DesktopDoctorOptions,
   type DesktopDoctorReport,
@@ -18,39 +18,30 @@ import {
   launchPolicyProblems,
   stalePackageScripts,
 } from "../../build/desktop-launch-policy.ts";
-import { resolveProject } from "../../build/paths.ts";
-
-/** The flags only `desktop doctor` reads. */
-export const DESKTOP_DOCTOR_FLAGS: readonly FlagSpec[] = [
-  {
-    name: "linux",
-    type: "boolean",
-    help: "doctor: run the Linux session checks (tray host, Secret Service, portals, …); the " +
-      "default on a Linux host",
-  },
-];
+import { readStaticConfig } from "../../build/config-static.ts";
 
 /**
- * The project's packaged launch-policy gaps (see `launchPolicyProblems`); a config that does not
- * load is one too.
- *
- * @param dir The project directory.
- * @returns The problems, or `null` when `dir` has no desktop target.
+ * The project's packaged launch-policy gaps (see `launchPolicyProblems`), from what its config
+ * says as data: this is an inspecting verb, so the config isn't run. A `desktop` key that code
+ * computes, or a config whose shape can't be read, is one gap too.
  */
 export async function projectLaunchPolicy(dir: string): Promise<LaunchPolicyProblem[] | null> {
   if (!await isDesktopProject(dir)) return null;
-  let config: unknown;
-  try {
-    config = (await resolveProject(dir)).config;
-  } catch (err) {
+  const config = await readStaticConfig(dir);
+  const desktop = config.keys.desktop;
+  if (!config.readable || (desktop && desktop.kind !== "editable")) {
     return [{
-      message: `denext.config could not be loaded, so the launch policy is unknown: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
-      fix: "fix the config (`denext doctor` names the problem)",
+      message: `${config.file} could not be loaded as data, so the launch policy is unknown: ` +
+        "`desktop doctor` doesn't run the project's code",
+      fix: "write `desktop` in the config as a plain object, or check the built app's " +
+        "laufey-launch.json",
     }];
   }
-  return launchPolicyProblems(config, desktopBridgeOrigins, await stalePackageScripts(dir));
+  return launchPolicyProblems(
+    desktop ? { desktop: desktop.value } : null,
+    desktopBridgeOrigins,
+    await stalePackageScripts(dir),
+  );
 }
 
 /**

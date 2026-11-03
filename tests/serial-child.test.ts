@@ -2,7 +2,9 @@ import { assert, assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
 import {
   boundedOutput,
+  CHILD_EXIT_GRACE_MS,
   childDeadlineMs,
+  childExitGraceMs,
   ChildStallError,
   lockDir,
   retryOnStall,
@@ -257,6 +259,16 @@ Deno.test("childDeadlineMs: DENEXT_CHILD_DEADLINE_MS replaces a deadline; 0 turn
   assertEquals(childDeadlineMs(120_000, env("0")), Infinity);
   assertEquals(childDeadlineMs(120_000, env("ten minutes")), 120_000, "not a number: the default");
   assertEquals(childDeadlineMs(120_000, env("-5")), 120_000);
+});
+
+Deno.test("childExitGraceMs: DENEXT_CHILD_EXIT_GRACE_MS replaces the grace; 0 waits for the exit", () => {
+  const env = (v?: string) => (k: string) => k === "DENEXT_CHILD_EXIT_GRACE_MS" ? v : undefined;
+  assertEquals(CHILD_EXIT_GRACE_MS, 5_000);
+  assertEquals(childExitGraceMs(undefined, env()), 5_000);
+  assertEquals(childExitGraceMs(5_000, env("20000")), 20_000);
+  assertEquals(childExitGraceMs(5_000, env("0")), Infinity);
+  assertEquals(childExitGraceMs(5_000, env("soon")), 5_000, "not a number: the default");
+  assertEquals(childExitGraceMs(5_000, env("-5")), 5_000);
 });
 
 Deno.test("boundedOutput: no deadline (Infinity) never kills the child", async () => {

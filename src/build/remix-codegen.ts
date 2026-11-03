@@ -19,6 +19,7 @@ import {
   txt,
 } from "./swc-ast.ts";
 import { GEN_HEADER, SERVER_EXPORTS } from "./remix-codegen-constants.ts";
+import { PAGE_REQUEST_MIDDLEWARE_EXPORT } from "../server/page-request-middleware.ts";
 
 export { GEN_HEADER, SERVER_EXPORTS };
 
@@ -1117,6 +1118,22 @@ export function dataModuleSource(parts: ModuleParts): string {
  * The marker `remixServerBuild()` reads to map a denext route back to its Remix module
  * (id + data exports) — what `context.serverBuild.routes` reflects over.
  */
+/**
+ * A generated page's request middleware export (`page-request-middleware.ts`): the route
+ * chain's middleware around the whole page request. Only a page with a chain has one.
+ */
+function requestMiddlewareSource(
+  role: "page" | "layout",
+  chain: { imports: string; decl: string } | null,
+): { runtime: string | null; decl: string } {
+  if (role !== "page" || !chain) return { runtime: null, decl: "" };
+  const fn = "remixRequestMiddleware";
+  return {
+    runtime: fn,
+    decl: `export const ${PAGE_REQUEST_MIDDLEWARE_EXPORT} = ${fn}(__middleware);\n`,
+  };
+}
+
 function remixRouteExport(id: string, hasServer: boolean): string {
   return `export const remixRoute = { id: ${JSON.stringify(id)}, module: ${
     hasServer ? "data" : "{}"
@@ -1157,10 +1174,12 @@ function routeWrapperSource(
   if (hasServer) imports.push(`import * as data from "./${dataFile}";`);
   // Metadata runs the loader before the render, so a route with middleware gets it too.
   const withMeta = parts.hasMeta || parts.hasLoader || parts.hasLinks || chain !== null;
-  const runtime = withMeta ? `${runtimeFn}, remixMeta` : runtimeFn;
-  imports.push(`import { ${runtime} } from "denext/remix/server";`);
+  // A page runs the chain around its whole request (the render's `next()`).
+  const wrap = requestMiddlewareSource(role, chain);
+  const runtime = [runtimeFn, withMeta ? "remixMeta" : null, wrap.runtime].filter(Boolean);
+  imports.push(`import { ${runtime.join(", ")} } from "denext/remix/server";`);
   if (chain?.imports) imports.push(chain.imports.trimEnd());
-  const meta = (chain?.decl ?? "") +
+  const meta = (chain?.decl ?? "") + wrap.decl +
     (withMeta ? `\n${metaExport(id, parts, chain !== null)}\n` : "");
   const opts = [
     `    id: ${JSON.stringify(id)},`,

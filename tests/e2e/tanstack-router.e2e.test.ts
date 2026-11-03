@@ -31,8 +31,6 @@ const READY_TIMEOUT_MS = 60_000;
 
 Deno.test({
   name: "e2e: examples/tanstack-router runs a file-based TanStack Router app in SPA mode",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const install = await runDeno(["install"], EXAMPLE, INSTALL_TIMEOUT_MS);
   if (!install.ok) {

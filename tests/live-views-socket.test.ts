@@ -5,7 +5,13 @@
 import { assertEquals } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
 import { defineLiveView, signLiveViewToken } from "../src/runtime/live-view.ts";
-import { handleLiveUpgrade, installLiveHub, uninstallLiveHub } from "../src/server/live.ts";
+import {
+  handleLiveUpgrade,
+  inspectLiveConnections,
+  installLiveHub,
+  liveViewStoreSettled,
+  uninstallLiveHub,
+} from "../src/server/live.ts";
 import { setClientAddr } from "../src/server/remote-addr.ts";
 
 // deno-lint-ignore no-explicit-any
@@ -130,6 +136,9 @@ Deno.test("live views over the socket: patches, the frame-size cap, connection c
   } finally {
     uninstallLiveHub();
     await server.shutdown();
+    // A closed socket parks its views and seals their snapshots into the view store in the
+    // background: the writes end in this test.
+    await liveViewStoreSettled();
   }
 });
 
@@ -155,9 +164,14 @@ Deno.test("live socket: a frame type naming an Object.prototype key is ignored, 
     assertEquals(errors, [], "no frame type reached Object.prototype");
     c.ws.close();
     await c.closed;
+    // The server's side of the socket ends a moment after the client's: let it, in this test.
+    for (let i = 0; i < 200 && inspectLiveConnections().length > 0; i++) {
+      await new Promise((r) => setTimeout(r, 10));
+    }
   } finally {
     console.error = realError;
     await server.shutdown();
     uninstallLiveHub();
+    await liveViewStoreSettled(); // the parked view's snapshot write ends in this test
   }
 });

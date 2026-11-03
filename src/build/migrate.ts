@@ -13,6 +13,7 @@
 // derived from the Vite config/usage, and — with `--desktop` — a `desktop.ts` entry
 // and `spa.proxy` for a `deno desktop` build.
 
+import { carryPackageManagerPatches, type MigratePatchesReport } from "./migrate-patches.ts";
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
 import { resolveTsPaths, tsPathAliases } from "./tsconfig-paths.ts";
@@ -36,7 +37,7 @@ import { VERSION } from "../version.ts";
 import { appendGitignore } from "./gitignore.ts";
 import { ensureVscodeDeno, withDenextUnstable } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
-import CATALOG from "../plugin/catalog.json" with { type: "json" };
+import { pluginCatalog } from "../plugin/catalog.ts";
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
 import {
   formatIconSearch,
@@ -115,6 +116,12 @@ import {
   type PrismaWiring,
 } from "./prisma-migrate.ts";
 import { denoSqlHasColumns } from "../server/prisma-adapter/client.ts";
+import { TOOLCHAIN_ACTIVE_ENV } from "./deno-toolchain.ts";
+import {
+  compareDenoVersions,
+  FIRST_OWN_VERSION_RUNTIME,
+  isDenextReleaseVersion,
+} from "./deno-version.ts";
 import { type NextAuthMigrateInfo, nextAuthMigrateInfo } from "./next-auth-migrate.ts";
 import { NEXT_AUTH_SUBPATHS } from "./auth-package.ts";
 
@@ -164,7 +171,7 @@ const DENEXT_OWNED = new Set([
  * minor line.
  */
 function catalogSpec(name: string): string {
-  const entry = CATALOG.plugins.find((p) => p.name === name);
+  const entry = pluginCatalog().plugins.find((p) => p.name === name);
   if (!entry) throw new Error(`the first-party plugin catalog has no entry for "${name}"`);
   return entry.spec;
 }
@@ -548,6 +555,12 @@ export interface MigrateResult {
    * `supplyChain.jailScripts.packages` entries written into deno.json (or left to the user).
    */
   jailScripts?: JailReport;
+  /**
+   * Present when package.json / pnpm-workspace.yaml declares pnpm or Bun npm patches
+   * (`patchedDependencies`): the ones carried into deno.json's `patchedDependencies` (copied to
+   * `patches/npm/`) and the ones left for review (src/build/migrate-patches.ts).
+   */
+  patches?: MigratePatchesReport;
 }
 
 /** How the app's `next.config.*` translated into `denext.config.ts`. */
@@ -945,7 +958,7 @@ async function applyPrismaImports(
   R: DenextResolver,
   mode: MigrateOptions["prismaAdapter"] = "auto",
 ): Promise<PrismaWiring | null> {
-  const denoSql = mode === "deno-sql" || (mode === "auto" && await denoSqlHasColumns());
+  const denoSql = mode === "deno-sql" || (mode === "auto" && await appRuntimeReadsColumns());
   const wiring = await detectPrismaWiring(
     dir,
     deps,
@@ -956,6 +969,26 @@ async function applyPrismaImports(
   for (const key of wiring.importsToDelete) delete imports[key];
   Object.assign(imports, wiring.importsToAdd);
   return wiring;
+}
+
+/**
+ * Whether the Deno the migrated app runs on reports `Deno.SQL` result columns (what
+ * `denext/prisma-adapter` needs): this process's own, or — when migrate runs on a stock Deno —
+ * the toolchain denext hands its children (`DENEXT_TOOLCHAIN_ACTIVE`, a release of denext's Deno),
+ * which `denext dev`, `build` and `start` re-run on. `DENEXT_DENO=stock` sets no such marker, so
+ * the app keeps Prisma's npm adapters there. Exported for testing.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`).
+ * @param probe This process's own check (default {@linkcode denoSqlHasColumns}).
+ */
+export async function appRuntimeReadsColumns(
+  env: (name: string) => string | undefined = (name) => Deno.env.get(name),
+  probe: () => Promise<boolean> = denoSqlHasColumns,
+): Promise<boolean> {
+  if (await probe()) return true;
+  const active = env(TOOLCHAIN_ACTIVE_ENV);
+  return active !== undefined && isDenextReleaseVersion(active) &&
+    compareDenoVersions(active, FIRST_OWN_VERSION_RUNTIME) >= 0;
 }
 
 /**
@@ -1559,8 +1592,15 @@ export async function migrateProject(
 /** {@link migrateProject} inside the project's write confinement. */
 async function migrateConfined(dir: string, options: MigrateOptions): Promise<MigrateResult> {
   const migrated = await migrateAnyProject(dir, options);
-  const jail = await applyJailExceptions(dir, { fs: mfs, edit: !migrated.denoJsonExists });
-  const r = jail.action === "none" ? migrated : { ...migrated, jailScripts: jail };
+  // Only the app is written: a workspace root's settings above it are left to the user.
+  const jail = await applyJailExceptions(dir, {
+    fs: mfs,
+    edit: !migrated.denoJsonExists,
+    confine: dir,
+  });
+  const withJail = jail.action === "none" ? migrated : { ...migrated, jailScripts: jail };
+  const patches = await carryPackageManagerPatches(dir, { edit: !migrated.denoJsonExists });
+  const r = patches ? { ...withJail, patches } : withJail;
   if (!options.capacitor || r.capacitor) return r;
   return { ...r, capacitorSkipped: capacitorSkipReason(r) };
 }

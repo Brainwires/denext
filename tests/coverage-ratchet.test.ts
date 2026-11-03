@@ -182,3 +182,41 @@ Deno.test("main: check, report a rise, --update, and the checked-in baseline par
     for (const n of entry) assert(Number.isInteger(n) && n >= 0 && n <= 100, file);
   }
 });
+
+Deno.test({
+  name: "main: a report mixing a symlinked checkout's two spellings loads every file",
+  // Creating a symlink on Windows needs a privilege CI's account may not hold.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const parent = await Deno.realPath(await Deno.makeTempDir());
+    // The link is the shorter spelling, so the report's root would be taken from it.
+    const real = join(parent, "the-real-checkout");
+    const link = join(parent, "l");
+    const errs: string[] = [];
+    const prev = [console.error, console.log] as const;
+    console.error = (...a: unknown[]) => void errs.push(a.join(" "));
+    console.log = () => {};
+    try {
+      for (const f of ["src/cli/a.ts", "src/server/b.ts"]) {
+        await Deno.mkdir(join(real, f, ".."), { recursive: true });
+        await Deno.writeTextFile(join(real, f), "");
+      }
+      await Deno.mkdir(join(real, "scripts"), { recursive: true });
+      await Deno.writeTextFile(
+        join(real, BASELINE_FILE),
+        formatBaseline({ "src/cli/a.ts": [100, 0, 0], "src/server/b.ts": [100, 0, 0] }),
+      );
+      await Deno.symlink(real, link);
+      const lcov = join(parent, "lcov.info");
+      await Deno.writeTextFile(
+        lcov,
+        `SF:${join(link, "src/server/b.ts")}\nDA:1,1\nend_of_record\n` +
+          `SF:${join(real, "src/cli/a.ts")}\nDA:1,1\nend_of_record\n`,
+      );
+      assertEquals(await main([lcov], link), 0, errs.join("\n"));
+    } finally {
+      [console.error, console.log] = prev;
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
+});

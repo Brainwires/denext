@@ -3,8 +3,13 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import * as esbuild from "../src/build/esbuild/mod.ts";
-import { GOOGLE_FONT_FAMILIES } from "../src/compat/next/font/google-families.ts";
-import { googleFontFamiliesModule, googleFontsPlugin } from "../src/build/google-fonts-plugin.ts";
+import {
+  googleFontFamilies,
+  googleFontFamiliesModule,
+  googleFontsPlugin,
+} from "../src/build/google-fonts-plugin.ts";
+
+const GOOGLE_FONT_FAMILIES = googleFontFamilies();
 
 Deno.test("google fonts: the catalogue is large, sorted, and yields unique identifiers", () => {
   assert(GOOGLE_FONT_FAMILIES.length > 1500, `families: ${GOOGLE_FONT_FAMILIES.length}`);
@@ -31,8 +36,6 @@ Deno.test("google fonts: the virtual module layers per-family loaders over the r
 Deno.test({
   name:
     "google fonts: an app import of an uncurated family bundles (the plugin claims only app imports)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   // Stand-in for the runtime alias plugin: the virtual module's own `next/font/google`
   // imports must reach it, the app's must not.

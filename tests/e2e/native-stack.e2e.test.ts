@@ -20,8 +20,6 @@ const pointer = (type: string, x: number, y: number) =>
 
 Deno.test({
   name: "e2e: StackLayout push keeps the list, the edge swipe pops it back without layout shift",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

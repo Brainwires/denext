@@ -15,16 +15,33 @@
  * - `state`: the window was maximized / unmaximized / minimized / restored / entered or left
  *   fullscreen — the page reads `state`.
  * - `display`: displays were added, removed or rescaled — the page reads `screens`.
- * - `closeRequested` `{ id }`: the user asked to close the window while the page guards the close.
+ * - `closeRequested` `{ id, reason }`: the window is asked to close while the page guards the close;
+ *   `reason` is `"close"` (its close button, Cmd+W / Alt+F4) or `"quit"` (the app is quitting).
  * - `drop`: files were dropped on the window — the page takes them with `takeDrops`.
  * - `titleBarPreferences`: the user changed their title bar settings — the page reads
  *   `titleBarPreferences` (runtime 2.9.7-denext.12).
+ * - `focus` / `blur`: the window gained or lost the keyboard focus (every runtime).
+ *
+ * Overlay windows (a desktop companion, a HUD): the opacity, click-through
+ * (`setIgnoreMouseEvents`), a click-catching hit region (`setHitRegion`), every-workspace
+ * visibility, the taskbar entry and always-on-top levels. Each is feature-detected on the
+ * runtime's `BrowserWindow` and reported by `capabilities` (runtime 3.0.0-denext.6 has them all);
+ * a runtime without one answers `unsupported`. Click-through with no way back (no `forward`, and no tray icon to
+ * reach the app) is refused: the window could never be clicked again.
  *
  * Close guard. A close event must be answered synchronously, but the page is across the bridge:
  * with the guard on (`setCloseGuard`), a close is prevented and `closeRequested` is emitted; the
  * page acknowledges (`closeAck`, which proves it is alive) and answers (`closeRespond`). A page
  * that never acknowledges cannot keep the window open: a close requested again after
  * {@link UNRESPONSIVE_MS} closes it. A new page load drops the guard.
+ *
+ * Why the window closes. `Deno.desktop.quit()` (Electron's `app.quit()`: `quitApp()`, a Windows
+ * tray's Quit) fires a cancelable `beforequit` and then a cancelable `close` on every window, all
+ * synchronously; a `close` seen while that runs is a quit (`reason: "quit"`), any other a plain
+ * close. A guard set with `quitOnly` (the page has only `onBeforeQuit` handlers) holds quits and
+ * lets plain closes through. When the page lets a held quit go, the quit is issued again with that
+ * window's approval recorded ({@link QuitState}), so a window that already agreed is not asked
+ * twice while another one is asked; a refusal ends the quit and drops every approval.
  *
  * Dropped files are untrusted input like opened files: the page gets READ-ONLY picked handles
  * ({@link PickedPaths} — `read` for a file, `readFolder` for a folder), never authority from a path.
@@ -43,7 +60,7 @@ import type { DesktopAppApi, DesktopRect, DesktopScreen } from "../launch-events
 import { platformFacts } from "./platform.ts";
 import { confineRelative, refuseReservedDataPath } from "../path-scope.ts";
 import { PickedPaths } from "../picked-paths.ts";
-import { DEFAULT_VIBRANCY } from "../window-config.ts";
+import { applyWindowLevel, DEFAULT_VIBRANCY } from "../window-config.ts";
 
 /** How long a guarded close may go unacknowledged before a repeated close request wins. */
 export const UNRESPONSIVE_MS = 5_000;
@@ -61,6 +78,17 @@ const MAX_SHARE_FILES = 64;
 const MAX_SHARE_TEXT = 64 * 1024;
 /** How a share sheet can end (`BrowserWindow.share`, runtime 2.9.7-denext.20). */
 const SHARE_OUTCOMES = new Set(["completed", "shown", "cancelled", "not_supported", "failed"]);
+
+/** The events the `window` capability emits. */
+export const WINDOW_EVENTS: readonly string[] = [
+  "state",
+  "display",
+  "closeRequested",
+  "drop",
+  "titleBarPreferences",
+  "focus",
+  "blur",
+];
 
 /** The window state events the runtime fires (each becomes a `state` signal). */
 const STATE_EVENTS = [
@@ -103,7 +131,13 @@ interface BrowserWindowLike {
   getMaximumSize?(): [number, number];
   setTitle?(title: string): void;
   setResizable?(resizable: boolean): void;
-  setAlwaysOnTop?(alwaysOnTop: boolean): void;
+  setAlwaysOnTop?(alwaysOnTop: boolean, level?: string): void;
+  setOpacity?(opacity: number): void;
+  getOpacity?(): number;
+  setIgnoreMouseEvents?(ignore: boolean, options?: { forward?: boolean }): void;
+  setHitRegion?(rects: DesktopRect[] | null): void;
+  setVisibleOnAllWorkspaces?(visible: boolean, options?: { visibleOnFullScreen?: boolean }): void;
+  setSkipTaskbar?(skip: boolean): void;
   setTitleBarStyle?(style: string): boolean;
   setWindowButtonPosition?(position: { x: number; y: number } | null): boolean;
   setBackgroundMaterial?(material: string): boolean;
@@ -171,6 +205,16 @@ export interface WindowControllerOptions {
   readonly emit: (cap: string, event: string, data: unknown) => void;
   /** End the process once the window closed for good (default `Deno.exit`). */
   readonly exit?: (code: number) => void;
+  /**
+   * Called once the window closed for good, instead of ending the process: the app decides
+   * (another window is open, or `desktop.app.keepAlive`).
+   */
+  readonly closed?: () => void;
+  /**
+   * Whether the app has another way in than this window (a tray icon): click-through without
+   * `forward` is refused otherwise. Default: none.
+   */
+  readonly wayBack?: () => boolean;
   /** The per-launch picked-path set (dropped files land here; drag-out resolves handles). */
   readonly picked?: PickedPaths;
   /** The app's own folders, the only paths (besides handles) a drag-out may carry. */
@@ -181,6 +225,13 @@ export interface WindowControllerOptions {
   readonly now?: () => number;
   /** The OS (tests; default the running one). */
   readonly os?: string;
+  /**
+   * The window was created as a layer-shell `overlay` (the main window with
+   * `desktop.window.overlay` on a runtime that reads it, the tray panel, an `overlay: true`
+   * window). Where the runtime has layer-shell such a window is placeable on Wayland: its position
+   * becomes the layer surface's margins, so `setPosition` is reported. Default: not one.
+   */
+  readonly overlay?: boolean;
 }
 
 /** What {@linkcode createWindowController} returns. */
@@ -278,8 +329,26 @@ function stateOf(win: BrowserWindowLike): Record<string, unknown> {
   };
 }
 
-/** What the window can do: the runtime's `windowCapabilities()`, else what the stock API has. */
+/**
+ * What the window can do: the runtime's `windowCapabilities()`, else what the stock API has. The
+ * runtime's report is app-wide and says `setPosition: false` on Wayland, where an ordinary window
+ * can't be placed; a layer-shell surface can (its position is the surface's margins), so a window
+ * created as an `overlay` reports `setPosition` where the runtime has `layerShell`.
+ */
 async function capabilitiesOf(
+  win: BrowserWindowLike | undefined,
+  api: DesktopAppApi | undefined,
+  overlay = false,
+): Promise<Record<string, boolean | string | null>> {
+  const caps = await reportedCapabilities(win, api);
+  if (overlay && caps.layerShell === true && typeof win?.setPosition === "function") {
+    caps.setPosition = true;
+  }
+  return caps;
+}
+
+/** The runtime's `windowCapabilities()` over what the stock API shows, plus denext's own. */
+async function reportedCapabilities(
   win: BrowserWindowLike | undefined,
   api: DesktopAppApi | undefined,
 ): Promise<Record<string, boolean | string | null>> {
@@ -292,6 +361,7 @@ async function capabilitiesOf(
   const has = (name: keyof BrowserWindowLike) => typeof win?.[name] === "function";
   const facts = await platformFacts(api);
   return {
+    ...overlayCapabilities(win, has, facts.cookieEncryption),
     state: has("maximize"),
     stateEvents: false,
     sizeConstraints: has("setMinimumSize"),
@@ -326,6 +396,37 @@ async function capabilitiesOf(
     // Wayland cannot place windows; CEF's cookie store may be unencrypted.
     sessionType: facts.sessionType,
     cookieEncryption: facts.cookieEncryption,
+  };
+}
+
+/**
+ * The overlay features a window has, as far as the runtime's `BrowserWindow` shows (the runtime's
+ * own `windowCapabilities()` report, read after, wins): click-through and its pointer forwarding,
+ * a hit region, every workspace, the taskbar entry, opacity, always-on-top levels, a transparent
+ * background (the system WebView on macOS and Linux: CEF reports a cookie store, WebView2 runs on
+ * Windows), non-activating panels and focus events (every runtime with a window).
+ */
+function overlayCapabilities(
+  win: BrowserWindowLike | undefined,
+  has: (name: keyof BrowserWindowLike) => boolean,
+  cookieEncryption: unknown,
+): Record<string, boolean> {
+  const cef = cookieEncryption === "os" || cookieEncryption === "basic";
+  return {
+    clickThrough: has("setIgnoreMouseEvents"),
+    clickThroughForward: false,
+    hitRegion: has("setHitRegion"),
+    visibleOnAllWorkspaces: has("setVisibleOnAllWorkspaces"),
+    skipTaskbar: has("setSkipTaskbar"),
+    opacity: has("setOpacity"),
+    alwaysOnTopLevels: false,
+    transparent: win !== undefined && Deno.build.os !== "windows" && !cef,
+    nonActivating: win !== undefined,
+    focusEvents: win !== undefined,
+    // Reported by the runtime's windowCapabilities() from 3.0.0-denext.6; false until then.
+    visibleOnFullScreen: false,
+    layerShell: false,
+    activationPolicy: false,
   };
 }
 
@@ -427,8 +528,65 @@ interface WindowState {
   readonly now: () => number;
   readonly drops: QueuedDrop[];
   guard: boolean;
-  pending: { id: string; at: number; acked: boolean } | undefined;
+  /** The guard holds only quits (the page has `onBeforeQuit` handlers but no close handlers). */
+  guardQuitOnly: boolean;
+  pending: { id: string; at: number; acked: boolean; reason: CloseReason } | undefined;
   installed: boolean;
+}
+
+/** Why a guarded window is asked to close. */
+type CloseReason = "close" | "quit";
+
+/**
+ * The app-wide quit in progress, shared by every window over one runtime API: whether a
+ * `Deno.desktop.quit()` is dispatching its events right now, and the windows whose pages already
+ * let it go.
+ */
+interface QuitState {
+  /** A `beforequit` fired and its `close` events are being dispatched (reset after the task). */
+  quitting: boolean;
+  /** A page let the quit go and the controller is issuing it again. */
+  reissuing: boolean;
+  /** The windows whose pages let the current quit go. */
+  readonly approved: Set<WindowState>;
+}
+
+/** Each runtime API's quit state (one per app; a fresh one for a window with no API). */
+const quitStates = new WeakMap<object, QuitState>();
+
+/** The quit state shared over `api`, listening to its `beforequit` from the first use. */
+function quitStateOf(api: DesktopAppApi | undefined): QuitState {
+  const known = api ? quitStates.get(api) : undefined;
+  if (known) return known;
+  const q: QuitState = { quitting: false, reissuing: false, approved: new Set() };
+  if (!api) return q;
+  quitStates.set(api, q);
+  api.addEventListener?.("beforequit", () => {
+    // A quit from anywhere else starts over: every guarded page is asked again.
+    if (!q.reissuing) q.approved.clear();
+    q.quitting = true;
+    // `quit()` dispatches every `close` synchronously after this event.
+    queueMicrotask(() => {
+      q.quitting = false;
+    });
+  });
+  return q;
+}
+
+/** Issue the quit again once `s`'s page let it go (`true` when the app is quitting). */
+function reissueQuit(s: WindowState): boolean {
+  const q = quitStateOf(s.api);
+  if (typeof s.api?.quit !== "function") {
+    finishClose(s);
+    return true;
+  }
+  q.approved.add(s);
+  q.reissuing = true;
+  try {
+    return s.api.quit() === true;
+  } finally {
+    q.reissuing = false;
+  }
 }
 
 /** The window, or `unsupported` outside the desktop runtime. */
@@ -463,7 +621,10 @@ function act<K extends keyof BrowserWindowLike>(
   return null;
 }
 
-/** Close the window for good and end the process (the single-window app quits). */
+/**
+ * Close the window for good, then end the process — or, with a `closed` hook, let the app decide
+ * (another window is open, or the app stays alive).
+ */
 function finishClose(s: WindowState): void {
   s.guard = false;
   s.pending = undefined;
@@ -471,7 +632,8 @@ function finishClose(s: WindowState): void {
     if (typeof s.win?.close === "function") s.win.close();
   } finally {
     // Let the RPC answer flush before the process goes away.
-    setTimeout(() => s.exit(0), 0);
+    const closed = s.options.closed;
+    setTimeout(() => closed ? closed() : s.exit(0), 0);
   }
 }
 
@@ -685,7 +847,7 @@ function shareError(err: unknown): unknown {
 function windowStateMethods(s: WindowState): DesktopCapability["methods"] {
   const { win, api } = s;
   return {
-    capabilities: { handler: () => capabilitiesOf(win, api) },
+    capabilities: { handler: () => capabilitiesOf(win, api, s.options.overlay === true) },
     titleBarPreferences: {
       handler: () => titleBarPreferencesOf(api, s.options.os ?? Deno.build.os),
     },
@@ -744,10 +906,7 @@ function windowLookMethods(s: WindowState): DesktopCapability["methods"] {
       handler: (args) =>
         act(s, "setResizable", "change resizability", bool(argsOf(args).resizable, "resizable")),
     },
-    setAlwaysOnTop: {
-      handler: (args) =>
-        act(s, "setAlwaysOnTop", "stay on top", bool(argsOf(args).alwaysOnTop, "alwaysOnTop")),
-    },
+    setAlwaysOnTop: { handler: (args) => setAlwaysOnTop(s, args) },
     setTitleBarStyle: {
       handler: (args) => {
         const style = argsOf(args).style;
@@ -772,15 +931,114 @@ function windowLookMethods(s: WindowState): DesktopCapability["methods"] {
   };
 }
 
+/** The always-on-top levels (Electron's names), lowest first. */
+const LEVELS = new Set(["floating", "status", "pop-up-menu", "screen-saver"]);
+/** The most rectangles a hit region takes. */
+const MAX_HIT_RECTS = 64;
+
+/** `setAlwaysOnTop`: on or off, at a level (applied through the runtime's level op when it has one). */
+function setAlwaysOnTop(s: WindowState, args: unknown): null {
+  const a = argsOf(args);
+  const on = bool(a.alwaysOnTop, "alwaysOnTop");
+  if (a.level === undefined || a.level === "floating" || !on) {
+    return act(s, "setAlwaysOnTop", "stay on top", on);
+  }
+  if (!LEVELS.has(a.level as string)) {
+    throw invalid('level must be "floating", "status", "pop-up-menu" or "screen-saver"');
+  }
+  act(s, "setAlwaysOnTop", "stay on top", on, a.level);
+  // The runtime's native setAlwaysOnTop can shadow its level-aware wrapper (macOS, denext.6).
+  applyWindowLevel(need(s), a.level as string);
+  return null;
+}
+
+/**
+ * `setIgnoreMouseEvents`: let clicks through to what is under the window. Without `forward` the
+ * window can never be clicked again, so that needs another way in (a tray icon).
+ */
+function setIgnoreMouseEvents(s: WindowState, args: unknown): null {
+  const a = argsOf(args);
+  const ignore = bool(a.ignore, "ignore");
+  const forward = a.forward === undefined ? false : bool(a.forward, "forward");
+  need(s);
+  if (ignore && !forward && s.options.wayBack?.() !== true) {
+    throw invalid(
+      "click-through without forward needs another way back to the window (a tray icon); " +
+        "pass { forward: true } or use setHitRegion",
+    );
+  }
+  return act(s, "setIgnoreMouseEvents", "let clicks through", ignore, { forward });
+}
+
+/** `setHitRegion`: the rectangles (page CSS pixels) that catch clicks; `null` the whole window. */
+function setHitRegion(s: WindowState, args: unknown): null {
+  const raw = argsOf(args).rects;
+  if (raw === null || raw === undefined) return act(s, "setHitRegion", "set a hit region", null);
+  if (!Array.isArray(raw) || raw.length > MAX_HIT_RECTS) {
+    throw invalid(`rects must be an array of at most ${MAX_HIT_RECTS} rectangles, or null`);
+  }
+  const rects = raw.map((r) => {
+    const o = argsOf(r);
+    return {
+      x: num(o.x, "x"),
+      y: num(o.y, "y"),
+      width: num(o.width, "width", 0),
+      height: num(o.height, "height", 0),
+    };
+  });
+  return act(s, "setHitRegion", "set a hit region", rects);
+}
+
+/** The overlay methods: opacity, click-through, hit region, workspaces and the taskbar. */
+function windowOverlayMethods(s: WindowState): DesktopCapability["methods"] {
+  return {
+    setOpacity: {
+      handler: (args) => {
+        const o = argsOf(args).opacity;
+        if (typeof o !== "number" || !Number.isFinite(o) || o < 0 || o > 1) {
+          throw invalid("opacity must be a number from 0 to 1");
+        }
+        return act(s, "setOpacity", "change its opacity", o);
+      },
+    },
+    setIgnoreMouseEvents: { handler: (args) => setIgnoreMouseEvents(s, args) },
+    setHitRegion: { handler: (args) => setHitRegion(s, args) },
+    setVisibleOnAllWorkspaces: {
+      handler: (args) => {
+        const a = argsOf(args);
+        const visible = bool(a.visible, "visible");
+        const visibleOnFullScreen = a.visibleOnFullScreen === undefined
+          ? false
+          : bool(a.visibleOnFullScreen, "visibleOnFullScreen");
+        return act(s, "setVisibleOnAllWorkspaces", "show on every workspace", visible, {
+          visibleOnFullScreen,
+        });
+      },
+    },
+    setSkipTaskbar: {
+      handler: (args) =>
+        act(s, "setSkipTaskbar", "leave the taskbar", bool(argsOf(args).skip, "skip")),
+    },
+  };
+}
+
 /** The close-guard, close and quit methods, and the drop / drag-out ones. */
 function windowCloseAndDragMethods(s: WindowState): DesktopCapability["methods"] {
   return {
     setCloseGuard: {
       handler: (args) => {
-        const enabled = bool(argsOf(args).enabled, "enabled");
+        const a = argsOf(args);
+        const enabled = bool(a.enabled, "enabled");
+        const quitOnly = a.quitOnly === undefined ? false : bool(a.quitOnly, "quitOnly");
         if (enabled && typeof s.api?.quit !== "function") throw unsupported("guard its close");
+        // Listen for quits before the first one can arrive.
+        if (enabled) quitStateOf(s.api);
         s.guard = enabled;
-        if (!enabled) s.pending = undefined;
+        s.guardQuitOnly = enabled && quitOnly;
+        if (!enabled) {
+          s.pending = undefined;
+          quitStateOf(s.api).approved.delete(s);
+        }
         return null;
       },
     },
@@ -789,15 +1047,21 @@ function windowCloseAndDragMethods(s: WindowState): DesktopCapability["methods"]
         const id = argsOf(args).id;
         if (s.pending === undefined || s.pending.id !== id) return { current: false };
         s.pending.acked = true;
-        return { current: true };
+        return { current: true, reason: s.pending.reason };
       },
     },
     closeRespond: {
       handler: (args) => {
         const a = argsOf(args);
-        if (s.pending === undefined || s.pending.id !== a.id) return { closing: false };
+        const pending = s.pending;
+        if (pending === undefined || pending.id !== a.id) return { closing: false };
         s.pending = undefined;
-        if (a.close !== true) return { closing: false };
+        if (a.close !== true) {
+          // A refused quit is over: the next one asks every page again.
+          if (pending.reason === "quit") quitStateOf(s.api).approved.clear();
+          return { closing: false };
+        }
+        if (pending.reason === "quit") return { closing: reissueQuit(s) };
         finishClose(s);
         return { closing: true };
       },
@@ -828,20 +1092,40 @@ function windowCloseAndDragMethods(s: WindowState): DesktopCapability["methods"]
   };
 }
 
+/**
+ * Whether the guard holds a close for `reason`: a quit unless this window's page already let it
+ * go (another window held it), a plain close unless the guard holds quits only.
+ */
+function guardHolds(s: WindowState, q: QuitState, reason: CloseReason): boolean {
+  return reason === "quit" ? !q.approved.has(s) : !s.guardQuitOnly;
+}
+
+/** The page never acknowledged the last request in time: it cannot keep the window open. */
+function pageUnresponsive(s: WindowState): boolean {
+  const pending = s.pending;
+  if (!pending || pending.acked || s.now() - pending.at < UNRESPONSIVE_MS) return false;
+  s.pending = undefined;
+  return true;
+}
+
+/**
+ * Ask the page about a held close, unless it is already being asked; a quit while the page is
+ * asked about a plain close is asked again, as a quit.
+ */
+function askPage(s: WindowState, reason: CloseReason): void {
+  if (s.pending && (reason !== "quit" || s.pending.reason === "quit")) return;
+  s.pending = { id: crypto.randomUUID(), at: s.now(), acked: false, reason };
+  s.emit("closeRequested", { id: s.pending.id, reason });
+}
+
 /** The window's `close` listener hook (see {@linkcode WindowController.interceptClose}). */
 function interceptClose(s: WindowState, event: Event): boolean {
   if (!s.guard) return false;
-  const at = s.now();
-  if (s.pending && !s.pending.acked && at - s.pending.at >= UNRESPONSIVE_MS) {
-    // The page never acknowledged the last request: it cannot keep the window open.
-    s.pending = undefined;
-    return false;
-  }
+  const q = quitStateOf(s.api);
+  const reason: CloseReason = q.quitting ? "quit" : "close";
+  if (!guardHolds(s, q, reason) || pageUnresponsive(s)) return false;
   event.preventDefault();
-  if (!s.pending) {
-    s.pending = { id: crypto.randomUUID(), at, acked: false };
-    s.emit("closeRequested", { id: s.pending.id });
-  }
+  askPage(s, reason);
   return true;
 }
 
@@ -852,6 +1136,8 @@ function installWindowEvents(s: WindowState): void {
   s.installed = true;
   for (const type of STATE_EVENTS) win.addEventListener(type, () => s.emit("state", null));
   win.addEventListener("drop", (e) => void acceptDrop(s, (e as CustomEvent).detail));
+  win.addEventListener("focus", () => s.emit("focus", null));
+  win.addEventListener("blur", () => s.emit("blur", null));
   s.api?.addEventListener?.("displaychanged", () => s.emit("display", null));
   // The user's title bar settings changed (runtime 2.9.7-denext.12).
   s.api?.addEventListener?.(
@@ -881,21 +1167,25 @@ export function createWindowController(options: WindowControllerOptions): Window
     now: options.now ?? Date.now,
     drops: [],
     guard: false,
+    guardQuitOnly: false,
     pending: undefined,
     installed: false,
   };
   const capability: DesktopCapability = {
     name: "window",
-    events: ["state", "display", "closeRequested", "drop", "titleBarPreferences"],
+    events: WINDOW_EVENTS,
     onPageLoad: () => {
       // The page that guarded the close, or that files were dropped on, is gone.
       s.guard = false;
+      s.guardQuitOnly = false;
       s.pending = undefined;
       s.drops.length = 0;
+      quitStateOf(s.api).approved.delete(s);
     },
     methods: {
       ...windowStateMethods(s),
       ...windowLookMethods(s),
+      ...windowOverlayMethods(s),
       ...windowCloseAndDragMethods(s),
     },
   };

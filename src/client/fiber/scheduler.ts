@@ -342,7 +342,9 @@ const transitionDoneCallbacks: Array<() => void> = [];
 // Deno's event loop alive forever, so constructing it at module scope would hang
 // any non-browser process (CLI, SSR, tests) that merely imports this module. It is
 // only ever pumped in the browser via scheduleContinuation(); manual-slicing tests
-// pump through __pumpForTests() and must never construct it.
+// pump through __pumpForTests() and must never construct it. It is closed again once a
+// slice schedules no further one (the sliced render finished or stopped), so a non-browser
+// process that ran a transition (a component test) is not held open by it either.
 let yieldChannel: MessageChannel | undefined;
 
 let continuationScheduled = false;
@@ -352,10 +354,14 @@ export function scheduleContinuation(): void {
   continuationScheduled = true;
   if (manualSlicing) return; // pumped via __pumpForTests()
   if (!yieldChannel) {
-    yieldChannel = new MessageChannel();
-    yieldChannel.port1.onmessage = () => {
+    const channel = yieldChannel = new MessageChannel();
+    channel.port1.onmessage = () => {
       continuationScheduled = false;
       resumeConcurrentImpl();
+      // Slicing went idle: let the channel go.
+      if (!continuationScheduled) {
+        channel.port1.close(), channel.port2.close(), yieldChannel = undefined;
+      }
     };
   }
   yieldChannel.port2.postMessage(null);

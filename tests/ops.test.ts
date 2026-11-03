@@ -12,7 +12,8 @@ import {
   unstable_cache,
 } from "../src/server/cache.ts";
 import { cookies } from "../src/server/request-context.ts";
-import { createApp, type RequestLogInfo } from "../src/server/app.ts";
+import type { RequestLogInfo } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import type { PageProps } from "../src/server/types.ts";
@@ -171,16 +172,18 @@ Deno.test("an inbound x-request-id is ignored (fresh UUID) when the app does not
 
 Deno.test({
   name: "requestTimeout returns 503 when a route exceeds the deadline",
-  sanitizeOps: false, // the orphaned slow render's timer outlives the test
-  sanitizeResources: false,
 }, async () => {
   setCacheStore(inMemoryCacheStore());
+  // The slow render waits on a gate rather than a timer, and the test opens it once the 503 is
+  // in, so the orphaned render finishes inside the test (no timer outlives it).
+  let open!: () => void;
+  const gate = new Promise<void>((r) => open = r);
   const app = createApp({
     getManifest: isrManifest,
     load: (_fp) =>
       Promise.resolve({
         default: async (_p: PageProps) => {
-          await delay(300);
+          await gate;
           return h("h1", null, "slow");
         },
       }),
@@ -189,6 +192,8 @@ Deno.test({
   const res = await app(new Request("http://localhost/cached"));
   assertEquals(res.status, 503);
   await res.text();
+  open();
+  await delay(20); // the orphaned render settles
 });
 
 Deno.test({
@@ -221,8 +226,6 @@ Deno.test({
 
 Deno.test({
   name: "M5: a timeout 503 carries the x-request-id correlation header",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   setCacheStore(inMemoryCacheStore());
   const app = createApp({

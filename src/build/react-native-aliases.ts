@@ -328,15 +328,21 @@ export function reactNativeAliasesPlugin(
     .flatMap(([pkg, alias]) => [pkg, ...(alias.subpaths ?? []).map((sub) => `${pkg}/${sub}`)]);
   const filter = new RegExp(`^(?:${specifiers.map(literal).join("|")})$`);
   const optionalChecks = new Map<string, Promise<boolean>>();
-  const svg = Object.hasOwn(aliases, SVG_TRANSFORM)
-    ? Promise.all([
-      installed(projectDir, "react-native-svg"),
-      installed(projectDir, SVG_TRANSFORM),
-    ]).then(([a, b]) => a && b)
-    : Promise.resolve(false);
-  const nativewind = Object.hasOwn(aliases, NATIVEWIND)
-    ? installed(projectDir, NATIVEWIND)
-    : Promise.resolve(false);
+  // Checked on first need, not when the plugin is made: a plugin a build never runs (options
+  // computed and dropped) starts no file lookups that would outlive it.
+  let svgCheck: Promise<boolean> | undefined;
+  const svg = () =>
+    svgCheck ??= Object.hasOwn(aliases, SVG_TRANSFORM)
+      ? Promise.all([
+        installed(projectDir, "react-native-svg"),
+        installed(projectDir, SVG_TRANSFORM),
+      ]).then(([a, b]) => a && b)
+      : Promise.resolve(false);
+  let nativewindCheck: Promise<boolean> | undefined;
+  const nativewind = () =>
+    nativewindCheck ??= Object.hasOwn(aliases, NATIVEWIND)
+      ? installed(projectDir, NATIVEWIND)
+      : Promise.resolve(false);
   return {
     name: "denext-react-native-aliases",
     setup(build) {
@@ -415,7 +421,7 @@ export function reactNativeAliasesPlugin(
       // react-native-web applies; packages keep the plain runtime.
       build.onResolve({ filter: JSX_RUNTIME }, async (args) => {
         if ((args.pluginData as Record<string, unknown> | undefined)?.[PLAIN]) return undefined;
-        if (args.namespace !== "file" || !await nativewind) return undefined;
+        if (args.namespace !== "file" || !await nativewind()) return undefined;
         if (/[\\/]react-native-css-interop[\\/]/.test(args.importer)) {
           const data: AliasData = { pkg: NATIVEWIND, resolveDir: args.resolveDir, jsx: args.path };
           return { path: `${args.path}#default`, namespace: NAMESPACE, pluginData: data };
@@ -436,7 +442,7 @@ export function reactNativeAliasesPlugin(
         if ((args.pluginData as Record<string, unknown> | undefined)?.[SVG_NAMESPACE]) {
           return undefined;
         }
-        if (!await svg) return undefined;
+        if (!await svg()) return undefined;
         const result = await build.resolve(args.path, {
           kind: args.kind,
           importer: args.importer,

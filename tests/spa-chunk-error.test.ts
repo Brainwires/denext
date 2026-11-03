@@ -188,8 +188,6 @@ for (const compat of [false, true]) {
   Deno.test({
     name: `chunk error export (${compat ? "esbuild" : "native"} path): the entry installs the ` +
       "handler and its lazy import() is wrapped",
-    sanitizeResources: false,
-    sanitizeOps: false,
   }, async () => {
     const dir = await spaFixture(compat);
     try {

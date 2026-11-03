@@ -14,6 +14,7 @@ import { platformResolution } from "../src/build/platform-extensions.ts";
 import { resetModuleGraphCache } from "../src/build/module-graph.ts";
 import { removeTempDir } from "./helpers/temp.ts";
 import { watchTests } from "./helpers/watchdog.ts";
+import "./helpers/esbuild-after-each.ts";
 
 // Builds in this process: a stalled one fails its test instead of holding the CI job.
 watchTests();

@@ -8,7 +8,12 @@
 //     [paths...] [-- args]
 //
 // Paths and `--ignore` entries are relative to the repo root (where `deno task` runs); with no
-// path, every test under the root. A flag's value may be its own argument (`--filter foo`), and
+// path, every test under the root. `deno test --ignore` replaces `deno.json`'s own test excludes
+// (`.deno/`, where the toolchain's type-check writes an `npm-compat` copy of packages, their
+// `_test.ts` files included), so a pass with an `--ignore` carries those excludes in it too.
+// Both sanitizers are on for every stock pass (`test.sanitizeOps` / `test.sanitizeResources` in
+// `deno.json`); the Vitest pass runs without them (the toolchain's Vitest layer turns them off
+// for every test, as Vitest has none). A flag's value may be its own argument (`--filter foo`), and
 // what follows `--` goes to the tests. Every pass runs; the exit code is non-zero when any fails.
 // `--vitest-allow-env=A,B` grants the Vitest pass (which runs least-privilege) reads of those
 // environment variables, for a `--preload` that reads them (`deno task test:stress`'s jitter).
@@ -58,6 +63,7 @@
 // instead of a hung test holding the CI job until its timeout.
 
 import { walk } from "@std/fs/walk";
+import { parse as parseJsonc } from "@std/jsonc";
 import { fromFileUrl, join, relative } from "@std/path";
 import { SERIAL_TESTS, serialTestsFor } from "../tests/serial-tests.ts";
 import { resolveDenoToolchain, TOOLCHAIN_ENV } from "../src/build/deno-toolchain.ts";
@@ -76,6 +82,16 @@ function covers(entry: string, file: string): boolean {
   const e = entry.replace(/^\.\//, "").replace(/\/$/, "");
   return e === "" || e === "." || file === e || file.startsWith(`${e}/`);
 }
+
+/**
+ * Directories tools write into the checkout that test discovery must never walk: `.deno/` (the
+ * toolchain's native type-check generates its project there, an `npm-compat` copy of the `@jsr/*`
+ * packages with their own `_test.ts` files included), `.denext/` (build output) and `coverage/`.
+ * Every stock pass names them in its `--ignore`: a `--ignore` on the command line replaces
+ * `deno.json`'s `exclude` / `test.exclude` instead of adding to it, so the config's own `.deno/`
+ * entry no longer applies once this script passes one.
+ */
+export const TOOL_CACHE_DIRS: readonly string[] = [".deno/", ".denext/", "coverage/"];
 
 /** The `deno test` flags whose value may be the next argument (`--filter foo`). */
 const VALUE_FLAGS = TEST_VALUE_FLAGS;
@@ -165,12 +181,15 @@ export interface TestPasses {
  * @param serial The serial test files.
  * @param vitest The Vitest test files (`tests/**\/*.vitest.ts`, repo-relative).
  * @param typeCheckVitest Type-check the Vitest files (CI); else the pass runs with `--no-check`.
+ * @param configExcludes The config's own test excludes ({@linkcode configTestExcludes}): a
+ *   `--ignore` replaces them, so the parallel pass's `--ignore` carries them too.
  */
 export function testPasses(
   args: readonly string[],
   serial: readonly string[] = SERIAL_TESTS,
   vitest: readonly string[] = [],
   typeCheckVitest = true,
+  configExcludes: readonly string[] = [],
 ): TestPasses {
   const split = splitArgs(args);
   const { ignores, paths, rest, vitestEnv } = split;
@@ -183,9 +202,18 @@ export function testPasses(
   const vitestFiles = inScope(vitest, paths, ignores);
   // A `.vitest.ts` path named on its own is the Vitest pass's alone: stock Deno runs an explicitly
   // named file whatever its name, and cannot resolve `vitest`.
-  const stockPaths = paths.filter((p) => !p.endsWith(VITEST_SUFFIX));
+  // Likewise a serial file named on its own: `--ignore` only prunes discovery, so an explicit
+  // path would also run in the parallel pass, its env changes leaking into the other files.
+  const stockPaths = paths.filter((p) =>
+    !p.endsWith(VITEST_SUFFIX) && !serialFiles.some((f) => f === p.replace(/^\.\//, ""))
+  );
   const base = ["test", "-A", "--unstable-kv", ...flags];
-  const ignore = [...ignores, ...serialFiles];
+  const own = [...ignores, ...serialFiles];
+  const listed = [...configExcludes.filter((e) => !own.includes(e)), ...own];
+  // A pass's own --ignore replaces the config's exclude: it carries those, and the tool caches
+  // the config may not name. With none, the config's excludes apply as they are.
+  const cache = TOOL_CACHE_DIRS.filter((d) => !listed.some((i) => covers(i, d)));
+  const ignore = own.length > 0 ? [...listed, ...cache] : [];
   return {
     parallel: paths.length > 0 && stockPaths.length === 0 ? null : [
       ...base,
@@ -211,6 +239,29 @@ export function testPasses(
 }
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
+
+/**
+ * The test excludes `deno.json` declares (its top-level `exclude` and `test.exclude`). `deno test
+ * --ignore=…` REPLACES them rather than adding to them, so every pass that passes `--ignore` adds
+ * them back: otherwise the parallel pass walks `.deno/` (the toolchain's type-check writes an
+ * `npm-compat` copy of npm and `@jsr/*` packages there, their `_test.ts` files included) and
+ * type-checks and runs what the config keeps out. A config that can't be read adds nothing.
+ *
+ * @param root The project root.
+ * @returns The entries, as written.
+ */
+export async function configTestExcludes(root: string = ROOT): Promise<string[]> {
+  let doc: unknown;
+  try {
+    doc = parseJsonc(await Deno.readTextFile(join(root, "deno.json")));
+  } catch {
+    return [];
+  }
+  const strings = (v: unknown) =>
+    Array.isArray(v) ? v.filter((e): e is string => typeof e === "string") : [];
+  const config = (doc ?? {}) as { exclude?: unknown; test?: { exclude?: unknown } };
+  return [...new Set([...strings(config.exclude), ...strings(config.test?.exclude)])];
+}
 
 /** The module every stock pass preloads: the per-test stall watchdog. */
 export const WATCHDOG_PRELOAD = fromFileUrl(
@@ -523,7 +574,13 @@ async function toolchainFor(): Promise<string | null | false> {
 async function runPasses(): Promise<boolean> {
   const ci = (Deno.env.get("CI") ?? "") !== "";
   // On Windows the files that build in the test process run serially too (tests/serial-tests.ts).
-  const passes = testPasses(Deno.args, serialTestsFor(Deno.build.os), await findVitestFiles(), ci);
+  const passes = testPasses(
+    Deno.args,
+    serialTestsFor(Deno.build.os),
+    await findVitestFiles(),
+    ci,
+    await configTestExcludes(),
+  );
   // Every pass runs on the toolchain when it resolves; with coverage it must (its `deno coverage`
   // merges the passes' profiles).
   const coverage = wantsCoverage(splitArgs(Deno.args).flags);
@@ -553,11 +610,36 @@ async function vitestPass(args: string[] | null, toolchain: string | null | fals
   return toolchain !== false && await runVitestPass(args, toolchain);
 }
 
+/**
+ * Whether the run's temp root is still there at the end. This run removes nothing but its own
+ * root; a root that vanished was removed by something else on the machine (another tool's
+ * temp-dir cleanup glob, Windows Storage Sense's temporary-files cleanup on low disk space), which
+ * fails every later test with NotFound, so the run says so instead of leaving a wall of
+ * unexplained failures.
+ *
+ * @param root The run's temp root.
+ * @returns True when it still exists.
+ */
+export async function tempRootSurvived(root: string): Promise<boolean> {
+  try {
+    await Deno.stat(root);
+    return true;
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+    console.error(
+      `test-run: the run's temp root ${root} was removed by another process while the tests ` +
+        "ran (a cleanup of the machine's temp dir?); the NotFound failures above follow from it.",
+    );
+    return false;
+  }
+}
+
 if (import.meta.main) {
   runTempRoot = await Deno.makeTempDir({ prefix: "dnx-tr-" });
   let ok = false;
   try {
     ok = await runPasses();
+    ok = await tempRootSurvived(runTempRoot) && ok;
   } finally {
     await removeTempRoot(runTempRoot);
   }

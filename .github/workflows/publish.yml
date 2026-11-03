@@ -161,8 +161,15 @@ jobs:
             git clean -fdq
           fi
 
+      # JSR refuses a package past 20 MiB of uncompressed files. Internal comments don't ship:
+      # the public API's docs, every line number and the code stay as tagged.
+      - name: Blank internal comments in @denext/denext's publish set
+        if: steps.pkg.outputs.config == 'deno.json'
+        run: deno run -A scripts/publish-strip.ts --write
+
       - name: Publish to JSR (with provenance)
-        run: deno publish --config ${{ steps.pkg.outputs.config }}
+        # --allow-dirty: the step above; the step before it left the tree clean otherwise.
+        run: deno publish --allow-dirty --config ${{ steps.pkg.outputs.config }}
 
   # The in-PATH `denext` binary. Runs only for a root `v*` tag, and only after the JSR publish
   # succeeded — a failed publish must never ship a binary claiming that version.

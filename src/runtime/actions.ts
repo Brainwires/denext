@@ -80,9 +80,19 @@ export function useActionState<State, Payload = FormData>(
   const [state, setState] = useState(initialState);
   const [isPending, setPending] = useState(false);
   // The latest state and action, read at dispatch time so `dispatch` keeps ONE identity for
-  // the component's lifetime (React's does), yet never closes over stale state.
-  const latest = useRef({ state, action });
-  latest.current = { state, action };
+  // the component's lifetime (React's does), yet never closes over stale state; and the error
+  // an action threw, which this render rethrows (once) into the nearest boundary.
+  const latest = useRef<{ state: State; action: typeof action; thrown?: { error: unknown } }>({
+    state,
+    action,
+  });
+  latest.current.state = state;
+  latest.current.action = action;
+  const thrown = latest.current.thrown;
+  if (thrown) {
+    latest.current.thrown = undefined;
+    throw thrown.error;
+  }
 
   const dispatch = useCallback((payload: Payload): Promise<void> => {
     setPending(() => true);
@@ -96,12 +106,13 @@ export function useActionState<State, Payload = FormData>(
     startTransition(() => {
       return Promise.resolve(latest.current.action(latest.current.state, payload))
         .then((next) => setState(() => next))
-        .catch((err) => {
-          // React rethrows an action's error into the nearest error boundary: surface it from
-          // the next render (a state updater that throws) instead of swallowing it in a log.
-          setState(() => {
-            throw err;
-          });
+        .catch((error) => {
+          // React rethrows an action's error into the nearest error boundary (a `notFound()`
+          // into the nearest not-found UI): surface it from the next render, which the pending
+          // flip schedules. Not from a throwing state updater: the setter runs it at once, so
+          // the error escaped as an unhandled rejection.
+          latest.current.thrown = { error };
+          setPending(() => true);
         })
         .finally(() => {
           setPending(() => false);

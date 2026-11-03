@@ -8,6 +8,7 @@ import { forgetTaggedClients } from "../../runtime/client-reference.ts";
 import { forgetTaggedServers } from "../../runtime/server-action.ts";
 import { getPluginPrepareWatchDirs, runMatchingPrepareSteps } from "../../plugin/mod.ts";
 import { withBuildDirLock } from "../project-locks.ts";
+import { outsideLockTasks } from "../file-lock.ts";
 import type { PluginPrepareContext } from "../../plugin/mod.ts";
 import { basename, extname, join, SEPARATOR } from "@std/path";
 import { typeCheck } from "./dev-endpoints.ts";
@@ -17,7 +18,7 @@ import { broadcast, broadcastUpdate, closeReloadClients } from "./reload.ts";
 import type { DevState } from "./state.ts";
 import { watchPlatformFiles } from "./platform.ts";
 import { isSelfWrite } from "../self-writes.ts";
-import { watchProjectStructure } from "../platform-watch.ts";
+import { startupReplay, watchProjectStructure } from "../platform-watch.ts";
 import { workspaceMemberDirs } from "../workspace-imports.ts";
 
 /**
@@ -206,44 +207,6 @@ function outsideEdits(
     });
 }
 
-/** How long after the watchers start an event can still be a replay of a write made before. */
-const STARTUP_REPLAY_MS = 2000;
-
-/**
- * Whether `path`'s change event is a replay of a write made before the watchers started, not an
- * edit: macOS's FSEvents delivers the recent history of a folder to a new watch, so the files a
- * scaffold or a checkout wrote just before `denext dev` arrived as edits — a config "changed"
- * note, a new generation in the middle of the first render (its actions forgotten while it
- * tagged them), copies of untouched modules. Within {@linkcode STARTUP_REPLAY_MS} of the start,
- * an event for a file last modified before the start is dropped; later events, and one for a
- * file that is gone, always count (an extracted archive keeps old mtimes on purpose).
- *
- * @param path The event's path.
- * @param startedAt When the watchers started (epoch ms).
- * @param now The time the event arrived (epoch ms).
- * @param mtimeOf The file's modification time (epoch ms), or null when it can't be read.
- * @returns Whether to drop the event.
- */
-export function startupReplay(
-  path: string,
-  startedAt: number,
-  now: number,
-  mtimeOf: (path: string) => number | null = statMtime,
-): boolean {
-  if (now - startedAt > STARTUP_REPLAY_MS) return false;
-  const mtime = mtimeOf(path);
-  return mtime !== null && mtime < startedAt;
-}
-
-/** `path`'s modification time (epoch ms), or null when it is gone or has none. */
-function statMtime(path: string): number | null {
-  try {
-    return Deno.statSync(path).mtime?.getTime() ?? null;
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Split a change set into config edits (restart note) and the rest (rebuild). Config edits
  * are classified by BASENAME: Deno.watchFs may report realpath-resolved event paths (e.g.
@@ -299,19 +262,22 @@ export async function watch(st: DevState): Promise<void> {
     if (paths.length === 0) return;
     changed.push(...paths);
     if (debounce) clearTimeout(debounce);
-    debounce = setTimeout(() => {
-      const changedPaths = changed;
-      changed = [];
-      // Regenerate any plugin prepare outputs whose watch globs matched FIRST (awaited), so the
-      // reload the change set triggers serves freshly generated types/store — then apply the set.
-      // Under the build-dir lock: this is one dev rebuild's codegen into `.denext/`.
-      void withBuildDirLock(
-        st.paths.projectDir,
-        () => runMatchingPrepareSteps(prepareContext(st), changedPaths),
-      )
-        .catch(() => false)
-        .finally(() => handleChangeSet(st, configBasenames, changedPaths));
-    }, 60);
+    // Outside every lock task: a batch is its own rebuild, never part of one whose `import()`
+    // left its context behind (stock Deno).
+    debounce = setTimeout(() =>
+      outsideLockTasks(() => {
+        const changedPaths = changed;
+        changed = [];
+        // Regenerate any plugin prepare outputs whose watch globs matched FIRST (awaited), so the
+        // reload the change set triggers serves freshly generated types/store — then apply the
+        // set. Under the build-dir lock: this is one dev rebuild's codegen into `.denext/`.
+        void withBuildDirLock(
+          st.paths.projectDir,
+          () => runMatchingPrepareSteps(prepareContext(st), changedPaths),
+        )
+          .catch(() => false)
+          .finally(() => handleChangeSet(st, configBasenames, changedPaths));
+      }), 60);
   };
   // The project-wide watch (one walk's skip rules: dot-folders, node_modules, build output) also
   // delivers content edits outside the watched folders — `components/X.tsx` — as the same

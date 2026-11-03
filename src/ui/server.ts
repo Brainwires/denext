@@ -38,7 +38,7 @@ import { boundedRequest, UI_MAX_BODY_BYTES } from "./body.ts";
 import type { RelayConfig } from "./logs/source.ts";
 import type { AppTarget } from "./app-admin.ts";
 import { UI_CSS_PATH } from "./layout.ts";
-import { UI_CSS } from "./styles.ts";
+import { UI_CSS } from "./assets.packed.ts";
 
 /** The port `denext ui` listens on unless `--port` says otherwise. */
 export const DEFAULT_UI_PORT = 5177;

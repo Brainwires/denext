@@ -20,8 +20,6 @@ const loaded = (name: string) => `!!(window.__loaded && window.__loaded.${name})
 
 Deno.test({
   name: "e2e: SPA client:* directives defer each component's chunk and mount to its trigger",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

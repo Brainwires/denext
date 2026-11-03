@@ -88,6 +88,13 @@ export interface SidecarSupervisorOptions {
   readonly launch: SidecarLauncher;
   /** Its port, when it has one (picked once per app launch). */
   readonly port?: number;
+  /**
+   * A fresh free port, for an `"auto"` port another process took between the pick and the start.
+   * Without it (or `portTaken`) the port never changes.
+   */
+  readonly repickPort?: () => number;
+  /** Whether another process holds `port` now (asked after a start that ended before ready). */
+  readonly portTaken?: (port: number) => boolean;
   /** Its secrets (resolved once per app launch). */
   readonly secrets?: Readonly<Record<string, string>>;
   /** The page-visible values (`expose`, secrets resolved). */
@@ -136,6 +143,12 @@ type Outcome =
   | { readonly kind: "ready" }
   | { readonly kind: "exit"; readonly exit: SidecarExit }
   | { readonly kind: "timeout" };
+
+/**
+ * How many times one run of starts takes a new port because another process took its own: each
+ * takes the next start at once, outside the restart policy and its attempt count.
+ */
+export const SIDECAR_PORT_REPICKS = 3;
 
 /** The delay before retry number `attempt` (1-based): doubling from `base`, capped at `max`. */
 export function sidecarBackoffDelay(attempt: number, base: number, max: number): number {
@@ -219,6 +232,10 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
   const stdoutRe = ready.stdout !== undefined ? new RegExp(ready.stdout) : undefined;
   const secrets = options.secrets ?? {};
   const listeners = new Set<(s: SidecarStatus) => void>();
+  /** The port: the one picked, or a re-pick once another process took it. */
+  let port = options.port;
+  /** Re-picks since the sidecar was last ready (bounded by `SIDECAR_PORT_REPICKS`). */
+  let repicks = 0;
 
   let status: SidecarStatus = {
     name: def.name,
@@ -262,9 +279,7 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
   const info = (): SidecarInfo => ({
     name: def.name,
     state: status.state,
-    ...(options.port !== undefined
-      ? { port: options.port, url: `http://127.0.0.1:${options.port}` }
-      : {}),
+    ...(port !== undefined ? { port, url: `http://127.0.0.1:${port}` } : {}),
     values: options.values ?? {},
   });
 
@@ -284,8 +299,8 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
     const checks: Promise<boolean>[] = [];
     if (ready.signal === true) checks.push(signal.then(() => true));
     if (stdoutRe) checks.push(line.then(() => true));
-    if (ready.http !== undefined && options.port !== undefined) {
-      const url = `http://127.0.0.1:${options.port}${ready.http}`;
+    if (ready.http !== undefined && port !== undefined) {
+      const url = `http://127.0.0.1:${port}${ready.http}`;
       checks.push(poll(
         async () => {
           const res = await fetchFn(url, {
@@ -338,6 +353,42 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
     }, delay);
   };
 
+  /**
+   * After a start ended before it was ready: when another process now holds the sidecar's port
+   * (it took the port between the pick and the bind, so the start failed on an address in use),
+   * take a fresh port and start again at once. `false` when the port is not the cause, or after
+   * `SIDECAR_PORT_REPICKS` such re-picks.
+   */
+  const repickAfterConflict = (gen: number): boolean => {
+    if (port === undefined || !options.repickPort || !options.portTaken) return false;
+    if (gen !== generation || repicks >= SIDECAR_PORT_REPICKS) return false;
+    let taken: boolean;
+    try {
+      taken = options.portTaken(port);
+    } catch {
+      taken = false;
+    }
+    if (!taken) return false;
+    const previous = port;
+    try {
+      port = options.repickPort();
+    } catch {
+      return false;
+    }
+    repicks++;
+    console.error(
+      `sidecar ${def.name}: port ${previous} was taken by another process; retrying on ${port}`,
+    );
+    set({ state: "starting", port });
+    launchOnce(true);
+    return true;
+  };
+
+  /** A start that ended before ready: on a fresh port when another process took its own. */
+  const endedBeforeReady = (gen: number, exit: SidecarExit): void => {
+    if (!repickAfterConflict(gen)) afterEnd(exit, false);
+  };
+
   /** One start: launch, then race readiness against the end and the timeout. */
   const launchOnce = (isRestart: boolean): void => {
     const gen = ++generation;
@@ -353,7 +404,7 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
       try {
         inst = await options.launch({
           definition: def,
-          ...(options.port !== undefined ? { port: options.port } : {}),
+          ...(port !== undefined ? { port } : {}),
           bootstrap: await bootstrapValue(),
           secrets,
           onLine: (stream, text) => {
@@ -364,7 +415,7 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
         });
       } catch (err) {
         if (gen !== generation) return;
-        afterEnd({ error: err instanceof Error ? err.message : String(err) }, false);
+        endedBeforeReady(gen, { error: err instanceof Error ? err.message : String(err) });
         return;
       }
       if (gen !== generation) {
@@ -386,12 +437,13 @@ export function createSidecarSupervisor(options: SidecarSupervisorOptions): Side
       ]);
       clock.clearTimeout(timer);
       if (gen !== generation) return;
-      if (outcome.kind === "exit") return afterEnd(outcome.exit, false);
+      if (outcome.kind === "exit") return endedBeforeReady(gen, outcome.exit);
       if (outcome.kind === "timeout") {
         await inst.stop(graceMs);
         if (gen !== generation) return;
         return afterEnd({ error: `not ready within ${readyTimeoutMs} ms` }, false);
       }
+      repicks = 0;
       set({ state: "ready" });
       resetTimer = clock.setTimeout(() => {
         resetTimer = undefined;

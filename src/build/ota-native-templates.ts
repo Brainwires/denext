@@ -63,8 +63,17 @@ import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
  * a request for a directory of a downloaded UI no longer quarantines it; and the bridge's frame
  * guard also refuses a main frame on another origin than the app's (bridge-frame-guard-native-
  * template.ts). The bump keeps an older denext from rewriting those checks away.
+ * Generation 12: the shell checks a manifest's platform stamp itself (code `platform_mismatch`, as
+ * the page does), the asset handler's check fails closed for a base other than the bundled UI or a
+ * version directory, and `/_capacitor_file_` requests into the versions root get the same check
+ * (iOS: `DenextOtaFileGuard`; Android: the route processor). A `/_capacitor_file_` path with a
+ * control character or to a missing file is refused; iOS serves no downloaded UI when the guard
+ * cannot be installed (code `guard_unavailable`, unless `plugins.DenextBridge.otaFileGuard: false`);
+ * an app that embeds a public key requires the platform stamp; a verified file is hashed again
+ * when its stat changes; and a manifest's signed `appId` (`appSignature`, the v5 payload) must
+ * name this app (code `app_mismatch`), required when the app embeds a public key. The bump keeps an older denext from rewriting those checks away.
  */
-export const OTA_TEMPLATE_VERSION = 11;
+export const OTA_TEMPLATE_VERSION = 12;
 
 /**
  * SHA-256 of every template file denext shipped before the marker line existed, by file name:

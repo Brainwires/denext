@@ -6,6 +6,7 @@
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
+import { OWN_MODULE_PATH } from "../src/build/windows-powershell.ts";
 import { desktopWindowsTargetNote } from "../src/build/desktop.ts";
 import {
   authenticodeSignature,
@@ -267,6 +268,6 @@ Deno.test("the probes: Windows PowerShell's own modules first, whatever module p
   await certificateTrust("c", "p", { os: "windows", powershell: record });
   assertEquals(scripts.length, 2);
   for (const script of scripts) {
-    assertEquals(script.split("\n")[0], '$env:PSModulePath = "$PSHOME\\Modules"');
+    assert(script.startsWith(`${OWN_MODULE_PATH}; `), `no module-path reset first: ${script}`);
   }
 });

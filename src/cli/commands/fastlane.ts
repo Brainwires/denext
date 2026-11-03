@@ -13,6 +13,7 @@ import {
   pluginfileGems,
   resolveFastlane,
 } from "../../build/fastlane-toolchain.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** Seams for {@linkcode runFastlane} (tests). */
 export interface RunFastlaneOptions {
@@ -81,18 +82,7 @@ export async function runFastlane(
 }
 
 export const fastlaneCommand: CommandSpec = {
-  name: "fastlane",
-  summary: "Run denext's managed fastlane (pinned; installed on first use)",
-  passthrough: true,
-  usage: "Runs fastlane with the arguments verbatim, in the current directory (or --cwd):\n" +
-    "  denext fastlane ios beta flavor:staging\n" +
-    "  denext fastlane android release track:production\n" +
-    `The first run installs fastlane ${FASTLANE_TOOLCHAIN.fastlane} on a pinned portable Ruby\n` +
-    "into denext's toolchain cache (SHA-256-verified; the gems build C extensions, so it needs\n" +
-    "the Command Line Tools on macOS or cc + make on Linux). Windows is not supported.\n" +
-    "  denext toolchain install --with fastlane   install it ahead of time\n" +
-    `  ${FASTLANE_ENV}=<path>                     run that fastlane instead (unverified)`,
-  positionals: [{ name: "args", help: "fastlane's arguments", variadic: true }],
+  ...commandMeta("fastlane"),
   run: async (ctx) => {
     Deno.exit(await runFastlane([...ctx.positionals, ...ctx.rest], commandCwd(ctx)));
   },

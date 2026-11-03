@@ -93,6 +93,31 @@ Deno.test("secureStore: desktop → the secureStore capability (get/set/delete)"
   });
 });
 
+Deno.test("secureStore: accessibility is accepted on desktop and the capability call is unchanged", async () => {
+  const kv = new Map<string, string>();
+  await inDesktop({
+    secureStore: {
+      get: (a) => kv.get((a as { key: string }).key) ?? null,
+      set: (a) => void kv.set((a as { key: string }).key, (a as { value: string }).value),
+      delete: (a) => void kv.delete((a as { key: string }).key),
+    },
+  }, async (rt) => {
+    assertEquals(
+      await secureStore.set("refresh", "r1", { accessibility: "whenUnlockedThisDeviceOnly" }),
+      { stored: "keychain" },
+    );
+    assertEquals(await secureStore.get("refresh"), "r1");
+    assertEquals(calls(rt)[0], { at: "secureStore.set", args: { key: "refresh", value: "r1" } });
+    // Still validated here: an unknown class never reaches the OS store.
+    await assertRejects(
+      () => secureStore.set("refresh", "r2", { accessibility: "always" as never }),
+      TypeError,
+      "accessibility",
+    );
+    assertEquals(kv.get("refresh"), "r1");
+  });
+});
+
 Deno.test("secureStore: a biometric-gated value still refuses on desktop (no biometrics)", async () => {
   const kv = new Map<string, string>();
   await inDesktop({

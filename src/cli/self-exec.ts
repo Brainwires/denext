@@ -1,7 +1,8 @@
 // How the CLI re-runs ITSELF in a child `deno run` (the CSS import-map re-exec and the
 // server-side-npm re-exec), for a local checkout, a JSR / https install, or a compiled binary.
 
-import { dirname, fromFileUrl, join, resolve } from "@std/path";
+import { dirname, fromFileUrl, isAbsolute, join, relative, resolve, SEPARATOR } from "@std/path";
+import { workspaceSelects } from "../build/workspace-globs.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { type DenoToolchainChoice, TOOLCHAIN_ACTIVE_ENV } from "../build/deno-toolchain.ts";
 import {
@@ -9,8 +10,20 @@ import {
   isDenextDenoVersion,
   needsNoLegacyAbortFlag,
 } from "../build/deno-version.ts";
+import {
+  hopLimits,
+  limitFlagsFor,
+  limitsNotAppliedWarning,
+  supportsLimitsWhy,
+} from "../build/resource-limits.ts";
 import { windowsCommandLine } from "./windows-command-line.ts";
 import { runToExit } from "../build/exited-output.ts";
+import {
+  REVOCATION_NOTICED_ENV,
+  type RevocationMode,
+  type RuntimeComponent,
+} from "../build/runtime-revocations.ts";
+import { type StockDenoPath, warnStockDeprecation } from "../build/stock-deprecation.ts";
 
 /** The config file names a Deno project may use, in resolution order. */
 const CONFIG_NAMES = ["deno.json", "deno.jsonc"] as const;
@@ -61,6 +74,49 @@ interface DenoConfig {
   workspace?: unknown;
 }
 
+/** The most of a config or import map the pin lookup reads, in bytes. */
+const MAX_CONFIG_BYTES = 8 * 1024 * 1024;
+
+/**
+ * `path`'s text when it is a regular file of a sane size, else null. A repository names these
+ * paths: `/dev/zero` would never finish reading and a FIFO would never start.
+ */
+function readRegularFile(path: string): string | null {
+  try {
+    const info = Deno.statSync(path);
+    return info.isFile && info.size <= MAX_CONFIG_BYTES ? Deno.readTextFileSync(path) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the import map at `path` belongs to the project of the config in `configDir`: every
+ * symlink resolved, it lies in the repository holding that config (the directory with `.git`),
+ * or under the config's own directory outside a repository. A repository's `deno.json` may name
+ * any path, and the pin lookup runs in this process before anything is trusted.
+ */
+function importMapIsContained(configDir: string, path: string): boolean {
+  let root = configDir;
+  for (let at = configDir, i = 0; i < WORKSPACE_WALK_LIMIT; i++) {
+    if (isGitRoot(at)) {
+      root = at;
+      break;
+    }
+    const parent = dirname(at);
+    if (parent === at) break;
+    at = parent;
+  }
+  try {
+    const real = Deno.realPathSync(path);
+    const from = Deno.realPathSync(root);
+    const rel = relative(from, real);
+    return rel !== ".." && !rel.startsWith(`..${SEPARATOR}`) && !isAbsolute(rel);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Read and parse `dir`'s `deno.json` (else `deno.jsonc`) — comments and trailing commas
  * allowed in either, as Deno allows them. `undefined` when there is no config, `null` when it
@@ -69,12 +125,8 @@ interface DenoConfig {
 function readConfig(dir: string): { config: DenoConfig; path: string } | null | undefined {
   for (const name of CONFIG_NAMES) {
     const path = join(dir, name);
-    let source: string;
-    try {
-      source = Deno.readTextFileSync(path);
-    } catch {
-      continue;
-    }
+    const source = readRegularFile(path);
+    if (source === null) continue;
     try {
       const data = parseJsonc(source);
       return typeof data === "object" && data !== null
@@ -113,36 +165,28 @@ function pinOfConfig(config: DenoConfig, configPath: string): string | null {
   const own = denextImport(config.imports);
   if (own !== null) return own;
   if (typeof config.importMap !== "string") return null;
+  const path = resolve(dirname(configPath), config.importMap);
+  if (!importMapIsContained(dirname(configPath), path)) return null;
+  const source = readRegularFile(path);
+  if (source === null) return null;
   try {
-    const map = parseJsonc(Deno.readTextFileSync(resolve(dirname(configPath), config.importMap)));
-    return denextImport((map as { imports?: unknown } | null)?.imports);
+    return denextImport((parseJsonc(source) as { imports?: unknown } | null)?.imports);
   } catch {
     return null; // a missing or malformed import map pins nothing
   }
 }
 
 /**
- * Whether a workspace member entry (`./apps/web`, `packages/*`) names `member`, both resolved
- * against the root's directory. Only `*` is understood, as one path segment.
+ * Whether a workspace member entry (`./apps/web`, `packages/*`, `packages/**`) names `member`,
+ * both resolved against the root's directory, as Deno expands the list (workspace-globs.ts).
  */
 function workspaceLists(config: DenoConfig, rootDir: string, member: string): boolean {
   const entries = Array.isArray(config.workspace)
     ? config.workspace
     : (config.workspace as { members?: unknown } | null)?.members;
   if (!Array.isArray(entries)) return false;
-  for (const entry of entries) {
-    if (typeof entry !== "string") continue;
-    const full = resolve(rootDir, entry);
-    if (!full.includes("*")) {
-      if (full === member) return true;
-      continue;
-    }
-    const pattern = full.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join(
-      "[^/\\\\]*",
-    );
-    if (new RegExp(`^${pattern}$`).test(member)) return true;
-  }
-  return false;
+  const list = entries.filter((e): e is string => typeof e === "string");
+  return workspaceSelects(list, relative(rootDir, member), "deno");
 }
 
 /**
@@ -691,6 +735,29 @@ export function mergeRunFlags(base: readonly string[], inherited: readonly strin
   return [...base.filter((t) => !set.has(flagName(t))), ...inherited];
 }
 
+/** The verbs that boot production work and never wait on the network: `start` and `job`. */
+const BOOT_VERBS: ReadonlySet<string> = new Set(["start", "job"]);
+
+/**
+ * How a verb's switch to the toolchain consults the revoked-runtimes list
+ * (src/build/runtime-revocations.ts): `start` and `job` read only the cached list (a production
+ * boot stays deterministic and offline; an image gets the check when it is built), every other
+ * verb refreshes a stale one within its budget. The desktop verbs check the Deno Desktop runtime
+ * with the toolchain, since the two roll back together.
+ *
+ * @param command The verb's name and where it came from.
+ * @returns The mode and the runtimes that move together.
+ */
+export function revocationCheckFor(
+  command: { readonly name: string; readonly source?: "core" | "plugin" | "project" },
+): { mode: RevocationMode; components: RuntimeComponent[] } {
+  const core = (command.source ?? "core") === "core";
+  return {
+    mode: core && BOOT_VERBS.has(command.name) ? "cache-only" : "fetch",
+    components: core && command.name === "desktop" ? ["cli", "desktop"] : ["cli"],
+  };
+}
+
 /**
  * The core verbs that serve HTTP from their own process (`Deno.serve`), and so are the ones
  * Deno's legacy `request.signal` abort reaches: `dev`, `start` and `profile` (which serves the
@@ -820,6 +887,33 @@ export interface ReexecToolchainDeps {
 }
 
 /**
+ * Say what the resolver asked to be said about its choice, and that the explicit
+ * `DENEXT_DENO=stock` opt-out is deprecated (once per process tree: 5.0 refuses it).
+ */
+function announceChoice(choice: DenoToolchainChoice, deps: ReexecToolchainDeps): void {
+  if (choice.warning) deps.warn(choice.warning);
+  // A revoked toolchain is said once per process tree: the processes this one starts stay quiet.
+  if (choice.kind === "toolchain" && choice.revocation?.revoked) {
+    deps.setEnv(REVOCATION_NOTICED_ENV, "1");
+  }
+  const path = stockPathOf(choice);
+  if (path) warnStockDeprecation(path, deps);
+}
+
+/**
+ * The deprecated stock path a {@linkcode DenoToolchainChoice} runs on, or `null`: the explicit
+ * `DENEXT_DENO=stock` opt-out, or a `DENEXT_DENO=<path>` binary that is stock Deno. (A denext that
+ * pins no toolchain, and a process that lacks the grants to start it, say nothing here.)
+ *
+ * @param choice The resolver's choice.
+ * @returns The path for {@linkcode warnStockDeprecation}, or `null`.
+ */
+export function stockPathOf(choice: DenoToolchainChoice): StockDenoPath | null {
+  if (choice.kind === "toolchain") return choice.stock ? "deno-path" : null;
+  return choice.optedOut ? "deno-env" : null;
+}
+
+/**
  * A compiled binary's half of {@linkcode maybeReexecToolchain}: it cannot swap its own runtime, so
  * it resolves the toolchain (downloading it on first need) and hands it to every child through its
  * own environment — `DENO_BIN` (what `denoExecutable()` spawns), the toolchain marker, and a PATH
@@ -832,7 +926,7 @@ async function handToolchainToChildren(deps: ReexecToolchainDeps): Promise<false
   // Under `deno run` on the toolchain already, `denoExecutable()` is this very binary.
   if (!deps.standalone() && onToolchainNow(deps)) return false;
   const choice = await deps.resolve();
-  if (choice.warning) deps.warn(choice.warning);
+  announceChoice(choice, deps);
   if (choice.kind === "stock") return false;
   deps.setEnv(TOOLCHAIN_ACTIVE_ENV, choice.version);
   deps.setEnv("DENO_BIN", choice.deno);
@@ -863,6 +957,11 @@ async function reexecForRuntimeFlags(deps: ReexecToolchainDeps): Promise<boolean
   return true;
 }
 
+/** This process's Deno, as the gate's seams report it. */
+function ownIdentity(deps: ReexecToolchainDeps): DenoIdentity {
+  return deps.denext ? { deno: deps.denoVersion, denext: deps.denext } : { deno: deps.denoVersion };
+}
+
 /**
  * Whether this `deno run` process already runs on the toolchain: it is denext's Deno (its
  * `Deno.build.denext` marker, or a pre-marker build's version; src/build/deno-version.ts) and the
@@ -872,11 +971,22 @@ async function reexecForRuntimeFlags(deps: ReexecToolchainDeps): Promise<boolean
 function onToolchainNow(deps: ReexecToolchainDeps): boolean {
   const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
   if (marker === "path") return true;
-  const identity = deps.denext
-    ? { deno: deps.denoVersion, denext: deps.denext }
-    : { deno: deps.denoVersion };
-  if (!isDenextDenoVersion(identity, deps.pinnedVersion)) return false;
+  if (!isDenextDenoVersion(ownIdentity(deps), deps.pinnedVersion)) return false;
   return marker === deps.denoVersion || deps.denoVersion === deps.pinnedVersion;
+}
+
+/**
+ * For a process already on the toolchain: `null` when it stays on it — always on the pinned
+ * version; on another version its marker names (the pin's rollback, which the command that
+ * started it chose because the pinned release is revoked) only while the resolver, reading the
+ * revoked-runtimes list now, still picks that version. Otherwise the resolver's choice, to re-exec
+ * onto: a marker leaked from a parent shell or a copied CI env never keeps a process on an older
+ * runtime the list no longer calls for.
+ */
+async function recheckedChoice(deps: ReexecToolchainDeps): Promise<DenoToolchainChoice | null> {
+  if (deps.pinnedVersion === null || deps.denoVersion === deps.pinnedVersion) return null;
+  const choice = await deps.resolve();
+  return choice.kind !== "toolchain" || choice.version === deps.denoVersion ? null : choice;
 }
 
 /**
@@ -907,14 +1017,88 @@ export async function maybeReexecToolchain(
   if (!applies) return deps.handOff ? await handToolchainToChildren(deps) : false;
   if (deps.standalone()) return await handToolchainToChildren(deps);
   const marker = deps.env(TOOLCHAIN_ACTIVE_ENV);
-  if (marker === "path") return false;
-  if (onToolchainNow(deps)) return await reexecForRuntimeFlags(deps);
-  const choice = await deps.resolve();
-  if (choice.warning) deps.warn(choice.warning);
+  if (marker === "path") {
+    // A child of a `DENEXT_DENO=<path>` run (the parent said so if that binary is stock Deno), or
+    // a process started with the marker already set (a unit or image): its own Deno tells.
+    if (!isDenextDenoVersion(ownIdentity(deps), deps.pinnedVersion)) {
+      warnStockDeprecation("deno-path", deps);
+    }
+    return false;
+  }
+  const choice = onToolchainNow(deps) ? await recheckedChoice(deps) : await deps.resolve();
+  if (choice === null) return await reexecForRuntimeFlags(deps);
+  announceChoice(choice, deps);
   if (choice.kind === "stock" && choice.refusal) throw new Error(choice.refusal);
   if (choice.kind === "stock") return false;
   // The child gets the runtime flags with the spawn; told so, it skips their check.
   const told = deps.pids ? { [RUNTIME_FLAGS_ENV]: String(deps.pids.pid) } : undefined;
   deps.exit(await deps.spawn(choice.deno, choice.version, told));
+  return true;
+}
+
+/** What {@linkcode maybeReexecForLimits} touches in the process (injectable for tests). */
+export interface LimitsGateDeps {
+  /**
+   * The flags `start.limits` configures (src/build/resource-limits.ts): handed down by an earlier
+   * hop, else read from the project. None for every verb but `start`.
+   */
+  readonly configured: readonly string[];
+  /**
+   * The runtime this process runs: denext's Deno version, `"path"` for a `DENEXT_DENO=<path>` Deno
+   * of unknown version, `undefined` for stock Deno.
+   */
+  readonly runtime: string | undefined;
+  /** `DENEXT_LIMITS_APPLIED` as this process received it: the flags it was started with. */
+  readonly applied: string | undefined;
+  /** Whether this process may start its own Deno again (`--allow-run` for it). */
+  readonly mayRespawn: boolean;
+  /** This process's pid (its child is told it gets the runtime flags with the re-run). */
+  readonly pid: number;
+  /**
+   * Re-run this invocation on this process's own Deno with `flags` after `run` (and the
+   * toolchain's runtime flags) and `env` added; resolve its exit code.
+   */
+  readonly spawn: (flags: readonly string[], env: Record<string, string>) => Promise<number>;
+  /** End the process (production: `Deno.exit`). */
+  readonly exit: (code: number) => void;
+  /** Say something on stderr. */
+  readonly warn: (message: string) => void;
+}
+
+/**
+ * The last gate before `denext start` serves: the configured resource limits go on the process
+ * that serves, and on no CLI hop before it (those hand them down as data, src/build/resource-
+ * limits.ts {@linkcode hopLimits}). This process serves; when it was not started with exactly the
+ * flags its runtime takes — `DENEXT_LIMITS_APPLIED` is compared with those, so a marker another
+ * process left, or one from before the config changed, never counts — it re-runs itself once with
+ * them and exits with the child's code (the child, started with them and told so, serves). With no
+ * permission to re-run, on stock Deno, a Deno of unknown version or one older than runtime
+ * 3.0.0-rc.2 it serves without them and says so.
+ *
+ * @param deps The process seams.
+ * @returns Whether the process re-ran (only a test observes `true`).
+ */
+export async function maybeReexecForLimits(deps: LimitsGateDeps): Promise<boolean> {
+  const { configured } = deps;
+  if (configured.length === 0) return false;
+  const wanted = limitFlagsFor(deps.runtime, configured);
+  if (wanted.length === 0) {
+    deps.warn(limitsNotAppliedWarning(configured, supportsLimitsWhy(deps.runtime)));
+    return false;
+  }
+  if (deps.applied === wanted.join(" ")) return false;
+  if (!deps.mayRespawn) {
+    deps.warn(limitsNotAppliedWarning(
+      wanted,
+      "this server was started on denext's Deno without them, and without the --allow-run to " +
+        "re-run itself with them — put them after `run` in the start task (with " +
+        "DENEXT_LIMITS_APPLIED naming them), or run `denext start`",
+    ));
+    return false;
+  }
+  const child = hopLimits(true, deps.runtime, configured); // the last hop: it serves
+  deps.exit(
+    await deps.spawn(child.flags, { ...child.env, [RUNTIME_FLAGS_ENV]: String(deps.pid) }),
+  );
   return true;
 }

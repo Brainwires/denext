@@ -33,8 +33,6 @@ const schema = (validate: (v: unknown) => boolean) => ({
 
 Deno.test({
   name: 'e2e: openapi ui: "scalar" renders from the app\'s origin with zero third-party requests',
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const root = await Deno.makeTempDir({ prefix: "denext_scalar_e2e_" });
   const appDir = join(root, "app");

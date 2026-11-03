@@ -115,6 +115,4 @@ export default function Lazy() {
 
 Deno.test({
   name: "migration bed: create-preact's Vite + preact-iso app migrates, builds and routes",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, (t) => runBed(t, PREACT_VITE));

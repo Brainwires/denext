@@ -44,8 +44,6 @@ const slow: DesktopCapability = {
   methods: { hang: { timeoutMs: 50, handler: () => new Promise<never>(() => {}) } },
 };
 
-const TEST = { sanitizeOps: false, sanitizeResources: false } as const;
-
 /**
  * Load the shell as a top-level document (as the window would), take the `__denext` the handler
  * injected, and install it plus a browser-like `fetch` for `pageOrigin` (default: the window's).
@@ -96,7 +94,7 @@ async function withPage(
 
 const codeOf = (err: unknown) => (err as { code?: string }).code;
 
-Deno.test({ ...TEST, name: "wire: echo.ping round-trips through the real client" }, async () => {
+Deno.test({ name: "wire: echo.ping round-trips through the real client" }, async () => {
   await withPage([echoCapability], async (server) => {
     const echo = desktopExtension<typeof echoCapability>("echo");
     const before = Date.now();
@@ -113,7 +111,7 @@ Deno.test({ ...TEST, name: "wire: echo.ping round-trips through the real client"
   });
 });
 
-Deno.test({ ...TEST, name: "wire: emitPong arrives through onDesktopEvent" }, async () => {
+Deno.test({ name: "wire: emitPong arrives through onDesktopEvent" }, async () => {
   await withPage([echoCapability], async (server) => {
     const got: unknown[] = [];
     const stop = onDesktopEvent<unknown>("echo", "pong", (d) => got.push(d));
@@ -134,7 +132,6 @@ Deno.test({ ...TEST, name: "wire: emitPong arrives through onDesktopEvent" }, as
 });
 
 Deno.test({
-  ...TEST,
   name: "wire: an event emitted before any subscriber is replayed to the first one",
 }, async () => {
   await withPage([echoCapability], async () => {
@@ -152,7 +149,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "wire: a dropped stream reconnects with Last-Event-ID and replays only the missed events",
 }, async () => {
   await withPage([echoCapability], async (server) => {
@@ -185,7 +181,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name: "wire: a cap that is not enabled → unavailable, and the web fallback runs",
 }, async () => {
   await withPage([echoCapability], async (server) => {
@@ -218,7 +213,7 @@ Deno.test({
   });
 });
 
-Deno.test({ ...TEST, name: "wire: a wrong token is refused (forbidden)" }, async () => {
+Deno.test({ name: "wire: a wrong token is refused (forbidden)" }, async () => {
   await withPage([echoCapability], async (server) => {
     const err = await assertRejects(() => desktopExtension("echo").ping({}));
     assertEquals(codeOf(err), "forbidden");
@@ -255,7 +250,7 @@ Deno.test({ ...TEST, name: "wire: a wrong token is refused (forbidden)" }, async
   }, { token: "not-the-launch-token" });
 });
 
-Deno.test({ ...TEST, name: "wire: a foreign Origin is refused (forbidden)" }, async () => {
+Deno.test({ name: "wire: a foreign Origin is refused (forbidden)" }, async () => {
   await withPage([echoCapability], async (server) => {
     const err = await assertRejects(() => desktopExtension("echo").ping({}));
     assertEquals(codeOf(err), "forbidden");
@@ -264,7 +259,7 @@ Deno.test({ ...TEST, name: "wire: a foreign Origin is refused (forbidden)" }, as
 });
 
 Deno.test(
-  { ...TEST, name: "wire: raw gate — preflight, content type, events Origin, size" },
+  { name: "wire: raw gate — preflight, content type, events Origin, size" },
   async () => {
     const server = await startBridgeServer([echoCapability]);
     const rpcUrl = `${server.origin}/_denext/desktop/rpc`;
@@ -333,7 +328,7 @@ Deno.test(
   },
 );
 
-Deno.test({ ...TEST, name: "wire: client-side too_large and runtime timeout (408)" }, async () => {
+Deno.test({ name: "wire: client-side too_large and runtime timeout (408)" }, async () => {
   await withPage([echoCapability, slow], async (server) => {
     const before = server.log.length;
     const big = await assertRejects(() =>
@@ -348,7 +343,6 @@ Deno.test({ ...TEST, name: "wire: client-side too_large and runtime timeout (408
 });
 
 Deno.test({
-  ...TEST,
   name: "wire: the token goes into the top-level document only, never a subframe",
 }, async () => {
   const server = await startBridgeServer([echoCapability]);
@@ -375,7 +369,6 @@ Deno.test({
 
 Deno.test(
   "wire: a top-level navigation runs every capability's onPageLoad (a reload drops page state)",
-  TEST,
   async () => {
     let loads = 0;
     const pageScoped: DesktopCapability = {
@@ -541,6 +534,8 @@ async function partReaches(path: string, bytes: number, ms = 5_000): Promise<voi
 async function filesUnder(dir: string): Promise<string[]> {
   const out: string[] = [];
   for await (const e of Deno.readDir(dir)) {
+    // The runtime's download records (its reserved folder, which the page never sees).
+    if (e.name === "denext-transfers") continue;
     if (e.isDirectory) {
       out.push(...(await filesUnder(join(dir, e.name))).map((n) => `${e.name}/${n}`));
     } else out.push(e.name);
@@ -549,7 +544,6 @@ async function filesUnder(dir: string): Promise<string[]> {
 }
 
 Deno.test({
-  ...TEST,
   name: "wire: downloadToFile sends the page's headers (an authenticated download) with progress",
 }, async () => {
   await withDownloads(async ({ root, files }) => {
@@ -575,7 +569,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name:
     "wire: aborting downloadToFile's signal stops the runtime's download and drops the partial file",
 }, async () => {
@@ -589,10 +582,12 @@ Deno.test({
     run.catch(() => {});
     await until(() => files.state.slowStarted, 5_000);
     abort.abort(reason);
+    let deadline: ReturnType<typeof setTimeout> | undefined;
     const settled = await Promise.race([
       run.then(() => "resolved", (err) => err),
-      new Promise((r) => setTimeout(() => r("still running"), 3_000)),
+      new Promise((r) => deadline = setTimeout(() => r("still running"), 3_000)),
     ]);
+    clearTimeout(deadline);
     assertEquals(settled, reason, "the promise rejects with the signal's reason");
     await until(() => files.state.slowCancelled, 3_000);
     // Nothing is left behind: no file and no `.part`.
@@ -601,7 +596,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name:
     "wire: a non-2xx download rejects with a FileTransferError (HTTP, status, body), as on mobile",
 }, async () => {
@@ -621,7 +615,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name:
     "wire: a desktop download is a tracked transfer: listed with progress, cancelFileTransfer stops it",
 }, async () => {
@@ -658,7 +651,6 @@ Deno.test({
 });
 
 Deno.test({
-  ...TEST,
   name:
     "wire: a desktop download pauses with its partial kept and resumes with a range request; a paused one cancels",
 }, async () => {
@@ -672,8 +664,8 @@ Deno.test({
     });
     run.catch(() => {});
     await partReaches(join(root, "dl", "r.bin.part"), 64 * 1024);
+    // The pause answers once the runtime's run has settled here: paused, its request gone.
     assert(await pauseFileTransfer("wire-pause"));
-    await until(() => events.some((e) => e.type === "paused"), 5_000);
     const paused = events.find((e) => e.type === "paused")!;
     assertEquals([paused.state, paused.bytes, paused.resumable], ["paused", 64 * 1024, true]);
     assertEquals(await filesUnder(root), ["dl/r.bin.part", "dl/r.bin.part.json"]);
@@ -692,14 +684,12 @@ Deno.test({
     again.catch(() => {});
     await partReaches(join(root, "dl", "s.bin.part"), 64 * 1024);
     assert(await pauseFileTransfer("wire-pause-2"));
-    await until(() => events.some((e) => e.id === "wire-pause-2" && e.type === "paused"), 5_000);
+    assertEquals(events.at(-1)?.type, "paused");
     assert(await cancelFileTransfer("wire-pause-2"));
     const err = await assertRejects(() => again, FileTransferError);
     assertEquals(err.code, "CANCELLED");
-    const end = Date.now() + 3_000;
-    while ((await filesUnder(root)).length > 1 && Date.now() < end) {
-      await new Promise((r) => setTimeout(r, 10));
-    }
+    // It rejects once the runtime has dropped the partial and its record: nothing is left in
+    // flight (before, the rejection came first and the drop finished after the test).
     assertEquals(await filesUnder(root), ["dl/r.bin"]);
     stop();
   });

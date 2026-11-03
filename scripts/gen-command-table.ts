@@ -8,10 +8,24 @@
 // for `deno compile --include`) and src/cli/offline-modules.generated.ts (those plus every module a
 // verb loads by URL: what `denext toolchain install` caches for a CLI installed from JSR).
 //
+// The verbs' descriptions (the table's data, about 100 KiB of help text: name, summary, usage,
+// flags, positionals, …) are written by hand in src/cli/commands/meta/<module>.ts, one
+// `export const <verb>Meta: CommandMeta` per verb, beside the module that implements it. Those
+// files are not published: this script packs them Brotli-compressed (a third of their size, to
+// keep the @denext/denext package under JSR's 20 MiB cap) into src/cli/command-meta.packed.ts,
+// and a verb's spec reads its own back with `...commandMeta("<verb>")` (src/cli/command-meta.ts),
+// so the help text ships once. They stay in the package, not in @denext/docs-corpus: every CLI
+// start reads them, and the CLI run from a checkout (or a URL) must not need a docs-corpus
+// release of its own commit.
+//
+// To change a verb's help: edit its meta file, then `deno task gen:command-table` (or `deno task
+// regen`, which also rewrites the CLI reference, site/app/docs/cli/cli.json, from the new table).
+//
 // tests/cli-startup-graph.test.ts fails when the committed table differs from what this writes.
 
-import { fromFileUrl, join, relative } from "@std/path";
+import { fromFileUrl, join, relative, toFileUrl } from "@std/path";
 import { denoFmt } from "./lib/deno-fmt.ts";
+import { packText } from "./lib/pack-texts.ts";
 import { CommandRegistry, type CommandSpec } from "../src/cli/command.ts";
 import { buildRegistry } from "../src/cli/register.ts";
 import {
@@ -23,9 +37,14 @@ import {
 const ROOT = fromFileUrl(new URL("..", import.meta.url));
 const CLI_DIR = join(ROOT, "src", "cli");
 const COMMANDS_DIR = join(CLI_DIR, "commands");
+/** The verbs' readable descriptions (not published; packed into {@linkcode META_OUT}). */
+export const META_DIR: string = join(COMMANDS_DIR, "meta");
 
 /** Where the generated table is written. */
 export const TABLE_OUT: string = join(CLI_DIR, "command-table.generated.ts");
+
+/** Where the verbs' descriptions are written, packed (src/build/packed-text.ts). */
+export const META_OUT: string = join(CLI_DIR, "command-meta.packed.ts");
 
 /** Where the list of lazily imported CLI modules (for `deno compile --include`) is written. */
 export const MODULES_OUT: string = join(CLI_DIR, "lazy-modules.generated.ts");
@@ -40,6 +59,7 @@ export const OFFLINE_OUT: string = join(CLI_DIR, "offline-modules.generated.ts")
 export const ENTRY_LAZY_MODULES: readonly string[] = [
   "./run-verb.ts",
   "./plugin-commands.ts",
+  "./unknown-verb.ts",
   "./commands/deno-toolchain.ts",
 ];
 
@@ -111,8 +131,33 @@ async function commandSources(eager: CommandRegistry): Promise<Map<string, Sourc
   return byName;
 }
 
+/**
+ * Every verb description under {@linkcode META_DIR}, by verb name: each module's exports that are
+ * an object with a string `name` and `summary` (a flag it shares has `help`, not `summary`).
+ * Throws on a verb described twice.
+ */
+export async function commandMetaSources(): Promise<Map<string, CommandMeta>> {
+  const byName = new Map<string, CommandMeta>();
+  const files = [...Deno.readDirSync(META_DIR)]
+    .filter((e) => e.isFile && e.name.endsWith(".ts"))
+    .map((e) => e.name)
+    .sort();
+  for (const file of files) {
+    const exports = await import(toFileUrl(join(META_DIR, file)).href);
+    for (const value of Object.values(exports)) {
+      const { name, summary } = (value ?? {}) as { name?: unknown; summary?: unknown };
+      if (typeof name !== "string" || typeof summary !== "string") continue;
+      if (byName.has(name)) {
+        throw new Error(`gen-command-table: "${name}" is described twice (commands/meta/${file})`);
+      }
+      byName.set(name, value as CommandMeta);
+    }
+  }
+  return byName;
+}
+
 /** The data half of `spec`; throws on a key the table does not know how to carry. */
-export function metaOf(spec: CommandSpec): CommandMeta {
+export function metaOf(spec: CommandMeta): CommandMeta {
   for (const key of Object.keys(spec)) {
     if (!COMMAND_FUNCTION_KEYS.includes(key) && !(COMMAND_META_KEYS as string[]).includes(key)) {
       throw new Error(
@@ -128,26 +173,43 @@ export function metaOf(spec: CommandSpec): CommandMeta {
   return meta as unknown as CommandMeta;
 }
 
-/** Both generated modules' sources. */
-export async function generate(): Promise<{ table: string; modules: string; offline: string }> {
+/** The generated modules' sources (`meta`: the packed module of descriptions). */
+export async function generate(): Promise<
+  { table: string; meta: string; modules: string; offline: string }
+> {
   const eager = buildRegistry();
   const sources = await commandSources(eager);
+  const described = await commandMetaSources();
   const metas: CommandMeta[] = [];
   const loads = eager.list().map((spec) => {
     const source = sources.get(spec.name);
     if (!source) {
       throw new Error(`gen-command-table: no export under src/cli/commands defines "${spec.name}"`);
     }
-    metas.push(metaOf(spec));
+    const meta = described.get(spec.name);
+    if (!meta) {
+      throw new Error(
+        `gen-command-table: no src/cli/commands/meta/*.ts module describes "${spec.name}"`,
+      );
+    }
+    described.delete(spec.name);
+    metas.push(metaOf(meta));
     return `  ${source.factory ? "factory" : "spec"}("${source.module}", "${source.exportName}"),`;
   });
-  // The descriptions are one JSON string (parsed once at startup, cheaper than an object literal
-  // and a third of the size `deno fmt` would make of one); the loaders stay code.
+  if (described.size > 0) {
+    throw new Error(
+      `gen-command-table: src/cli/commands/meta describes verbs buildRegistry() does not ` +
+        `register: ${[...described.keys()].join(", ")}`,
+    );
+  }
+  // The descriptions are one JSON document (parsed once at startup, cheaper than an object
+  // literal), packed in command-meta.packed.ts; the loaders stay code.
   const table = await denoFmt(
     `// Generated by scripts/gen-command-table.ts from buildRegistry() (src/cli/register.ts).
 // Do not edit: run \`deno task gen:command-table\`. Each row is a verb's description and the
 // import of the module that implements it (src/cli/lazy-command.ts).
 
+import { commandMetas } from "./command-meta.ts";
 import type { CommandRegistry, CommandSpec } from "./command.ts";
 import { type CommandLoader, type CommandMeta, importCliModule } from "./lazy-command.ts";
 
@@ -161,10 +223,8 @@ const factory = (module: string, name: string): CommandLoader => (registry) =>
     (m[name] as (registry: CommandRegistry) => CommandSpec)(registry)
   );
 
-/** Every first-party verb's description, in registry order (JSON: see the generator). */
-const META: readonly CommandMeta[] = JSON.parse(
-  ${JSON.stringify(JSON.stringify(metas))},
-);
+/** Every first-party verb's description, in registry order (packed JSON: see the generator). */
+const META: readonly CommandMeta[] = commandMetas();
 
 /** How to load each verb in {@linkcode META}, in the same order. */
 const LOADERS: readonly CommandLoader[] = [
@@ -179,6 +239,17 @@ export const COMMAND_TABLE: readonly (readonly [CommandMeta, CommandLoader])[] =
 `,
     ROOT,
   );
+  const meta =
+    `// Generated by scripts/gen-command-table.ts from buildRegistry() (src/cli/register.ts).
+// Do not edit: change src/cli/commands/meta/*.ts and run \`deno task gen:command-table\`. The
+// description of every first-party verb (its name, summary, usage text, flags and positionals), in
+// registry order: JSON (\`{ COMMANDS: [...] }\`), Brotli-compressed, in base64
+// (src/build/packed-text.ts). src/cli/command-meta.ts decodes it on first use.
+
+/** Every first-party verb's description, as packed JSON. */
+export const CLI_COMMANDS_BROTLI_BASE64: string =
+  ${JSON.stringify(packText(JSON.stringify({ COMMANDS: metas })))};
+`;
   const modules = lazyModules(eager, sources);
   const modulesSource = await denoFmt(
     `// Generated by scripts/gen-command-table.ts. Do not edit: run \`deno task gen:command-table\`.
@@ -192,7 +263,7 @@ ${modules.map((m) => `import "${m}";`).join("\n")}
     ROOT,
   );
   const offline = await denoFmt(offlineModulesSource(await offlineModules()), ROOT);
-  return { table, modules: modulesSource, offline };
+  return { table, meta, modules: modulesSource, offline };
 }
 
 /** The source of src/cli/offline-modules.generated.ts over `modules` (`src/cli/`-relative). */
@@ -245,7 +316,7 @@ const FRAMEWORK_FILE = /frameworkFileUrl\(\s*"([^"]+)"\s*\)/g;
  * The absolute paths of the modules src/ loads through a computed URL, which no static import
  * reaches: `new URL("./x.ts", import.meta.url)` (directly or through a `const X = "./x.ts"`) and
  * `frameworkFileUrl("src/x.ts")`. Comment lines are skipped; a path that names no file is not a
- * module (an example in a doc string) and is left out.
+ * module (an example in a doc string) and is left out, and so is a workspace member's file.
  */
 export async function computedModuleUrls(): Promise<string[]> {
   const found = new Set<string>();
@@ -266,10 +337,19 @@ export async function computedModuleUrls(): Promise<string[]> {
       ...[...code.matchAll(FRAMEWORK_FILE)].map((m) => join(ROOT, m[1])),
     ];
     for (const file of candidates) {
-      if (MODULE_FILE.test(file) && await isFile(file)) found.add(file);
+      if (MODULE_FILE.test(file) && !inMember(file) && await isFile(file)) found.add(file);
     }
   }
   return [...found].sort();
+}
+
+/**
+ * Whether `file` belongs to a workspace member (packages/): published on its own, so a published
+ * denext has no such path, and the module that names it by path in a checkout reaches it by its
+ * package specifier otherwise (src/build/native-templates.packed.ts).
+ */
+function inMember(file: string): boolean {
+  return !relative(join(ROOT, "packages"), file).startsWith("..");
 }
 
 /** Every `.ts` / `.tsx` file under `dir`, the native templates' sources excepted (not published). */
@@ -298,12 +378,15 @@ function lazyModules(eager: CommandRegistry, sources: Map<string, Source>): stri
 }
 
 if (import.meta.main) {
-  const { table, modules, offline } = await generate();
+  const { table, meta, modules, offline } = await generate();
   await Deno.writeTextFile(TABLE_OUT, table);
+  await Deno.writeTextFile(META_OUT, meta);
   await Deno.writeTextFile(MODULES_OUT, modules);
   await Deno.writeTextFile(OFFLINE_OUT, offline);
   console.log(
-    `wrote ${relative(ROOT, TABLE_OUT)}, ${relative(ROOT, MODULES_OUT)} and ` +
+    `wrote ${relative(ROOT, TABLE_OUT)}, ${relative(ROOT, META_OUT)}, ${
+      relative(ROOT, MODULES_OUT)
+    } and ` +
       relative(ROOT, OFFLINE_OUT),
   );
 }

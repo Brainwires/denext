@@ -3,6 +3,7 @@
 // whose listeners the test can fire, a manual requestAnimationFrame queue, and a component
 // mounted on the in-memory DOM.
 
+import { hasPendingPassiveEffects } from "../../src/client/fiber/commit.ts";
 import { createRoot, flushSync, setDocument } from "../../src/client/reconciler.ts";
 import { h } from "../../src/jsx/jsx-runtime.ts";
 import { makeDom } from "./dom.ts";
@@ -127,6 +128,56 @@ export async function until(
     if (performance.now() - start > limitMs) throw new Error(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
+}
+
+/**
+ * Wait until the last commit's passive effects (useEffect) have run. They run on the passive
+ * flush's own task, which a commit arms when it happens: a fixed sleep the test armed earlier can
+ * end first under load, and the armed flush then outlives the test (a leaked timer).
+ */
+export function passiveSettled(): Promise<void> {
+  return until(() => !hasPendingPassiveEffects(), "the passive effects");
+}
+
+/** The native view slot elements under `node` (itself included), in document order. */
+function slotsIn(node: Any, out: Any[] = []): Any[] {
+  if (!node) return out;
+  if (node.getAttribute?.("data-denext-native-view")) out.push(node);
+  for (const child of node.childNodes ?? []) slotsIn(child, out);
+  return out;
+}
+
+/** The first native view slot element under `node` (itself included), if any. */
+function slotIn(node: Any): Any {
+  return slotsIn(node)[0] ?? null;
+}
+
+/**
+ * Wait until the native view slots under `container` have the `statuses` given (in document
+ * order) and the effects of the commit that set them have run. A slot goes native (or falls back)
+ * when the plugin's answers settle, and that commit's effects (the `onCommand` handoff, the
+ * UIManager registration, `onMapReady`) run on the passive flush's own task after it: awaited
+ * here, never assumed to fit in a fixed sleep.
+ */
+export function slotsSettledIn(container: Any, statuses: readonly string[]): Promise<void> {
+  return until(
+    () => {
+      const slots = slotsIn(container);
+      return slots.length === statuses.length &&
+        slots.every((slot, i) => slot.getAttribute("data-status") === statuses[i]) &&
+        !hasPendingPassiveEffects();
+    },
+    `the native view slots (${statuses.join(", ")}) and their effects`,
+  );
+}
+
+/** Wait until the slot under `container` is native and that commit's effects have run. */
+export function nativeIn(container: Any): Promise<void> {
+  return until(
+    () =>
+      slotIn(container)?.getAttribute("data-status") === "native" && !hasPendingPassiveEffects(),
+    "the native view and its effects",
+  );
 }
 
 /** A timer the fake clock holds: when it is due, and its callback. */

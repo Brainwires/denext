@@ -110,26 +110,51 @@ Deno.test("throws AddrInUse when no port is free within the range", async () => 
 // `installDrainDeadline` itself is tests/serve-drain-deadline.vitest.ts (fake clock).
 
 Deno.test("serveWithPortFallback: a signal wires the drain deadline (no hang on clean shutdown)", async () => {
-  // With no in-flight requests, aborting the signal drains immediately and the
-  // deadline never trips — proving the wiring doesn't force-exit a clean shutdown.
+  // With no in-flight requests, aborting the signal drains immediately and the deadline is
+  // cancelled, never tripping — proving the wiring doesn't force-exit a clean shutdown. The
+  // deadline is far longer than the test, and the timer calls are watched to see it armed and
+  // then cleared: waiting out a short one instead failed whenever a loaded machine stalled the
+  // process for longer than it between the abort and the drain.
+  const DRAIN_MS = 60_000;
+  const armed: unknown[] = [];
+  const cleared = new Set<unknown>();
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = ((fn: () => void, ms?: number, ...args: unknown[]) => {
+    const id = realSetTimeout(fn, ms, ...args);
+    if (ms === DRAIN_MS) armed.push(id);
+    return id;
+  }) as typeof setTimeout;
+  globalThis.clearTimeout = ((id?: number) => {
+    cleared.add(id);
+    realClearTimeout(id);
+  }) as typeof clearTimeout;
   const controller = new AbortController();
   let bound = -1;
   let timedOut = false;
-  const server = serveWithPortFallback(
-    {
-      port: 0,
-      signal: controller.signal,
-      onListen: ({ port }) => (bound = port),
-      shutdownDrainMs: 30,
-      onDrainTimeout: () => (timedOut = true), // inject instead of Deno.exit
-    },
-    ok,
-  );
-  assertNotEquals(bound, -1);
-  controller.abort(); // no in-flight requests → shutdown drains at once
-  await server.finished; // resolves once drained
-  await delay(60); // well past the 30ms deadline
-  assert(!timedOut, "a clean drain cancels the deadline (no forced exit)");
+  try {
+    const server = serveWithPortFallback(
+      {
+        port: 0,
+        signal: controller.signal,
+        onListen: ({ port }) => (bound = port),
+        shutdownDrainMs: DRAIN_MS,
+        onDrainTimeout: () => (timedOut = true), // inject instead of Deno.exit
+      },
+      ok,
+    );
+    assertNotEquals(bound, -1);
+    controller.abort(); // no in-flight requests → shutdown drains at once
+    await server.finished; // resolves once drained
+    assertEquals(armed.length, 1, "the abort armed the drain deadline");
+    // The deadline is cancelled once the drain settles (a promise turn after it, at most).
+    for (let i = 0; i < 100 && !cleared.has(armed[0]); i++) await delay(1);
+    assert(cleared.has(armed[0]), "a clean drain cancels the deadline (no forced exit)");
+    assert(!timedOut);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  }
 });
 
 Deno.test("isContentHashed: esbuild / deno bundle `name-HASH` names, never an unhashed name", () => {

@@ -12,6 +12,7 @@ import { join, toFileUrl } from "@std/path";
 import {
   compileApp,
   compileBuildFlags,
+  compileFrameworkImports,
   denortBinary,
   neverEmbedded,
   relativeCssRedirects,
@@ -399,4 +400,65 @@ Deno.test({
       await removeTempDir(dir);
     }
   },
+});
+
+Deno.test({
+  name: "compileApp: start.tls with several certificates bakes --unstable-net; one does not",
+  ignore: Deno.build.os === "windows", // the recording `deno` is a shell script
+  async fn() {
+    // The compile runs with a config of its own (.denext/compile/deno.json), which carries no
+    // `unstable` from the project's deno.json: without the flag the binary refused to serve
+    // several certificates ("needs the unstable net APIs").
+    const argvFor = async (certificates: number): Promise<string[]> => {
+      const dir = await builtProjectWithState();
+      try {
+        const certs = Array.from(
+          { length: certificates },
+          (_, i) =>
+            `{ hostnames: [${
+              i === 0 ? '"*"' : `"h${i}.test"`
+            }], certFileEnv: "C${i}", keyFileEnv: "K${i}" }`,
+        );
+        await Deno.writeTextFile(
+          join(dir, "denext.config.ts"),
+          `export default { start: { tls: { certificates: [${certs.join(", ")}] } } };\n`,
+        );
+        await Deno.writeTextFile(
+          join(dir, "deno.json"),
+          JSON.stringify({ name: "@acme/embed", unstable: ["net"] }),
+        );
+        const record = join(dir, "argv.json");
+        const fake = join(dir, "fake-deno.sh");
+        await Deno.writeTextFile(fake, `#!/bin/sh\nprintf '%s\\n' "$@" > '${record}'\n`);
+        await Deno.chmod(fake, 0o755);
+        await compileApp(dir, { deno: fake, output: join(dir, "dist", "app") });
+        const config = JSON.parse(
+          await Deno.readTextFile(join(dir, ".denext", "compile", "deno.json")),
+        );
+        assertEquals(config.unstable, undefined, "the compile config carries no unstable");
+        return (await Deno.readTextFile(record)).trim().split("\n");
+      } finally {
+        await removeTempDir(dir);
+      }
+    };
+    assert((await argvFor(2)).includes("--unstable-net"));
+    assertEquals((await argvFor(1)).includes("--unstable-net"), false);
+  },
+});
+
+Deno.test("compileFrameworkImports: a checkout's import map; none for a published, vendored or npm-compat copy", async () => {
+  // This checkout: its bare imports, absolutized against its own deno.json.
+  const own = await compileFrameworkImports();
+  assertEquals(own["denext"], new URL("../mod.ts", import.meta.url).href);
+  // A copy carries no repository deno.json (none is read) and imports fully qualified specifiers.
+  for (
+    const root of [
+      "https://jsr.io/@denext/denext/9.9.9/",
+      "file:///app/vendor/jsr.io/@denext/denext/9.9.9/",
+      "file:///C:/app/vendor/jsr.io/@denext/denext/9.9.9/",
+      "file:///app/node_modules/@jsr/denext__denext/",
+    ]
+  ) {
+    assertEquals(await compileFrameworkImports(root), {}, root);
+  }
 });

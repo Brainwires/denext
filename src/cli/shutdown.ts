@@ -15,19 +15,27 @@ export const SHUTDOWN_SIGNALS: Deno.Signal[] = Deno.build.os === "windows"
  * Abort `controller` on the first termination signal (and stop trapping, so the
  * process exits once the server drains). Passing the controller's signal to the
  * server makes Deno.serve stop accepting and wait for in-flight requests.
+ *
+ * @param controller Aborted on the first termination signal.
+ * @returns Stops trapping: for a server that ended another way (its `shutdown()`), whose
+ *   listeners would otherwise keep the event loop alive and swallow the next Ctrl-C.
  */
-export function installShutdown(controller: AbortController): void {
-  const onSignal = () => {
-    controller.abort();
+export function installShutdown(controller: AbortController): () => void {
+  const uninstall = () => {
     for (const sig of SHUTDOWN_SIGNALS) {
       try {
         Deno.removeSignalListener(sig, onSignal);
       } catch { /* not installed */ }
     }
   };
+  const onSignal = () => {
+    controller.abort();
+    uninstall();
+  };
   for (const sig of SHUTDOWN_SIGNALS) {
     try {
       Deno.addSignalListener(sig, onSignal);
     } catch { /* signal unsupported on this platform */ }
   }
+  return uninstall;
 }

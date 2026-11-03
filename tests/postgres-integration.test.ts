@@ -160,8 +160,6 @@ for (const driver of ["Deno.SQL", "npm:postgres"] as const) {
   Deno.test({
     name: `Postgres via ${driver}: listen() receives a NOTIFY, unlisten() stops it${label}`,
     ignore: reason !== undefined,
-    sanitizeResources: false,
-    sanitizeOps: false,
     async fn() {
       const sql = await connect(driver);
       try {

@@ -72,7 +72,7 @@ export async function collectOtaManifest(
  * stamp with stray whitespace still names its target, and then fails the manifest's stamp check
  * (its bytes are not the target's) instead of passing for an unknown one.
  */
-async function readPlatformStamp(dir: string): Promise<string | null> {
+export async function readPlatformStamp(dir: string): Promise<string | null> {
   try {
     return (await Deno.readTextFile(join(dir, ...OTA_PLATFORM_PATH.split("/")))).trim();
   } catch {
@@ -136,10 +136,11 @@ export function defaultOtaExpiry(
  *
  * @param dir The web root (e.g. `out/`); it must contain an `index.html`.
  * @param meta Optional `required` / `notes` / `sequence` / `minNative` / `nativeFingerprint` /
- *   `expiresAt`; a key left out is left out of the manifest, except that a signed manifest (or one
- *   given an `expiresAt`) without a `sequence` gets {@linkcode defaultOtaSequence}, and a signed
+ *   `expiresAt` / `platform` / `appId`; a key left out is left out of the manifest, except that a
+ *   signed manifest (or one given an `expiresAt` or an `appId`) without a `sequence` gets
+ *   {@linkcode defaultOtaSequence}, and a signed
  *   one without an `expiresAt` gets {@linkcode defaultOtaExpiry} (30 days), so it is signed with
- *   the v4 payload.
+ *   the v4 payload (v5 with an `appId`).
  * @param signingKey An ECDSA P-256 private key (`loadOtaSigningKey`): the manifest then carries
  *   a `signature` over its version and metadata.
  * @returns The manifest written.
@@ -158,7 +159,8 @@ export async function writeOtaManifest(
   }
   const now = Date.now();
   let stamped = meta;
-  if ((signingKey || meta.expiresAt !== undefined) && meta.sequence === undefined) {
+  const needsSequence = signingKey || meta.expiresAt !== undefined || meta.appId !== undefined;
+  if (needsSequence && meta.sequence === undefined) {
     stamped = { ...stamped, sequence: defaultOtaSequence(now) };
   }
   if (signingKey && meta.expiresAt === undefined) {

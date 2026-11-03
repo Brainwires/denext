@@ -32,12 +32,14 @@ export interface DesktopAppDirs {
 export type DesktopOsName = "darwin" | "windows" | "linux";
 
 /**
- * Read an env var (trying the lowercase spelling too), or undefined without permission. The
- * canonical copy shared by the desktop runtime modules (the updater imports it too).
+ * Read an env var by its exact name, or undefined without permission. The canonical copy shared by
+ * the desktop runtime modules (the updater imports it too). No lowercase fallback: the runtime's
+ * own `$DENO_DESKTOP_DATA` resolution does not try one, so the two must agree (Windows env names
+ * are case-insensitive anyway).
  */
 export function env(name: string): string | undefined {
   try {
-    return Deno.env.get(name) ?? Deno.env.get(name.toLowerCase()) ?? undefined;
+    return Deno.env.get(name) ?? undefined;
   } catch {
     return undefined;
   }
@@ -45,10 +47,10 @@ export function env(name: string): string | undefined {
 
 /** The user's home directory (best effort; `.` when unknown). */
 function homeDir(): string {
-  return env("HOME") ?? env("USERPROFILE") ?? ".";
+  return nonEmpty(env("HOME")) ?? nonEmpty(env("USERPROFILE")) ?? ".";
 }
 
-/** A non-empty trimmed env value, or undefined. */
+/** A non-empty (not whitespace-only) env value, or undefined. */
 function nonEmpty(value: string | undefined): string | undefined {
   return value && value.trim() ? value : undefined;
 }
@@ -72,11 +74,10 @@ export function osDataDir(
   const home = homeDir();
   if (os === "darwin") return join(home, "Library", "Application Support", appId);
   if (os === "windows") {
-    const appData = env("APPDATA") ?? join(home, "AppData", "Roaming");
+    const appData = nonEmpty(env("APPDATA")) ?? join(home, "AppData", "Roaming");
     return join(appData, appId);
   }
-  const xdg = env("XDG_DATA_HOME");
-  const base = xdg && xdg.trim() ? xdg : join(home, ".local", "share");
+  const base = nonEmpty(env("XDG_DATA_HOME")) ?? join(home, ".local", "share");
   return join(base, appId);
 }
 

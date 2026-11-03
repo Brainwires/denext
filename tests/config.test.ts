@@ -15,7 +15,7 @@ import {
   resolveStreaming,
   safeRedirectLocation,
 } from "../src/server/config.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { h } from "../src/jsx/jsx-runtime.ts";

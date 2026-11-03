@@ -4,9 +4,10 @@
 // - Same-origin only: every action request is verified against Origin (falling
 //   back to Referer). When neither is present the request is rejected. This is
 //   the primary CSRF defense, because actions run with the visitor's cookies.
-//   The one exception is a request from an origin the app's `cors` allows that
-//   carries no ambient credential (no cookie; `corsCredentialless`): it has no
-//   visitor's cookies to abuse.
+//   The one exception is a request from an origin the app's `cors` lists exactly
+//   (never `["*"]`) that carries no ambient credential (no cookie; `corsCredentialless`)
+//   and the `x-denext-action: 1` marker (a custom header, so always preflighted): it
+//   has no visitor's cookies to abuse.
 // - POST only: actions can never be triggered by a GET (no <img>/link CSRF).
 // - Bounded dispatch: only ids explicitly registered via `serverAction` resolve;
 //   the id is a Map key, never a path or eval target. A bound action's id carries its values
@@ -101,11 +102,16 @@ export function isActionRequest(request: Request, pathname: string): boolean {
 }
 
 /**
- * The CSRF gate: the app's own origin (or an allowed one) — or a cookie-less call from a
- * `cors`-allowed origin, which has no visitor's credentials to forge.
+ * The CSRF gate: the app's own origin (or an allowed one) — or a cookie-less call from an
+ * origin the app's `cors` lists exactly (never `["*"]`), which has no visitor's credentials to
+ * forge. The cross-origin call must also carry denext's `x-denext-action: 1` marker: a custom
+ * header, so the browser always preflights it and a plain cross-site `<form>` post never
+ * qualifies.
  */
 function callerAllowed(request: Request, options: ActionHandlerOptions): boolean {
-  return verifyOrigin(request, options) || corsCredentialless(request, options.cors ?? null);
+  if (verifyOrigin(request, options)) return true;
+  return request.headers.get("x-denext-action") === "1" &&
+    corsCredentialless(request, options.cors ?? null);
 }
 
 /** Handle a Server Action POST. Runs inside the per-request async context. */

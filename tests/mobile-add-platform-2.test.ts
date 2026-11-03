@@ -77,6 +77,7 @@ async function inProject(
       "import type { CapacitorConfig } from '@capacitor/cli';\n\nconst config: CapacitorConfig = {\n  appId: 'com.example.app',\n  webDir: 'out',\n};\n\nexport default config;\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
     // The web export `cap sync` copies (without it the run falls back to `cap update`).
     "out/index.html": "<!doctype html>\n",
     ".git/HEAD": "ref: refs/heads/main\n",
@@ -118,22 +119,22 @@ Deno.test("platform capabilities: each pins a Capacitor 8 package and says what 
     pins[name] = cap.npm ? `${cap.npm}@${cap.version}` : "(denext native plugin)";
   }
   assertEquals(pins, {
-    "app-review": "@capawesome/capacitor-app-review@^8.0.2",
-    "app-update": "@capawesome/capacitor-app-update@^8.0.5",
-    "screen-orientation": "@capacitor/screen-orientation@^8.0.1",
-    "media-library": "@capacitor-community/media@^9.1.0",
-    "privacy-screen": "@capacitor/privacy-screen@^2.0.1",
-    tracking: "capacitor-plugin-app-tracking-transparency@^3.0.0",
-    background: "@capacitor/background-runner@^3.0.0",
-    restore: "@capacitor/app@^8.1.1",
+    "app-review": "@capawesome/capacitor-app-review@8.0.2",
+    "app-update": "@capawesome/capacitor-app-update@8.0.5",
+    "screen-orientation": "@capacitor/screen-orientation@8.0.1",
+    "media-library": "@capacitor-community/media@9.1.0",
+    "privacy-screen": "@capacitor/privacy-screen@2.0.1",
+    tracking: "capacitor-plugin-app-tracking-transparency@3.0.0",
+    background: "@capacitor/background-runner@3.0.0",
+    restore: "@capacitor/app@8.1.1",
     accessibility: "(denext native plugin)",
     storage: "(denext native plugin)",
     "context-menu": "(denext native plugin)",
     "system-icons": "(denext native plugin)",
     "background-audio": "(denext native plugin)",
     "file-transfer": "(denext native plugin)",
-    "background-location": "@capgo/background-geolocation@^8.4.7",
-    application: "@capacitor/app@^8.1.1",
+    "background-location": "@capgo/background-geolocation@8.4.7",
+    application: "@capacitor/app@8.1.1",
   });
 });
 
@@ -153,10 +154,10 @@ Deno.test("mobile add: the six plugin capabilities install and write their usage
       run,
     });
     assertEquals(lines(), [
-      "npm install --ignore-scripts @capawesome/capacitor-app-review@^8.0.2 @capawesome/capacitor-app-update@^8.0.5 " +
-      "@capacitor/screen-orientation@^8.0.1 @capacitor-community/media@^9.1.0 " +
-      "@capacitor/privacy-screen@^2.0.1 capacitor-plugin-app-tracking-transparency@^3.0.0",
-      "npx cap sync",
+      "npm install --ignore-scripts --save-exact @capawesome/capacitor-app-review@8.0.2 @capawesome/capacitor-app-update@8.0.5 " +
+      "@capacitor/screen-orientation@8.0.1 @capacitor-community/media@9.1.0 " +
+      "@capacitor/privacy-screen@2.0.1 capacitor-plugin-app-tracking-transparency@3.0.0",
+      "npx --no cap sync",
     ]);
     const plist = await read(dir, INFO_PLIST);
     for (
@@ -198,8 +199,8 @@ Deno.test("mobile add background: runner config, plist keys, AppDelegate, gradle
     assertStringIncludes(text, "BGTaskSchedulerPermittedIdentifiers: dev.denext.background");
     const report = await addMobileCapabilities({ capabilities: ["background"], cwd: dir, run });
     assertEquals(lines(), [
-      "npm install --ignore-scripts @capacitor/background-runner@^3.0.0",
-      "npx cap sync",
+      "npm install --ignore-scripts --save-exact @capacitor/background-runner@3.0.0",
+      "npx --no cap sync",
     ]);
     for (const path of ["capacitor.config.ts", INFO_PLIST, APP_DELEGATE, APP_GRADLE]) {
       assert(report.written.includes(path), path);
@@ -277,7 +278,10 @@ Deno.test("mobile add restore: @capacitor/app plus the startup note", async () =
   await inProject({}, async (dir) => {
     const { run, lines } = fakeRunner();
     const report = await addMobileCapabilities({ capabilities: ["restore"], cwd: dir, run });
-    assertEquals(lines(), ["npm install --ignore-scripts @capacitor/app@^8.1.1", "npx cap sync"]);
+    assertEquals(lines(), [
+      "npm install --ignore-scripts --save-exact @capacitor/app@8.1.1",
+      "npx --no cap sync",
+    ]);
     assertStringIncludes(report.plan.manual.join("\n"), "onRestoredResult");
   });
 });

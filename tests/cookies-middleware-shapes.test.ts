@@ -6,7 +6,7 @@
 
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { createMiddlewareRunner, redirectResponse } from "../src/server/middleware.ts";
 import { NextResponse } from "../src/compat/next/server.ts";
 import { NextRequest } from "../src/compat/next/request.ts";

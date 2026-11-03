@@ -445,12 +445,28 @@ function documentTarget(): (EventTarget & { body?: Element | null }) | undefined
   return d && typeof d.addEventListener === "function" ? d : undefined;
 }
 
-/** Run `fn` after the next frame paints (rAF + a task), else on a task. */
-function afterPaint(fn: () => void): void {
-  const raf =
-    (globalThis as { requestAnimationFrame?: (cb: () => void) => number }).requestAnimationFrame;
-  if (typeof raf === "function") raf(() => setTimeout(fn, 0));
-  else setTimeout(fn, 0);
+/**
+ * Run `fn` after the next frame paints (rAF + a task), else on a task.
+ *
+ * @returns A function that cancels it (the frame or the task, whichever is pending).
+ */
+function afterPaint(fn: () => void): () => void {
+  const g = globalThis as {
+    requestAnimationFrame?: (cb: () => void) => number;
+    cancelAnimationFrame?: (id: number) => void;
+  };
+  let task: ReturnType<typeof setTimeout> | undefined;
+  if (typeof g.requestAnimationFrame !== "function") {
+    task = setTimeout(fn, 0);
+    return () => clearTimeout(task);
+  }
+  const frame = g.requestAnimationFrame(() => {
+    task = setTimeout(fn, 0);
+  });
+  return () => {
+    g.cancelAnimationFrame?.(frame);
+    clearTimeout(task);
+  };
 }
 
 /** A row's searchable / typeahead text, from the options that can supply one. */
@@ -511,6 +527,8 @@ export class VirtualController<T> {
   #painted = false;
   #paintScheduled = false;
   #seedTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The cancellers of the pending {@linkcode afterPaint} callbacks (the unmount runs them). */
+  readonly #afterPaints = new Set<() => void>();
   /** Sum and count of every size measured so far (for a list given no size information). */
   #measuredSum = 0;
   #measuredCount = 0;
@@ -777,6 +795,15 @@ export class VirtualController<T> {
     return !this.#synced || (!this.#painted && paints());
   }
 
+  /** {@linkcode afterPaint}, cancelled by the unmount when it has not run yet. */
+  #afterPaint(fn: () => void): void {
+    const cancel = afterPaint(() => {
+      this.#afterPaints.delete(cancel);
+      fn();
+    });
+    this.#afterPaints.add(cancel);
+  }
+
   /** After the first paint: add the overscan window (see `#firstWindow`). */
   #schedulePaint(): void {
     if (this.#paintScheduled || this.#painted) return;
@@ -785,7 +812,7 @@ export class VirtualController<T> {
       this.#painted = true;
       return;
     }
-    afterPaint(() => {
+    this.#afterPaint(() => {
       this.#painted = true;
       if (!this.#mounted || this.printing) return;
       this.core.configure(this.#config(this.props));
@@ -1185,6 +1212,11 @@ export class VirtualController<T> {
       clearTimeout(this.#targetTimer);
       clearTimeout(this.#seedTimer);
       this.#seedTimer = undefined;
+      for (const cancel of this.#afterPaints) cancel();
+      this.#afterPaints.clear();
+      // A cancelled one never ran: a later mount schedules it again.
+      this.#paintScheduled = false;
+      this.#progressScheduled = false;
       for (const t of this.#trackers) t.dispose();
       this.#cleanup = undefined;
       this.#mounted = false;
@@ -1949,7 +1981,7 @@ export class VirtualController<T> {
     }
     if (!pending) return;
     this.#progressScheduled = true;
-    afterPaint(() => {
+    this.#afterPaint(() => {
       this.#progressScheduled = false;
       if (!this.#mounted) return;
       const vis = this.core.visible();

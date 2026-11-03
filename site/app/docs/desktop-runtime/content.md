@@ -359,6 +359,43 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 - **Layer:** laufey, Deno runtime, denext.
 - **Upstream:** planned.
 
+### Overlay windows, tray events and the activation policy
+
+What a transparent, click-through desktop companion and a tray-first app need, in Electron's names
+so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
+
+- **Overlay windows.** `BrowserWindow.setIgnoreMouseEvents(ignore, { forward })` (click-through;
+  with `forward` the page still hears pointer moves on macOS), `setHitRegion(rects | null)` (only
+  these rectangles, in CSS pixels, take the mouse: macOS follows the cursor, Windows a transparent
+  window style on a cursor timer, Linux the input shape), `setVisibleOnAllWorkspaces(visible, {
+  visibleOnFullScreen })`, `setSkipTaskbar(skip)` and `setAlwaysOnTop(flag, level)` with
+  Electron's levels (`"floating"`, `"status"`, `"pop-up-menu"`, `"screen-saver"`, …; every level
+  on macOS, one floating level on Windows and Linux). New windows take `show: false` (created
+  hidden, no flash), `overlay: true` (a wlr-layer-shell surface on wlroots compositors, KDE Plasma
+  and COSMIC; an ordinary window elsewhere) and `skipTaskbar`; `transparent` now works on
+  Windows' WebView2 too. `windowCapabilities()` reports each (`clickThrough`, `hitRegion`,
+  `visibleOnFullScreen`, `layerShell`, `activationPolicy`, `nonActivating`, `textToSpeech`, …).
+  denext's `denext/desktop/window` calls feature-detect them.
+- **Tray events.** Every click is a `"click"` `TrayMouseEvent` with `button`, `modifiers`, `x` /
+  `y` and `double`; a right click is also `"contextmenu"`, a middle click `"auxclick"`, a double
+  click `"dblclick"`, and hover `"mouseenter"` / `"mouseleave"` (macOS, Windows).
+  `tray.popUpMenu()` opens the menu at the icon, and `Deno.Tray.capabilities()` says which events
+  and data this OS delivers. On Linux a session with a StatusNotifierWatcher gets laufey's own
+  StatusNotifierItem, so clicks arrive there too. denext hands them on by their DOM names, with
+  `click` the primary button's (`tray.on(type, handler)` in `denext/desktop/app`).
+  `Tray.attachPanel` creates its panel hidden and off the taskbar, toggles it on a plain left click
+  only, and places it from the icon and the display's work area.
+- **The activation policy.** `Deno.dock.setActivationPolicy("regular" | "accessory" |
+  "prohibited")` and `getActivationPolicy()` (macOS). The launch file's `"activationPolicy"`
+  (`LAUFEY_ACTIVATION_POLICY` for an unpackaged run) is the policy the host starts in, so an
+  accessory app shows no Dock icon from its first frame; laufey's hosts used to force regular at
+  launch. denext writes it from `desktop.app.activationPolicy`, or `"accessory"` for
+  `desktop.app.dock: false`, and only for a runtime that reads it.
+- **Text to speech.** `Deno.desktop.speech.speak(text, { voice, lang, rate, pitch, volume })`
+  resolves when the utterance ends (also when cut off), `stop()`, `voices()`: AVSpeechSynthesizer,
+  SAPI, speech-dispatcher (which the `.deb` / `.rpm` recommend, with gtk-layer-shell). `speak()`
+  in `denext/mobile` uses it where the window has no Web Speech (WebKitGTK).
+
 ### Device-independent sizing on Windows
 
 - **What:** window sizes, positions and size limits are the page area in device-independent
@@ -793,17 +830,20 @@ The [Desktop apps](/docs/desktop) guide covers each of these from the page's sid
 ## Runtime releases
 
 Each release is a tag on the Deno fork; denext pins one (`src/build/desktop-runtime-pin.json`;
-currently `3.0.0-rc.5`).
+currently `3.0.0-denext.7`).
 
 **Naming.** Up to `2.9.7-denext.22` a release was named after the Deno release it was built from
-plus `-denext.<n>`. The next release is `3.0.0-rc.1`, then `3.0.0-rc.2` and so on: the fork's own
+plus `-denext.<n>`. The next releases were `3.0.0-rc.1` through `3.0.0-rc.6`: the fork's own
 version, tagged `denext-runtime-v3.0.0-rc.1`, with its archives named after it
-(`deno-desktop-runtime-3.0.0-rc.1-<target>-<backend>.tar.gz`). `3.0.0` final carries Deno's planned
-3.0 milestone. The Deno release a runtime is built from stays in the pin's `deno` field (2.9.8 from `3.0.0-rc.4`, 2.9.7 before), and
-that is still the stock `deno desktop` it packages with. Semver orders the two schemes in release
-order (`2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0`), which is how denext compares runtime versions.
-Upstream Deno releases a `3.0.0` too, so from `3.0.0-rc.3` denext tells its own Deno from upstream's
-by an identity marker rather than the version: `Deno.build.denext` and a
+(`deno-desktop-runtime-3.0.0-rc.1-<target>-<backend>.tar.gz`). After `3.0.0-rc.6` the release
+candidates end: the fork's releases are `3.0.0-denext.1`, `3.0.0-denext.2`, and so on, tagged
+`denext-runtime-v3.0.0-denext.1`. There is no upstream 3.0: upstream Deno stays on its 2.9.x LTS
+line, and denext's runtime is the forward line. The Deno release a runtime is built from stays in
+the pin's `deno` field (2.9.8 from `3.0.0-rc.4`, 2.9.7 before), and that is still the stock
+`deno desktop` it packages with. denext compares runtime versions by semver with one exception: on
+the `3.0.0` core a `denext.N` release ranks above every `rc.N` one, where plain semver would put it
+below, so `2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.6` < `3.0.0-denext.1` < `3.0.0-denext.2` < `3.0.0-denext.3` < `3.0.0-denext.5` < `3.0.0-denext.6` < `3.0.0-denext.7`.
+From `3.0.0-rc.3` denext tells its own Deno from stock Deno by an identity marker rather than the version: `Deno.build.denext` and a
 `denext <version> (Brainwires)` line in `deno --version` (see the
 [toolchain notes](/docs/toolchain#identity)).
 
@@ -836,6 +876,13 @@ by an identity marker rather than the version: `Deno.build.denext` and a
 | `3.0.0-rc.3`      | An identity marker: `deno --version` ends with a `denext 3.0.0-rc.3 (Brainwires)` line and `Deno.build.denext` holds the version (the release manifest records both under `cli.identity`), which is how denext tells its runtime from upstream Deno of the same number. TypeScript 7 is the language server's own default (`deno lsp` runs tsgo unless `deno.unstable` lists features without `tsgo-lsp`, or `DENO_UNSTABLE_TSGO_LSP=0`), and it no longer writes or rewrites a project's root `tsconfig.json`. A `node --watch` / `deno run --watch` child keeps its parent's IPC channel across restarts (Unix). On Windows a `file:` link on another drive keeps its import map. `createIpcHandle` reports a failed handle's errno, and an npm `bin` named `..` is skipped. `deno check -- <files>` checks those files, and the native check's TS2307 for an unresolvable import carries Deno's `deno add` hint. laufey `ef41855`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `3.0.0-rc.4`      | Built from Deno 2.9.8 (X.509 v1 TLS certificates handled as OpenSSL does, safer npm symlinking, zsh completions, `mock.reset()`, the distrusted eMudhra CAs removed). Page downloads from a custom-scheme app origin on every backend: WebKit (macOS, Linux) downloads a `Content-Disposition: attachment` response, and CEF and WebView2 an `<a download>` link to the app's scheme. rustls-webpki 0.103.16 in the desktop runtime; built with Rust 1.99.1.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `3.0.0-rc.5`      | Two Deno 3.0 defaults: `request.signal` aborts only when a response is not delivered (the opt-out is `--unstable-legacy-abort` or `DENO_LEGACY_ABORT=1`), and an approved dependency's lifecycle script runs jailed (`--no-jail-scripts` or `"supplyChain": { "jailScripts": false }` opts out). Type-aware lint rules (`deno lint --type-aware`) through a pinned tsgolint shipped in the CLI zip; `--unstable-idle-trim` returns a server's memory to the OS when its event loop goes idle (glibc Linux). On Windows a spawned child inherits only its own handles, so a concurrent spawn no longer holds another's output pipe open; a workspace member's import map can map a module on another drive.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `3.0.0-rc.6`      | The narrower lifecycle-script jail: a package's `net` may list the hosts its scripts reach, held by an allow-listing proxy for every program a script starts (chained through an `http://` proxy in `HTTPS_PROXY` / `HTTP_PROXY` / `ALL_PROXY`); a script writes only beneath its own package and its `write` paths (which may start with `~`); `"executables": true` keeps a program it downloads into `~` and `"allowPrivate": true` lets a listed host resolve to a private address; an exceptions object that lists only packages configures the jail without turning it on. Node's `module.register()` hooks and `--trace-sigint`, coverage written when SIGINT or SIGTERM ends a run, `deno check`'s `Checked N files` summary, an unresolved `compilerOptions.types` entry reported as an error, and `deno jupyter` cells run with the config's permissions.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `3.0.0-denext.1`  | The hardened lifecycle-script jail: a package's declared download host needs `jailScripts.knownPackages`, `deno info --json` reports `lifecycleJail` (the OS confinement on this machine and what it can't hold), and in a project with a package.json and no deno.json, package.json's `"deno": { "allowScripts", "supplyChain" }` object holds the settings. A link whose path and target both lie in a jailed script's write roots is allowed on macOS and Linux. The packaged app's launch file fails closed (`"strictPolicy": true`: no bridge pin gives the bridge to no document, no RP list refuses every passkey ceremony), and the Linux secure store keys items by the app id too.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `3.0.0-denext.2`  | Download deadlines: a stalled npm / JSR fetch gives up and retries on a fresh connection (`DENO_DOWNLOAD_*`). The Deploy token's Secret Service session is encrypted, and so is the secure-store migration's read of older items. Windows pipe and spawn fixes, Node compatibility fixes, V8 15.2, and Linux binaries built for glibc 2.27 and later (the manifest's `cli.glibc`, which the toolchain pin records as `minGlibc`). Security advisory [GHSA-6f6m-g5gm-hc4m](https://github.com/Brainwires/deno/security/advisories/GHSA-6f6m-g5gm-hc4m).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `3.0.0-denext.3`  | V8 15.2.124.45, with the fixes for two V8 bugs exploited in the wild (security advisory [GHSA-qr84-w8xw-f7r4](https://github.com/Brainwires/deno/security/advisories/GHSA-qr84-w8xw-f7r4)). New runtime APIs: the `HTMLRewriter` global (`--unstable-html-rewriter`), `resolveCertificate` (a certificate per server name for `Deno.listenTls` / `Deno.serve`, `--unstable-net`), a cookie jar for `fetch` (`Deno.CookieJar`, `Deno.Cookie`, `Deno.CookieMap`, `--unstable-cookies`) and npm `patchedDependencies`. A desktop bind call whose page navigated away or whose window was destroyed is rejected and dropped. The idle trim keeps a wake-up that arrives during a trim and skips the GC on a large live heap (`DENO_IDLE_TRIM_MAX_GC_HEAP_MB`). Sloppy-import hints only for modules the graph prepared (no file-existence probe for a computed `import()` without read permission). Node compatibility: better-sqlite3 under Jest, a shell-spawned `node` shim, `node:test` subtests, a package.json script's arguments without npm's `--`.                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `3.0.0-denext.5`  | Security: in a package.json-only project `require()` no longer reads, without read permission, files a `node_modules` link leads to outside `node_modules` (advisory [GHSA-xhq4-83x4-g734](https://github.com/Brainwires/deno/security/advisories/GHSA-xhq4-83x4-g734)), and the memory behind `tickInfo` / `immediateInfo` / `timerInfo` belongs to its V8 backing store, so it is never read after it is freed (advisory [GHSA-mvh6-5whv-26gw](https://github.com/Brainwires/deno/security/advisories/GHSA-mvh6-5whv-26gw)). On Windows a finished process ends with `TerminateProcess`, so it can't spin in its teardown instead of exiting. The panic banner names the subcommand and argument count, not the command line. Opt-in crash reports (`DENEXT_CRASH_REPORT_URL`) from the CLI and `denort`, and the desktop runtime's panic report on the same schema. `3.0.0-denext.4` was never released.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `3.0.0-denext.6`  | Overlay windows, tray events and the activation policy ([above](#overlay-windows-tray-events-and-the-activation-policy)): click-through, hit regions, every workspace (over full-screen apps too), the taskbar entry, always-on-top levels, `show: false`, `overlay` (wlr-layer-shell) and `skipTaskbar` window options, transparent windows on WebView2; tray `click` events with their detail, `contextmenu`, `auxclick`, `mouseenter` / `mouseleave`, `popUpMenu()`, `Tray.capabilities()`, laufey's own StatusNotifierItem on Linux; `Deno.dock.setActivationPolicy` and the launch file's `activationPolicy`; `Deno.desktop.speech`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `3.0.0-denext.7`  | Security: CEF 156.0.14 (Chromium 156.0.8078.48), up from CEF 150, with Chrome's fixes from 151 through 156.0.8078.48 (advisory [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)); Chrome's fixes from 156.0.8078.73 on come with the next runtime. Linux Wayland: `.deno-desktop/app.json`'s `initialWindow.overlay` makes the window the app starts with a layer-shell surface, a tray panel is one where the compositor has layer-shell (and opens at the click when the tray has no icon position), a non-resizable window keeps its size rather than 800 × 600, KWin leaves a frameless window frameless, and app.json's `name` titles an untitled window. Linux: `libdenort.so` is linked `-Bsymbolic`, so `node:zlib`'s Brotli no longer binds to the system `libbrotlidec` a web view loaded (a packaged webview app that used it hung). `deno doc --json` and `--html` carry no ANSI color escapes.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 denext needs `2.9.7-denext.14`. Under an older runtime a child the app starts from its own
 executable (a sidecar's `spawnSelf`) begins its stdout with the runtime loader's launch messages
@@ -930,13 +977,14 @@ any difference. macOS apps package on a Mac.
 **`denext doctor`** reports the pinned runtime version, whether it is cached and verified on this
 machine, and whether `deno` is the version it needs.
 
-| Variable                           | Effect                                                             |
-| ---------------------------------- | ------------------------------------------------------------------ |
-| `DENEXT_DESKTOP_RUNTIME=pinned`    | The default: denext's runtime, downloaded and verified.            |
-| `DENEXT_DESKTOP_RUNTIME=stock`     | The stock Deno Desktop runtime (see [Opting out](#opting-out)).    |
-| `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` | A local runtime build, checked for its layout only (runtime work). |
-| `DENEXT_DESKTOP_RUNTIME_VERIFY=1`  | Re-hash every cached file before use (`--verify-runtime`).         |
-| `DENEXT_DESKTOP_RUNTIME_ATTEST=1`  | `gh attestation verify` a fresh download (`--attest-runtime`).     |
+| Variable                           | Effect                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------- |
+| `DENEXT_DESKTOP_RUNTIME=pinned`    | The default: denext's runtime, downloaded and verified.                   |
+| `DENEXT_DESKTOP_RUNTIME=stock`     | The stock Deno Desktop runtime (see [Opting out](#opting-out)).           |
+| `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` | A local runtime build, checked for its layout only (runtime work).        |
+| `DENEXT_DESKTOP_RUNTIME_VERIFY=1`  | Re-hash every cached file before use (`--verify-runtime`).                |
+| `DENEXT_DESKTOP_RUNTIME_ATTEST=1`  | Require `gh attestation verify` of a fresh download (`--attest-runtime`). |
+| `DENEXT_DESKTOP_RUNTIME_ATTEST=0`  | Never run it (unset: run it when `gh` is signed in, else say so).         |
 
 The provenance check accepts only an attestation from the runtime repository's release workflow
 (`.github/workflows/denext_runtime.yml`) built from the pinned tag, on a GitHub-hosted runner.
@@ -1039,8 +1087,9 @@ upstream version.
   versions differ.
 - **Verified before use.** denext checks the size and SHA-256 of every archive against its own pin
   before extracting it, and the cached files against the marker before reusing them.
-- **Attested.** Every archive has a build provenance attestation, and `--attest-runtime` checks it
-  on every fresh download.
+- **Attested.** Every archive has a build provenance attestation, checked on every fresh download
+  whenever the GitHub CLI is signed in (the build says so when it is not); `--attest-runtime` makes
+  the check required.
 
 ```sh
 gh attestation verify deno-desktop-runtime-<version>-<target>-<backend>.tar.gz -R Brainwires/deno

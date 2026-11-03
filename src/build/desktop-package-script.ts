@@ -38,6 +38,7 @@ import {
   withSigntoolCertificate,
 } from "./code-signing.ts";
 import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
+import { runToExit } from "./exited-output.ts";
 
 /** A package script's parsed command line. */
 export interface DesktopPackageArgs {
@@ -246,12 +247,7 @@ const WIX_MAJOR = 5;
 /** `wix --version` (e.g. `5.0.2+aa65968c`), or `null` when `wix` does not run. */
 async function wixVersion(): Promise<string | null> {
   try {
-    const out = await new Deno.Command("wix", {
-      args: ["--version"],
-      stdout: "piped",
-      stderr: "null",
-    })
-      .output();
+    const out = await runToExit("wix", { args: ["--version"], stderr: "null" });
     return out.code === 0 ? new TextDecoder().decode(out.stdout).trim() : null;
   } catch {
     return null;
@@ -726,10 +722,23 @@ export function desktopWindowsTargetNote(
 /** How many files one `signtool sign` call takes (keeps the command line short on Windows). */
 const SIGN_BATCH = 32;
 
+/** Fills `buf` from `file`'s current position; `false` when the file ends first (Rust's `read_exact`). */
+async function readExact(file: Deno.FsFile, buf: Uint8Array): Promise<boolean> {
+  let at = 0;
+  while (at < buf.length) {
+    const n = await file.read(buf.subarray(at));
+    if (n === null || n === 0) return false;
+    at += n;
+  }
+  return true;
+}
+
 /**
  * Whether `path` holds a PE image: `MZ`, then `PE\0\0` at the offset the DOS header's
  * `e_lfanew` names. The header decides, not the extension: an `.exe`, a `.dll`, a CEF helper or a
- * native `.node` addon are all PE files, and a renamed one still is.
+ * native `.node` addon are all PE files, and a renamed one still is. The rule is exactly the
+ * runtime's (`is_pe_image`, which picks the files an update's signature check covers): any
+ * `e_lfanew`, with no bounds, so every file the runtime will check is a file denext signs.
  */
 async function isPeFile(path: string): Promise<boolean> {
   let file: Deno.FsFile;
@@ -740,12 +749,11 @@ async function isPeFile(path: string): Promise<boolean> {
   }
   try {
     const dos = new Uint8Array(64);
-    if ((await file.read(dos)) !== 64 || dos[0] !== 0x4d || dos[1] !== 0x5a) return false;
+    if (!(await readExact(file, dos)) || dos[0] !== 0x4d || dos[1] !== 0x5a) return false;
     const peAt = new DataView(dos.buffer).getUint32(0x3c, true);
-    if (peAt < 64 || peAt > 64 * 1024 * 1024) return false;
     await file.seek(peAt, Deno.SeekMode.Start);
     const sig = new Uint8Array(4);
-    if ((await file.read(sig)) !== 4) return false;
+    if (!(await readExact(file, sig))) return false;
     return sig[0] === 0x50 && sig[1] === 0x45 && sig[2] === 0 && sig[3] === 0;
   } finally {
     file.close();

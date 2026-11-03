@@ -3,9 +3,9 @@
   "private": true,
   "dependencies": {
     "@aparajita/capacitor-secure-storage": "8.0.1",
-    "@capacitor/android": "8.5.2",
-    "@capacitor/core": "8.5.2",
-    "@capacitor/ios": "8.5.2",
+    "@capacitor/android": "8.6.0",
+    "@capacitor/core": "8.6.0",
+    "@capacitor/ios": "8.6.0",
     "@clerk/electron": "^0.0.48",
     "@clerk/nextjs": "^7.9.8",
     "next": "^16.0.0",
@@ -13,6 +13,6 @@
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
-    "@capacitor/cli": "8.5.2"
+    "@capacitor/cli": "8.6.0"
   }
 }

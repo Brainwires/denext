@@ -12,6 +12,10 @@ import { type Harness, postTo, stopUi, uiOn } from "./helpers/ui-panel.ts";
 import { type DbChildRunner, setDbChildRunner } from "../src/ui/features/database.ts";
 import type { DbEnvelope, DbReply } from "../src/ui/database/protocol.ts";
 import { UI_CSRF_HEADER } from "../src/ui/security.ts";
+import { releaseFetchBodies } from "./helpers/unread-bodies.ts";
+
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
 
 const PG_PROJECT = { ".env": "DATABASE_URL=postgres://app:pw@127.0.0.1:5432/app\n" };
 

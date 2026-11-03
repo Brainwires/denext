@@ -30,6 +30,7 @@ import {
   OTA_MANIFEST_PATH,
   OTA_PLATFORM_HEADER,
   OTA_PLATFORM_PATH,
+  otaAppMismatch,
   type OtaManifest,
   otaPlatformMismatch,
 } from "./ota-manifest.ts";
@@ -63,11 +64,24 @@ import {
  *   `android`): it is that platform's export (`denext export --platform`), with that platform's
  *   files. Checked here, before the native side sees it. The manifest's `platform` field is not
  *   signed; the export's stamp file is (the version covers it), so a stamped export is refused
- *   by another target whether or not the field is present. Only a manifest with neither (a `web`
- *   export) fits every shell.
+ *   by another target whether or not the field is present. A manifest with neither (a `web`
+ *   export) fits a shell without a public key only: an app that embeds one (`denext mobile add-ota
+ *   --public-key`) takes only its own platform's stamped export (`denext export --platform ios`,
+ *   or `denext ota manifest --platform ios` over the export), so a web export signed with the same
+ *   key cannot install itself on a phone. The page cannot tell whether the binary embeds a key, so
+ *   that refusal comes from the native side.
+ * - `app_mismatch`: the manifest's signed `appId` names another app than this one (the iOS bundle
+ *   id / Android application id). An app that embeds a public key also refuses a manifest
+ *   without one (re-sign it: `denext ota manifest --app-id <id> --sign`), so a feed for another
+ *   app that shares the signing key cannot install its UI here. The page refuses another app's
+ *   manifest before the native side sees it (with {@linkcode OtaCheckOptions.appId}, or the id the
+ *   shell's status reports); the missing-id refusal comes from the native side.
+ * - `guard_unavailable`: the iOS shell could not install the check on Capacitor's
+ *   `/_capacitor_file_` requests (an app whose web view uses its own asset handler class), so it
+ *   serves no downloaded UI in this process and refuses every update: see {@linkcode onOtaRejected}.
  *
  * The trust checks (`integrity`, `signature`, `insecure`, `downgrade`, `native_too_old`,
- * `native_mismatch`, `expired`, and
+ * `native_mismatch`, `app_mismatch`, `expired`, and
  * `invalid` for a malformed or oversized manifest) run before any file is downloaded, and a
  * refusal leaves the running UI and any staged one as they were.
  */
@@ -84,7 +98,9 @@ export type OtaErrorCode =
   | "native_too_old"
   | "native_mismatch"
   | "platform_mismatch"
-  | "expired";
+  | "app_mismatch"
+  | "expired"
+  | "guard_unavailable";
 
 // An array literal, not a `new Set(...)`: bundlers keep a module-level constructor call,
 // which would pin this module into every bundle that imports `denext/mobile`.
@@ -101,7 +117,9 @@ const OTA_ERROR_CODES: readonly string[] = [
   "native_too_old",
   "native_mismatch",
   "platform_mismatch",
+  "app_mismatch",
   "expired",
+  "guard_unavailable",
 ] satisfies readonly OtaErrorCode[];
 
 /** The native plugin's name: `window.Capacitor.Plugins.DenextOta`. */
@@ -129,16 +147,30 @@ export interface OtaStatus {
    * older than that check.
    */
   readonly tampered: string | null;
+  /**
+   * This app's id (the iOS bundle id / Android application id), which a manifest's `appId` must
+   * name; absent from a shell older than that check.
+   */
+  readonly appId?: string | null;
 }
 
 /**
- * What {@linkcode onOtaRejected} reports: a downloaded UI that failed re-verification.
+ * What {@linkcode onOtaRejected} reports: a downloaded UI that failed re-verification, or one the
+ * shell did not serve because it could not check it.
  */
 export interface OtaRejectedEvent {
-  /** The version that was quarantined. */
+  /** The version that was quarantined (or, with `guard_unavailable`, not served). */
   readonly version: string;
   /** The native side's reason, e.g. `"assets/app.js does not match the signed manifest."`. */
   readonly reason: string;
+  /**
+   * `tampered`: the UI changed on the device after the download and was quarantined.
+   * `guard_unavailable`: the iOS shell could not install its check on Capacitor's
+   * `/_capacitor_file_` requests, so this launch served the bundled UI instead; nothing was
+   * quarantined, and updates are refused with that code until the app ships a binary that can
+   * install it (or opts out with `plugins.DenextBridge.otaFileGuard: false`).
+   */
+  readonly code: "tampered" | "guard_unavailable";
 }
 
 /** The JS face of the native `DenextOta` plugin (Capacitor seeds a stub per method). */
@@ -209,6 +241,12 @@ export interface OtaCheckOptions {
    * `runtimePlatform()` in the iOS / Android shell.
    */
   platform?: "ios" | "android";
+  /**
+   * This app's id (the iOS bundle id / Android application id): a manifest naming another app is
+   * refused before the native side sees it (code `app_mismatch`). Default: the id the shell's
+   * status reports. The native side checks it either way.
+   */
+  appId?: string;
   /**
    * Called when the server's UI needs a newer app binary: a check or prepare that ends in an
    * `error` result with code `native_too_old` (the manifest's `minNative` is above this build) or
@@ -526,6 +564,8 @@ async function newerManifest(
   } catch (err) {
     return { kind: "error", reason: `status failed: ${messageOf(err)}` };
   }
+  const otherApp = appRefusal(manifest, options, status);
+  if (otherApp) return otherApp;
   // A version on its trial launch is the one running (or about to be): offering it again is
   // not an update, whatever `current` still says.
   const running = status.pending ?? status.current ?? status.bundled ?? null;
@@ -550,6 +590,21 @@ async function manifestRefusal(
   if (!isOtaManifestExpired(manifest)) return null;
   const at = new Date(manifest.expiresAt! * 1000).toISOString();
   return { kind: "error", reason: `the manifest expired at ${at}`, code: "expired" };
+}
+
+/**
+ * Another app's release (a feed misrouted, or another app sharing the signing key), refused as
+ * `app_mismatch` against `options.appId`, else the id the shell's status reports; null when it
+ * fits or neither knows the app.
+ */
+function appRefusal(
+  manifest: OtaManifest,
+  options: OtaCheckOptions,
+  status: Partial<OtaStatus>,
+): { readonly kind: "error"; readonly reason: string; readonly code: OtaErrorCode } | null {
+  const appId = options.appId ?? (typeof status.appId === "string" ? status.appId : undefined);
+  const reason = otaAppMismatch(manifest, appId);
+  return reason === null ? null : { kind: "error", reason, code: "app_mismatch" };
 }
 
 /**
@@ -880,6 +935,11 @@ export async function otaStatus(): Promise<OtaStatus | null> {
  * kept until a listener is added, so register early (in the root layout); {@linkcode otaStatus}
  * reports the same version as `tampered`. The version may be downloaded again.
  *
+ * It also fires, with `code: "guard_unavailable"`, when the iOS shell did not serve a downloaded
+ * UI because it could not install its check on Capacitor's `/_capacitor_file_` requests (the web
+ * view's asset handler is the app's own class): the bundled UI runs instead, nothing is
+ * quarantined, and updates are refused with that code in this process.
+ *
  * On the web, and in a shell whose `DenextOta` plugin predates this check, it never fires and
  * the returned function does nothing.
  *
@@ -889,7 +949,7 @@ export async function otaStatus(): Promise<OtaStatus | null> {
  * ```ts
  * import { onOtaRejected } from "denext/mobile";
  *
- * onOtaRejected(({ version, reason }) => reportToServer("ota-tampered", { version, reason }));
+ * onOtaRejected(({ version, reason, code }) => reportToServer(`ota-${code}`, { version, reason }));
  * ```
  */
 export function onOtaRejected(listener: (event: OtaRejectedEvent) => void): () => void {
@@ -900,6 +960,7 @@ export function onOtaRejected(listener: (event: OtaRejectedEvent) => void): () =
     listener({
       version: event.version,
       reason: typeof event.reason === "string" ? event.reason : "",
+      code: event.code === "guard_unavailable" ? "guard_unavailable" : "tampered",
     });
   }));
 }

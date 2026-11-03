@@ -1,6 +1,6 @@
 // `denext/prisma-adapter` restates Prisma's driver-adapter contract instead of importing it
 // (the runtime stays zero-npm). This checks the restatement against the real
-// `@prisma/driver-adapter-utils` at the version denext pins for Prisma (6.19.3), in both
+// `@prisma/driver-adapter-utils` at the version denext pins for Prisma (7.10.1), in both
 // directions: what the adapter produces is what Prisma takes, and what Prisma passes is what the
 // adapter reads. The checks are type-level: `deno test` type-checks this file.
 
@@ -30,7 +30,7 @@ const _query = (q: Prisma.SqlQuery): SqlQuery => q;
 const sameErrors: Same<MappedError, Prisma.MappedError> = true;
 const sameColumnTypes: Same<typeof ColumnTypeEnum, typeof Prisma.ColumnTypeEnum> = true;
 
-Deno.test("prisma-adapter: the restated contract matches @prisma/driver-adapter-utils 6.19.3", () => {
+Deno.test("prisma-adapter: the restated contract matches @prisma/driver-adapter-utils 7.10.1", () => {
   void [_factory, _adapter, _tx, _result, _query];
   assertEquals([sameErrors, sameColumnTypes], [true, true]);
   assertEquals(Object.keys(ColumnTypeEnum).length, 32);

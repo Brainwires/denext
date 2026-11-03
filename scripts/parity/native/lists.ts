@@ -25,6 +25,7 @@
 // adapter names are reported, never a failure.
 
 import { LIST_PACKAGES } from "../../../src/react-native/lists/manifest.ts";
+import { boundedDeno } from "../../deno-doc.ts";
 import { npmInstall } from "./shared.ts";
 import { LIST_WAIVERS, type ListWaiver } from "./waivers.ts";
 
@@ -144,15 +145,11 @@ const DENEXT: Record<
 // deno-lint-ignore no-explicit-any
 type Json = any;
 
-/** `deno doc --json` over `files`. */
+/** `deno doc --json` over `files`, bounded ({@linkcode boundedDeno}). */
 async function denoDoc(root: string, files: string[]): Promise<Json> {
-  const out = await new Deno.Command(Deno.execPath(), {
-    args: ["doc", "--json", ...files.map((f) => `${root}/${f}`)],
-    stdout: "piped",
-    stderr: "piped",
-  }).output();
-  if (out.code !== 0) throw new Error(new TextDecoder().decode(out.stderr));
-  return JSON.parse(new TextDecoder().decode(out.stdout));
+  const out = await boundedDeno(["doc", "--json", ...files.map((f) => `${root}/${f}`)]);
+  if (out.code !== 0) throw new Error(out.stderr);
+  return JSON.parse(out.stdout);
 }
 
 /** The value exports (functions and variables, re-exports included) of one module. */

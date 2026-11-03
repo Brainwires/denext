@@ -672,7 +672,7 @@ function withConsoleStore(fn: (store: ReturnType<typeof fakeConsoleStore>) => vo
   }
 }
 
-Deno.test("panel: the Console tab lists entries, filters by level, expands stacks, clears", () => {
+Deno.test("panel: the Console tab lists entries, filters by level, expands stacks, clears", async () => {
   withConsoleStore((store) =>
     withPanel(Tiny, ({ body }) => {
       tabByLabel(body, "Console").dispatch("click");
@@ -694,6 +694,8 @@ Deno.test("panel: the Console tab lists entries, filters by level, expands stack
       assertEquals(store.entries.length, 0);
     })
   );
+  // The clear queued the open Console tab's throttled re-render (50 ms): let it run here.
+  await new Promise((r) => setTimeout(r, 80));
 });
 
 Deno.test("panel: the error badge shows the count and opens the Console", () => {

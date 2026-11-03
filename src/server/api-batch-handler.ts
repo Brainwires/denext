@@ -4,8 +4,8 @@
 // executes):
 //   1. not itself a batch item (no nested batches, no depth games)
 //   2. same-origin (`verifyOrigin` — the SAME CSRF gate as Server Actions: the batch replays
-//      the caller's cookies into every item), or a `cors`-allowed origin carrying no cookie
-//      (`corsCredentialless`: nothing ambient to replay)
+//      the caller's cookies into every item), or an origin the app's `cors` lists exactly (never
+//      `["*"]`) carrying no cookie (`corsCredentialless`: nothing ambient to replay)
 //   3. the `x-denext-api-batch: 1` marker (a plain <form> cannot set a custom header → CORS
 //      preflight barrier on top of the origin check)
 //   4. `content-type: application/json`

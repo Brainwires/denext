@@ -5,10 +5,11 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { startProdOrigin } from "../helpers/prod-origin.ts";
-import { fromFileUrl } from "@std/path";
 import { buildInChild } from "../helpers/bounded-build.ts";
+import { copyExample } from "../helpers/example-copy.ts";
 
-const APP = fromFileUrl(new URL("../../examples/caching", import.meta.url));
+// A private copy: building the checkout's example would rewrite its tracked deno.lock.
+const APP = await copyExample("caching");
 
 /** Extract the cached "fetched at" timestamp the /data page renders. */
 function cachedAt(html: string): string {
@@ -66,8 +67,6 @@ async function stepIsrHit(origin: string): Promise<void> {
 
 Deno.test({
   name: "examples/caching: unstable_cache, revalidateTag, and ISR",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const controller = new AbortController();
   let server: Deno.HttpServer | undefined;

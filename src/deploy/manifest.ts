@@ -82,6 +82,38 @@ export interface DeployServer {
    * `--compile` executable has it baked in already. Absent in a manifest from before denext 4.8.1.
    */
   idleTrim?: boolean;
+  /**
+   * The resource-limit flags the project's `start.limits` asks for (`--max-memory=512m`,
+   * `--max-cpu-time=<n>`, `--max-time=<n>`; empty when nothing is limited), for a server started on
+   * denext's Deno from runtime 3.0.0-rc.2: a generator puts them on the server's `deno run`
+   * (a `--compile` executable has them baked in already). Absent in a manifest from before denext
+   * 4.10.
+   */
+  limits?: string[];
+  /**
+   * `start.tls` — the server serves HTTPS itself — with each certificate's host names and the
+   * environment variables naming its PEM files (never the paths or the files), for a generator to
+   * pass those variables through, make the files readable and probe health over `https:`; `null`
+   * when the server serves plain HTTP. Several certificates need denext's Deno from runtime
+   * 3.0.0-denext.3 with the unstable net APIs on. Absent in a manifest from before denext 4.10.3.
+   */
+  tls?: DeployServerTls | null;
+}
+
+/** {@linkcode DeployServer.tls}: the certificates the server serves HTTPS with. */
+export interface DeployServerTls {
+  /** One entry per certificate, in config order. */
+  certificates: DeployTlsCertificate[];
+}
+
+/** One certificate of {@linkcode DeployServerTls}. */
+export interface DeployTlsCertificate {
+  /** The host names it serves (exact, a one-label `*.` wildcard, or `"*"`). */
+  hostnames: string[];
+  /** The environment variable holding the certificate (chain) file's path. */
+  certFileEnv: string;
+  /** The environment variable holding the private key file's path. */
+  keyFileEnv: string;
 }
 
 /** A job under `jobs/`. */

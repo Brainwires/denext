@@ -61,8 +61,6 @@ async function stepViewSwitch(page: Page): Promise<void> {
 
 Deno.test({
   name: "e2e: SPA mode boots a client-only app on denext's createRoot (no SSR markup)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

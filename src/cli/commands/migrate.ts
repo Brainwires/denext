@@ -18,6 +18,7 @@ import {
   runCapacitorSteps,
 } from "../../build/migrate-capacitor.ts";
 import type { CommandRunner } from "../../build/mobile-capabilities.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /**
  * Print the codemod's planned source-import rewrites, then apply them — either
@@ -195,6 +196,14 @@ function reportRemix(m: NonNullable<MigrateResult["remix"]>): void {
 function reportJailScripts(j: NonNullable<MigrateResult["jailScripts"]>): void {
   const [first, ...rest] = j.lines;
   const mark = j.action === "written" || j.action === "manual" ? "⚠️ " : "▸";
+  console.log(`  ${mark} ${first}`);
+  for (const line of rest) console.log(`      ${line}`);
+}
+
+/** The pnpm / Bun patches migrate carried into deno.json (or left for review). */
+function reportPatches(p: NonNullable<MigrateResult["patches"]>): void {
+  const [first, ...rest] = p.lines;
+  const mark = p.action === "written" && p.review.length === 0 ? "▸" : "⚠️ ";
   console.log(`  ${mark} ${first}`);
   for (const line of rest) console.log(`      ${line}`);
 }
@@ -391,7 +400,7 @@ function expoNextSteps(e: NonNullable<MigrateResult["expo"]>, capacitor: boolean
     ...(e.missingPackages.length ? [`install ${e.missingPackages.join(" ")}`] : []),
     ...(capacitor ? [] : [
       "install @capacitor/core @capacitor/cli @capacitor/ios @capacitor/android (^8)",
-      "deno task export && npx cap add ios && npx cap add android",
+      "deno task export && npx --no cap add ios && npx --no cap add android",
     ]),
     ...(e.mobile.command ? [e.mobile.command] : []),
   ];
@@ -650,7 +659,8 @@ function reportCapacitor(c: CapacitorMigrateInfo): void {
 function reportCapacitorSteps(outcome: CapacitorStepsOutcome): void {
   for (const line of outcome.ran) console.log(`    ran: ${line}`);
   if (outcome.failed) {
-    console.log(`    ✗ failed (exit ${outcome.failed.code}): ${outcome.failed.line}`);
+    const { code, line, reason } = outcome.failed;
+    console.log(`    ✗ failed (${reason ?? `exit ${code}`}): ${line}`);
   }
   if (outcome.pending.length) {
     console.log("    still to run:");
@@ -658,11 +668,30 @@ function reportCapacitorSteps(outcome: CapacitorStepsOutcome): void {
   }
 }
 
+/**
+ * Whether migrate may run the Capacitor steps, each of which runs the project's own code (its
+ * package manager's hooks, its build, its Capacitor config): `--yes`, or a confirmed prompt on
+ * an interactive human run. A `--json` run never prompts, so it needs `--yes`.
+ */
+function allowCapacitorProjectCode(
+  info: CapacitorMigrateInfo,
+  yes: boolean,
+  json: boolean,
+): boolean {
+  if (yes) return true;
+  const runnable = info.steps.filter((s) => !s.skip);
+  if (runnable.length === 0 || json || !Deno.stdin.isTerminal()) return false;
+  console.log("\n  These steps run the project's own code:");
+  for (const s of runnable) console.log(`    ${s.line}    # ${s.projectCode}`);
+  return confirm("  Run them now? Only do this for a project you trust.");
+}
+
 /** Run the Capacitor steps (human mode prints as it goes; JSON mode returns the outcome). */
 async function capacitorSteps(
   r: MigrateResult,
   run: CommandRunner,
   json: boolean,
+  yes: boolean,
 ): Promise<CapacitorStepsOutcome | undefined> {
   if (!r.capacitor) {
     if (r.capacitorSkipped && !json) {
@@ -671,7 +700,8 @@ async function capacitorSteps(
     return undefined;
   }
   if (!json) reportCapacitor(r.capacitor);
-  const outcome = await runCapacitorSteps(r.capacitor.steps, run);
+  const allowProjectCode = allowCapacitorProjectCode(r.capacitor, yes, json);
+  const outcome = await runCapacitorSteps(r.capacitor.steps, run, { allowProjectCode });
   if (!json) reportCapacitorSteps(outcome);
   return outcome;
 }
@@ -793,90 +823,12 @@ export function terminalRunner(toStderr: boolean): CommandRunner {
 
 /**
  * The `migrate` command. `run` runs the commands `--enable-capacitor` plans (the package
- * install, the export and `npx cap add`); tests pass a recorder. By default they run with the
- * terminal attached.
+ * install, the export and `npx cap add`) once the user opted in to running the project's own
+ * code; tests pass a recorder. By default they run with the terminal attached.
  */
 export function createMigrateCommand(run?: CommandRunner): CommandSpec {
   return {
-    name: "migrate",
-    summary:
-      "Migrate a Next.js, Remix, React Router, TanStack Start, Vite, CRA, Expo, Fresh, Preact, " +
-      "Lustre or React app (config files)",
-    positionals: [{ name: "dir", help: "App directory to migrate (default: .)" }],
-    flags: [
-      {
-        name: "from",
-        type: "string",
-        valueName: "<framework>",
-        help: "Force source: next | remix | react-router | vite | cra | generic | expo | " +
-          "tanstack-start | fresh | preact | lustre",
-      },
-      {
-        name: "check",
-        type: "boolean",
-        help: "Report what migrate would change and what won't migrate; writes nothing " +
-          "(needs read access, plus --allow-run to evaluate next.config; add --json for the " +
-          "machine-readable report)",
-      },
-      { name: "desktop", type: "boolean", help: "Also scaffold a desktop entry" },
-      {
-        name: "enable-capacitor",
-        type: "boolean",
-        help: "Also add an iOS/Android Capacitor target: capacitor.config.ts, the mobile:* tasks " +
-          "and config keys, and install the pinned Capacitor 8 packages (SPA, App Router, Expo)",
-      },
-      {
-        name: "app-id",
-        type: "string",
-        valueName: "<id>",
-        help: "With --enable-capacitor: the app id (reverse-DNS, e.g. com.example.app); else " +
-          "derived from the desktop identifier or the package name",
-      },
-      {
-        name: "platform",
-        type: "string",
-        valueName: "<ios,android>",
-        help: "With --enable-capacitor: export, then run `npx cap add` for these platforms",
-      },
-      {
-        name: "backend",
-        type: "string",
-        valueName: "<url>",
-        help: "Backend URL for SPA proxy",
-      },
-      {
-        name: "proxy",
-        type: "string",
-        valueName: "<paths>",
-        help: "Comma-separated proxy prefixes",
-      },
-      {
-        name: "codemod",
-        type: "boolean",
-        help: "Also rewrite source imports to native denext",
-      },
-      {
-        name: "yes",
-        alias: "y",
-        type: "boolean",
-        help: "Apply the codemod without prompting",
-      },
-      {
-        name: "prisma-adapter",
-        type: "string",
-        valueName: "<auto|deno-sql|npm>",
-        help: "A Prisma app's SQLite / Postgres driver adapter: deno-sql (denext/prisma-adapter " +
-          "over Deno.SQL, no npm driver), npm (@prisma/adapter-better-sqlite3 / -pg), or auto " +
-          "(deno-sql when the runtime supports it; the default)",
-      },
-      {
-        name: "denext-local-path",
-        type: "string",
-        valueName: "<path>",
-        help: "Point the generated config at a LOCAL denext checkout (file://) instead of JSR — " +
-          "for testing an unreleased/dev denext against a real app",
-      },
-    ],
+    ...commandMeta("migrate"),
     run: async (ctx: CommandContext) => {
       const target = resolve(ctx.global.cwd ?? ctx.positionals[0] ?? ".");
       const json = ctx.global.json;
@@ -893,7 +845,12 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
         // Machine-readable: the result object only (no banner, no prompts). `--codemod`
         // applies with `--yes`, else reports its plan as a dry run. The Capacitor steps'
         // output goes to the terminal; their outcome is in the JSON.
-        const capacitorRun = await capacitorSteps(r, run ?? terminalRunner(true), true);
+        const capacitorRun = await capacitorSteps(
+          r,
+          run ?? terminalRunner(true),
+          true,
+          ctx.flags.yes === true,
+        );
         const codemod = ctx.flags.codemod === true
           ? await runCodemod(target, { write: ctx.flags.yes === true })
           : undefined;
@@ -907,7 +864,8 @@ export function createMigrateCommand(run?: CommandRunner): CommandSpec {
       if (r.prisma) reportPrisma(r.prisma);
       if (r.nextAuth) reportNextAuth(r.nextAuth);
       if (r.jailScripts) reportJailScripts(r.jailScripts);
-      await capacitorSteps(r, run ?? terminalRunner(false), false);
+      if (r.patches) reportPatches(r.patches);
+      await capacitorSteps(r, run ?? terminalRunner(false), false, ctx.flags.yes === true);
 
       if (r.denoJsonExists) {
         console.log(
@@ -947,14 +905,7 @@ async function pinMigratedEligible(target: string, r: MigrateResult, json: boole
 export const migrateCommand: CommandSpec = createMigrateCommand();
 
 export const codemodCommand: CommandSpec = {
-  name: "codemod",
-  summary: "(advanced) Rewrite next/*+react imports to native denext",
-  positionals: [{ name: "dir", help: "App directory (default: .)" }],
-  flags: [{
-    name: "write",
-    type: "boolean",
-    help: "Apply without prompting (CI)",
-  }],
+  ...commandMeta("codemod"),
   run: async (ctx) => {
     // The source-rewrite half of `migrate`, standalone (advanced). `--write` applies
     // without a prompt (CI); otherwise it confirms interactively.

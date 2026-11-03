@@ -23,6 +23,7 @@ import {
   OTA_SIGNING_KEY_ENV,
   verifyOtaManifest,
 } from "../src/build/ota-signing.ts";
+import { OTA_APP_ID_ENV } from "../src/build/ota-app-id.ts";
 import { symlinkDir } from "./helpers/symlink.ts";
 
 const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
@@ -88,11 +89,8 @@ async function exists(path: string): Promise<boolean> {
   return await Deno.stat(path).then(() => true, () => false);
 }
 
-const bundling = { sanitizeOps: false, sanitizeResources: false };
-
 Deno.test({
   name: "exportSpa: a re-export after a code change leaves exactly the new build in out/",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture();
   const out = join(dir, "out");
@@ -131,7 +129,6 @@ Deno.test({
 
 Deno.test({
   name: "exportSpa: a failed export leaves the previous out/ intact",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture();
   const out = join(dir, "out");
@@ -149,7 +146,6 @@ Deno.test({
 
 Deno.test({
   name: "exportSpa: spa.precompress: false ships no .gz siblings",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture(", precompress: false");
   try {
@@ -164,7 +160,6 @@ Deno.test({
 
 Deno.test({
   name: "exportSpa: spa.ota writes _denext/ota.json last, over every file but .gz siblings",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture(", ota: true");
   try {
@@ -194,6 +189,21 @@ Deno.test({
     const signed = JSON.parse(await Deno.readTextFile(join(out, "_denext", "ota.json")));
     assertEquals(signed.version, manifest.version);
     assert(await verifyOtaManifest(signed, publicKey), JSON.stringify(signed));
+    // No Capacitor appId / desktop.app.identifier here: a signed manifest that names no app.
+    assertEquals(signed.appId, undefined);
+    // DENEXT_OTA_APP_ID (what `denext mobile build` sets) names it, signed by `appSignature`.
+    Deno.env.set(OTA_SIGNING_KEY_ENV, privateKeyPem);
+    Deno.env.set(OTA_APP_ID_ENV, "com.example.app");
+    try {
+      await staticExport(dir);
+    } finally {
+      Deno.env.delete(OTA_SIGNING_KEY_ENV);
+      Deno.env.delete(OTA_APP_ID_ENV);
+    }
+    const bound = JSON.parse(await Deno.readTextFile(join(out, "_denext", "ota.json")));
+    assertEquals(bound.appId, "com.example.app");
+    assert(typeof bound.appSignature === "string");
+    assert(await verifyOtaManifest(bound, publicKey), JSON.stringify(bound));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -201,7 +211,6 @@ Deno.test({
 
 Deno.test({
   name: "exportSpa: no _denext/ota.json unless spa.ota is on",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture();
   try {
@@ -318,7 +327,6 @@ Deno.test({
 Deno.test({
   name: 'staticExport: outDir ".GIT" is refused and .git survives (case-insensitive FS)',
   ignore: !CASE_INSENSITIVE,
-  ...bundling,
 }, async () => {
   const dir = await spaFixture();
   try {
@@ -394,7 +402,6 @@ async function pagesFixture(): Promise<string> {
 
 Deno.test({
   name: "staticExport (Pages Router): an unsafe outDir is refused before anything is removed",
-  ...bundling,
 }, async () => {
   const dir = await pagesFixture();
   try {
@@ -419,7 +426,6 @@ Deno.test({
 
 Deno.test({
   name: "staticExport (Pages Router): out/ is replaced through the staging swap",
-  ...bundling,
 }, async () => {
   const dir = await pagesFixture();
   const out = join(dir, "out");
@@ -440,7 +446,6 @@ Deno.test({
 
 Deno.test({
   name: "staticExport: an unsafe outDir is refused before anything is written or removed",
-  ...bundling,
 }, async () => {
   const dir = await spaFixture();
   const sibling = `${dir}-sibling`;

@@ -113,12 +113,8 @@ async function checkLiveView(compat: boolean): Promise<void> {
 
 Deno.test({
   name: "e2e: a defineLiveView counter mounts over Live and takes clicks (native App Router)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, () => checkLiveView(false));
 
 Deno.test({
   name: "e2e: a defineLiveView counter mounts over Live and takes clicks (compatibilityMode)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, () => checkLiveView(true));

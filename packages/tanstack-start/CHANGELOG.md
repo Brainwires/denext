@@ -3,6 +3,12 @@
 All notable changes to this package are documented here. It follows its own semver, independent
 of `@denext/denext`.
 
+## [Unreleased]
+
+- **A mocked import's runtime message lists the import trace** (`denext dev`, the browser): the
+  app modules from the entry to the importer, as Start's dev server builds it from the imports
+  resolved so far. A denied file's self-denial mock lists the trace to the file too.
+
 ## [0.2.0] - 2026-10-19
 
 - Requires `@denext/denext` ^4.4.0 (the plugin-kit's `servesRoutes`, `addDeployRoutes` and

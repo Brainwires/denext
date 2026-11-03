@@ -140,8 +140,6 @@ async function spaApp(): Promise<string> {
 for (const [platform, want] of [["ios", "IOS_LABEL"], ["web", "WEB_LABEL"]] as const) {
   Deno.test({
     name: `SPA compat export --platform ${platform}: a tsconfig paths import bundles ${want}`,
-    sanitizeResources: false,
-    sanitizeOps: false,
   }, async () => {
     const dir = await spaApp();
     try {

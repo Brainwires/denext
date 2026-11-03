@@ -127,7 +127,9 @@
       "env": "DENEXT_SHUTDOWN_DRAIN_MS"
     },
     "buildDir": ".denext",
-    "idleTrim": true
+    "idleTrim": true,
+    "limits": [],
+    "tls": null
   },
   "jobs": [
     {
@@ -168,6 +170,14 @@
     },
     {
       "name": "DENEXT_ACTION_ID_SECRET",
+      "required": false,
+      "public": false,
+      "sources": [
+        "stack"
+      ]
+    },
+    {
+      "name": "DENEXT_CRASH_REPORT_URL",
       "required": false,
       "public": false,
       "sources": [

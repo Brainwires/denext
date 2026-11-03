@@ -19,7 +19,9 @@ import {
 import { composeMiddleware, type MiddlewareFunction } from "../src/compat/remix/middleware.ts";
 import {
   bindAction,
+  data,
   redirect,
+  remixRequestMiddleware,
   type RouteMiddleware,
   runActionResponse,
   runLoaderOnce,
@@ -253,4 +255,159 @@ Deno.test("middleware: a thrown redirect stops the loader and the action", async
   const posted = inRequest(() => action(new FormData()));
   assertInstanceOf(await assertRejects(() => posted.result), RedirectError);
   assertEquals(acted, false);
+});
+
+// The page request middleware: the chain runs around the whole page request (see
+// `page-request-middleware.ts`), and the render's loaders don't run it again.
+Deno.test("request middleware: next() is the render; a throw before next() fails that route inward", async () => {
+  const order: string[] = [];
+  const chain: RouteMiddleware[] = [
+    {
+      id: "root",
+      middleware: [async (_args, next) => {
+        order.push("root");
+        const res = await next();
+        res.headers.set("x-root", String(res.status));
+        return res;
+      }],
+    },
+    {
+      id: "routes/page",
+      middleware: [() => {
+        order.push("page");
+        throw new Error("page middleware failed");
+      }],
+    },
+  ];
+  const { result } = inRequest(() =>
+    remixRequestMiddleware(chain)({
+      request: new Request("http://localhost/x"),
+      params: {},
+      recover: () => Promise.resolve(new Response("recovered", { status: 500 })),
+      render: async () => {
+        // The render's loaders: the root's runs, the failing route's rethrows its error.
+        const parent = await runLoaderOnce("root", () => "root data", {}, [chain[0]]);
+        const child = await runLoaderOnce("routes/page", () => "never", {}, chain).catch((e) =>
+          (e as Error).message
+        );
+        return new Response(`${parent}|${child}`, { status: 500 });
+      },
+    })
+  );
+  const res = await result;
+  assertEquals(await res.text(), "root data|page middleware failed");
+  assertEquals(res.headers.get("x-root"), "500", "the ancestor's next() got the render");
+  assertEquals(order, ["root", "page"], "each middleware ran once");
+});
+
+Deno.test("request middleware: a throw after next() answers with the thrown Response or the error response", async () => {
+  const run = (thrown: unknown) => {
+    const chain: RouteMiddleware[] = [{
+      id: "root",
+      middleware: [async (_args, next) => {
+        await next();
+        throw thrown;
+      }],
+    }];
+    return inRequest(() =>
+      remixRequestMiddleware(chain)({
+        request: new Request("http://localhost/x"),
+        params: {},
+        recover: (err) => Promise.resolve(new Response(String(err), { status: 500 })),
+        render: () => Promise.resolve(new Response("page")),
+      })
+    ).result;
+  };
+  const answered = await run(new Response("teapot", { status: 418 }));
+  assertEquals(answered.status, 418);
+  assertEquals(await answered.text(), "teapot");
+  const failed = await run(new Error("late"));
+  assertEquals(failed.status, 500);
+  assertEquals(await failed.text(), "Error: late");
+
+  const twice: RouteMiddleware[] = [{
+    id: "root",
+    middleware: [async (_args, next) => {
+      await next();
+      return await next();
+    }],
+  }];
+  const res = await inRequest(() =>
+    remixRequestMiddleware(twice)({
+      request: new Request("http://localhost/x"),
+      params: {},
+      recover: (err) => Promise.resolve(new Response((err as Error).message, { status: 500 })),
+      render: () => Promise.resolve(new Response("page")),
+    })
+  ).result;
+  assertEquals(await res.text(), "You may only call `next()` once per middleware");
+});
+
+Deno.test("middleware: around a Server Action next() is the action's response", async () => {
+  const headers: RouteMiddleware[] = [{
+    id: "root",
+    middleware: [async (_args, next) => {
+      const res = await next();
+      res.headers.set("x-action-status", String(res.status));
+      return res;
+    }],
+  }];
+  const created = bindAction(() => data({ id: 1 }, { status: 201 }), "routes/x", {}, headers)!;
+  const posted = inRequest(() => created(new FormData()));
+  assertEquals(await posted.result, { id: 1 });
+  assertEquals(posted.ctx.outgoingHeaders.get("x-action-status"), "201");
+  assertEquals(posted.ctx.responseStatus, 201);
+
+  const plain = bindAction(() => ({ ok: true }), "routes/x", {}, headers)!;
+  const plainPost = inRequest(() => plain(new FormData()));
+  assertEquals(await plainPost.result, { ok: true });
+  assertEquals(plainPost.ctx.responseStatus, undefined, "a plain value sets no status");
+
+  const returned = bindAction(() => Response.json({ via: "response" }), "routes/x", {}, headers)!;
+  assertEquals(await inRequest(() => returned(new FormData())).result, { via: "response" });
+
+  // A middleware answering with its own Response: the caller gets it as the action's result.
+  const replaced = bindAction(() => ({ ok: true }), "routes/x", {}, [{
+    id: "root",
+    middleware: [() => Response.json({ replaced: true })],
+  }])!;
+  assertEquals(await inRequest(() => replaced(new FormData())).result, { replaced: true });
+
+  // A Response the action throws reaches next(), then answers as a thrown one does.
+  let seen = 0;
+  const thrower = bindAction(
+    () => {
+      throw new Response("gone", { status: 410 });
+    },
+    "routes/x",
+    {},
+    [{
+      id: "root",
+      middleware: [async (_args, next) => {
+        seen = (await next()).status;
+      }],
+    }],
+  )!;
+  const err = await assertRejects(() => inRequest(() => thrower(new FormData())).result);
+  assertEquals((err as { status: number }).status, 410);
+  assertEquals(seen, 410);
+});
+
+Deno.test("middleware: a resource route's thrown Response reaches next()", async () => {
+  const res = await runLoaderResponse(
+    () => {
+      throw new Response("nope", { status: 404 });
+    },
+    new Request("http://localhost/r"),
+    [{
+      id: "root",
+      middleware: [async (_args, next) => {
+        const inner = await next();
+        inner.headers.set("x-seen", String(inner.status));
+        return inner;
+      }],
+    }],
+  );
+  assertEquals(res.status, 404);
+  assertEquals(res.headers.get("x-seen"), "404");
 });

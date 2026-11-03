@@ -75,6 +75,8 @@ class FumadocsHost {
   #nextId = 1;
   #idle: ReturnType<typeof setTimeout> | undefined;
   #stderr = "";
+  /** Settles once the current child has exited and its output has been read to the end. */
+  #done: Promise<void> = Promise.resolve();
 
   constructor(readonly install: FumadocsMdx) {}
 
@@ -90,18 +92,25 @@ class FumadocsHost {
     });
   }
 
-  /** Stop the child (pending requests reject). */
-  dispose(): void {
+  /**
+   * Stop the child (pending requests reject). Resolves once it has exited and its output pipes
+   * are drained, so a caller that removes the app directory next (Windows refuses one a process
+   * still holds), or a test that ends, finds nothing left running.
+   */
+  dispose(): Promise<void> {
     clearTimeout(this.#idle);
     const child = this.#child;
     this.#child = null;
-    if (!child) return;
+    if (!child) return this.#done;
     this.#writer?.close().catch(() => {});
     this.#writer = null;
+    // The idle child is unref'd; waiting for its exit must keep the event loop alive.
+    child.ref();
     try {
       child.kill();
     } catch { /* already gone */ }
     for (const [id] of this.#pending) this.#fail(id, new Error("fumadocs-mdx host disposed"));
+    return this.#done;
   }
 
   #ensureChild(): void {
@@ -129,10 +138,11 @@ class FumadocsHost {
     this.#child = child;
     this.#writer = child.stdin.getWriter();
     this.#stderr = "";
-    void this.#readLines(child.stdout, (line) => this.#onLine(line));
-    void this.#readLines(child.stderr, (line) => {
+    const stdout = this.#readLines(child.stdout, (line) => this.#onLine(line));
+    const stderr = this.#readLines(child.stderr, (line) => {
       this.#stderr = (this.#stderr + line + "\n").slice(-4000);
     });
+    this.#done = Promise.all([child.status.catch(() => {}), stdout, stderr]).then(() => {});
     child.status.then(() => {
       if (this.#child !== child) return;
       this.#child = null;
@@ -185,7 +195,7 @@ class FumadocsHost {
   #touch(): void {
     clearTimeout(this.#idle);
     if (this.#pending.size > 0) return;
-    const timer = setTimeout(() => this.dispose(), IDLE_MS);
+    const timer = setTimeout(() => void this.dispose(), IDLE_MS);
     this.#idle = timer;
     Deno.unrefTimer(timer);
   }
@@ -203,10 +213,11 @@ function fumadocsHost(install: FumadocsMdx): FumadocsHost {
   return host;
 }
 
-/** Stop every compile host (build end, dev-server teardown, tests). */
-export function disposeFumadocsHosts(): void {
-  for (const host of hosts.values()) host.dispose();
+/** Stop every compile host (build end, dev-server teardown, tests); resolves once they exited. */
+export async function disposeFumadocsHosts(): Promise<void> {
+  const stopping = [...hosts.values()].map((host) => host.dispose());
   hosts.clear();
+  await Promise.all(stopping);
 }
 
 /** Import paths fumadocs' loaders own: MDX (with or without a query) and queried meta files. */

@@ -42,6 +42,7 @@ import {
   rootMdPage,
   VNodeMarkdown,
 } from "./lib/docs-corpus.ts";
+import type { ApiMember } from "./lib/api-signature.ts";
 import { CORPUS_MODULE } from "./lib/docs-corpus-package.ts";
 import { brotliBase64 } from "./lib/pack-texts.ts";
 
@@ -63,6 +64,9 @@ interface RefSymbol {
   returns: string;
   examples?: string[];
   denextOnly: boolean;
+  members?: ApiMember[];
+  extends?: { type: string; ref?: string }[];
+  implements?: { type: string; ref?: string }[];
 }
 interface RefGroup {
   module: string;
@@ -82,6 +86,33 @@ interface ApiChunk {
 /** `denext/server` → `denext-server` (matches site/lib/api.ts). */
 const moduleSlug = (m: string) => m.replace(/\//g, "-");
 
+/** An `extends` / `implements` entry, with the `denext_read_docs` reference of a documented parent. */
+function parentMarkdown(p: { type: string; ref?: string }): string {
+  return p.ref ? `\`${p.type}\` (\`api:${p.ref}\`)` : `\`${p.type}\``;
+}
+
+/** One interface or class member as a list item; the continuation lines stay inside the item. */
+function memberMarkdown(m: ApiMember): string {
+  const tags = [
+    ...(m.params ?? []).filter((p) => p.doc).map((p) => `\`${p.name}\` — ${p.doc}`),
+    ...(m.returns ? [`Returns ${m.returns}`] : []),
+  ];
+  const body = [m.doc?.trim(), ...tags].filter(Boolean).join("\n\n").replace(/\n/g, "\n  ");
+  return `- \`${m.signature}\`${body ? ` — ${body}` : ""}`;
+}
+
+/** An interface's or class's parents and members as Markdown blocks; none for any other symbol. */
+function membersMarkdown(s: RefSymbol): string[] {
+  const parents = (s.extends ?? []).map(parentMarkdown).join(", ");
+  const implemented = (s.implements ?? []).map(parentMarkdown).join(", ");
+  const members = (s.members ?? []).map(memberMarkdown).join("\n");
+  return [
+    ...(parents ? [`**Inherits from** ${parents}`] : []),
+    ...(implemented ? [`**Implements** ${implemented}`] : []),
+    ...(members ? [`**Members**\n\n${members}`] : []),
+  ];
+}
+
 /** An API symbol's full docs as Markdown (signature, prose, params, returns, examples). */
 function symbolMarkdown(module: string, s: RefSymbol): string {
   const out = [`\`\`\`ts\n${s.signature}\n\`\`\``];
@@ -92,6 +123,7 @@ function symbolMarkdown(module: string, s: RefSymbol): string {
     out.push("**Parameters**\n\n" + params.map((p) => `- \`${p.name}\` — ${p.doc}`).join("\n"));
   }
   if (s.returns) out.push(`**Returns** ${s.returns}`);
+  out.push(...membersMarkdown(s));
   for (const ex of s.examples ?? []) out.push(ex.includes("```") ? ex : `\`\`\`ts\n${ex}\n\`\`\``);
   return `# ${s.name} (${s.kind}, \`${module}\`)\n\n${out.join("\n\n")}`;
 }

@@ -22,6 +22,7 @@
  * @module
  */
 
+import { withOwnModules } from "../../build/windows-powershell.ts";
 import { type DesktopCapability, DesktopCapError } from "../extension.ts";
 import { browserLaunchArgs } from "../auth-session-runtime.ts";
 import { confineWithinRoots, refuseReservedDataPath } from "../path-scope.ts";
@@ -210,14 +211,17 @@ export function shellPathCommand(
     if (action === "reveal") return ["explorer.exe", [`/select,${path}`]];
     // NOT argv: `powershell.exe -Command` joins every trailing argument into the command TEXT, so
     // a path such as `…\a;Start-Process calc` would run. The path arrives in SHELL_PATH_ENV
-    // (see shellPathEnv), which the script reads as data.
+    // (see shellPathEnv), which the script reads as data. `Add-Type` loads from Windows
+    // PowerShell's own modules, whatever module path it inherited (withOwnModules).
     return [
       "powershell.exe",
       [
         "-NoProfile",
         "-Command",
-        `& { $p = $env:${SHELL_PATH_ENV}; Add-Type -AssemblyName Microsoft.VisualBasic; ` +
-        "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p,'OnlyErrorDialogs','SendToRecycleBin') }",
+        withOwnModules(
+          `& { $p = $env:${SHELL_PATH_ENV}; Add-Type -AssemblyName Microsoft.VisualBasic; ` +
+            "[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($p,'OnlyErrorDialogs','SendToRecycleBin') }",
+        ),
       ],
     ];
   }

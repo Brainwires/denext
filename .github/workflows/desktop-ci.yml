@@ -65,8 +65,10 @@ on:
       - "src/build/deno-cache-dir.ts"
       - "src/build/deno-toolchain.ts"
       - "src/build/deno-toolchain-pin.json"
+      - "src/build/runtime-revocation*.ts" # the revoked-runtimes list the runtime pins are checked against
       - "src/build/linux-libc.ts"
       - "src/build/deno-version.ts"
+      - "src/build/stock-deprecation.ts"
       - "src/build/net-permissions.ts"
       - "src/build/file-lock.ts"
       - "src/build/project-locks.ts"
@@ -85,12 +87,16 @@ on:
       - "src/build/precompress.ts"
       - "src/build/bundle.ts"
       - "src/build/exited-output.ts"
+      - "scripts/deno-doc.ts" # bounded `deno doc` / `deno info` children
+      - "src/build/child-probe.ts" # their stall probe (and the build's, under DENEXT_CHILD_PROBE)
+      - "src/build/windows-powershell.ts"
       # The vendored esbuild API (the sidecar bundler) and the esbuild the toolchain ships.
       - "src/build/esbuild/**"
       - "src/build/paths.ts"
       - "src/build/json-edit.ts"
       - "src/build/config-edit.ts"
       - "src/build/config-files.ts"
+      - "src/build/config-static.ts"
       - "src/build/workspace-imports.ts"
       - "src/build/patch-diff.ts"
       - "src/build/css-config-guard.ts"
@@ -100,6 +106,13 @@ on:
       - "src/build/doctor-format.ts"
       - "src/build/spa/shared.ts"
       - "src/build/react-native-desktop.ts"
+      # The pack readers the desktop runtime graph must keep lazy (tests/desktop-runtime-graph.test.ts).
+      - "src/build/packed-text.ts"
+      - "scripts/lib/pack-texts.ts"
+      # The scaffolded packaging scripts ship in the docs-corpus pack (scaffold.ts reads them).
+      - "src/build/native-templates.packed.ts"
+      - "src/build/native-templates/desktop-package-scripts.ts"
+      - "packages/docs-corpus/native-templates.ts"
       - "src/cli/commands/desktop*.ts"
       - "src/cli/commands/doctor.ts"
       - "src/client/live-client.ts"
@@ -113,6 +126,7 @@ on:
       - "src/build/dev-server.ts"
       - "src/build/react-native.ts"
       - "src/cli/command.ts"
+      - "src/cli/command-meta.ts"
       - "src/cli/commands/mobile-build.ts"
       - "src/cli/commands/toolchain.ts"
       - "src/cli/dev-attach.ts"

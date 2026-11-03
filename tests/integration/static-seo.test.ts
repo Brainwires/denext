@@ -2,7 +2,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { join } from "@std/path";
 import { renderDocument } from "../../src/server/document.ts";
 import { mergeMetadata } from "../../src/server/render-page.ts";
-import { createApp } from "../../src/server/app.ts";
+import { createApp } from "../helpers/released-app.ts";
 import { parsePattern } from "../../src/router/segments.ts";
 import { h } from "../../src/jsx/jsx-runtime.ts";
 import type { RouteManifest } from "../../src/router/manifest.ts";

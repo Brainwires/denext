@@ -25,6 +25,7 @@ import { compatModuleList } from "../src/build/pipeline-shared.ts";
 import { removeTempDirSync } from "./helpers/temp.ts";
 import { withSubstDrive } from "./helpers/subst-drive.ts";
 import { watchTests } from "./helpers/watchdog.ts";
+import "./helpers/esbuild-after-each.ts";
 
 // Builds in this process: a stalled one fails its test instead of holding the CI job.
 watchTests();
@@ -274,8 +275,6 @@ Deno.test("packageNameOfPath: the package a node_modules file belongs to", () =>
 
 Deno.test({
   name: "npm boundary, nodeResolve: false: the server bundle's island is the walk's module",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-npm-boundary-nr-" }));
   try {

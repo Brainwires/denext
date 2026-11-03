@@ -281,6 +281,9 @@ function Save-Download([string]$uri, [string]$outFile) {
 # no attestation and skips this.
 function Assert-Attestation([string]$zip, [string]$asset, [string]$repo) {
   if ($env:DENEXT_ARTIFACTS) { return }
+  # `gh` writes its refusals to stderr; under 'Stop' Windows PowerShell 5.1 turns that into a
+  # terminating NativeCommandError (even redirected), so the exit codes below never decide.
+  $ErrorActionPreference = 'Continue'
   $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
   $signedIn = $false
   if ($gh) {

@@ -10,7 +10,10 @@ name: Native plugins
 # ci.yml.
 #
 #   android  a debug .apk (Gradle)
-#   ios      an unsigned Release build (xcodebuild; no certificates on the runner)
+#   ios      an unsigned Release build (xcodebuild; no certificates on the runner), then the
+#            same build through denext's managed fastlane on Apple silicon: `denext toolchain
+#            install --with fastlane` (the pinned portable Ruby, the gems' C extensions built
+#            with the runner's Xcode clang) and `denext fastlane ios build unsigned:true`
 #
 # Runs when a template or an installer changes on `development` (or on a `ci/*` branch), and on
 # manual dispatch. There is no scheduled run. A release is gated on it: `deno task release` refuses
@@ -24,6 +27,8 @@ on:
       - "src/build/*native-templates.ts"
       - "src/build/native-templates.packed.ts"
       - "src/build/mobile-*.ts"
+      - "src/build/fastlane-*"
+      - "src/cli/commands/fastlane.ts"
       - ".github/workflows/native-plugins.yml"
   workflow_dispatch:
     inputs:
@@ -115,9 +120,17 @@ jobs:
         with:
           path: |
             ~/Library/Caches/deno
+            !~/Library/Caches/deno/denext-deno/fastlane
             examples/mobile/.denext/mobile-build/ios/DerivedData/SourcePackages
           key: ${{ runner.os }}-native-plugins-${{ hashFiles('deno.lock', 'examples/mobile/package-lock.json') }}
           restore-keys: ${{ runner.os }}-native-plugins-
+      # denext's managed fastlane (the portable Ruby + the built gems), keyed on its pin as the
+      # workflow `denext mobile add fastlane --ci` writes caches it. A pin change installs afresh.
+      - name: Cache the managed fastlane
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ~/Library/Caches/deno/denext-deno/fastlane
+          key: denext-fastlane-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('src/build/fastlane-toolchain-pin.json') }}
       - name: Install the Capacitor packages
         run: npm ci --no-audit --no-fund
       - name: Export the UI
@@ -127,3 +140,35 @@ jobs:
       # Unsigned: no certificate or provisioning profile on the runner.
       - name: Build with the plugins (unsigned Release)
         run: $DENEXT mobile build ios --release --unsigned --skip-export
+      # The managed fastlane on Apple silicon (macos-15 is arm64): install it ahead of time, then
+      # run the iOS `build` lane on this project. unsigned:true: no match, certificate or Apple
+      # account on the runner. The lane runs the CLI from this checkout ($DENEXT_CLI, absolute:
+      # fastlane runs `sh` from the fastlane/ folder). Every step fails the job on a non-zero exit.
+      - name: The toolchain the fastlane install sees
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64 || { echo "::error::expected an arm64 runner, got $(uname -m)"; exit 1; }
+          xcode-select -p
+          xcodebuild -version
+          xcrun clang --version
+          xcrun --show-sdk-path
+      - name: Install the managed fastlane (denext toolchain install --with fastlane)
+        run: $DENEXT toolchain install --with fastlane
+      - name: The managed Ruby is the arm64 build
+        run: |
+          set -euo pipefail
+          ruby=$(ls -d ~/Library/Caches/deno/denext-deno/fastlane/*/darwin-aarch64/ruby/bin/ruby)
+          file "$ruby"
+          file "$ruby" | grep -q arm64 || { echo "::error::$ruby is not an arm64 binary"; exit 1; }
+          "$ruby" -e 'puts RUBY_DESCRIPTION; require "openssl"; puts OpenSSL::OPENSSL_VERSION'
+      - name: Add the fastlane files
+        run: $DENEXT mobile add fastlane
+      - name: denext fastlane ios build (unsigned)
+        env:
+          DENEXT_CLI: deno run -A --node-modules-dir=none ${{ github.workspace }}/cli.ts
+        run: |
+          set -euo pipefail
+          # The build step above left its .ipa here: only the lane's own counts.
+          rm -rf dist/mobile/ios
+          $DENEXT fastlane ios build unsigned:true skip_export:true
+          ls -l dist/mobile/ios/*-release-unsigned.ipa

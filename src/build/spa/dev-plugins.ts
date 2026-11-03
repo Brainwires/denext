@@ -14,6 +14,7 @@ import {
   runPluginTeardown,
 } from "../../plugin/mod.ts";
 import { withBuildDirLock } from "../project-locks.ts";
+import { outsideLockTasks } from "../file-lock.ts";
 import { isSelfWrite } from "../self-writes.ts";
 import { hasPathSegment, inNodeModules } from "../path-segments.ts";
 import { broadcastFrame, invalidateBuilds, type SpaDevState } from "./dev-state.ts";
@@ -73,7 +74,8 @@ function watchPrepareInputs(st: SpaDevState): void {
   const ignored = (p: string) =>
     p.startsWith(st.paths.outDir) || inNodeModules(p) || hasPathSegment(p, ".git") ||
     isSelfWrite(p);
-  watchBatches(watcher, ignored, (batch) => void regenerate(st, batch));
+  // Each batch is its own rebuild, outside every lock task (see `outsideLockTasks`).
+  watchBatches(watcher, ignored, (batch) => void outsideLockTasks(() => regenerate(st, batch)));
 }
 
 /** Re-run the prepare steps `batch` matches; when one ran, rebuild and reload onto its output. */

@@ -15,6 +15,7 @@ import {
   withDevServerUrl,
   withLocalNetworkAccess,
 } from "../src/build/mobile-dev.ts";
+import { installFakeCapacitorCli } from "./_capacitor-cli.ts";
 
 const URL_ = "http://192.168.1.5:3000";
 
@@ -87,6 +88,7 @@ async function project(): Promise<{ root: string; file: string }> {
   const root = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-mobile-dev-" }));
   const file = join(root, "capacitor.config.ts");
   await Deno.writeTextFile(file, TS_TEMPLATE);
+  await installFakeCapacitorCli(root);
   return { root, file };
 }
 
@@ -123,8 +125,8 @@ Deno.test("mobile dev writes server.url for the session, then restores it and re
     const f = fakes(root, file);
     await runMobileDev({ cwd: root }, f.deps);
     assertEquals(f.calls.map((c) => [c.cmd, ...c.args, c.cwd]), [
-      ["npx", "cap", "copy", root],
-      ["npx", "cap", "copy", root],
+      ["npx", "--no", "cap", "copy", root],
+      ["npx", "--no", "cap", "copy", root],
     ]);
     assertStringIncludes(f.seen[0], `url: "${URL_}"`, "the session copy points at the server");
     assertEquals(f.seen[1], TS_TEMPLATE, "the closing copy pushes the original config");
@@ -500,6 +502,7 @@ async function nativeProject(
     await Deno.mkdir(join(copy, ".."), { recursive: true });
     await Deno.writeTextFile(copy, JSON.stringify(config, null, "\t"));
   }
+  await installFakeCapacitorCli(root);
   return { root, file, copies };
 }
 
@@ -662,10 +665,16 @@ Deno.test("--restore logs one line per file changed, re-copies, and notes a fail
       `  restored ${file}`,
       `  scrubbed the dev server URL from ${copies[0]}`,
     ]);
-    assertStringIncludes(lines[2], "note: `npx cap copy` exited with 1");
+    assertStringIncludes(lines[2], "note: `npx --no cap copy` exited with 1");
     assertStringIncludes(lines[2], "run your export and `npx cap copy` before a release build");
     assertEquals(lines.length, 3, "the clean Android copy is not reported");
-    assertEquals(calls.map((c) => [c.cmd, ...c.args, c.cwd]), [["npx", "cap", "copy", root]]);
+    assertEquals(calls.map((c) => [c.cmd, ...c.args, c.cwd]), [[
+      "npx",
+      "--no",
+      "cap",
+      "copy",
+      root,
+    ]]);
     assertEquals(await Deno.readTextFile(file), original);
     assertEquals(await Deno.readTextFile(copies[1]), clean);
 

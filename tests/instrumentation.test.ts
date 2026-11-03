@@ -7,7 +7,7 @@ import {
   setNextRuntimeEnv,
 } from "../src/server/instrumentation.ts";
 import { resolveProject } from "../src/build/paths.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { actionEndpoint } from "../src/runtime/server-action.ts";
 import { serverAction } from "../src/runtime/action-stub.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";

@@ -123,7 +123,6 @@ async function seed(sql: SqlClient): Promise<void> {
 Deno.test({
   name: `db-admin on a real Postgres: catalog, paging, RLS preview, writes, guards${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     try {
@@ -304,7 +303,6 @@ Deno.test({
   name:
     `db-admin on a real Postgres: "Read as" blanks legacy claim settings left on the login role${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     const role = new URL(env.url).username;
@@ -336,7 +334,6 @@ Deno.test({
 Deno.test({
   name: `db-admin on a real Postgres: migrations and auth users${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     const dir = await Deno.makeTempDir({ prefix: "dnx_dbadmin_" });
@@ -409,7 +406,6 @@ Deno.test({
 Deno.test({
   name: `db-admin on a real Postgres: the SQL editor's two transactions${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     try {
@@ -462,7 +458,6 @@ Deno.test({
   name:
     `db-admin on a real Postgres: create, ban, unban and a new password, as auth reads them${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     try {
@@ -534,7 +529,6 @@ Deno.test({
 Deno.test({
   name: `db-admin on a real Postgres: realtime's publication opt-in and trigger status${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     try {
@@ -609,7 +603,6 @@ Deno.test({
 Deno.test({
   name: `the real denext db-admin child: DATABASE_URL from .env, password masked${label}`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
   async fn() {
     const env = await environment();
     const dir = await Deno.makeTempDir({ prefix: "dnx_dbadmin_child_" });

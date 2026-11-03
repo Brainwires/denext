@@ -235,8 +235,6 @@ const until = async (done: () => boolean, ms = 15_000) => {
 
 Deno.test({
   name: "logical source: a temporary slot, read in batches, decoded, dropped on stop",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const rel = relation(100, "public", "notes", [["id", 20], ["body", 25]]);
     const { sql, conns } = slotClient({
@@ -260,8 +258,6 @@ Deno.test({
 
 Deno.test({
   name: "logical source: refusals — no reserve(), wal_level, a slot that cannot be made",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     await assertRejects(
       () => source(slotClient({ noReserve: true }).sql, () => {}).start(),
@@ -287,8 +283,6 @@ Deno.test({
 
 Deno.test({
   name: "logical source: a failed read reopens the slot on a new connection and resyncs",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     let fail = 1;
     const { sql, conns } = slotClient({ failRead: () => fail-- > 0 });

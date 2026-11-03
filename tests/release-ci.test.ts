@@ -19,6 +19,7 @@ import {
   releaseCiVerdict,
   unmetCiJobs,
 } from "../scripts/release-ci.ts";
+import { revocationResignDue } from "../src/build/runtime-revocations.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 
@@ -470,4 +471,17 @@ Deno.test("CI workflows: the badge check runs on the dispatched run a release co
   const step = ci.slice(ci.indexOf("- name: Test-count badge is current"));
   const cond = step.slice(step.indexOf("if:"), step.indexOf("run:"));
   assertStringIncludes(cond, "workflow_dispatch");
+});
+
+Deno.test("release step 7: the revoked-runtimes list is re-signed when fewer than 10 days remain", () => {
+  const now = Date.parse("2026-10-30T00:00:00Z");
+  const day = 86_400_000;
+  const expiring = (days: number) => ({ expiresAt: new Date(now + days * day).toISOString() });
+  // A fresh 21-day list is left alone until its last 10 days.
+  assertEquals(revocationResignDue(expiring(21), now), false);
+  assertEquals(revocationResignDue(expiring(10), now), false);
+  assert(revocationResignDue(expiring(10 - 1 / 24), now));
+  assert(revocationResignDue(expiring(1), now));
+  // Lapsed (the releases paused): re-signed on the next one.
+  assert(revocationResignDue(expiring(-5), now));
 });

@@ -5,7 +5,7 @@
 // are the files the real run would create, modify, move or delete, and the findings come from
 // the same result object the real run prints. Nothing is written, so it needs read access plus
 // run access for the `next.config.*` evaluator, which is a `deno` subprocess
-// (`deno run --allow-read --allow-env --allow-run …/cli migrate --check`). Without
+// (`deno run --no-config --allow-read --allow-env --allow-run …/cli migrate --check`). Without
 // `--allow-run` the config is reported as not evaluated, not as unportable.
 
 import { VERSION } from "../../mod.ts";
@@ -369,8 +369,8 @@ function capacitorFindings(r: MigrateResult): { wont: MigrateFinding[]; review: 
 }
 
 /**
- * The lifecycle-script jail exceptions to review: each one written into deno.json (it widens the
- * jail for that package) or left for the user to add.
+ * The lifecycle-script jail exceptions to review: each one written into deno.json (or a package.json
+ * project's `"deno"` object; it widens the jail for that package) or left for the user to add.
  */
 function jailFindings(r: MigrateResult): MigrateFinding[] {
   const j = r.jailScripts;
@@ -379,10 +379,29 @@ function jailFindings(r: MigrateResult): MigrateFinding[] {
     item: `lifecycle-script jail: ${req.entry.name}`,
     reason:
       (j.action === "written"
-        ? `exception ${JSON.stringify(req.exception)} written to deno.json`
-        : `add the exception ${JSON.stringify(req.exception)} to deno.json by hand`) +
+        ? `exception ${JSON.stringify(req.exception)} written to ${j.home}`
+        : `add the exception ${JSON.stringify(req.exception)} to ${j.home} by hand`) +
       `: ${req.entry.reason}`,
   }));
+}
+
+/**
+ * The pnpm / Bun patches: each one carried into deno.json's `patchedDependencies` (or to add by
+ * hand), and each one the runtime can't apply.
+ */
+function patchFindings(r: MigrateResult): MigrateFinding[] {
+  const p = r.patches;
+  if (!p) return [];
+  return [
+    ...p.carried.map((c) => ({
+      item: `npm patch: ${c.key}`,
+      reason: `${c.from} copied to ${c.to}${
+        p.action === "manual" ? "; add it to deno.json's patchedDependencies by hand" : " and " +
+          "registered in deno.json's patchedDependencies (the runtime applies it on install)"
+      }`,
+    })),
+    ...p.review.map((c) => ({ item: `npm patch: ${c.key}`, reason: `${c.from}: ${c.reason}` })),
+  ];
 }
 
 /** Every finding for a successful dry run, split into won't-migrate and review. */
@@ -411,6 +430,7 @@ function findings(r: MigrateResult): { wont: MigrateFinding[]; review: MigrateFi
       ...appIconFindings(r),
       ...cap.review,
       ...jailFindings(r),
+      ...patchFindings(r),
     ],
   };
 }

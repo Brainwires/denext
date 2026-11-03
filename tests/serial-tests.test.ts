@@ -4,7 +4,7 @@
 // listed file still does; every src module that changes it is listed; and `scripts/test-run.ts`
 // keeps the listed files out of the parallel pass.
 
-import { assert, assertEquals } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import {
   SERIAL_HELPERS,
   SERIAL_SOURCE_EXEMPT,
@@ -23,6 +23,7 @@ import {
 } from "../scripts/lib/serial-scan.ts";
 import {
   ALLOW_SKIP_VITEST_ENV,
+  configTestExcludes,
   coverageDir,
   emitEntrySource,
   findVitestFiles,
@@ -33,13 +34,16 @@ import {
   removeTempRoot,
   stockPassDeno,
   tempRootEnv,
+  tempRootSurvived,
   testPasses,
+  TOOL_CACHE_DIRS,
   vitestSkipAllowed,
   wantsCoverage,
   WATCHDOG_PRELOAD,
   withWatchdog,
 } from "../scripts/test-run.ts";
-import { fromFileUrl, join, toFileUrl } from "@std/path";
+import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
+import { boundedOutput } from "./helpers/bounded-command.ts";
 
 Deno.test("serial tests: each file that changes process-wide state is listed, and only those", async () => {
   // Stale? `deno task regen` rewrites the list (scripts/gen-serial-tests.ts); then commit it.
@@ -120,7 +124,7 @@ Deno.test("test-run: the serial files leave the parallel pass and run on their o
     "-A",
     "--unstable-kv",
     "--parallel",
-    "--ignore=tests/e2e/,tests/migration-bed/,tests/a.test.ts,tests/integration/b.test.ts",
+    "--ignore=tests/e2e/,tests/migration-bed/,tests/a.test.ts,tests/integration/b.test.ts,.deno/,.denext/,coverage/",
   ]);
   assertEquals(all.serial, [
     "test",
@@ -137,7 +141,7 @@ Deno.test("test-run: the serial files leave the parallel pass and run on their o
     "--unstable-kv",
     "--fail-fast",
     "--parallel",
-    "--ignore=tests/integration/b.test.ts",
+    "--ignore=tests/integration/b.test.ts,.deno/,.denext/,coverage/",
     "tests/integration/",
   ]);
   assertEquals(integration.serial, [
@@ -148,6 +152,27 @@ Deno.test("test-run: the serial files leave the parallel pass and run on their o
     "tests/integration/b.test.ts",
   ]);
   assertEquals(testPasses(["tests/other/"], serial).serial, null);
+});
+
+Deno.test("test-run: a serial file named on its own runs in the serial pass alone", () => {
+  const serial = ["tests/s.test.ts", "tests/live-views.test.ts"];
+  const named = testPasses(
+    ["tests/a.test.ts", "./tests/s.test.ts", "tests/live-views.test.ts"],
+    serial,
+  );
+  assertEquals(named.serial?.slice(-2), ["tests/s.test.ts", "tests/live-views.test.ts"]);
+  const parallel = named.parallel!;
+  assert(parallel.includes("tests/a.test.ts"));
+  assert(!parallel.includes("tests/s.test.ts") && !parallel.includes("./tests/s.test.ts"));
+  assert(!parallel.includes("tests/live-views.test.ts"));
+  // Only serial files named: no parallel pass at all.
+  const only = testPasses(["tests/s.test.ts"], serial);
+  assertEquals(only.parallel, null);
+  assertEquals(only.serial?.at(-1), "tests/s.test.ts");
+  // With coverage the stock files share one pass, the serial ones included.
+  const cov = testPasses(["--coverage=cov", "tests/s.test.ts"], serial);
+  assertEquals(cov.serial, null);
+  assert(cov.parallel?.includes("tests/s.test.ts"));
 });
 
 Deno.test("test-run: the stock passes preload the per-test stall watchdog", async () => {
@@ -182,7 +207,7 @@ Deno.test("test-run: a flag's separate value stays with its flag; `--` args reac
     "deno.json",
     "--reporter=dot",
     "--parallel",
-    "--ignore=tests/a.test.ts",
+    "--ignore=tests/a.test.ts,.deno/,.denext/,coverage/",
     "tests/",
     "--",
     "--x",
@@ -217,7 +242,7 @@ Deno.test("test-run: the Vitest files run in their own pass, never in the stock 
     "--unstable-kv",
     "--reporter=dot",
     "--parallel",
-    "--ignore=tests/e2e/,tests/a.test.ts",
+    "--ignore=tests/e2e/,tests/a.test.ts,.deno/,.denext/,coverage/",
   ]);
   // The pass gets only the grants its files use.
   assertEquals(all.vitest, [
@@ -295,7 +320,7 @@ Deno.test("test-run: with coverage every pass accumulates raw profiles, the stoc
     "--unstable-kv",
     "--coverage=cov",
     "--coverage-raw-data-only",
-    "--ignore=tests/e2e/",
+    "--ignore=tests/e2e/,.deno/,.denext/,coverage/",
   ]);
   assertEquals(passes.serial, null);
   // The Vitest pass writes into the same directory, without emptying it.
@@ -365,6 +390,22 @@ Deno.test("test-run: removeTempRoot removes a full root and tolerates a missing 
   await removeTempRoot(root); // already gone: no throw
 });
 
+Deno.test("test-run: a temp root something else removed mid-run is reported, not left unexplained", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext_tr_root_" });
+  assertEquals(await tempRootSurvived(root), true);
+  await Deno.remove(root);
+  const orig = console.error;
+  const lines: string[] = [];
+  console.error = (...a: unknown[]) => lines.push(a.join(" "));
+  try {
+    assertEquals(await tempRootSurvived(root), false);
+  } finally {
+    console.error = orig;
+  }
+  assertEquals(lines.length, 1);
+  assert(lines[0].includes(`temp root ${root} was removed by another process`), lines[0]);
+});
+
 Deno.test("test-run: the temp dirs a test leaves behind go with the run's temp root", async () => {
   // The machine's temp dir, as the run sees it: nothing may be left in it afterwards.
   const machineTmp = await Deno.makeTempDir({ prefix: "denext_tr_machine_" });
@@ -377,6 +418,10 @@ Deno.test("test-run: the temp dirs a test leaves behind go with the run's temp r
         `  await Deno.writeTextFile(d + "/f", "x");\n` +
         `});\n`,
     );
+    // Another run's root in the same temp dir (two runs on one machine): this run's cleanup must
+    // leave it alone, removing only the root it made.
+    const sibling = await Deno.makeTempDir({ dir: machineTmp, prefix: "dnx-tr-" });
+    await Deno.writeTextFile(join(sibling, "in-use"), "x");
     const script = fromFileUrl(new URL("../scripts/test-run.ts", import.meta.url));
     const { success, stderr } = await new Deno.Command(Deno.execPath(), {
       args: ["run", "-A", script, "--no-check", probe],
@@ -388,7 +433,8 @@ Deno.test("test-run: the temp dirs a test leaves behind go with the run's temp r
     const left = [...Deno.readDirSync(machineTmp)].map((e) => e.name).filter((n) =>
       n !== "leak_probe_test.ts"
     );
-    assertEquals(left, [], "the run left these in the temp dir");
+    assertEquals(left, [basename(sibling)], "the run left these in the temp dir");
+    assertEquals(await Deno.readTextFile(join(sibling, "in-use")), "x", "the other run's root");
   } finally {
     await Deno.remove(machineTmp, { recursive: true });
   }
@@ -525,6 +571,119 @@ Deno.test("test-run: a module another config re-emitted is reported again after 
     const report = await run(["coverage", "cov"]);
     assert(!report.includes("Missing transpiled source"), report);
     assert(report.includes("lib.ts"), report);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("test-run: the parallel pass never walks the tool caches (.deno/, .denext/, coverage/)", () => {
+  assertEquals(TOOL_CACHE_DIRS, [".deno/", ".denext/", "coverage/"]);
+  // Named on every stock discovery pass that passes an --ignore of its own (which replaces the
+  // config's exclude); with none, the config's exclude applies.
+  for (
+    const args of [["--ignore=tests/e2e/"], ["tests/", "--ignore=x/"], [
+      "--coverage=cov",
+      "--ignore=x/",
+    ]]
+  ) {
+    const ignore = testPasses(args, []).parallel?.find((a) => a.startsWith("--ignore="));
+    assertEquals(
+      ignore?.slice("--ignore=".length).split(",").slice(-3),
+      [...TOOL_CACHE_DIRS],
+      `${args}`,
+    );
+  }
+  // One the caller already ignores is not named twice.
+  assertEquals(
+    testPasses(["--ignore=.deno/,tests/e2e/"], []).parallel?.find((a) => a.startsWith("--ignore=")),
+    "--ignore=.deno/,tests/e2e/,.denext/,coverage/",
+  );
+});
+
+Deno.test("test-run: a --ignore keeps .deno/ out though it replaces deno.json's exclude", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "dnx-tr-discovery-" });
+  try {
+    // What a toolchain type-check leaves behind: an npm-compat copy with its own `_test.ts`.
+    await Deno.mkdir(join(dir, ".deno/npm-compat/@jsr/std__x"), { recursive: true });
+    await Deno.mkdir(join(dir, "tests/e2e"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ exclude: [".deno/"] }));
+    const failing = 'Deno.test("never", () => { throw new Error("walked"); });\n';
+    await Deno.writeTextFile(join(dir, ".deno/npm-compat/@jsr/std__x/x_test.ts"), failing);
+    await Deno.writeTextFile(join(dir, "tests/e2e/e_test.ts"), failing);
+    await Deno.writeTextFile(join(dir, "tests/a_test.ts"), 'Deno.test("a", () => {});\n');
+    const run = async (args: string[]) => {
+      const out = await boundedOutput(Deno.execPath(), { args, cwd: dir, timeoutMs: 120_000 });
+      return new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
+    };
+    // Deno's own behaviour, the reason test-run names the caches: the command-line ignore
+    // replaces the config's `exclude`, and the cache's test runs.
+    assertStringIncludes(await run(["test", "--no-check", "--ignore=tests/e2e/"]), "walked");
+    const parallel = testPasses(["--no-check", "--ignore=tests/e2e/"], []).parallel!;
+    const out = await run(parallel);
+    assert(!out.includes("walked"), out);
+    assertStringIncludes(out, "1 passed");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("test-run: a pass's --ignore carries the config's own excludes, which --ignore replaces", () => {
+  const serial = ["tests/a.test.ts"];
+  const all = testPasses(["--ignore=tests/e2e/"], serial, [], true, [".deno/", "tests/e2e/"]);
+  assertEquals(
+    all.parallel?.at(-1),
+    "--ignore=.deno/,tests/e2e/,tests/a.test.ts,.denext/,coverage/",
+  );
+  // No --ignore of its own: the config's excludes apply as they are.
+  assertEquals(testPasses(["tests/other/"], serial, [], true, [".deno/"]).parallel, [
+    "test",
+    "-A",
+    "--unstable-kv",
+    "--parallel",
+    "tests/other/",
+  ]);
+});
+
+Deno.test("test-run: configTestExcludes reads deno.json's exclude and test.exclude", async () => {
+  // This checkout's: the toolchain's `.deno/` copy stays out of every pass.
+  assert((await configTestExcludes()).includes(".deno/"));
+  const dir = await Deno.makeTempDir();
+  try {
+    assertEquals(await configTestExcludes(dir), []); // no config
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      '{\n  // a comment\n  "exclude": ["dist/", 1],\n  "test": { "exclude": [".deno/", "dist/"] }\n}',
+    );
+    assertEquals(await configTestExcludes(dir), ["dist/", ".deno/"]);
+    await Deno.writeTextFile(join(dir, "deno.json"), "{ not json");
+    assertEquals(await configTestExcludes(dir), []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("test-run: deno test --ignore replaces the config's test.exclude (why the passes add it back)", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    await Deno.mkdir(join(dir, ".deno", "npm-compat"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "deno.json"), '{ "test": { "exclude": [".deno/"] } }');
+    await Deno.writeTextFile(join(dir, "a_test.ts"), 'Deno.test("a", () => {});\n');
+    await Deno.writeTextFile(
+      join(dir, ".deno", "npm-compat", "b_test.ts"),
+      'Deno.test("compat copy", () => {});\n',
+    );
+    const ran = async (args: string[]) => {
+      const out = await new Deno.Command(Deno.execPath(), {
+        args: ["test", "--no-check", ...args],
+        cwd: dir,
+        env: { NO_COLOR: "1" },
+        stdin: "null",
+      }).output();
+      return new TextDecoder().decode(out.stdout).includes("compat copy");
+    };
+    assertEquals(await ran([]), false);
+    assertEquals(await ran(["--ignore=dist/"]), true);
+    assertEquals(await ran(["--ignore=.deno/,dist/"]), false);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

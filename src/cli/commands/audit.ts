@@ -13,12 +13,13 @@ import type { CommandContext, CommandSpec, FlagSpec } from "../command.ts";
 import { projectDir } from "../shared.ts";
 import { auditProject, toCycloneDx } from "../../build/audit.ts";
 import { denoExecutable } from "../../build/bundle.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /**
  * Deno's `deno audit` flags, declared so help lists them and the parser keeps their values; each
  * is forwarded as written. (`--ignore` takes its CVE list as one comma-separated value.)
  */
-const DENO_AUDIT_FLAGS: readonly FlagSpec[] = [
+export const DENO_AUDIT_FLAGS: readonly FlagSpec[] = [
   {
     name: "level",
     type: "string",
@@ -95,24 +96,7 @@ async function spawnDenoAudit(args: string[], cwd: string, toStderr: boolean): P
  */
 export function makeAuditCommand(runDenoAudit: DenoAuditRunner = spawnDenoAudit): CommandSpec {
   return {
-    name: "audit",
-    summary: "Audit dependencies + prove the runtime is zero-npm, then run deno audit",
-    usage:
-      "denext's checks (dependency inventory, zero-npm runtime proof, permissions; --sbom),\n" +
-      "then Deno's `deno audit` for known vulnerabilities, with its flags below forwarded\n" +
-      "(and anything after `--`). Non-zero when either fails. Deno's audit alone:\n" +
-      "`denext deno audit`.",
-    positionals: [{ name: "dir", help: "Project directory (default: .)" }],
-    flags: [
-      { name: "sbom", type: "boolean", help: "Emit a CycloneDX SBOM (JSON)" },
-      {
-        name: "strict",
-        type: "boolean",
-        help: "Exit non-zero if runtime source imports npm",
-      },
-      { name: "skip-deno-audit", type: "boolean", help: "Run denext's checks only" },
-      ...DENO_AUDIT_FLAGS,
-    ],
+    ...commandMeta("audit"),
     run: async (ctx) => {
       const dir = projectDir(ctx);
       const report = await auditProject(dir);

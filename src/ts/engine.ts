@@ -13,9 +13,9 @@
 // pin before it, stock Deno, a `DENEXT_DENO=<path>` binary) is left alone.
 
 import {
+  activeToolchainPin,
   type DenoToolchainPin,
   denoToolchainTarget,
-  loadDenoToolchainPin,
   toolchainTsgo,
   type ToolchainTsgoStatus,
 } from "../build/deno-toolchain.ts";
@@ -77,7 +77,7 @@ export async function nativeCheckDecision(
   let supported = false;
   try {
     supported = runtimeSupportsNativeCheck(
-      options.pin ?? loadDenoToolchainPin(),
+      options.pin ?? activeToolchainPin(),
       options.target ?? denoToolchainTarget(),
       options.running ?? currentDenoIdentity(),
     );

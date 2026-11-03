@@ -20,8 +20,6 @@ const text = (id: string) => `document.getElementById(${JSON.stringify(id)})?.te
 
 Deno.test({
   name: "e2e: next-auth/react hydrates on the next-compat build, in the app and a library",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nextauth_e2e_" });
   await writeNextAuthCompatFixture(dir);

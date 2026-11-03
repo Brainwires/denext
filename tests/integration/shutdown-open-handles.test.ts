@@ -154,8 +154,6 @@ Deno.test({
   name: "denext start: an open pool no longer holds the process past the drain deadline",
   // On Windows the stop is the console's Ctrl-C / Ctrl-Break (tests/helpers/console-ctrl.ts):
   // Windows has no SIGTERM, and `kill("SIGTERM")` there is `TerminateProcess`.
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async (t) => {
     const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_shutdown_" }));
     const env: Record<string, string> = PG_URL ? { DATABASE_URL: PG_URL } : {};

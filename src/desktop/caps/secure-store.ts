@@ -46,6 +46,7 @@
 
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
 import { exitedOutput } from "../../build/exited-output.ts";
+import { withOwnModules } from "../../build/windows-powershell.ts";
 import { type DesktopCapability, DesktopCapError, type DesktopPermissions } from "../extension.ts";
 import { type DesktopAppApi, desktopAppApi } from "../launch-events.ts";
 import { platformFacts } from "./platform.ts";
@@ -76,13 +77,15 @@ export interface SecureCommand {
  * (service, key, secret) arrives on STDIN as JSON and is read with `ConvertFrom-Json`, NEVER
  * interpolated into the command, because PowerShell `-Command` joins trailing argv into the command
  * text (so a page-supplied key/value on argv would be a command-injection). `get` writes the stored
- * password to stdout (exit 1 when absent); `set` upserts; `delete` is idempotent.
+ * password to stdout (exit 1 when absent); `set` upserts; `delete` is idempotent. It first points
+ * the module path at Windows PowerShell's own modules ({@link withOwnModules}): `ConvertFrom-Json`
+ * and `New-Object` fail to load under a module path inherited from PowerShell 7.
  *
  * NOTE (verification): the injection-safe SHAPE (constant script + JSON on stdin) is unit-tested
  * here, but the WinRT round-trip runs only on Windows — it is exercised by the Windows packaging CI,
  * not locally.
  */
-const WINDOWS_VAULT_SCRIPT = [
+const WINDOWS_VAULT_SCRIPT = withOwnModules([
   "$ErrorActionPreference='Stop'",
   "$p=[Console]::In.ReadToEnd()|ConvertFrom-Json",
   "[void][Windows.Security.Credentials.PasswordVault,Windows.Security.Credentials,ContentType=WindowsRuntime]",
@@ -93,7 +96,7 @@ const WINDOWS_VAULT_SCRIPT = [
   // `exit 0`: the caught Retrieve of an absent key leaves `$?` false, which `-Command` exits 1 on.
   "'delete'{try{$c=$v.Retrieve($p.service,$p.key);$v.Remove($c)}catch{};exit 0}",
   "}",
-].join("\n");
+].join("\n"));
 
 /**
  * Quote one argument for the `security -i` command-line parser: double quotes, with `\` and `"`

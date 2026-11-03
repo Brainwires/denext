@@ -3,7 +3,7 @@
 // responses, and the same-origin / double-submit CSRF gate on cookie-authenticated writes.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { apiDefinitionOf, createApi } from "../src/server/define-api.ts";
 import { cors, csrf } from "../src/server/api-middleware.ts";
 import { ApiError } from "../src/server/api-error.ts";

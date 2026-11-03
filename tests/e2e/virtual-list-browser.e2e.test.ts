@@ -526,8 +526,6 @@ const HTML = (script: string) =>
 Deno.test({
   name:
     "browser: RTL, sticky push, animations, print, selection, window cache, keyboard inset, scrollToIndex, MVCP, progressive",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const result = await esbuild.build({
     stdin: { contents: ENTRY, loader: "js", resolveDir: FW },

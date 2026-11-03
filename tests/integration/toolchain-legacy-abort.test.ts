@@ -24,8 +24,6 @@ const TOOLCHAIN = cachedToolchain();
 Deno.test({
   name: "denext start on the pinned toolchain serves without Deno's legacy-abort notice",
   ignore: TOOLCHAIN === null,
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: async () => {
     const deno = TOOLCHAIN!;
     const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-legacy-abort-" }));

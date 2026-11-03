@@ -15,7 +15,9 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   use them either), and a worker script inside a `"use cache"` body or a PPR shell runs on the
   main thread, since that output cannot carry the response's nonce. Partytown's trade-offs
   apply: a cross-origin script is fetched by the worker and needs CORS, and what a worker script
-  loads is outside the page's `scriptSrc`. SPA mode always uses the main-thread fallback.
+  loads is outside the page's `scriptSrc`. A SPA gets Partytown only where denext serves its
+  shell (`denext dev`, `denext start`), which mints the nonce; a static `denext export` has no
+  response to mint one for, so its worker scripts take the main-thread fallback.
 - **`next/og` renders satori's subset** (flexbox, inline `style`, `tw`): the same engine and
   limits as Next. Arbitrary CSS would need a layout engine or a headless browser.
 - **Async `startTransition` is scoped by a time window by default.** Browsers have no
@@ -25,11 +27,11 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   An async generator resumed by `throw()` / `return()` at a plain `yield` runs its `catch` /
   `finally` in the caller's context, not its own, and a module whose top-level evaluation throws
   leaves its context current.
-- **`captureOwnerStack()` returns `null` during a server render**, and an element made with
-  `h()` / `createElement` gets its owner when a render returns it (the component whose render
-  result first holds it), not when it is made: one built outside any render (a module-level
-  constant) is owned by the first component that returns it, where React gives it none, and its
-  frame carries no JSX call site.
+- **In `captureOwnerStack()`, an element made with `h()` / `createElement` gets its owner when
+  a render returns it** (the component whose render result first holds it), not when it is
+  made: one built outside any render (a module-level constant) is owned by the first component
+  that returns it, where React gives it none, and its frame carries no JSX call site. During a server render (under `denext dev`) a frame names the
+  component only, since server modules compile JSX to `jsx`, not `jsxDEV`.
 - **A native App Router or SPA build leaves out three runtimes the app's own sources never name**
   (on denext's Deno toolchain, whose `deno bundle` takes `--define`): the clearing of `next/image`
   blur placeholders in server-only trees (kept when a source names `blurDataURL` or a
@@ -40,6 +42,13 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   segment). npm packages are not scanned, so a package that renders either of the first two by
   itself, with props the app never names, or builds a route pattern itself, needs the app to name
   it once. A next-compat (npm React) build keeps all three.
+- **A Server Action's `notFound()` / `forbidden()` / `unauthorized()` reaching the client tree**
+  renders the page level's nearest `not-found.tsx` / `forbidden.tsx` / `unauthorized.tsx`, which
+  the server renders for the current URL. Next picks the file nearest the calling component
+  (for a client component in a layout, the parent segment's). On a route that renders as one
+  client bundle (a page or layout that calls a hook itself, the compatibility path) the bundle
+  re-renders the page, so the page stays as it was; an async `startTransition` callback that
+  rejects with one leaves it unhandled, as any rejection.
 - **Won't:** legacy context (`childContextTypes`, use `createContext`) and Next's `taint` config
   (React's `experimental_taint*` are enforced).
 
@@ -47,12 +56,15 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
 
 ### denext's Deno toolchain
 
+- **Won't: esbuild compiled to wasm** (`@denext/esbuild`). It would remove the npm download but runs
+  several times slower on every compat build and dev session; the build runs the toolchain's esbuild
+  binary instead.
 - **Built for six targets only:** macOS (arm64, x64), Linux (x64, arm64) and Windows (x64,
   arm64). Elsewhere, and offline on first use, a command that needs the toolchain stops with an
   error naming `denext toolchain install`; `DENEXT_DENO=stock` runs stock Deno instead, without
   `Deno.SQL` or Vitest/Jest compatibility in `deno test`.
 - **Windows on Arm has run on a VM, not yet on Arm64 hardware** (last verified on toolchain
-  2.9.7-denext.21). On
+  2.9.7-denext.21, 2026-10-19; later runtimes are covered by CI's `windows-11-arm` job only). On
   a Windows 11 Arm64 virtual machine (QEMU/KVM on an Arm64 board, software rendering through WARP,
   no GPU) these pass: `denext toolchain install` (`deno --version` reports `2.9.7-denext.21`,
   `aarch64-pc-windows-msvc`); `desktop run` and `desktop dev` windows on WebView2 and CEF (the page
@@ -65,7 +77,8 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   pages). denext's unit and integration suites run there too; what fails on that VM fails the
   same way on Windows x64, where CI's `windows-tests` job runs those suites for every release. CI's `windows-11-arm` job (desktop
   suites, `install.ps1`, the Arm64 `.msi`) is required for a release. Not yet run on Arm64: a
-  physical PC (GPU rendering), Authenticode-signed builds and the trusted-update checks. A
+  physical PC (GPU rendering), Authenticode-signed builds and the trusted-update checks (target:
+  unscheduled; they need a Windows on Arm PC and an Authenticode certificate). A
   `desktop run` / `dev` window loads the VC++ runtime
   from System32, so it needs the Arm64 VC++ 2015-2022 redistributable on the machine; a packaged
   bundle carries the runtime next to its `.exe`.
@@ -101,17 +114,18 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   keeps TypeScript 6 whatever the setting says, and a `deno.unstable` list in
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
-- **Runtime 3.0.0-rc.5's type-check leaves `.deno/npm-compat` in the project root.** It holds
+- **The runtime's type-check leaves `.deno/npm-compat` in the project root** (3.0.0-rc.5 through
+  the pinned 3.0.0-denext.7). It holds
   an npm-shaped copy of the `@jsr/*` packages, their `_test.ts` files included, and a later
   `deno test` with default discovery would run those. A `denext create` project's `deno.json`
   excludes `.deno/` (top-level `exclude`), as denext's own does; an older project adds
-  `"exclude": [".deno/"]` itself. A runtime issue, to be fixed in rc.6 or later by keeping the
-  copy out of the project.
+  `"exclude": [".deno/"]` itself. A runtime issue, to be fixed in a later runtime by keeping the
+  copy out of the project. Planned before 5.0 (ROADMAP, "Before 5.0 / Runtime fork").
 - **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
   `denext start` begins its graceful shutdown on those events too, but Windows ends a console
   process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
   the `services/` stop and `onShutdown()` don't get to finish. Stop a server with Ctrl-C or
-  Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully.
+  Ctrl-Break, which is what service wrappers (WinSW, NSSM) send: those drain fully. Planned for 5.x (ROADMAP, "5.x / Runtime fork").
 - **The production server's idle memory trim is glibc Linux only, and a trim can delay one
   request.** On macOS, Windows and musl (Alpine) the runtime ignores the switch. The trim runs
   between event loop polls, so a request that arrives while one runs waits for it once (up to about
@@ -171,17 +185,20 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `documentsErrors`.
 - **`@denext/graphql` reloads a schema object only when it can trace it:** one built in
   `denext.config.ts` itself, or imported through an alias rather than a relative import, needs a
-  dev-server restart after an edit (a module-path `schema` always reloads).
+  dev-server restart after an edit (a module-path `schema` always reloads). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 
 ### Gleam and Lustre (`denext/gleam`)
 
 - **A Lustre server component (`defineLustreView`) resumes only on the instance that ran it:**
   Lustre's model is an arbitrary Gleam value, so it is never written to the shared view store. A
   reconnect to the same instance within `live.limits.viewResumeSeconds` reattaches the running
-  runtime; a reconnect to another instance, or a later one, runs `init` again. The page's first
-  paint is replaced by Lustre's own render when the view mounts (not adopted), and Lustre's
-  contexts (`provide` / `subscribe`) and client-sent attribute or property changes are not
-  carried over Live.
+  runtime; a reconnect to another instance, or a later one, runs `init` again.
+- **A Lustre server component re-renders after its first mount:** the first paint is adopted, but
+  the whole view a reconnect or a resync sends is rendered anew, so a field focused then loses its
+  focus. A first paint whose markup does not fit the view is re-rendered too.
+- **Lustre's contexts are not carried over Live:** a server component's `provide` / `subscribe`
+  between the view and the page around it never reach the browser. A view has no host attributes
+  or properties to send either: its input is its signed props, so other props render another view.
 - **A stopped Lustre app's timers keep firing:** Lustre gives no way to cancel an app's timers or
   subscriptions from outside. A stopped server component, and (with denext's post-build fix to
   Lustre's client runtime) a stopped `lustreIsland`, ignore what they dispatch, but the timer
@@ -217,7 +234,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   loopback/private peer with no trusted proxy hop unless `rateLimitLocalAddresses` is set.
 - **Native passkey rows sign in usernameless only:** `/native/passkey/*` has no step-up of a
   pending native sign-in with a passkey (a code at `/native/mfa` finishes it), and no list or
-  delete rows (the cookie `/passkeys` rows, or `listPasskeys` / `deletePasskey` on the server).
+  delete rows (the cookie `/passkeys` rows, or `listPasskeys` / `deletePasskey` on the server). Planned for 5.x (ROADMAP, "5.x / Deno Desktop").
 - **Passkeys accept ES256 / RS256 / Ed25519 credential keys only** (every WebAuthn L3
   attestation format is verified, `android-safetynet` and `compound` included). Revocation of the
   Metadata Service paths (OCSP, then CRL) fails closed by default, so an unreachable responder and
@@ -315,18 +332,22 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   instead. Without `DENEXT_VERSION` the installers pick the newest non-prerelease.
 - **`denext build --compile` compiles a server only:** a SPA has no server to compile, and `dev`,
   `build` and `export` stay on the CLI.
-- **A workspace glob member expands one level.** `"./apps/*"` names the folders directly under
-  `apps/`; a deeper or mid-path glob (`packages/**`, `apps/*/web`) names nothing to denext, so an
-  app it covers builds on its own config and its siblings' names don't resolve. List such members
-  one by one. A package's own import map applies to its files as a scope, except in a server copy
-  `denext dev` writes after an edit there, which resolves through the app's map.
+- **A workspace glob never follows a symlink out of the root.** denext expands `"workspace"`,
+  `"workspaces"` and `pnpm-workspace.yaml` globs as Deno, npm, Yarn and pnpm do (`packages/**`,
+  `apps/*/web`, `!` exclusions), but a folder a glob reaches through a symlink whose target lies
+  outside the root is no member to denext, though Deno and npm take it: an app it names builds on
+  its own config and its siblings' names don't resolve. List such a member by its path. A
+  package's own import map applies to its files as a scope, except in a server copy `denext dev`
+  writes after an edit there, which resolves through the app's map.
 - **Inside a Node workspace, run the JSR CLI with `--node-modules-dir=none`.** Deno resolves
   `npm:` from `node_modules` there (and rewrites a `pnpm-workspace.yaml`) before denext runs.
 - **The dev server's assets answer only opted-in hosts** (loopback, `--lan`, `--host`,
   `allowedDevOrigins`; no wildcards), the CVE-2025-48068 defence.
-- **DevTools can't expand a package's custom hook** (one imported by a bare / `npm:` / `jsr:` /
-  URL specifier): its cells are labelled with the call, and cells two such hooks in a row could
-  share stay unnamed. The bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
+- **DevTools can't expand every package's custom hook:** a package module that is CommonJS or
+  minified (its hooks lost their names), a hook imported by a versioned `npm:`, `jsr:` or URL
+  specifier, and any package hook in React Native mode or on the bundled dev path keep their
+  cells labelled with the call, and cells two such hooks in a row could share stay unnamed. The
+  bundled App Router path names route files only. Network, Cache, Routes and the MCP snapshot
   need the App Router dev server. React DevTools' hooks view and Profiler read React internals,
   so they don't work; use denext's panel.
 - **`createTestApp` sets plugins up in `dev` mode**: their build steps run and what they emit is
@@ -363,21 +384,21 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   `undefined` (denext's CSP is hash-based), and the synthesized `ServerBuild` is flat. A
   `getLoadContext` that returns a `RouterContextProvider` keeps the `context.set(key, value)` calls
   whose value carries over; one passing `req` / `res` on (an `expressContext`) is a note.
-- **React Router route `middleware` on a page render runs ahead of the loaders, not around the
-  render.** There is no single handler to wrap, so `next()` resolves at once to a stand-in
-  response (headers set on it reach the page; another `Response` answers like a thrown one), code
-  after `next()` runs before the loaders, and a parent route's loader may run before a child
-  route's middleware. On a resource route and a plain POST to a page's action `next()` runs the
-  real handler. `clientMiddleware` does not run.
+- **React Router route `middleware` that throws after `next()`** answers with the thrown
+  `Response`, or the app's error response for an error, instead of rendering the route's error
+  boundary from its loader data. A page written by `denext export` renders outside a request, so
+  there the middleware runs ahead of the loaders and `next()` resolves at once to a stand-in
+  response. `clientMiddleware` does not run.
 - **`useBlocker` can't hold a hard unload;** add a `beforeunload` prompt for that.
 - **Prisma auto-migration wires SQLite, Postgres (CockroachDB too), MySQL and SQL Server only:**
   a `mongodb` datasource keeps its `new PrismaClient()` unwired (Prisma 6 has no MongoDB driver
   adapter). SQL Server's `@prisma/adapter-mssql` (over npm `mssql`) is wired and unit-tested but
   not yet run against a live SQL Server. SQLite and Postgres
   run over `Deno.SQL` (`denext/prisma-adapter`, no npm driver) only on denext's Deno runtime
-  3.0.0-rc.1 or later; on an earlier runtime migrate wires Prisma's npm adapters
+  3.0.0-rc.1 or later; for an app that runs on an earlier runtime (or under
+  `DENEXT_DENO=stock`) migrate wires Prisma's npm adapters
   (`@prisma/adapter-better-sqlite3` with its `links` shim, `@prisma/adapter-pg`), and CockroachDB
-  and MySQL always take theirs.
+  and MySQL always take theirs. Planned for 5.x (ROADMAP, "5.x / Backend").
 - **`denext/prisma-adapter` reads no `interval`, range, composite or geometric Postgres column**
   (Prisma's `UnsupportedNativeDataType`; cast it to `text` in a raw query). `money` is read at
   the fractional digits of `lc_monetary` as the first `money` result found it: a session that
@@ -397,7 +418,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   allows its own inline styles by hash and runs no inline script), and `import.meta.env.PROD` is
   true under `denext start`, where the source runs in place rather than from Vite's build output.
   `denext migrate --check` lists each one it finds
-  ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)).
+  ([Migrating from Fresh](https://denext.dev/docs/migrating-fresh)). Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **Preact:** `@preact/signals`' `useSignalRef` / `createModel` / `useModel` are not provided, and
   its `signal` / `computed` / `effect` (and hook forms) take no options argument.
   `denext/preact/compat` lacks `createFactory`, `findDOMNode`, `isFragment`, `isMemo` and
@@ -413,16 +434,15 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   needs the app to name it once). `denext/preact/render-to-string` keeps denext's attribute order and hyphenated SVG attributes, ignores the legacy `context` argument,
   and `renderToReadableStream` sends the whole document once resolved (no fallback-first
   streaming); `preact-render-to-string/jsx` and `/stream-node` are not mapped. A migrated Preact
-  app runs as a SPA, so preset-vite's `prerender` does not carry over.
+  app runs as a SPA, so preset-vite's `prerender` does not carry over. Planned for 5.x (ROADMAP, "5.x / Framework compatibility surfaces").
 - **`denext/signals` re-renders the component that read a signal**, where Preact patches the text
   node in place; a signal bound to a DOM prop needs Preact's JSX runtime
   (`jsxImportSource: "preact"`).
 
 ### TanStack Start
 
-- **`@denext/tanstack-start`:** a mocked import's runtime message (`denext dev`) lists no
-  import trace. With `generateRouteTree: false` `denext export` prerenders only the `pages`
-  listed and their links, refusing no route by kind, and the deploy manifest lists its server
+- **`@denext/tanstack-start`:** with `generateRouteTree: false` `denext export` prerenders only
+  the `pages` listed and their links, refusing no route by kind, and the deploy manifest lists its server
   functions alone. The server render and the client bundle are compiled onto denext's React, so
   an app's own `react` import must resolve to denext (`compatibilityMode`).
 
@@ -455,7 +475,8 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   IndexedDB on the web; certificate pinning can't cover the WebView's own `fetch`/XHR.
 - **Native context menus differ per OS:** iOS lifts a preview only for a bound element
   (`useContextMenu`); Android's `PopupMenu` flattens submenus into groups and draws no icons or
-  title; the Deno Desktop menu draws no destructive style or icons.
+  title; the Deno Desktop menu draws `destructive` items in red and `iconPng` icons, except that
+  Windows' menus draw a destructive item as a normal one.
 - **Background audio (`denext mobile add background-audio`) and `pickMedia`** are compiled and
   unit-tested, not yet run on a device (background playback, the lock-screen and notification
   controls, multi-select and video picks). `setAudioSession`'s `interruption` applies on iOS only
@@ -464,15 +485,24 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   foreground (Android 12+) and keeps it until `clearNowPlaying()`. expo-audio's other audio-mode
   fields (silent mode, earpiece routing, background recording) are accepted without effect. A
   native `selectionLimit` holds on iOS and Android 13+ (elsewhere, and on the web, the result is
-  cut to it); `ordered` needs `@capawesome/capacitor-file-picker` and iOS 15+.
+  cut to it); `ordered` needs `@capawesome/capacitor-file-picker` and iOS 15+. Device run: target
+  unscheduled (needs an iPhone and an Android phone).
 - **File transfers (`denext mobile add file-transfer`)** are compiled and tested against a local
   server (the iOS manager through macOS's `URLSession`, the Android HTTP half through the JDK), not
   yet run on a device in the background. Android's WorkManager stops a job after about ten
   minutes: a download resumes from its `.part` file on the next run, an upload starts over; uploads
   cannot pause anywhere. iOS may defer a background transfer started while the app is already in
   the background. On the web a transfer lasts as long as the page. A Deno Desktop download
-  pauses and resumes, but `fileTransfers()` lists only the ones this page started: after a
-  restart, download the same URL to the same file again to continue its kept partial file.
+  does not run on while the app is closed: one running at quit is listed as `failed` (resumable
+  from its partial file) after the restart. Done desktop records are listed for 7 days unless
+  forgotten first, where the plugin keeps them until `forgetFileTransfer()`, and a download into a
+  picked file (its handle lasts one launch) is not recorded. A desktop record never writes a
+  credential header (`Authorization`, `Cookie`, an API key) to disk, so after a restart a download
+  started with one does not resume through `resumeFileTransfer()`: start it again with
+  `downloadToFile()` and its headers (same id, URL and file) and it continues from its partial
+  file. The records file is `0600` on macOS and Linux; Windows ignores the mode, so there it takes
+  the user profile's ACL (the user and administrators). Background device run: target unscheduled
+  (needs an iPhone and an Android phone).
 - **Interactive keyboard dismissal** works at best on the outer scroller; screen readers follow
   the DOM accessibility tree; on Android `allowFontScaling={false}` can't undo WebView text zoom.
 - **`NativeViewSlot` is a native layer, not DOM:** non-scroll layout changes reach it a frame
@@ -492,21 +522,39 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   `MessageHandler` by its type; if a future Capacitor changes that, the guard logs it and the
   bridge keeps Capacitor's own origin rules. Plugin responses then go back through
   `evaluateJavascript` (Capacitor's fallback path).
-- **`openAuthSession` needs PKCE** (S256) on every platform unless `pkce: "not-applicable"` with a
-  `reason`; Deno Desktop's loopback flow does not check for it yet.
 - **`secureStore`'s `requireBiometric` is OS-enforced only in a current binary** (`denext mobile
   add biometrics` from a denext newer than 4.8.0, in a new binary): in an older binary, and in a Deno Desktop window (the desktop
   keychain has no biometric access control yet), the gate is denext's code in the page and page
   script can read the value. Android needs 9 or later (8 and earlier refuse it); the passcode as
   a fallback (`allowDeviceCredential`) needs Android 11. A gated value is dropped when the enrolled
-  biometrics change, and it is never backed up.
+  biometrics change, and it is never backed up. The Deno Desktop gate is planned for 5.x (ROADMAP, "5.x / Deno Desktop").
+- **`secureStore`'s `accessibility` is an iOS Keychain class.** On Android the secure-storage
+  plugin's Keystore key never leaves the device and needs no unlock, so every value behaves as
+  `"afterFirstUnlockThisDeviceOnly"` whatever is passed (no `whenUnlocked` lock requirement there);
+  on the web and in a Deno Desktop window the option has no effect.
+- **The OTA check on `/_capacitor_file_` requests (iOS) needs Capacitor's own asset handler:** the
+  bridge turns that handler into `DenextOtaFileGuard`. When it cannot (an app that installs its own
+  handler subclass), the app serves no downloaded UI: it runs the bundled UI, `onOtaRejected` fires
+  with `code: "guard_unavailable"`, and updates are refused with that code.
+  `plugins.DenextBridge.otaFileGuard: false` in the Capacitor config serves downloaded UIs anyway,
+  with `/_capacitor_file_` reads of their files unchecked: a file changed on the device can then
+  reach the page through `Capacitor.convertFileSrc`, and a `/_capacitor_file_` path with a NUL
+  crashes the app in Capacitor's own handler. Set it only for a handler that does its own checks.
+- **A signed OTA app takes only its platform's export:** with a public key embedded, a manifest
+  without the `_denext/platform.txt` stamp (an unstamped web export) is refused
+  (`platform_mismatch`). Stamp it with `denext export --platform ios|android` or
+  `denext ota manifest <dir> --platform ios|android` before signing.
+- **The OTA serve check trusts a file's stat between hashes:** a verified file is hashed again only
+  when its size, modification or change time, or inode changes. On Android the change time has
+  whole-second resolution, so a rewrite within the second of the first check that also restores
+  the modification time is served until the next launch.
 - **`denext fastlane` (the managed fastlane)** runs on macOS and Linux only (arm64, x64); Windows
   is not supported. Its first install needs a C compiler, because several of fastlane's gems
   build C extensions. It runs denext's pinned gems, so plugins in `fastlane/Pluginfile` need the
   project's Gemfile and `bundle exec`. The Ruby comes from denext's own mirror (the `toolchain-assets`
   GitHub release), with Homebrew's `ghcr.io` registry as the fallback, both pinned by SHA-256. It has been run on
-  macOS x64, Linux x64 (Ubuntu) and Linux arm64 (Fedora, SELinux enforcing); on macOS arm64 the
-  Ruby is pinned and its hash checked, but the install has not been run there yet.
+  macOS x64, Linux x64 (Ubuntu) and Linux arm64 (Fedora, SELinux enforcing); on macOS arm64,
+  release CI installs it and runs the iOS `build` lane (unsigned) on a GitHub-hosted macOS 15 runner.
 - **Won't:** native UIs for watches, cars and App Clips; hosted services (an Expo Go-style
   client, push relay, build/submit, OTA CDN); install attribution; MDM configuration wrappers;
   code obfuscation (keep secrets on the server).
@@ -556,17 +604,22 @@ Rendering is a WebView by design, so the WebView's and the OS's limits apply.
   `DenextBrightness` plugins `denext mobile add calendar | contacts | print | brightness` write
   are compiled (Java against Capacitor 8) and type-checked (Swift against the iOS SDK) but not
   yet run on a phone (Android's split of a repeating event from one occurrence on included), and
-  `expo-print`'s `printToFileAsync` lays HTML out without running its scripts.
+  `expo-print`'s `printToFileAsync` lays HTML out without running its scripts. Device run: target unscheduled (needs an iPhone and
+  an Android phone).
 - **A strict CSP still blocks a `<style>` element a library fills with text at run time**,
   and react-native-web's second sheet when it renders into a shadow root; those need
   `style-src 'unsafe-inline'`. react-native-web's own sheet and React Native mode's rules need
   nothing (the CSP is hash-based, so there is no nonce to give such an element).
-- **Renderers built on `react-reconciler` see no denext context** (React Native Skia's
-  `<Canvas>`, react-three-fiber, react-konva): a component inside their tree reads a context's default
-  value (as in React, contexts don't cross renderers), and a provider placed inside the tree does
-  not reach it either (in React it would); pass the values as props. A class component inside such
-  a tree is not supported. React Native Skia with Reanimated, and in the Capacitor shell's
-  WebViews, is not yet verified.
+- **A class's `static contextType` inside a `react-reconciler` renderer's tree reads nothing**
+  (React Native Skia's `<Canvas>`, react-three-fiber, react-konva): the renderer takes only React's
+  context object there, and a denext context is a function, so `this.context` stays empty. Read
+  the context with `<Context.Consumer>` or a function component's `useContext` instead (both work
+  inside the tree, as do class components otherwise). A provider inside such a tree reaches it
+  only for a context made with `react`'s `createContext` (what the renderers and migrated code
+  use); one made with `denext`'s own is read there with its default unless it is provided above a
+  bridging root (react-three-fiber's `<Canvas>`, react-konva's `<Stage>`). React Native Skia with
+  Reanimated, and in the Capacitor shell's WebViews, is not yet verified (target: unscheduled; needs an
+  iPhone and an Android phone).
 - **Unistyles' Babel plugin is ported in part:** the component swap and `useVariants` run, the
   per-style dependency pass does not (the theme is CSS variables; a style that depends on the
   breakpoint or another runtime value updates when its component renders again). Tamagui's
@@ -613,7 +666,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   of an app's notifications, so `deliveredNotifications()` there lists only what denext posted
   during this run and has not removed (a notification the user dismissed is still listed, one from
   an earlier run is not); on every OS `threadId` does not group them in the OS. [Details](https://denext.dev/docs/desktop#desktop-notifications).
-- **Linux sessions differ:** with no tray host `createTray` rejects `unsupported`; with a locked
+- **Linux sessions differ:** with no tray host `createTray` rejects `unsupported` (and the backend
+  tray of `desktop.tray` is not made: the main window is shown instead); with a locked
   keyring no one can unlock, CEF stores cookies obfuscated, not OS-protected
   (`cookieEncryption: "basic"`). `denext desktop doctor --linux` lists what is missing
   ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
@@ -625,6 +679,15 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **The Linux clipboard** is readable by an app in the background while the session is unlocked,
   as on macOS and Windows; a locked session refuses reads only where the locker sets logind's
   `LockedHint` ([details](https://denext.dev/docs/desktop#desktop-linux-session)).
+- **UI overlay files are served whole.** A file of a UI update (`denext/desktop/updater`) is read
+  into memory and checked before it is sent, never streamed from its folder, so a large media file
+  in an overlay costs its size per request (the bundled export still streams). Where the OS reports
+  no inode or change time the file is hashed on every read. `denext desktop package` reads the
+  floor sequence from `out/_denext/ota.json`, the default export folder.
+- **`resolveDesktopUiDir` checks a UI overlay once, at launch.** It returns a folder, so a server
+  you build yourself over that folder reads files without the per-file check: one changed after
+  launch is served as it is. `runDesktop` is not affected. A hand-built server should use
+  `openDesktopUi` and read through its overlay's `read`.
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
@@ -632,6 +695,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
+- **The CEF backend is on Chromium 156.0.8078.48** (runtime 3.0.0-denext.7), without Chrome's fixes
+  from 156.0.8078.73 on (73 CVEs by Chrome's notes), which need a newer CEF 156 build and come with
+  the next runtime. Keep untrusted remote content out of app windows
+  (`desktop.app.allowedNavigationOrigins`) or use a system web view; see
+  [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj).
 - **CEF on Linux spellchecks seven languages out of the box** (runtime 2.9.7-denext.21): the
   runtime makes no network requests of its own, so it never downloads Hunspell dictionaries; it
   ships en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT. For any other language the app ships
@@ -639,6 +707,24 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   spellchecker, unchanged.
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):
   navigations and subresources arrive whole. Stream through `fetch` / `EventSource`, or use CEF.
+- **Overlay and tray-first windows depend on the OS for part of what they ask for.** With the
+  pinned runtime (3.0.0-denext.7): always-on-top levels above `"floating"` and
+  `visibleOnFullScreen` are macOS-only (Windows and Linux have one floating level); a transparent
+  window is opaque on CEF; `overlay: true` is a layer surface only on a Wayland compositor with
+  wlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) and with gtk-layer-shell installed, an
+  ordinary window elsewhere (GNOME has no layer shell); tray hover events are macOS and Windows
+  only, `popUpMenu()` does nothing on Linux (the tray host opens the menu), and a Linux session
+  without a StatusNotifierWatcher (AppIndicator only) delivers no tray clicks; text to speech on
+  Linux needs speech-dispatcher (the packages recommend it). Under the stock runtime, or a pinned runtime before 3.0.0-denext.6,
+  click-through, hit regions, every-workspace visibility, the taskbar setter, the levels, tray
+  event detail and the activation policy report `false` / reject `unsupported`,
+  `desktop.app.dock: false` hides the Dock icon only once the app starts (it shows for a moment at
+  launch), and a window opened hidden, and the tray panel, may flash once ([details](https://denext.dev/docs/desktop#desktop-overlay-windows)).
+- **Several windows share one origin.** `openWindow({ capabilities })` limits what a window's page
+  may call, least privilege rather than isolation: every window has the app's origin, storage and
+  launch token. With several windows open a reload releases that window's tray icons, close guard
+  and drops; keep-awake holds and global shortcuts are released only by the main window's reload.
+  A runtime without window bindings treats every page as the main window's.
 - **Window and menu features differ per OS and backend** (title-bar styles and the Dock menu are
   macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held; a badge is a
   window-title prefix on Windows, and on Linux too unless a dock reads launcher badges). Ask
@@ -652,7 +738,12 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Permissions:** a packaged app keeps `--allow-read` / `--allow-env` unscoped, and a picked path
   needs unscoped read/write (permissions bake at build time); FFI, Node-API addons and spawned OS
   tools are full trust; the bridge token is readable by any script in the page, so keep the
-  strict CSP and enable only the capabilities you use.
+  strict CSP and enable only the capabilities you use. A program sidecar shipped in the app
+  (`run: { exec: "./bin/…" }`) is baked an unscoped `--allow-run` and a broad `--allow-write`
+  (its copy in the app's cache folder has a per-user path); runtime 3.0.0-denext.8 scopes both to
+  that copy when the app sets `desktop.app.identifier`, from the denext release that pins it. Under
+  `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets only
+  the permissions the app holds unscoped (no scoped grants, `--unstable-*` or `--config`).
 - **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime
   writes through `/usr/bin/security`, which any program of the same user can read back) an app
   without a provisioning profile that grants a keychain access group keeps its items in the login
@@ -682,7 +773,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   window on Wayland can't be named to the portal, so its portal dialog isn't modal to the window.
 - **Some desktop paths can only be verified by hand** (Touch ID / Windows Hello passkeys, signed
   macOS notifications, the update signer match with real identities, Mica, real HiDPI displays):
-  no CI runner has the hardware or identities, so they are checked before each final release
+  no CI runner has the hardware or identities, so they are checked before each final release (target: unscheduled for the paths that need a
+  Windows Hello machine, signed macOS and Windows builds, or a FIDO2 key on Linux)
   ([checklist](https://denext.dev/docs/contributing#manual-desktop-checks-before-a-final-release)).
 - **No Touch Bar.** `react-native-windows` / `-macos` native
   modules don't run (write a desktop extension); their extra components are DOM stand-ins.

@@ -24,6 +24,10 @@ import {
 import { UI_CSRF_FIELD, uiOriginAllowed } from "../src/ui/security.ts";
 import { type DbChildRunner, setDbChildRunner } from "../src/ui/features/database.ts";
 import type { DbEnvelope, DbReply } from "../src/ui/database/protocol.ts";
+import { releaseFetchBodies } from "./helpers/unread-bodies.ts";
+
+// Responses read only for their status or headers are released when each test ends.
+releaseFetchBodies();
 
 const PASSWORD = "correct horse battery staple";
 

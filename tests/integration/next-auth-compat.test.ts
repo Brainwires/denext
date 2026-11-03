@@ -49,8 +49,6 @@ function jar() {
 
 Deno.test({
   name: "next-compat build: next-auth and next-auth/react resolve to the shim, app and library",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_nextauth_compat_" });
   try {

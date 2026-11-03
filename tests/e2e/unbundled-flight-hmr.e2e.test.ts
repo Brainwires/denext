@@ -57,8 +57,6 @@ async function stepFlightEntry(server: RunningServer): Promise<void> {
 
 Deno.test({
   name: "e2e: unbundled dev loop — Flight island single-module HMR preserves state",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await Deno.makeTempDir({ prefix: "denext_hmr_flight_" });
   await copy(FIXTURE, dir, { overwrite: true });

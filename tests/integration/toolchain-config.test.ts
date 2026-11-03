@@ -82,8 +82,6 @@ async function toolchainWrapper(dir: string): Promise<{ path: string; log: strin
 Deno.test({
   name: "a jsr: CLI's toolchain re-exec builds an app whose config needs its import map",
   ignore: Deno.build.os === "windows",
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: async () => {
     const tmp = await Deno.makeTempDir({ prefix: "denext-tc-config-" });
     try {

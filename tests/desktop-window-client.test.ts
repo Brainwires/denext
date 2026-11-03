@@ -14,6 +14,7 @@ import {
   makeWindowDraggable,
   maximizeWindow,
   minimizeWindow,
+  onBeforeQuit,
   onCloseRequested,
   onDisplayChanged,
   onFileDrop,
@@ -220,6 +221,104 @@ Deno.test("window client: a throwing close handler keeps the window open", async
       await until(() => responses.length === 1);
       assertEquals(responses[0], { id: "x", close: false });
       stop();
+    });
+  } finally {
+    console.error = errors;
+  }
+});
+
+Deno.test("window client: a close handler is told why — close, or the app quitting", async () => {
+  let reason: unknown = "quit";
+  const responses: unknown[] = [];
+  await inDesktop({
+    window: {
+      setCloseGuard: () => null,
+      closeAck: () => ({ current: true, reason }),
+      closeRespond: (args) => void responses.push(args),
+    },
+  }, async (rt) => {
+    const seen: string[] = [];
+    // Close to the tray, but let the app quit.
+    const stop = onCloseRequested((event) => {
+      seen.push(event.reason);
+      return event.reason === "quit";
+    });
+    // A handler written without the event keeps working.
+    const plain = onCloseRequested(() => true);
+    rt.emit("window", "closeRequested", { id: "q" });
+    await until(() => responses.length === 1);
+    assertEquals(responses[0], { id: "q", close: true });
+    reason = undefined; // a runtime that does not say: a plain close
+    rt.emit("window", "closeRequested", { id: "c" });
+    await until(() => responses.length === 2);
+    assertEquals(responses[1], { id: "c", close: false });
+    assertEquals(seen, ["quit", "close"]);
+    stop();
+    plain();
+  });
+});
+
+Deno.test("window client: onBeforeQuit guards quits only, runs first, and its refusal asks no close handler", async () => {
+  let reason = "quit";
+  const responses: unknown[] = [];
+  const errors = console.error;
+  console.error = () => {};
+  try {
+    await inDesktop({
+      window: {
+        setCloseGuard: () => null,
+        closeAck: () => ({ current: true, reason }),
+        closeRespond: (args) => void responses.push(args),
+      },
+    }, async (rt) => {
+      const order: string[] = [];
+      let keep: boolean | void = false;
+      const guards = () => rt.calls.filter((c) => c.method === "setCloseGuard").map((c) => c.args);
+      const stopQuit = onBeforeQuit(() => {
+        order.push("beforeQuit");
+        return keep;
+      });
+      await until(() => guards().length === 1);
+      assertEquals(guards(), [{ enabled: true, quitOnly: true }]);
+      const stopClose = onCloseRequested(({ reason }) => {
+        order.push(`close:${reason}`);
+      });
+      await until(() => guards().length === 2);
+      assertEquals(guards()[1], { enabled: true }, "a close handler guards every close");
+      rt.emit("window", "closeRequested", { id: "1" });
+      await until(() => responses.length === 1);
+      assertEquals(responses[0], { id: "1", close: false });
+      assertEquals(order, ["beforeQuit"], "refused before any close handler");
+      keep = undefined;
+      rt.emit("window", "closeRequested", { id: "2" });
+      await until(() => responses.length === 2);
+      assertEquals(responses[1], { id: "2", close: true });
+      assertEquals(order, ["beforeQuit", "beforeQuit", "close:quit"]);
+      // A plain close does not ask the before-quit handlers.
+      reason = "close";
+      rt.emit("window", "closeRequested", { id: "3" });
+      await until(() => responses.length === 3);
+      assertEquals(order.at(-1), "close:close");
+      assertEquals(order.length, 4);
+      // Without close handlers the guard goes back to quits only, then off.
+      stopClose();
+      await until(() => guards().length === 3);
+      assertEquals(guards()[2], { enabled: true, quitOnly: true });
+      stopQuit();
+      stopQuit();
+      await until(() => guards().length === 4);
+      assertEquals(guards()[3], { enabled: false });
+      // A throwing before-quit handler keeps the app running.
+      const stopThrow = onBeforeQuit(() => {
+        throw new Error("boom");
+      });
+      reason = "quit";
+      await until(() => guards().length === 5 && rt.openStreams() === 1);
+      rt.emit("window", "closeRequested", { id: "4" });
+      const fourth = () => responses.find((r) => (r as { id: string }).id === "4");
+      await until(() => fourth() !== undefined);
+      assertEquals(fourth(), { id: "4", close: false });
+      stopThrow();
     });
   } finally {
     console.error = errors;

@@ -15,6 +15,7 @@ import { shadowFromPrerender } from "../src/lustre/kit.ts";
 import { lustreVersion, writeLustreKits } from "../src/build/lustre-kit.ts";
 import type { PluginContext, PluginPrepareStep } from "../src/plugin/mod.ts";
 import { removeTempDirSync } from "./helpers/temp.ts";
+import { boundedDeno } from "../scripts/deno-doc.ts";
 
 /** A Gleam `Ok` / `Error` as Gleam's JavaScript output builds them. */
 const ok = <T>(value: T) => Object.assign([value], { isOk: () => true });
@@ -254,12 +255,9 @@ Deno.test('lustreVersion: a manifest version that is not a version is "unknown",
 Deno.test("denext/gleam: importable from client code (no static path to the build plugin)", async () => {
   // a file URL, not a path: `deno info` reads a Windows `C:\…` path as a URL with scheme "c"
   const entry = new URL("../src/gleam.ts", import.meta.url).href;
-  const out = await new Deno.Command(Deno.execPath(), {
-    args: ["info", "--json", entry],
-    env: { NO_COLOR: "1" },
-  }).output();
-  assert(out.success, new TextDecoder().decode(out.stderr));
-  const graph = JSON.parse(new TextDecoder().decode(out.stdout)) as {
+  const out = await boundedDeno(["info", "--json", entry], { env: { NO_COLOR: "1" } });
+  assert(out.success, out.stderr);
+  const graph = JSON.parse(out.stdout) as {
     roots: string[];
     modules: Array<{ specifier: string; dependencies?: Array<{ code?: { specifier: string } }> }>;
   };

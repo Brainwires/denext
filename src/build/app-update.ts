@@ -27,6 +27,7 @@ import { createHash } from "node:crypto";
 import { basename, join } from "@std/path";
 import { fromBase64, otaPublicKeyOf, parseOtaPublicKey, toBase64 } from "./ota-signing.ts";
 import { checkArtifactVersion } from "./app-update-version.ts";
+import { runToExitText } from "./exited-output.ts";
 
 /** What the signature covers before the signed string (the runtime's `SIGNATURE_DOMAIN`). */
 const APP_UPDATE_SIGNATURE_DOMAIN = "denext-app-update-v1\n";
@@ -814,9 +815,8 @@ export type NotarizationCommandRunner = (
 ) => Promise<NotarizationCommandResult>;
 
 const runCommand: NotarizationCommandRunner = async (cmd, args) => {
-  const out = await new Deno.Command(cmd, { args, stdout: "piped", stderr: "piped" }).output();
-  const text = new TextDecoder();
-  return { success: out.success, stdout: text.decode(out.stdout), stderr: text.decode(out.stderr) };
+  const { success, stdout, stderr } = await runToExitText(cmd, { args });
+  return { success, stdout, stderr };
 };
 
 const NOTARIZE_FIX = "package it with a Developer ID identity and DENEXT_NOTARY_PROFILE set";

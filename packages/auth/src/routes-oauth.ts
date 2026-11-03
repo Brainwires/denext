@@ -640,6 +640,12 @@ export async function fetchOAuthProfile(
     )
     : undefined;
   const userinfo = await readUserinfo(provider, endpoints.userinfoUrl, tokens, doFetch);
+  // OIDC Core §5.3.2: a userinfo response is about the id_token's subject, or it is not used.
+  // Without this a mapper that merges userinfo over the verified claims would sign in whoever
+  // the userinfo endpoint names.
+  if (claims && userinfo && userinfo.sub !== claims.sub) {
+    throw new Error(`${provider.id}: the userinfo \`sub\` is not the id_token's`);
+  }
   // OAuth providers (no id_token `email_verified`) may expose a verified-email list —
   // fetch it so the mapper can avoid trusting an unverified `userinfo.email`.
   const emails = provider.userEmailsUrl && tokens.access_token

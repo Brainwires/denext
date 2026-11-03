@@ -9,7 +9,8 @@
 //   deno task parity:native:plugins     # re-vendor the pinned versions' types (needs the network)
 //
 // Run it after changing a pin in src/build/mobile-capabilities-expo.ts, review the diff, then run
-// the test. Re-vendoring takes the newest version the pin's caret range admits.
+// the test. Re-vendoring takes the pinned version (`denext mobile add` pins each plugin exactly;
+// a caret range takes the newest version it admits).
 
 import { dirname, fromFileUrl, join, relative } from "@std/path";
 import { EXPO_SDK_CAPABILITIES } from "../../../src/build/mobile-capabilities-expo.ts";
@@ -79,8 +80,12 @@ export interface PluginListenerHandle {
 `;
 const CAPACITOR_CORE_NAMES = new Set(["PermissionState", "PluginListenerHandle"]);
 
-/** Whether `version` is within the caret range `range` (`^x.y.z`, as every pin here is). */
+/**
+ * Whether `version` is within the pin `range`: an exact version (`x.y.z`, as `denext mobile add`
+ * pins every plugin) admits only itself; a caret range (`^x.y.z`) its major's later releases.
+ */
 export function caretAdmits(range: string, version: string): boolean {
+  if (/^\d+\.\d+\.\d+$/.test(range)) return range === version;
   const m = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range);
   const v = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
   if (!m || !v) return false;

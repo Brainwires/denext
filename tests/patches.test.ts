@@ -20,8 +20,14 @@ import {
   type PatchEntry,
   patchFileName,
   patchPlugin,
+  patchRuntime,
   revertNpmPatch,
 } from "../src/build/patches.ts";
+import {
+  FIRST_PATCHED_DEPENDENCIES_RUNTIME,
+  supportsPatchedDependencies,
+} from "../src/build/deno-version.ts";
+import toolchainPin from "../src/build/deno-toolchain-pin.json" with { type: "json" };
 
 Deno.test("patch file names round-trip, scoped packages included", () => {
   assertEquals(patchFileName("left-pad", "1.3.0"), "left-pad+1.3.0.patch");
@@ -127,7 +133,12 @@ Deno.test("npm: a deleted and an added file are recorded (/dev/null), applied (r
 Deno.test("npm: a file too large to diff is skipped with a note, the rest of the patch is recorded", async () => {
   const { dir, installed, pristine } = await npmProject();
   const notes: string[] = [];
-  const opts = { npmPristine: () => Promise.resolve(pristine), log: (m: string) => notes.push(m) };
+  // `runtime: null`: no patchedDependencies registration (and its notes) on any pinned toolchain.
+  const opts = {
+    npmPristine: () => Promise.resolve(pristine),
+    log: (m: string) => notes.push(m),
+    runtime: null,
+  };
   try {
     const huge = Array.from({ length: 60_000 }, (_, i) => `l${i}`).join("\n") + "\n";
     await Deno.writeTextFile(join(pristine, "bundle.js"), huge);
@@ -515,5 +526,199 @@ Deno.test("npm: node_modules/<pkg> may link into the workspace, never elsewhere 
     await Deno.remove(elsewhere, { recursive: true });
   } finally {
     await Deno.remove(root, { recursive: true });
+  }
+});
+
+// ── deno.json `patchedDependencies` (runtime 3.0.0-denext.3, DENEXT.md item 161) ───────────────
+
+Deno.test("supportsPatchedDependencies: from runtime 3.0.0-denext.3 on", () => {
+  assertEquals(FIRST_PATCHED_DEPENDENCIES_RUNTIME, "3.0.0-denext.3");
+  for (const v of ["3.0.0-denext.3", "3.0.0-denext.10", "3.0.1"]) {
+    assert(supportsPatchedDependencies(v), v);
+  }
+  for (const v of ["3.0.0-denext.2", "3.0.0-rc.7", "2.9.7-denext.14", "2.9.8", "x"]) {
+    assert(!supportsPatchedDependencies(v), v);
+  }
+});
+
+Deno.test("patchRuntime: the pinned toolchain, none under DENEXT_DENO=stock or a path", () => {
+  const env = (vars: Record<string, string>) => (name: string) => vars[name];
+  assertEquals(patchRuntime(env({})), toolchainPin.version);
+  assertEquals(patchRuntime(env({ DENEXT_DENO: "pinned" })), toolchainPin.version);
+  assertEquals(patchRuntime(env({ DENEXT_DENO: "stock" })), null);
+  assertEquals(patchRuntime(env({ DENEXT_DENO: "/usr/local/bin/deno" })), null);
+});
+
+/** {@link npmProject} with `nodeModulesDir: "auto"` and a patched `index.js`. */
+async function runtimeProject(
+  config: Record<string, unknown> = { nodeModulesDir: "auto" },
+): Promise<Awaited<ReturnType<typeof npmProject>>> {
+  const project = await npmProject();
+  await Deno.writeTextFile(join(project.dir, "deno.json"), JSON.stringify(config));
+  await Deno.writeTextFile(
+    join(project.installed, "index.js"),
+    LEFT_PAD.replace('str + "-" + len', '"PATCHED:" + str + "-" + len'),
+  );
+  return project;
+}
+
+const readConfig = async (dir: string) =>
+  JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))) as {
+    patchedDependencies?: Record<string, string>;
+  };
+
+Deno.test("npm: on runtime 3.0.0-denext.3 create registers a package-relative patch in deno.json", async () => {
+  const { dir, installed, pristine } = await runtimeProject({
+    nodeModulesDir: "auto",
+    patchedDependencies: { "other@1.0.0": "patches/other.patch" },
+  });
+  const lines: string[] = [];
+  const opts = {
+    npmPristine: () => Promise.resolve(pristine),
+    log: (l: string) => void lines.push(l),
+    runtime: "3.0.0-denext.3",
+  };
+  try {
+    const created = await createNpmPatch(dir, "left-pad", opts);
+    assertEquals(created.registered, "left-pad@1.3.0");
+    assertEquals(lines, []);
+    const copy = await Deno.readTextFile(join(dir, "patches", "npm", "left-pad+1.3.0.patch"));
+    // What the runtime's applier reads: a `diff --git` section per file, paths in the package.
+    assert(copy.startsWith("diff --git a/index.js b/index.js\n--- a/index.js\n+++ b/index.js\n@@"));
+    assertStringIncludes(copy, '+  return "PATCHED:" + str + "-" + len;');
+    assertEquals((await readConfig(dir)).patchedDependencies, {
+      "other@1.0.0": "patches/other.patch",
+      "left-pad@1.3.0": "patches/npm/left-pad+1.3.0.patch",
+    });
+    // The patch-package file is still written, and denext's boot apply stays a no-op.
+    assertEquals((await listPatches(dir)).map((p) => p.name), ["left-pad"]);
+    assertEquals(await applyPatches(dir, opts), { applied: [], unchanged: ["left-pad@1.3.0"] });
+
+    // A re-create against another version replaces the registration and its copy.
+    await Deno.writeTextFile(
+      join(installed, "package.json"),
+      `{ "name": "left-pad", "version": "1.4.0" }\n`,
+    );
+    await createNpmPatch(dir, "left-pad", opts);
+    assertEquals((await readConfig(dir)).patchedDependencies, {
+      "other@1.0.0": "patches/other.patch",
+      "left-pad@1.4.0": "patches/npm/left-pad+1.4.0.patch",
+    });
+    assertEquals(
+      [...Deno.readDirSync(join(dir, "patches", "npm"))].map((e) => e.name),
+      ["left-pad+1.4.0.patch"],
+    );
+
+    // Delete drops the registration and the copy; the user's own entry stays.
+    await deletePatch(dir, "left-pad");
+    assertEquals((await readConfig(dir)).patchedDependencies, {
+      "other@1.0.0": "patches/other.patch",
+    });
+    assertEquals([...Deno.readDirSync(join(dir, "patches", "npm"))], []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("npm: a workspace member registers in the workspace root's deno.json", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext_patches_ws_" });
+  const { dir, pristine } = await runtimeProject({ imports: {} });
+  const member = join(root, "apps", "web");
+  try {
+    await Deno.mkdir(join(root, "apps"), { recursive: true });
+    await Deno.rename(dir, member);
+    await Deno.writeTextFile(
+      join(root, "deno.json"),
+      JSON.stringify({ workspace: ["apps/web"], nodeModulesDir: "auto" }),
+    );
+    const opts = {
+      npmPristine: () => Promise.resolve(pristine.replace(dir, member)),
+      log: () => {},
+      runtime: "3.0.0-denext.3",
+    };
+    const created = await createNpmPatch(member, "left-pad", opts);
+    assertEquals(created.registered, "left-pad@1.3.0");
+    assertEquals((await readConfig(root)).patchedDependencies, {
+      "left-pad@1.3.0": "apps/web/patches/npm/left-pad+1.3.0.patch",
+    });
+    assertEquals((await readConfig(member)).patchedDependencies, undefined);
+    await deletePatch(member, "left-pad");
+    assertEquals((await readConfig(root)).patchedDependencies, undefined);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("npm: no registration on an older runtime, without node_modules, or for an added file", async () => {
+  // An older runtime: nothing beyond the patch-package file, and nothing said.
+  {
+    const { dir, pristine } = await runtimeProject();
+    const lines: string[] = [];
+    const log = (l: string) => void lines.push(l);
+    try {
+      const created = await createNpmPatch(dir, "left-pad", {
+        npmPristine: () => Promise.resolve(pristine),
+        log,
+        runtime: "3.0.0-denext.2",
+      });
+      assertEquals(created.registered, undefined);
+      assertEquals((await readConfig(dir)).patchedDependencies, undefined);
+      assertEquals(lines, []);
+      const none = await createNpmPatch(dir, "left-pad", {
+        npmPristine: () => Promise.resolve(pristine),
+        log,
+        runtime: null,
+      });
+      assertEquals(none.registered, undefined);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+  // The runtime refuses to resolve without a node_modules directory, so it is never added there.
+  {
+    const { dir, pristine } = await runtimeProject({ imports: {} });
+    const lines: string[] = [];
+    try {
+      const created = await createNpmPatch(dir, "left-pad", {
+        npmPristine: () => Promise.resolve(pristine),
+        log: (l) => void lines.push(l),
+        runtime: "3.0.0-denext.3",
+      });
+      assertEquals(created.registered, undefined);
+      assertEquals((await readConfig(dir)).patchedDependencies, undefined);
+      assertEquals(lines.length, 1);
+      assertStringIncludes(lines[0], "no node_modules directory");
+      // A package.json project has one.
+      await Deno.writeTextFile(join(dir, "package.json"), "{}");
+      const again = await createNpmPatch(dir, "left-pad", {
+        npmPristine: () => Promise.resolve(pristine),
+        log: () => {},
+        runtime: "3.0.0-denext.3",
+      });
+      assertEquals(again.registered, "left-pad@1.3.0");
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+  // The runtime's applier changes existing files only: a patch that adds one keeps denext's
+  // mechanism alone, and drops an earlier registration.
+  {
+    const { dir, installed, pristine } = await runtimeProject();
+    const lines: string[] = [];
+    const opts = {
+      npmPristine: () => Promise.resolve(pristine),
+      log: (l: string) => void lines.push(l),
+      runtime: "3.0.0-denext.3",
+    };
+    try {
+      assertEquals((await createNpmPatch(dir, "left-pad", opts)).registered, "left-pad@1.3.0");
+      await Deno.writeTextFile(join(installed, "extra.js"), "module.exports = 1;\n");
+      assertEquals((await createNpmPatch(dir, "left-pad", opts)).registered, undefined);
+      assertStringIncludes(lines.join("\n"), "adds or deletes a file");
+      assertEquals((await readConfig(dir)).patchedDependencies, undefined);
+      assertEquals([...Deno.readDirSync(join(dir, "patches", "npm"))], []);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
   }
 });

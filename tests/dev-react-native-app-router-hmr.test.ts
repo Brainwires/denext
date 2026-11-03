@@ -24,8 +24,6 @@ async function text(origin: string, path: string): Promise<string> {
 
 Deno.test({
   name: "dev (App Router, reactNative): an island edit hot-swaps per module",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_rn_ar_hmr_" }));
   await writeRnAppRouterFixture(dir, "{ reactNative: true }");
