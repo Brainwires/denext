@@ -79,6 +79,29 @@ export class PickedPaths {
     return handle;
   }
 
+  /** The entry `handle` names, refused (`forbidden`) when unknown, or read-only for a write. */
+  #entry(handle: unknown, write: boolean): { realPath: string; mode: PickMode } {
+    const entry = typeof handle === "string" ? this.#entries.get(handle) : undefined;
+    if (!entry) throw forbidden("unknown or expired picked handle");
+    if (write && (entry.mode === "read" || entry.mode === "readFolder")) {
+      throw forbidden("this handle is read-only");
+    }
+    return entry;
+  }
+
+  /**
+   * The absolute real path a handle names: the file or folder the user picked. Only a handle this
+   * set issued resolves; any other value (a path string, a forged or expired handle) throws
+   * `forbidden`, and with `write` a read-only handle does too. For the Deno side only (an
+   * extension's `ctx.pickedPath`): the path is never sent to the page.
+   *
+   * @param handle The opaque handle from a dialog, a drop or an opened file.
+   * @param write Whether the caller writes to it (refused for a read-only handle).
+   */
+  path(handle: unknown, write = false): string {
+    return this.#entry(handle, write).realPath;
+  }
+
   /**
    * Resolve `(handle, rel)` to a confined absolute {@link PickedTarget} for the requested access, or
    * throw `forbidden` for an unknown/expired handle, a write to a read-only handle, or a relative
@@ -89,11 +112,7 @@ export class PickedPaths {
    * @param write Whether the access writes (gated by the handle's mode).
    */
   async resolve(handle: unknown, rel: string, write: boolean): Promise<PickedTarget> {
-    const entry = typeof handle === "string" ? this.#entries.get(handle) : undefined;
-    if (!entry) throw forbidden("unknown or expired picked handle");
-    if (write && (entry.mode === "read" || entry.mode === "readFolder")) {
-      throw forbidden("this handle is read-only");
-    }
+    const entry = this.#entry(handle, write);
     if (entry.mode === "folder" || entry.mode === "readFolder") {
       const target = await confineRelative(entry.realPath, rel && rel.length > 0 ? rel : ".");
       return { target, root: entry.realPath };

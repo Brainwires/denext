@@ -93,6 +93,9 @@ Deno.test("runOnMainThread: passes fn and context to Deno.desktop.runOnMainThrea
 Deno.test("runOnMainThread: a quitting runtime's rejection reaches the handler", async () => {
   const desktop = {
     runOnMainThread: () => Promise.reject(new Error("the app is quitting")),
+    pickedPath: () => {
+      throw new Error("no picked paths in tests");
+    },
   };
   await withDesktop(desktop, async () => {
     await assertRejects(

@@ -115,8 +115,11 @@ await runDesktop({
         {" "}
         pushes an event to the page, where <code>onDesktopEvent(cap, event, handler)</code> from
         {" "}
-        <code>denext/desktop/client</code>{" "}
-        receives it. An event emitted before the page subscribes is kept and delivered then:
+        <code>denext/desktop/client</code> receives it (a fourth argument,{" "}
+        <code>{"{ window: id }"}</code>, sends it to one window). An extension module emits through
+        its own <code>setup</code>{" "}
+        host instead (<a href="#desktop-extension-events">below</a>). An event emitted before the
+        page subscribes is kept and delivered then:
       </p>
       <Code lang="ts">
         {`const { emit } = await runDesktop({
@@ -3219,6 +3222,97 @@ const stop = onDesktopEvent<{ id: string }>("scanner", "attached", ({ id }) => r
 desktop: {
   capabilities: { extensions: ["./desktop/extensions/scanner.ts"] },
   extraPermissions: { ffi: ["./native/libscanner.dylib"] }, // baked into the package
+},`}
+      </Code>
+
+      <h3 id="desktop-extension-events">Events no page call started</h3>
+      <p>
+        A method&apos;s <code>ctx.emit(event, data)</code>{" "}
+        lives as long as its call. For work the extension or <code>desktop.ts</code>{" "}
+        starts on its own (a long job a tray item started, a file watcher), give the extension a
+        {" "}
+        <code>setup(host)</code>: it runs once when the app starts, before any page can call, and
+        {" "}
+        <code>host.emit(event, data)</code>{" "}
+        streams to the page with no call in flight. Both emits are limited to the capability&apos;s
+        declared <code>events</code>, and both keep an event until the page subscribes, like{" "}
+        <code>runDesktop</code>&apos;s <code>emit(cap, event, data)</code>. Pass{" "}
+        <code>{'{ window: "panel" }'}</code>{" "}
+        (a window id) as a third argument to reach one window instead of every one.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/jobs.ts
+import { defineDesktopExtension, type DesktopExtensionHost } from "denext/desktop";
+let host: DesktopExtensionHost | undefined;
+export function reportProgress(percent: number) {
+  host?.emit("progress", { percent }); // from desktop.ts, a tray item, a timer
+}
+export default defineDesktopExtension({
+  name: "jobs",
+  events: ["progress"],
+  setup: (h) => (host = h),
+  methods: {},
+});
+
+// a "use client" component
+onDesktopEvent<{ percent: number }>("jobs", "progress", ({ percent }) => setPercent(percent));`}
+      </Code>
+
+      <h3 id="desktop-picked-path">A picked file&apos;s path, for a host program</h3>
+      <p>
+        The <code>path</code> a pick returns to the page (<code>pickDocument</code>,{" "}
+        <code>openFile</code>, <code>pickFolder</code>,{" "}
+        <code>onFileDrop</code>) is for display: page script could send back any string, so an
+        extension never trusts a path from the page. Send the pick&apos;s <code>handle</code>{" "}
+        instead, and resolve it on the Deno side with <code>ctx.pickedPath(handle)</code>{" "}
+        (also on the <code>setup</code>{" "}
+        host): it returns the absolute path of a file or folder the user chose in a dialog, dropped
+        on a window or opened with the app in this launch, and throws <code>forbidden</code>{" "}
+        for anything else (a path, a made-up or expired handle). <code>{"{ write: true }"}</code>
+        {" "}
+        also refuses a read-only handle (an opened or dropped file). Keep the path in the Deno
+        process; the page already has its display copy.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/tools.ts
+info: {
+  handler: async (args, ctx) => {
+    const input = ctx.pickedPath((args as { handle?: unknown }).handle); // forbidden unless picked
+    const out = await new Deno.Command("qemu-img", { args: ["info", "--output=json", input] })
+      .output();
+    return JSON.parse(new TextDecoder().decode(out.stdout));
+  },
+},
+
+// the page
+const doc = await pickDocument();
+if (doc?.handle) await tools.info({ handle: doc.handle });`}
+      </Code>
+
+      <h3 id="desktop-validate-input">Validate what the page sends</h3>
+      <p>
+        An extension runs with the app&apos;s permissions, so treat every argument as untrusted,
+        whatever page you wrote. Declare an <code>input</code>{" "}
+        schema that lists the keys a page may send and refuses the rest (Zod&apos;s{" "}
+        <code>.strict()</code>, Valibot&apos;s{" "}
+        <code>strictObject</code>), and never spread the page&apos;s object into a settings store.
+        Settings that guard the machine (a program the app runs, a resource budget, a confirmation
+        step) stay out of the page&apos;s reach, or within bounds the extension checks against the
+        current value.{" "}
+        <a href="https://github.com/Brainwires/denext/tree/main/examples/hangar">
+          examples/hangar
+        </a>
+        &apos;s <code>setSettings</code>{" "}
+        is a worked example: a page may not change the QEMU prefix, and may raise the RAM budget
+        only to 90%.
+      </p>
+      <Code lang="ts">
+        {`setSettings: {
+  input: z.object({
+    libraryRoot: z.string().startsWith("/").optional(),
+    ramBudgetPercent: z.number().int().min(10).max(90).optional(), // the file may go higher
+  }).strict(), // an unknown key is a validation error, not silently kept
+  handler: (args) => saveSettings(args as PageSettings),
 },`}
       </Code>
 

@@ -6,6 +6,7 @@
 import { join } from "@std/path/posix";
 import { overBudgetBy, ramBudget, sshCommand, trayTooltip } from "./format.ts";
 import type { Host } from "./host.ts";
+import { PAGE_SETTINGS } from "./page-settings.ts";
 import {
   convertArgs,
   createArgs,
@@ -88,6 +89,54 @@ export function parseSettings(raw: unknown, base: HangarSettings): HangarSetting
       "Shutdown timeout",
     ),
   };
+}
+
+/** Settings the page sees but may only send back unchanged (it round-trips the whole object). */
+const PAGE_READ_ONLY: readonly (keyof HangarSettings)[] = ["qemuPrefix"];
+
+/**
+ * Validate settings the page sent against {@link PAGE_SETTINGS}, over `current`: an unknown key, a
+ * changed read-only one, a wrong type or a value out of the page's bounds is a `validation`
+ * refusal. A value equal to the current one always passes (a RAM budget of 100 set in the file
+ * survives a save from the page). Then the same checks as the settings file ({@link parseSettings}).
+ */
+export function parsePageSettings(raw: unknown, current: HangarSettings): HangarSettings {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new HangarError("validation", "settings must be an object");
+  }
+  for (const [key, value] of Object.entries(raw)) checkPageSetting(key, value, current);
+  // The folder's own checks (absolute, no `..`) and the merge over `current`.
+  return parseSettings({ ...raw, qemuPrefix: current.qemuPrefix }, current);
+}
+
+/** One key the page sent: listed in PAGE_SETTINGS and within its rule, or unchanged. */
+function checkPageSetting(key: string, value: unknown, current: HangarSettings): void {
+  const unchanged = Object.hasOwn(current, key) && value === current[key as keyof HangarSettings];
+  if (PAGE_READ_ONLY.includes(key as keyof HangarSettings)) {
+    if (!unchanged) {
+      throw new HangarError("validation", `${key} can't be changed from the app's pages`);
+    }
+    return;
+  }
+  if (!Object.hasOwn(PAGE_SETTINGS, key)) {
+    throw new HangarError("validation", `"${key}" is not a setting`);
+  }
+  const rule = PAGE_SETTINGS[key as keyof typeof PAGE_SETTINGS];
+  if (unchanged || rule.kind === "folder") return; // a folder is checked by parseSettings
+  checkPageInt(key, value, rule);
+}
+
+/** A whole number within the page's bounds for `key`. */
+function checkPageInt(key: string, value: unknown, rule: { min: number; max: number }): void {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new HangarError("validation", `${key} must be a whole number`);
+  }
+  if (value < rule.min || value > rule.max) {
+    throw new HangarError(
+      "validation",
+      `${key} must be from ${rule.min} to ${rule.max} here (edit the settings file for more)`,
+    );
+  }
 }
 
 /** Run a config parse, turning its `ConfigError` into a `validation` refusal. */

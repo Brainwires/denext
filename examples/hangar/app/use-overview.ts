@@ -1,7 +1,10 @@
 "use client";
-// The overview (VMs, instances, RAM budget), polled while the page is visible.
+// The overview (VMs, instances, RAM budget), polled while the page is visible, and refreshed at
+// once when the backend says the instances changed (the tray started or stopped a VM).
 
 import { useCallback, useEffect, useState } from "denext";
+import { onDesktopEvent } from "denext/desktop/client";
+import { CHANGED_EVENT } from "../lib/changes.ts";
 import type { Overview } from "../lib/types.ts";
 import { errorText, hangar } from "./hangar-client.ts";
 
@@ -28,7 +31,11 @@ export function useOverview(): {
     const timer = setInterval(() => {
       if (document.visibilityState === "visible") void refresh();
     }, POLL_MS);
-    return () => clearInterval(timer);
+    const stop = onDesktopEvent("hangar", CHANGED_EVENT, () => void refresh());
+    return () => {
+      clearInterval(timer);
+      stop();
+    };
   }, [refresh]);
   return { overview, error, refresh };
 }

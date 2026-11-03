@@ -45379,6 +45379,12 @@
               "name": "perWindow",
               "signature": "readonly perWindow?: boolean",
               "doc": "The capability keeps per-page state for each window (keyed by\n{@linkcode DesktopCapCtx.windowId}), so {@linkcode DesktopCapability.onPageLoad} is called for\nevery window's page loads, not just the main window's."
+            },
+            {
+              "kind": "property",
+              "name": "setup",
+              "signature": "readonly setup?: (host: DesktopExtensionHost) => void",
+              "doc": "Called once, when the app's bridge starts (before any page can call), with the\n{@linkcode DesktopExtensionHost}: the extension's own process-level `emit` (scoped to its\ndeclared {@linkcode DesktopCapability.events}) and `pickedPath`. Keep the host in a module\nvariable so work started outside a method call — by `desktop.ts`, a tray menu, a timer — can\nstream to the page. An error it throws is logged, never surfaced."
             }
           ]
         },
@@ -45471,8 +45477,14 @@
             {
               "kind": "method",
               "name": "emit",
-              "signature": "emit(event: string, data: unknown): void",
-              "doc": "Push an event to the page's event stream. `event` must be one the capability declared in\n{@linkcode DesktopCapability.events}; emitting an undeclared event throws."
+              "signature": "emit(event: string, data: unknown, options?: DesktopEmitOptions): void",
+              "doc": "Push an event to the pages' event stream: every window's, or only `options.window`'s. `event`\nmust be one the capability declared in {@linkcode DesktopCapability.events}; emitting an\nundeclared event throws. Events are retained for replay, so a page that subscribes later still\nreceives it. For work that outlives the call (or that no page call started), use the\n{@linkcode DesktopExtensionHost} {@linkcode DesktopCapability.setup} receives."
+            },
+            {
+              "kind": "method",
+              "name": "pickedPath",
+              "signature": "pickedPath(handle: unknown, options?: DesktopPickedPathOptions): string",
+              "doc": "The absolute host path of a file or folder the USER picked in this launch: a `handle` that a\nnative dialog (`pickDocument`, `openFile`, `saveFile`, `pickFolder`), a file dropped on a window\nor a file the OS opened with the app produced. Use it to hand a picked file to a host program\n(a CLI tool) that needs its path. Anything else — a path string, a forged or expired handle —\nthrows a `forbidden` {@linkcode DesktopCapError}, so page script cannot turn a string of its\nchoosing into a host path. With `{ write: true }` a read-only handle (an opened or dropped\nfile) is refused too. Never send the returned path back to the page."
             },
             {
               "kind": "method",
@@ -45619,6 +45631,26 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopEmitOptions",
+          "slug": "DesktopEmitOptions",
+          "kind": "interface",
+          "signature": "interface DesktopEmitOptions",
+          "doc": "Where an event goes: DesktopCapCtx.emit, DesktopExtensionHost.emit.",
+          "docFull": "Where an event goes: {@linkcode DesktopCapCtx.emit}, {@linkcode DesktopExtensionHost.emit}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window?: string",
+              "doc": "The one window the event is for (`\"main\"`, `\"panel\"`, or an id `openWindow` returned); every\nwindow's stream when omitted."
+            }
+          ]
+        },
+        {
           "name": "DesktopEventLog",
           "slug": "DesktopEventLog",
           "kind": "class",
@@ -45701,6 +45733,44 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "DesktopExtensionHost",
+          "slug": "DesktopExtensionHost",
+          "kind": "interface",
+          "signature": "interface DesktopExtensionHost",
+          "doc": "What an extension's DesktopCapability.setup receives once, when the app starts: the process-level counterpart of DesktopCapCtx, for work the extension (or desktop.ts) starts on its own — a tray-started job, a file watcher — that streams to the page with no page call in flight. Keep it at module scope and use it for the life of the app.",
+          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "appSupportDir",
+              "signature": "readonly appSupportDir: string",
+              "doc": "The OS per-app support directory (create-on-first-use); durable across launches."
+            },
+            {
+              "kind": "property",
+              "name": "os",
+              "signature": "readonly os: \"darwin\" | \"windows\" | \"linux\"",
+              "doc": "The running OS."
+            },
+            {
+              "kind": "method",
+              "name": "emit",
+              "signature": "emit(event: string, data: unknown, options?: DesktopEmitOptions): void",
+              "doc": "Push an event to the pages' streams (every window's, or `options.window`'s). `event` must be\none the capability declared in {@linkcode DesktopCapability.events}; an undeclared one throws.\nEvents are retained for replay: one emitted before any page subscribes is delivered to the\nfirst `onDesktopEvent` subscriber, as with {@linkcode DesktopCapCtx.emit}."
+            },
+            {
+              "kind": "method",
+              "name": "pickedPath",
+              "signature": "pickedPath(handle: unknown, options?: DesktopPickedPathOptions): string",
+              "doc": "The same lookup as {@linkcode DesktopCapCtx.pickedPath}."
+            }
+          ]
         },
         {
           "name": "desktopHasTool",
@@ -46490,6 +46560,26 @@
           ]
         },
         {
+          "name": "DesktopPickedPathOptions",
+          "slug": "DesktopPickedPathOptions",
+          "kind": "interface",
+          "signature": "interface DesktopPickedPathOptions",
+          "doc": "Options for DesktopCapCtx.pickedPath.",
+          "docFull": "Options for {@linkcode DesktopCapCtx.pickedPath}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "write",
+              "signature": "readonly write?: boolean",
+              "doc": "The caller will write to the path: a read-only handle (an opened or dropped file) is refused."
+            }
+          ]
+        },
+        {
           "name": "DesktopProxyFn",
           "slug": "DesktopProxyFn",
           "kind": "typeAlias",
@@ -46634,8 +46724,8 @@
             {
               "kind": "method",
               "name": "emit",
-              "signature": "emit(cap: string, event: string, data: unknown): void",
-              "doc": "Push an event to the page (`cap` need not be a registered capability's). Events are retained\nfor replay, so one emitted before the page subscribes is still delivered."
+              "signature": "emit(cap: string, event: string, data: unknown, options?: DesktopEmitOptions): void",
+              "doc": "Push an event to the pages (`cap` need not be a registered capability's): every window's, or\nonly `options.window`'s. Events are retained for replay, so one emitted before the page\nsubscribes is still delivered. An extension module reaches the same stream without this\nhandle through its {@linkcode DesktopCapability.setup} host."
             },
             {
               "kind": "method",
@@ -46818,6 +46908,37 @@
           "returns": "The slug (\"app\" when nothing usable remains).",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "DesktopStrictPermissionsError",
+          "slug": "DesktopStrictPermissionsError",
+          "kind": "class",
+          "signature": "class DesktopStrictPermissionsError extends Error",
+          "doc": "desktop.permissions: \"strict\" could not be honoured or scoped (the message names the reason and the fix). The generated package scripts print it as one line, not a stack trace.",
+          "docFull": "`desktop.permissions: \"strict\"` could not be honoured or scoped (the message names the reason and\nthe fix). The generated package scripts print it as one line, not a stack trace.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "constructor",
+              "name": "constructor",
+              "signature": "constructor(message: string)",
+              "doc": "Build the refusal.",
+              "params": [
+                {
+                  "name": "message",
+                  "doc": "The refusal, with the fix."
+                }
+              ]
+            }
+          ],
+          "extends": [
+            {
+              "type": "Error"
+            }
+          ]
         },
         {
           "name": "desktopToolGate",
@@ -48084,6 +48205,22 @@
             },
             {
               "kind": "method",
+              "name": "path",
+              "signature": "path(handle: unknown, write?: boolean): string",
+              "doc": "The absolute real path a handle names: the file or folder the user picked. Only a handle this\nset issued resolves; any other value (a path string, a forged or expired handle) throws\n`forbidden`, and with `write` a read-only handle does too. For the Deno side only (an\nextension's `ctx.pickedPath`): the path is never sent to the page.",
+              "params": [
+                {
+                  "name": "handle",
+                  "doc": "The opaque handle from a dialog, a drop or an opened file."
+                },
+                {
+                  "name": "write",
+                  "doc": "Whether the caller writes to it (refused for a read-only handle)."
+                }
+              ]
+            },
+            {
+              "kind": "method",
               "name": "resolve",
               "signature": "resolve(handle: unknown, rel: string, write: boolean): Promise<PickedTarget>",
               "doc": "Resolve `(handle, rel)` to a confined absolute {@link PickedTarget} for the requested access, or\nthrow `forbidden` for an unknown/expired handle, a write to a read-only handle, or a relative\npath on a single-file handle.",
@@ -48577,6 +48714,23 @@
               "doc": "`desktop.sidecars` from the config (from {@link resolveDesktopCapabilities}); {@link sidecars}\nis laid over it."
             }
           ]
+        },
+        {
+          "name": "runDesktopPackageMain",
+          "slug": "runDesktopPackageMain",
+          "kind": "function",
+          "signature": "runDesktopPackageMain(main: () => Promise<void>): Promise<void>",
+          "doc": "Run a package script's main, printing a desktop.permissions: \"strict\" refusal (DesktopStrictPermissionsError) as its one-line message and exiting 1. Any other error keeps its stack.",
+          "docFull": "Run a package script's `main`, printing a `desktop.permissions: \"strict\"` refusal\n({@linkcode DesktopStrictPermissionsError}) as its one-line message and exiting 1. Any other error\nkeeps its stack.",
+          "params": [
+            {
+              "name": "main",
+              "doc": "The script's entry point."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "shouldInjectDesktopToken",
@@ -60756,7 +60910,7 @@
               "kind": "property",
               "name": "path",
               "signature": "readonly path?: string",
-              "doc": "The file's path, for display only: the picked copy natively, the file itself on desktop\n(a browser hides it)."
+              "doc": "The file's path, for display only: the picked copy natively, the file itself on desktop\n(a browser hides it). To hand the file to a desktop extension (a host program needs its\npath), send {@linkcode PickedDocument.handle} and resolve it there with `ctx.pickedPath`."
             },
             {
               "kind": "property",

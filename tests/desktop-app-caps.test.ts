@@ -36,6 +36,9 @@ function ctxOf(window?: unknown): DesktopCapCtx & { emitted: Array<[string, unkn
     emit: (event, data) => void emitted.push([event, data]),
     appSupportDir: "/tmp/app",
     runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+    pickedPath: () => {
+      throw new Error("no picked paths in tests");
+    },
     os: "darwin",
     window,
     signal: new AbortController().signal,

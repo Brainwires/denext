@@ -14,8 +14,9 @@ denext task desktop:package    # write scripts/package-*.ts from the scaffold, t
 denext task dev                # the UI in a browser (no backend: it says so)
 ```
 
-It needs QEMU (`brew install qemu` on macOS; `qemu-system-*` and `qemu-img` on the `PATH` prefix set
-in Settings, `/opt/homebrew` by default). The tests run from the repository root:
+It needs QEMU (`brew install qemu` on macOS; `qemu-system-*` and `qemu-img` under the QEMU prefix,
+`/opt/homebrew` by default; set `qemuPrefix` in `hangar-settings.json` in the app's data folder).
+The tests run from the repository root:
 
 ```sh
 deno test -A tests/hangar.test.ts
@@ -41,6 +42,13 @@ deno test -A tests/hangar.test.ts
   step (type the name), which the backend checks again. Every action names a library VM by id; a
   path must stay inside that VM's folder (symlinks resolved). Hangar reads only `start.sh` and
   `hangar.json` in a VM folder; of the other files it sees names and sizes, never their contents.
+- **Settings the page may change.** The settings page's save is checked against
+  `lib/page-settings.ts`: a key not listed there is refused, the QEMU prefix (the program Hangar
+  runs) is not writable from a page at all, and the RAM budget goes only up to 90% from a page.
+  Higher budgets and another prefix are set in `hangar-settings.json`.
+- **Live from the tray.** A VM the tray starts or stops tells the open pages at once: the extension
+  keeps the host its `setup` received and emits `changed` through it (`lib/changes.ts`), with no
+  page call in flight.
 
 ## How it is built
 
@@ -49,6 +57,8 @@ deno test -A tests/hangar.test.ts
 | `desktop.ts`            | The Deno Desktop entry: `runDesktop` with the config's window, tray and Dock     |
 | `desktop/hangar.ts`     | The backend, a `defineDesktopExtension` the page calls through the bridge        |
 | `lib/hangar.ts`         | The VM logic over a `Host` (`lib/host.ts`): library, instances, images, settings |
+| `lib/page-settings.ts`  | What the settings page may change, and within which bounds                       |
+| `lib/changes.ts`        | The `changed` event the pages refresh on, sent through the extension's host      |
 | `lib/deno-host.ts`      | The real host: `ps`, `lsof` / `/proc`, `qemu-img`, unix sockets, files           |
 | `lib/qmp.ts`            | A small QMP client over any byte stream                                          |
 | `lib/start-script.ts`   | The static `start.sh` reader                                                     |
@@ -60,7 +70,9 @@ deno test -A tests/hangar.test.ts
 | `app/*/`                | The pages: the library, the panel, a VM's details, images, a new VM, settings    |
 
 `tests/hangar.test.ts` drives `lib/` against an in-memory host (`tests/helpers/hangar-fake-host.ts`)
-and the QMP client against an in-memory socket: no QEMU, no `~/VMs`, no real process.
+and the QMP client against an in-memory socket: no QEMU, no `~/VMs`, no real process. Its type check
+runs `deno check` through a timeout helper of its own, so a copy of the tests needs nothing from
+this repository's `scripts/`.
 
 ## How it is tray-first
 
