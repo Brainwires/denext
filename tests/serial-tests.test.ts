@@ -421,9 +421,12 @@ Deno.test("test-run: the temp dirs a test leaves behind go with the run's temp r
     const sibling = await Deno.makeTempDir({ dir: machineTmp, prefix: "dnx-tr-" });
     await Deno.writeTextFile(join(sibling, "in-use"), "x");
     const script = fromFileUrl(new URL("../scripts/test-run.ts", import.meta.url));
-    const { success, stderr } = await new Deno.Command(Deno.execPath(), {
+    // denext's Deno toolchain, not the running Deno: test-run refuses any other (5.0), and this
+    // suite may run on PATH's upstream `deno` (a pre-push precheck from such a shell).
+    const toolchain = await toolchainDeno();
+    const { success, stderr } = await new Deno.Command(toolchain, {
       args: ["run", "-A", script, "--no-check", probe],
-      env: { ...tempRootEnv(machineTmp), DENEXT_DENO: Deno.execPath() },
+      env: { ...tempRootEnv(machineTmp), DENEXT_DENO: toolchain },
       stdout: "null",
       stderr: "piped",
     }).output();

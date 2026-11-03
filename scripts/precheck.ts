@@ -12,7 +12,8 @@
 //   3. type-check      cli.ts + mod.ts (CI's step) and every changed TypeScript file, on denext's
 //                      Deno toolchain (native TypeScript 7) as CI checks them — never the `deno`
 //                      that happens to be on PATH (an upstream 2.9 checks with TypeScript 6)
-//   4. drift tests     the consistency tests that turned CI red most often (DRIFT_TESTS)
+//   4. drift tests     the consistency tests that turned CI red most often (DRIFT_TESTS), on
+//                      denext's Deno toolchain like every test step here (5.0 runs on no other)
 //   5. test badge      `deno task badge:tests --check` (CI checks it on the dispatched run a
 //                      release counts, on `main` and on pull requests)
 //   6. affected tests  the changed test files and the test files importing a changed module
@@ -64,6 +65,35 @@ export function typeCheckArgs(files: readonly string[]): string[] {
  */
 export function budgetArgs(): string[] {
   return ["run", "-A", "scripts/toolchain-deno.ts", "task", "budget"];
+}
+
+/**
+ * The drift tests' command: `deno test` on denext's Deno toolchain (scripts/toolchain-deno.ts), as
+ * CI runs its tests. denext 5.0 refuses a test that builds the app on any other Deno, and a test
+ * that spawns `Deno.execPath()` expects the toolchain, so PATH's `deno` (often upstream) never runs
+ * them.
+ */
+export function driftTestArgs(): string[] {
+  return [
+    "run",
+    "-A",
+    "scripts/toolchain-deno.ts",
+    "test",
+    "-A",
+    "--unstable-kv",
+    "--parallel",
+    ...DRIFT_TESTS,
+  ];
+}
+
+/**
+ * The affected tests' command: scripts/test-run.ts started on denext's Deno toolchain (it runs
+ * every pass there too), so the runner's own process and its tests share the Deno CI uses.
+ *
+ * @param files The test files.
+ */
+export function testRunArgs(files: readonly string[]): string[] {
+  return ["run", "-A", "scripts/toolchain-deno.ts", "run", "-A", "scripts/test-run.ts", ...files];
 }
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
@@ -244,7 +274,7 @@ if (import.meta.main) {
     outcomes,
     "drift tests",
     "each failure above names its fix (most: deno task regen, then commit)",
-    () => deno(["test", "-A", "--unstable-kv", "--parallel", ...DRIFT_TESTS], { NO_COLOR: "1" }),
+    () => deno(driftTestArgs(), { NO_COLOR: "1" }),
   );
 
   await step(
@@ -267,7 +297,7 @@ if (import.meta.main) {
           "`deno run -A scripts/affected-tests.ts <changed files>` and test them before CI";
       }
       console.log(`  ${affected.join("\n  ")}`);
-      return await deno(["run", "-A", "scripts/test-run.ts", ...affected], { NO_COLOR: "1" });
+      return await deno(testRunArgs(affected), { NO_COLOR: "1" });
     },
   );
 
