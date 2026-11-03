@@ -11,7 +11,6 @@ import {
   assertThrows,
 } from "@std/assert";
 import { fromFileUrl } from "@std/path";
-import { boundedDeno } from "../scripts/deno-doc.ts";
 import { FakeHost } from "./helpers/hangar-fake-host.ts";
 import {
   formatBytes,
@@ -26,13 +25,17 @@ import {
   createHangar,
   defaultSettings,
   HangarError,
+  parsePageSettings,
   parseSettings,
 } from "../examples/hangar/lib/hangar.ts";
+import { PAGE_MAX_RAM_BUDGET } from "../examples/hangar/lib/page-settings.ts";
+import { CHANGED_EVENT, createChangeNotifier } from "../examples/hangar/lib/changes.ts";
 import { homeFolder } from "../examples/hangar/lib/host.ts";
 import { parseImageInfo, sizeBytes } from "../examples/hangar/lib/images.ts";
 import { readVmFile, scanLibrary } from "../examples/hangar/lib/library.ts";
 import {
   loadSettings,
+  savePageSettings,
   saveSettings,
   SETTINGS_FILE,
   settingsPath,
@@ -702,6 +705,66 @@ Deno.test("hangar settings: defaults and validation", () => {
   assertThrows(() => parseSettings({ libraryRoot: "/a/../b" }, base), HangarError);
 });
 
+Deno.test("hangar page settings: only the keys a page may change, within its bounds", () => {
+  const current = defaultSettings("/home/u", "darwin");
+  // The settings page round-trips the whole object it was given: that saves.
+  assertEquals(parsePageSettings({ ...current }, current), current);
+  const next = parsePageSettings({ libraryRoot: "/vms/", ramBudgetPercent: 50 }, current);
+  assertEquals([next.libraryRoot, next.ramBudgetPercent], ["/vms", 50]);
+  // A key that is not a setting is refused, not dropped.
+  assertThrows(() => parsePageSettings({ debug: true }, current), HangarError, '"debug"');
+  assertThrows(() => parsePageSettings({ __proto__x: 1 }, current), HangarError);
+  // The program Hangar runs is not the page's to choose.
+  assertThrows(
+    () => parsePageSettings({ qemuPrefix: "/tmp/evil" }, current),
+    HangarError,
+    "qemuPrefix",
+  );
+  // The RAM budget guards the host: a page may not raise it past its bound, or send a non-number.
+  assertThrows(
+    () => parsePageSettings({ ramBudgetPercent: PAGE_MAX_RAM_BUDGET + 1 }, current),
+    HangarError,
+  );
+  assertThrows(() => parsePageSettings({ ramBudgetPercent: "50" }, current), HangarError);
+  assertThrows(() => parsePageSettings({ shutdownTimeoutSeconds: 1.5 }, current), HangarError);
+  assertThrows(() => parsePageSettings({ libraryRoot: 7 }, current), HangarError);
+  assertThrows(() => parsePageSettings({ libraryRoot: "/a/../b" }, current), HangarError);
+  for (const raw of [null, "x", [1], 3]) {
+    assertThrows(() => parsePageSettings(raw, current), HangarError, "an object");
+  }
+  // A budget of 100 set in the settings file survives a save from the page.
+  const fromFile = { ...current, ramBudgetPercent: 100 };
+  assertEquals(parsePageSettings({ ...fromFile }, fromFile).ramBudgetPercent, 100);
+});
+
+Deno.test("hangar settings from the page: refused before anything is written", async () => {
+  const host = new FakeHost();
+  const dir = "/home/u/Library/Application Support/hangar";
+  const current = defaultSettings(host.home, host.os);
+  for (const raw of [{ qemuPrefix: "/tmp/evil" }, { ramBudgetPercent: 100 }, { extra: 1 }]) {
+    const err = await assertRejects(() => savePageSettings(host, dir, raw, current), HangarError);
+    assertEquals(err.code, "validation", JSON.stringify(raw));
+    assertEquals(await loadSettings(host, dir), current); // nothing saved
+  }
+  const saved = await savePageSettings(
+    host,
+    dir,
+    { ...current, shutdownTimeoutSeconds: 30 },
+    current,
+  );
+  assertEquals(saved.shutdownTimeoutSeconds, 30);
+  assertEquals((await loadSettings(host, dir)).shutdownTimeoutSeconds, 30);
+});
+
+Deno.test("hangar change notice: sent through the extension's setup host, nothing before it", () => {
+  const emitted: Array<[string, unknown]> = [];
+  const notice = createChangeNotifier();
+  notice.changed(); // before setup: no host, no event, no throw
+  notice.attach({ emit: (event, data) => void emitted.push([event, data]) });
+  notice.changed();
+  assertEquals(emitted, [[CHANGED_EVENT, null]]);
+});
+
 Deno.test("hangar settings file: only in an absolute data folder, never the working directory", () => {
   assertEquals(settingsPath("/data/hangar"), `/data/hangar/${SETTINGS_FILE}`);
   assertEquals(
@@ -1162,11 +1225,43 @@ Deno.test("hangar: the entry, the extension and the pages type-check against den
     "app/settings/page.tsx",
   ];
   // `--no-lock`: checking never rewrites the example's committed lock file.
-  const out = await boundedDeno(["check", "--no-lock", "--config", "deno.json", ...files], {
-    cwd: dir,
-  });
+  const out = await runDeno(["check", "--no-lock", "--config", "deno.json", ...files], dir);
   assertEquals(out.code, 0, out.stderr);
 });
+
+/**
+ * Run `deno <args>` in `cwd` to its exit, killed after `timeoutMs` so a stuck child fails the test
+ * instead of hanging it. Local to these tests on purpose: an app built from the example copies them
+ * without any of this repository's scripts.
+ */
+async function runDeno(
+  args: readonly string[],
+  cwd: string,
+  timeoutMs = 300_000,
+): Promise<{ code: number; stderr: string }> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), timeoutMs);
+  try {
+    const out = await new Deno.Command(Deno.execPath(), {
+      args: [...args],
+      cwd,
+      env: { NO_COLOR: "1" },
+      stdin: "null",
+      stdout: "null",
+      stderr: "piped",
+      signal: abort.signal,
+    }).output();
+    const stderr = new TextDecoder().decode(out.stderr);
+    return {
+      code: out.code,
+      stderr: abort.signal.aborted
+        ? `deno ${args[0]} timed out after ${timeoutMs} ms\n${stderr}`
+        : stderr,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 Deno.test("homeFolder: Windows' profile folder, as Windows sets no HOME", () => {
   const env = (vars: Record<string, string>) => (name: string) => vars[name];

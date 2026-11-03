@@ -48,10 +48,23 @@ export interface DesktopPermissions {
  */
 export interface DesktopCapCtx {
   /**
-   * Push an event to the page's event stream. `event` must be one the capability declared in
-   * {@linkcode DesktopCapability.events}; emitting an undeclared event throws.
+   * Push an event to the pages' event stream: every window's, or only `options.window`'s. `event`
+   * must be one the capability declared in {@linkcode DesktopCapability.events}; emitting an
+   * undeclared event throws. Events are retained for replay, so a page that subscribes later still
+   * receives it. For work that outlives the call (or that no page call started), use the
+   * {@linkcode DesktopExtensionHost} {@linkcode DesktopCapability.setup} receives.
    */
-  emit(event: string, data: unknown): void;
+  emit(event: string, data: unknown, options?: DesktopEmitOptions): void;
+  /**
+   * The absolute host path of a file or folder the USER picked in this launch: a `handle` that a
+   * native dialog (`pickDocument`, `openFile`, `saveFile`, `pickFolder`), a file dropped on a window
+   * or a file the OS opened with the app produced. Use it to hand a picked file to a host program
+   * (a CLI tool) that needs its path. Anything else — a path string, a forged or expired handle —
+   * throws a `forbidden` {@linkcode DesktopCapError}, so page script cannot turn a string of its
+   * choosing into a host path. With `{ write: true }` a read-only handle (an opened or dropped
+   * file) is refused too. Never send the returned path back to the page.
+   */
+  pickedPath(handle: unknown, options?: DesktopPickedPathOptions): string;
   /** The OS per-app support directory (create-on-first-use); durable across launches. */
   readonly appSupportDir: string;
   /** The running OS. */
@@ -97,6 +110,43 @@ export interface DesktopCapCtx {
    * @returns `fn`'s return value as an unsigned `bigint`.
    */
   runOnMainThread(fn: DesktopMainThreadFn, context?: Deno.PointerValue): Promise<bigint>;
+}
+
+/** Where an event goes: {@linkcode DesktopCapCtx.emit}, {@linkcode DesktopExtensionHost.emit}. */
+export interface DesktopEmitOptions {
+  /**
+   * The one window the event is for (`"main"`, `"panel"`, or an id `openWindow` returned); every
+   * window's stream when omitted.
+   */
+  readonly window?: string;
+}
+
+/** Options for {@linkcode DesktopCapCtx.pickedPath}. */
+export interface DesktopPickedPathOptions {
+  /** The caller will write to the path: a read-only handle (an opened or dropped file) is refused. */
+  readonly write?: boolean;
+}
+
+/**
+ * What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the
+ * process-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)
+ * starts on its own — a tray-started job, a file watcher — that streams to the page with no page
+ * call in flight. Keep it at module scope and use it for the life of the app.
+ */
+export interface DesktopExtensionHost {
+  /**
+   * Push an event to the pages' streams (every window's, or `options.window`'s). `event` must be
+   * one the capability declared in {@linkcode DesktopCapability.events}; an undeclared one throws.
+   * Events are retained for replay: one emitted before any page subscribes is delivered to the
+   * first `onDesktopEvent` subscriber, as with {@linkcode DesktopCapCtx.emit}.
+   */
+  emit(event: string, data: unknown, options?: DesktopEmitOptions): void;
+  /** The same lookup as {@linkcode DesktopCapCtx.pickedPath}. */
+  pickedPath(handle: unknown, options?: DesktopPickedPathOptions): string;
+  /** The OS per-app support directory (create-on-first-use); durable across launches. */
+  readonly appSupportDir: string;
+  /** The running OS. */
+  readonly os: "darwin" | "windows" | "linux";
 }
 
 /**
@@ -165,6 +215,14 @@ export interface DesktopCapability {
    * every window's page loads, not just the main window's.
    */
   readonly perWindow?: boolean;
+  /**
+   * Called once, when the app's bridge starts (before any page can call), with the
+   * {@linkcode DesktopExtensionHost}: the extension's own process-level `emit` (scoped to its
+   * declared {@linkcode DesktopCapability.events}) and `pickedPath`. Keep the host in a module
+   * variable so work started outside a method call — by `desktop.ts`, a tray menu, a timer — can
+   * stream to the page. An error it throws is logged, never surfaced.
+   */
+  readonly setup?: (host: DesktopExtensionHost) => void;
 }
 
 /**

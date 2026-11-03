@@ -11,7 +11,7 @@
 // window's page may be suspended (macOS) until it shows, so a menu item it handled would do nothing.
 import config from "./.deno-desktop/config.json" with { type: "json" };
 import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
-import { hangarBackend, setHangarWindows } from "./desktop/hangar.ts";
+import { hangarBackend, hangarChanged, setHangarWindows } from "./desktop/hangar.ts";
 import { createHangarWindows, driveTray } from "./lib/tray-driver.ts";
 
 const caps = await resolveDesktopCapabilities(config, { base: import.meta.url });
@@ -25,7 +25,16 @@ setHangarWindows(windows);
 if (app.tray) {
   driveTray(app.tray, windows, {
     overview: async () => (await backend()).overview(),
-    start: async (id) => (await backend()).start(id, { headless: true, allowOverBudget: false }),
-    shutdown: async (id) => (await backend()).shutdown(id),
+    // The tray's own actions: the open pages hear of them through the extension's `changed` event.
+    start: async (id) => {
+      const result = await (await backend()).start(id, { headless: true, allowOverBudget: false });
+      hangarChanged();
+      return result;
+    },
+    shutdown: async (id) => {
+      const result = await (await backend()).shutdown(id);
+      hangarChanged();
+      return result;
+    },
   });
 }

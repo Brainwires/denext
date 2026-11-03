@@ -1,5 +1,6 @@
 {
   "workspace": [],
+  "allowScripts": { "deny": ["npm:@parcel/watcher"] },
   "version": "0.1.0",
   "tasks": {
     "dev": "deno run -A ../../cli.ts dev .",

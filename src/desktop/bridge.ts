@@ -51,9 +51,13 @@ import {
   type DesktopCapability,
   type DesktopCapCtx,
   DesktopCapError,
+  type DesktopEmitOptions,
+  type DesktopExtensionHost,
   type DesktopMainThreadFn,
+  type DesktopPickedPathOptions,
   validateStandard,
 } from "./extension.ts";
+import type { PickedPaths } from "./picked-paths.ts";
 import { readCapped, TIMED_OUT as BODY_TIMED_OUT } from "../utils/read-capped.ts";
 
 /** The RPC endpoint path (kept in sync with {@link ./bridge-client.ts}). */
@@ -103,6 +107,11 @@ export interface DesktopBridgeOptions {
    * stock runtime's rules).
    */
   readonly trust?: DesktopTrust;
+  /**
+   * The launch's picked-path set (dialogs, drops, opened files): what
+   * {@link DesktopCapCtx.pickedPath} resolves a handle against. Without it every handle is refused.
+   */
+  readonly pickedPaths?: PickedPaths;
 }
 
 /** The runtime bridge: a request handler for its two paths, and an event emitter. */
@@ -382,25 +391,50 @@ export function createDesktopBridge(
 
   const pages = createPageTracker((windowId) => pageLoaded(windowId));
 
+  /** `cap`'s own emit: only its declared events, to every window or `options.window`'s. */
+  const capEmit = (cap: DesktopCapability) =>
+  (
+    event: string,
+    data: unknown,
+    emitOptions?: DesktopEmitOptions,
+  ) => {
+    if (cap.events?.includes(event) !== true) {
+      throw new Error(`desktop cap "${cap.name}" emitted undeclared event "${event}"`);
+    }
+    events.append(cap.name, event, data, emitOptions?.window);
+  };
+  /** A handle the user picked in this launch, to its absolute path; anything else is refused. */
+  const pickedPath = (handle: unknown, pathOptions?: DesktopPickedPathOptions): string => {
+    if (!options.pickedPaths) {
+      throw new DesktopCapError("forbidden", "unknown or expired picked handle", { status: 403 });
+    }
+    return options.pickedPaths.path(handle, pathOptions?.write === true);
+  };
+  const os = Deno.build.os as "darwin" | "windows" | "linux";
+
   /** The context a handler runs with; `signal` is the deadline's abort signal. */
   const makeCtx = (
     cap: DesktopCapability,
     signal: AbortSignal,
     windowId: string,
   ): DesktopCapCtx => ({
-    emit: (event, data) => {
-      if (cap.events?.includes(event) !== true) {
-        throw new Error(`desktop cap "${cap.name}" emitted undeclared event "${event}"`);
-      }
-      events.append(cap.name, event, data);
-    },
+    emit: capEmit(cap),
+    pickedPath,
     appSupportDir: options.appSupportDir ?? "",
-    os: Deno.build.os as "darwin" | "windows" | "linux",
+    os,
     window: options.getWindow?.(windowId),
     windowId,
     signal,
     runOnMainThread: runOnDesktopMainThread,
   });
+
+  // Each capability's process-level host, handed once to its `setup` before any page can call.
+  setUpCapabilities(registry.values(), (cap) => ({
+    emit: capEmit(cap),
+    pickedPath,
+    appSupportDir: options.appSupportDir ?? "",
+    os,
+  }), dev);
 
   /** The calling window's id, or the 403 for a window token that names no open window. */
   const callerWindow = (request: Request): string | Response => {
@@ -513,6 +547,25 @@ export function createDesktopBridge(
     },
     events,
   };
+}
+
+/**
+ * Hand each capability with a {@link DesktopCapability.setup} its process-level host, once. A setup
+ * that throws is logged (its message in dev only) and the others still run.
+ */
+function setUpCapabilities(
+  caps: Iterable<DesktopCapability>,
+  hostFor: (cap: DesktopCapability) => DesktopExtensionHost,
+  dev: boolean,
+): void {
+  for (const cap of caps) {
+    if (!cap.setup) continue;
+    try {
+      cap.setup(hostFor(cap));
+    } catch (err) {
+      console.error(`desktop: ${cap.name}.setup failed`, dev ? err : "");
+    }
+  }
 }
 
 /** Which page each window shows, by the page id its requests carry. */

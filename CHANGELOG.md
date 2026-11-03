@@ -8,6 +8,35 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **A desktop extension can stream to the page with no page call in flight.** A capability's new
+  `setup(host)` runs once when the app starts and receives a `DesktopExtensionHost`: its
+  `host.emit(event, data)` is the extension's own process-level emit (limited to its declared
+  `events`, kept until the page subscribes, like `ctx.emit`), so work started by `desktop.ts`, a
+  tray item or a timer reaches `onDesktopEvent` without the "keep the last `ctx.emit`" workaround.
+  `ctx.emit`, `host.emit` and `runDesktop`'s `emit` take `{ window }` to reach one window instead
+  of every one.
+- **`ctx.pickedPath(handle)` hands an extension the path of a file the user picked.** It resolves a
+  handle that a dialog (`pickDocument`, `openFile`, `saveFile`, `pickFolder`), a file dropped on a
+  window or a file the OS opened with the app produced in this launch to its absolute path, for a
+  host program that needs one; a path string, a made-up or expired handle is refused with
+  `forbidden`, and `{ write: true }` also refuses a read-only handle. The page's `path` stays
+  display-only. The desktop guide gains "Validate what the page sends".
+
+### Fixed
+
+- **The desktop examples no longer print Deno's "Ignored build scripts" box.** The examples that
+  are their own workspace root (Hangar, Companion, the kitchen sink, Clerk, React Native desktop)
+  carry the `allowScripts` deny of `@parcel/watcher` a scaffold writes, so an app copied from one
+  runs `denext desktop package --regenerate-scripts` and every other command without the warning.
+- **Hangar's settings page can no longer loosen what guards the host.** `setSettings` checks the
+  page's arguments against the settings a page may change: unknown keys are refused instead of
+  dropped, the QEMU prefix (the program Hangar runs) is set only in the settings file, and the RAM
+  budget goes up to 90% from a page. A VM the tray starts or stops now refreshes the open pages at
+  once through the extension's `setup` host, and Hangar's tests type-check it with a timeout helper
+  of their own instead of a repository script.
+
 ## [4.11.13] - 2026-11-02
 
 ### Added
