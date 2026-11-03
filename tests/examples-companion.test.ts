@@ -15,6 +15,7 @@ import {
   isVisible,
   type LoopyEvent,
   type LoopyModel,
+  MOODS,
   moodState,
   nextTimer,
   stateDurationMs,
@@ -364,11 +365,30 @@ Deno.test("loopy overlay: a shown bubble is marked as catching clicks", async ()
 Deno.test("Loopy renders its move as data-state, with an accessible name and its face", async () => {
   const html = await renderToString(h(Loopy, { state: "point" }));
   assertMatch(html, /<svg class="loopy" data-state="point"[^>]* role="img" aria-label="Loopy"/);
-  assert(html.includes('class="loopy-arm"'), "the arm that unbends");
-  assertEquals(html.match(/<circle/g)?.length, 2 + 3, "two eyes and three thought dots");
+  assertEquals(html.match(/class="loopy-wire"/g)?.length, 1, "the wire is one continuous piece");
+  assertEquals(
+    html.match(/<circle/g)?.length,
+    1 + 2 + 3,
+    "the bead head, two pupils, three thought dots",
+  );
+  assertEquals(html.match(/class="loopy-eye-white"/g)?.length, 2, "two eyes");
+  assert(html.includes('class="loopy-brows"'), "expressive brows");
   assert(!/<image|href=/.test(html), "no external assets");
   const named = await renderToString(h(Loopy, { state: "celebrate", label: "Loopy the clip" }));
   assertMatch(named, /data-state="celebrate"[^>]*aria-label="Loopy the clip"/);
+});
+
+Deno.test("Loopy: every mood has its own wire tint and face, and a say request accepts it", async () => {
+  const faces = new Set<string>();
+  for (const mood of MOODS) {
+    const html = await renderToString(h(Loopy, { state: "idle", mood }));
+    assertMatch(html, new RegExp(`data-mood="${mood}"`), mood);
+    faces.add(html.replace(/data-mood="[^"]*"/, ""));
+    assertEquals(parseSayRequest({ text: "hi", mood }).message.mood, mood);
+  }
+  assertEquals(faces.size, MOODS.length, "no two moods draw the same face");
+  const plain = await renderToString(h(Loopy, { state: "idle" }));
+  assertMatch(plain, /data-mood="neutral"/, "no mood is neutral");
 });
 
 /** A message as the page holds it. */

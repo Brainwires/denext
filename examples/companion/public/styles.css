@@ -6,6 +6,10 @@
   --wire-edge: #0b6b5c;
   --wire-shine: #a6efe0;
   --ink: #1d2b33;
+  /* Loopy's wire: bare steel, like a real paper clip (the UI keeps the teal above). */
+  --clip: #b9c1c8;
+  --clip-edge: #5c656d;
+  --clip-shine: #ffffff;
   --paper: #fbf8f1;
   --bubble: #ffffff;
   --bubble-edge: #d9d2c3;
@@ -243,18 +247,338 @@ button {
   stroke-linejoin: round;
 }
 
+/* The wire takes the mood of the message on screen: steel when neutral, violet while thinking,
+   amber for attention, green for success. */
+.loopy[data-mood="thinking"] {
+  --clip: #a596ff;
+  --clip-edge: #4a3da6;
+  --clip-shine: #ebe7ff;
+}
+
+.loopy[data-mood="attention"] {
+  --clip: #f2b544;
+  --clip-edge: #9a6400;
+  --clip-shine: #fff2cc;
+}
+
+.loopy[data-mood="success"] {
+  --clip: #3ccf7a;
+  --clip-edge: #17734a;
+  --clip-shine: #dbffe9;
+}
+
+.loopy-wire-edge,
+.loopy-wire,
+.loopy-wire-shine {
+  transition: stroke 400ms ease-out;
+}
+
+.loopy[data-mood="confused"] {
+  --clip: #c58cf5;
+  --clip-edge: #6b2fa0;
+  --clip-shine: #f3e3ff;
+}
+
+.loopy[data-mood="mad"] {
+  --clip: #e5484d;
+  --clip-edge: #8a1a1f;
+  --clip-shine: #ffd6d7;
+}
+
+.loopy[data-mood="sad"] {
+  --clip: #5b9cff;
+  --clip-edge: #1f4f9e;
+  --clip-shine: #dce9ff;
+}
+
+.loopy[data-mood="excited"] {
+  --clip: #ff8a3d;
+  --clip-edge: #a84a0c;
+  --clip-shine: #ffe2cc;
+}
+
+.loopy[data-mood="sleepy"] {
+  --clip: #8d9bb3;
+  --clip-edge: #46526a;
+  --clip-shine: #e7ecf5;
+}
+
+.loopy[data-mood="love"] {
+  --clip: #ff6fae;
+  --clip-edge: #a3245f;
+  --clip-shine: #ffe0ee;
+}
+
+.loopy[data-mood="surprised"] {
+  --clip: #ffd23f;
+  --clip-edge: #9c7600;
+  --clip-shine: #fff6cf;
+}
+
+.loopy[data-mood="shocked"] {
+  --clip: #36e2ff;
+  --clip-edge: #0a7a94;
+  --clip-shine: #dcfaff;
+}
+
+.loopy[data-mood="wow"] {
+  --clip: #ffc83d;
+  --clip-edge: #b06f00;
+  --clip-shine: #fff3c4;
+}
+
+.loopy-eyes ellipse:not(.loopy-eye-white) {
+  fill: #3b1e14;
+}
+
+.loopy .loopy-tongue {
+  fill: #e86a7a;
+}
+
+.loopy-star-eyes path,
+.loopy-wow-sparks path {
+  fill: #ffb800;
+  stroke: #8a5a00;
+  stroke-width: 0.8;
+}
+
+.loopy-wow-sparks path {
+  animation: twinkle 0.9s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.loopy-wow-sparks path:nth-child(2) {
+  animation-delay: 0.3s;
+}
+
+.loopy-wow-sparks path:nth-child(3) {
+  animation-delay: 0.6s;
+}
+
+.loopy .loopy-exclaim {
+  fill: var(--clip-edge);
+  font: 900 24px system-ui, sans-serif;
+  animation: pop 0.6s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+  transform-box: fill-box;
+  transform-origin: bottom;
+}
+
+.loopy .loopy-zaps path {
+  stroke: var(--clip-edge);
+  stroke-width: 2.6;
+  animation: flicker 0.25s steps(2) infinite;
+}
+
+/* surprised: a pop up; shocked: a stiff jolt and a jitter. */
+.loopy[data-state="idle"][data-mood="surprised"] .loopy-body {
+  animation: pop 0.5s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+}
+
+.loopy[data-state="idle"][data-mood="shocked"] .loopy-body,
+.loopy[data-state="blink"][data-mood="shocked"] .loopy-body {
+  animation: jitter 0.12s linear infinite;
+}
+
+@keyframes pop {
+  0% {
+    transform: scale(0.85);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@keyframes jitter {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(-1.5px, 1px);
+  }
+  50% {
+    transform: translate(1.5px, -1px);
+  }
+  75% {
+    transform: translate(-1px, -1px);
+  }
+}
+
+@keyframes twinkle {
+  0%,
+  100% {
+    transform: scale(0.7) rotate(0);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.15) rotate(20deg);
+    opacity: 1;
+  }
+}
+
+@keyframes flicker {
+  50% {
+    opacity: 0.2;
+  }
+}
+
+/* Face parts that only some moods show. */
+.loopy .loopy-mouth.is-open {
+  fill: #5a1f24;
+}
+
+.loopy-heart-eyes path {
+  fill: #e2306c;
+  stroke: none;
+}
+
+.loopy-extra {
+  pointer-events: none;
+}
+
+.loopy .loopy-question,
+.loopy .loopy-zs text {
+  fill: var(--clip-edge);
+  font: 800 22px system-ui, sans-serif;
+}
+
+.loopy .loopy-zs text {
+  font-size: 13px;
+  animation: drift 2.4s ease-in-out infinite;
+}
+
+.loopy .loopy-zs text:nth-child(2) {
+  animation-delay: 0.4s;
+}
+
+.loopy .loopy-zs text:nth-child(3) {
+  animation-delay: 0.8s;
+}
+
+.loopy .loopy-question {
+  animation: wobble 1.6s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.loopy .loopy-steam path {
+  stroke: #c9cdd1;
+  stroke-width: 3;
+  animation: drift 1s ease-in-out infinite;
+}
+
+.loopy .loopy-tear {
+  fill: #7fc3ff;
+  stroke: #3b82c4;
+  stroke-width: 0.8;
+  animation: fall 2.2s ease-in infinite;
+}
+
+.loopy-blush ellipse {
+  fill: #ff7aa8;
+  opacity: 0.55;
+}
+
+.loopy-floating-hearts path {
+  fill: #ff4f93;
+  stroke: none;
+  animation: drift 2s ease-in-out infinite;
+}
+
+.loopy-floating-hearts path:nth-child(2) {
+  animation-delay: 0.7s;
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  50% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
+@keyframes wobble {
+  0%,
+  100% {
+    transform: rotate(-10deg);
+  }
+  50% {
+    transform: rotate(10deg);
+  }
+}
+
+@keyframes fall {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+}
+
+/* Body language for the moods that hold idle: a shake (mad), a droop (sad), a slow nod (sleepy). */
+.loopy[data-state="idle"][data-mood="mad"] .loopy-body,
+.loopy[data-state="blink"][data-mood="mad"] .loopy-body {
+  animation: shake 0.45s ease-in-out infinite;
+}
+
+.loopy[data-state="idle"][data-mood="sad"] .loopy-body,
+.loopy[data-state="blink"][data-mood="sad"] .loopy-body {
+  animation: none;
+  transform: translateY(4px) scale(1.03, 0.95);
+  transition: transform 500ms ease-out;
+}
+
+.loopy[data-state="idle"][data-mood="sleepy"] .loopy-body,
+.loopy[data-state="blink"][data-mood="sleepy"] .loopy-body {
+  animation: nod 3.6s ease-in-out infinite;
+}
+
+@keyframes shake {
+  0%,
+  100% {
+    transform: translateX(0) rotate(0);
+  }
+  25% {
+    transform: translateX(-3px) rotate(-2deg);
+  }
+  75% {
+    transform: translateX(3px) rotate(2deg);
+  }
+}
+
+@keyframes nod {
+  0%,
+  100% {
+    transform: rotate(-1deg);
+  }
+  60% {
+    transform: rotate(-6deg) translateY(2px);
+  }
+}
+
 .loopy-wire-edge {
-  stroke: var(--wire-edge);
+  stroke: var(--clip-edge);
   stroke-width: 15;
 }
 
 .loopy-wire {
-  stroke: var(--wire);
+  stroke: var(--clip);
   stroke-width: 11.5;
 }
 
 .loopy-wire-shine {
-  stroke: var(--wire-shine);
+  stroke: var(--clip-shine);
   stroke-width: 3;
   opacity: 0.8;
   transform: translate(-2.4px, -1.8px);
@@ -515,5 +839,29 @@ button {
     animation-duration: 1ms !important;
     animation-iteration-count: 1 !important;
     transition: none !important;
+  }
+}
+
+/* wow: the mouth says the word once, slowly — small "w", big "O", small "w" — and stays on the last
+   "w". The tongue moves with it. */
+.loopy[data-mood="wow"] .loopy-mouth,
+.loopy[data-mood="wow"] .loopy-tongue {
+  transform-box: view-box;
+  transform-origin: 80px 92px;
+  animation: say-wow 2.6s ease-in-out 0.6s both;
+}
+
+@keyframes say-wow {
+  0%,
+  15% {
+    transform: scale(0.45, 0.5);
+  }
+  40%,
+  60% {
+    transform: scale(1.05, 1.08);
+  }
+  85%,
+  100% {
+    transform: scale(0.45, 0.5);
   }
 }

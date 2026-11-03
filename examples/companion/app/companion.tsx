@@ -14,7 +14,7 @@ import {
   companionReducer,
   INITIAL_COMPANION,
 } from "../lib/companion-state.ts";
-import { type LoopyModel, nextTimer } from "../lib/loopy-machine.ts";
+import { type LoopyModel, type LoopyState, nextTimer } from "../lib/loopy-machine.ts";
 import { type LoopyMessage, parseSayRequest, type SayRequest } from "../lib/messages.ts";
 import { dragWindowBy, quit, setupWindow } from "../lib/window-setup.ts";
 import { readAloudOn, saveReadAloud, spokenText } from "../lib/speech.ts";
@@ -220,6 +220,28 @@ function Demo({ onSay }: { onSay: (message: LoopyMessage) => void }) {
   );
 }
 
+/** Loopy on its stage, in the mood of the message on screen, with the poke target while shown. */
+function Stage(
+  { stageRef, squashRef, state, message, onPoke }: {
+    stageRef: RefObject<HTMLDivElement>;
+    squashRef: RefObject<HTMLDivElement>;
+    state: LoopyState;
+    message: LoopyMessage | undefined;
+    onPoke: () => void;
+  },
+) {
+  return (
+    <div class="stage" ref={stageRef}>
+      <div class="squash" ref={squashRef} data-loopy-hit="">
+        <Loopy state={state} mood={message?.mood} />
+        {state !== "hidden" && (
+          <button type="button" class="poke" aria-label="Poke Loopy" onClick={onPoke} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Loopy, its bubble, and (in a browser) the demo buttons. */
 export function Companion() {
   const [model, dispatch] = useReducer(companionReducer, INITIAL_COMPANION);
@@ -249,12 +271,13 @@ export function Companion() {
   return (
     <main class={`companion${desktop ? " is-desktop" : ""}`} ref={rootRef}>
       <BubbleSlot message={current} onFinish={finish} />
-      <div class="stage" ref={stageRef}>
-        <div class="squash" ref={squashRef} data-loopy-hit="">
-          <Loopy state={model.loopy.state} />
-          {shown && <button type="button" class="poke" aria-label="Poke Loopy" onClick={poke} />}
-        </div>
-      </div>
+      <Stage
+        stageRef={stageRef}
+        squashRef={squashRef}
+        state={model.loopy.state}
+        message={current}
+        onPoke={poke}
+      />
       <Controls
         shown={shown}
         desktop={desktop}

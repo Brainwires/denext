@@ -4,7 +4,8 @@
 //   … "Deploy now?" --action yes:Deploy --action no:Later --wait     # prints the pressed id
 //   echo '{"hook_event_name":"Stop","cwd":"/src/app"}' | … --from-hook  # a Claude Code hook
 //
-// Flags: --mood neutral|thinking|attention|success, --action <id>:<label> (up to three),
+// Flags: --mood <neutral|thinking|attention|success|confused|mad|sad|excited|sleepy|love|surprised|
+//   shocked|wow>, --action <id>:<label> (up to three),
 // --timeout <ms> (0: until closed), --wait (hold until a button is pressed; prints its id, or
 // nothing), --from-hook (build the message from a Claude Code hook's JSON on stdin),
 // --inbox <file> (default: the app's data folder; `LOOPY_INBOX` too). Exits 1 when Loopy isn't

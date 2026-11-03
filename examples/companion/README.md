@@ -87,13 +87,31 @@ Content-Type: application/json
 { "text": "Build failed", "mood": "attention", "actions": [{ "id": "open", "label": "Show me" }], "wait": true }
 ```
 
-| Field       | Type                                                | Default                                |
-| ----------- | --------------------------------------------------- | -------------------------------------- |
-| `text`      | 1–500 characters                                    | required                               |
-| `mood`      | `neutral` \| `thinking` \| `attention` \| `success` | `neutral`                              |
-| `actions`   | up to 3 `{ id, label }`                             | none                                   |
-| `timeoutMs` | `0` (until closed) or 1000–120000                   | by length; until closed with actions   |
-| `wait`      | hold the response until a button or the close       | `false` (answers `202 { id }` at once) |
+| Field       | Type                                          | Default                                |
+| ----------- | --------------------------------------------- | -------------------------------------- |
+| `text`      | 1–500 characters                              | required                               |
+| `mood`      | one of the moods below                        | `neutral`                              |
+| `actions`   | up to 3 `{ id, label }`                       | none                                   |
+| `timeoutMs` | `0` (until closed) or 1000–120000             | by length; until closed with actions   |
+| `wait`      | hold the response until a button or the close | `false` (answers `202 { id }` at once) |
+
+Moods. Each one tints Loopy's wire and changes its face; some add an extra and a move.
+
+| Mood        | Wire       | Face and extras                                                           |
+| ----------- | ---------- | ------------------------------------------------------------------------- |
+| `neutral`   | bare steel | big eyes, a small smile                                                   |
+| `thinking`  | violet     | eyes up, a flat mouth, a trail of thought dots                            |
+| `attention` | amber      | brows up, a little "o", points at the bubble                              |
+| `success`   | green      | a big grin, two hops and sparkles                                         |
+| `confused`  | purple     | one brow up, eyes looking two ways, a wavy mouth, a wobbling `?`          |
+| `mad`       | red        | brows down, a frown, steam, a shake                                       |
+| `sad`       | blue       | brows up in the middle, a frown, a falling tear, a droop                  |
+| `excited`   | orange     | a wide open grin, hops                                                    |
+| `sleepy`    | slate      | eyes nearly shut, floating z's, a slow nod                                |
+| `love`      | pink       | heart eyes, blush, floating hearts                                        |
+| `surprised` | yellow     | wide eyes, a small "o", a popping `!`                                     |
+| `shocked`   | cyan       | brows sky-high, tiny pupils, a tall open mouth, zap lines, a jitter       |
+| `wow`       | gold       | dark oval eyes; after a beat the mouth says "wow" once: small, big, small |
 
 The token is generated on the first run and kept, with the port, in `loopy-inbox.json` in the app's
 data folder (`~/Library/Application Support/dev.denext.loopy/` on macOS,
