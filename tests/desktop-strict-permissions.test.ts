@@ -18,8 +18,15 @@ import {
   DESKTOP_DATA_TOKEN,
   desktopBuildFlags,
   desktopPackageFlags,
+  DesktopStrictPermissionsError,
   strictPermissionsProblem,
 } from "../src/build/desktop-capabilities.ts";
+import { runDesktopPackageMain } from "../src/build/desktop-package-script.ts";
+import {
+  LINUX_PACKAGE_SCRIPT,
+  MACOS_PACKAGE_SCRIPT,
+  WINDOWS_PACKAGE_SCRIPT,
+} from "../src/build/desktop-package-scripts.ts";
 import { desktopDataTokenRuntimeProblem } from "../src/build/desktop-launch-policy.ts";
 import {
   DESKTOP_RUNTIME_ENV,
@@ -298,4 +305,59 @@ Deno.test("desktop.permissions: strict needs desktop.app.identifier in the confi
     Error,
     "desktop.app.identifier",
   );
+});
+
+Deno.test("strict: a refusal is a DesktopStrictPermissionsError, whatever the entry", () => {
+  for (
+    const config of [
+      app("strict", {}, null),
+      app("strict", { extraPermissions: { read: ["*"] } }),
+      app("strict", { extraPermissions: { env: ["*"] } }),
+    ]
+  ) {
+    assertThrows(() => desktopBuildFlags(config, "linux", SCOPE), DesktopStrictPermissionsError);
+  }
+});
+
+Deno.test("strict: a package script prints the refusal as one line and exits 1; other errors keep their stack", async () => {
+  const realExit = Deno.exit;
+  const realError = console.error;
+  const lines: unknown[] = [];
+  let code: number | undefined;
+  console.error = (...a: unknown[]) => void lines.push(...a);
+  Deno.exit = ((c?: number) => {
+    code = c;
+    throw new Error("exit");
+  }) as typeof Deno.exit;
+  try {
+    await assertRejects(
+      () =>
+        runDesktopPackageMain(() => {
+          throw new DesktopStrictPermissionsError("denext: strict refused");
+        }),
+      Error,
+      "exit",
+    );
+    assertEquals(lines, ["denext: strict refused"]);
+    assertEquals(code, 1);
+    await assertRejects(
+      () =>
+        runDesktopPackageMain(() => {
+          throw new TypeError("boom");
+        }),
+      TypeError,
+      "boom",
+    );
+    assertEquals(lines.length, 1);
+  } finally {
+    Deno.exit = realExit;
+    console.error = realError;
+  }
+});
+
+Deno.test("strict: every package script template runs main through runDesktopPackageMain", () => {
+  for (const text of [MACOS_PACKAGE_SCRIPT, LINUX_PACKAGE_SCRIPT, WINDOWS_PACKAGE_SCRIPT]) {
+    assertStringIncludes(text, "if (import.meta.main) await runDesktopPackageMain(main);");
+    assertStringIncludes(text, "  runDesktopPackageMain,\n");
+  }
 });

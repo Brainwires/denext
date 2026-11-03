@@ -95,6 +95,7 @@ const {
   desktopToolGate,
   desktopWindowsTargetNote,
   parseDesktopPackageArgs,
+  runDesktopPackageMain,
   prepareDesktopPackage,
   stampDesktopWindowsBundle: stampTreeManifest,
 } = await import("denext/desktop");
@@ -246,4 +247,4 @@ async function main(): Promise<void> {
   );
 }
 
-if (import.meta.main) await main();
+if (import.meta.main) await runDesktopPackageMain(main);

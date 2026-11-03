@@ -103,6 +103,7 @@ const {
   macosSigningEntitlements,
   notarytoolSubmitArgs,
   parseDesktopPackageArgs,
+  runDesktopPackageMain,
   syncDesktopAppConfig,
   V8_ENTITLEMENTS,
   writeLaufeyLaunchConfig,
@@ -577,4 +578,4 @@ async function main(): Promise<void> {
   console.log(distributionNote(signing));
 }
 
-if (import.meta.main) await main();
+if (import.meta.main) await runDesktopPackageMain(main);

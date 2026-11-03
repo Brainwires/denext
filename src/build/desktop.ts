@@ -178,6 +178,7 @@ export {
   desktopNpmArgs,
   type DesktopOs,
   desktopPackageFlags,
+  DesktopStrictPermissionsError,
 } from "./desktop-capabilities.ts";
 
 // `desktop.denoFlags` (an allow-list of resolution / type-check flags) for the package scripts.
@@ -259,6 +260,7 @@ export {
   parseDesktopPackageArgs,
   type PreparedDesktopPackage,
   prepareDesktopPackage,
+  runDesktopPackageMain,
   stampDesktopWindowsBundle,
 } from "./desktop-package-script.ts";
 // scripts/package-windows.ts: the tree manifest of the app's identifier and version and every file

@@ -75,6 +75,7 @@ const {
   desktopToolGate,
   desktopVersionProblem,
   parseDesktopPackageArgs,
+  runDesktopPackageMain,
   prepareDesktopPackage,
 } = await import("denext/desktop");
 
@@ -196,4 +197,4 @@ async function main(): Promise<void> {
   );
 }
 
-if (import.meta.main) await main();
+if (import.meta.main) await runDesktopPackageMain(main);

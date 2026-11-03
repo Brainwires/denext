@@ -9,6 +9,7 @@ import {
   desktopNpmArgs,
   type DesktopOs,
   desktopPackageFlags,
+  DesktopStrictPermissionsError,
 } from "./desktop-capabilities.ts";
 import { syncDesktopAppConfig, writeLaufeyLaunchConfig } from "./desktop-app-config.ts";
 import { desktopDenoFlagArgs } from "./desktop-deno-flags.ts";
@@ -372,6 +373,23 @@ export interface DesktopRunOptions {
    * takes on its command line): each is shown as `***`.
    */
   readonly secrets?: readonly string[];
+}
+
+/**
+ * Run a package script's `main`, printing a `desktop.permissions: "strict"` refusal
+ * ({@linkcode DesktopStrictPermissionsError}) as its one-line message and exiting 1. Any other error
+ * keeps its stack.
+ *
+ * @param main The script's entry point.
+ */
+export async function runDesktopPackageMain(main: () => Promise<void>): Promise<void> {
+  try {
+    await main();
+  } catch (err) {
+    if (!(err instanceof DesktopStrictPermissionsError)) throw err;
+    console.error(err.message);
+    Deno.exit(1);
+  }
 }
 
 /**

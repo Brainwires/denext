@@ -180,6 +180,10 @@ and this project adheres to
 
 ### Fixed
 
+- **A `desktop.permissions: "strict"` refusal prints as one line.** The generated
+  `scripts/package-*.ts` (and so `denext desktop package`) end with the refusal's message and exit 1
+  instead of an uncaught error with a stack trace; other errors keep their stack. Regenerate the
+  scripts with `denext desktop package --regenerate-scripts` to pick it up.
 - **The desktop kitchen-sink's drag check passes on a Wayland WebKitGTK window**, where a drag with
   no button held ends `"cancelled"` rather than `"failed"`. The desktop guide and known limitations
   now say that `startFileDrag` resolving `"failed"` is a normal outcome on Wayland (always under

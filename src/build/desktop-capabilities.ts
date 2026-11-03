@@ -980,8 +980,24 @@ function strictRequested(cfg: DesktopFlagConfig): boolean {
   if (problem) throw new Error(`denext: desktop.${problem[0]} ${problem[1]}`);
   if (!desktopPermissionsMode(cfg.desktop?.permissions).strict) return false;
   const conflict = strictPermissionsSidecarError(cfg.desktop?.sidecars);
-  if (conflict) throw new Error(`denext: desktop.permissions ${conflict}`);
+  if (conflict) throw new DesktopStrictPermissionsError(`denext: desktop.permissions ${conflict}`);
   return true;
+}
+
+/**
+ * `desktop.permissions: "strict"` could not be honoured or scoped (the message names the reason and
+ * the fix). The generated package scripts print it as one line, not a stack trace.
+ */
+export class DesktopStrictPermissionsError extends Error {
+  /**
+   * Build the refusal.
+   *
+   * @param message The refusal, with the fix.
+   */
+  constructor(message: string) {
+    super(message);
+    this.name = "DesktopStrictPermissionsError";
+  }
 }
 
 /** The fix every strict-mode refusal of an unscopable grant names. */
@@ -1013,7 +1029,7 @@ function strictReadFlag(
   for (const [source, values] of sources) {
     const bad = values.find((v) => desktopScopedPath(v) === undefined);
     if (bad === undefined) continue;
-    throw new Error(
+    throw new DesktopStrictPermissionsError(
       `denext: desktop.permissions "strict" cannot scope --allow-read: ${source} reads ` +
         `${JSON.stringify(bad)}, which has no folder token ($APPDATA, $CACHE) and is not an ` +
         'absolute path (a path picked at run time, $DOCUMENTS, a relative path or "*" needs an ' +
@@ -1038,7 +1054,7 @@ function strictReadFlag(
  */
 function strictEnvFlag(extra: DesktopPermissionSet, cfg: DesktopFlagConfig): string {
   if ((extra.env ?? []).includes("*")) {
-    throw new Error(
+    throw new DesktopStrictPermissionsError(
       'denext: desktop.permissions "strict" cannot scope --allow-env: desktop.extraPermissions.env ' +
         '(or a sidecar\'s permissions.env) has "*", the whole environment. List the variables by ' +
         `name, ${STRICT_UNSCOPABLE_FIX}.`,
@@ -1193,7 +1209,7 @@ function strictMode(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): b
   const problem = strictProblem(cfg, options);
   if (problem === null) return true;
   if (options.strictFallback) return false;
-  throw new Error(`denext: ${problem}.`);
+  throw new DesktopStrictPermissionsError(`denext: ${problem}.`);
 }
 
 /** Why requested strict mode cannot be honoured, with the fix, else `null`. */
