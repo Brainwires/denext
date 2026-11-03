@@ -65,7 +65,6 @@ const stock = await stockDenoOnPath();
 Deno.test({
   name: "build(), createTestApp() and probeApp() refuse a stock Deno before doing any work",
   ignore: stock === null,
-  sanitizeResources: false,
   fn: async () => {
     const root = fromFileUrl(new URL("../", import.meta.url));
     const project = await Deno.makeTempDir({ prefix: "denext-require-runtime-" });
