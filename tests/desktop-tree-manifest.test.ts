@@ -302,11 +302,14 @@ Deno.test("buildDesktopBundle stamps a Windows bundle's tree manifest last, afte
   const end = body.indexOf("\n}\n");
   const fn = body.slice(0, end);
   const launch = fn.indexOf("await writeLaufeyLaunchConfig(");
-  const stamp = fn.indexOf("await stampDesktopTreeManifest(o.out, `${basename(o.out)}.exe`, {");
+  const stamp = fn.indexOf("if (meta) await stampWindowsBundleTree(o.out, meta);");
   assert(launch > 0 && stamp > launch, "laufey-launch.json, then the manifest");
-  assertStringIncludes(fn.slice(fn.lastIndexOf("if (", stamp), stamp), "meta.identifier");
-  assertStringIncludes(fn.slice(stamp, stamp + 200), "appId: meta.identifier");
-  assertStringIncludes(fn.slice(stamp, stamp + 200), "version: meta.version");
+  const helper = src.slice(src.indexOf("async function stampWindowsBundleTree("));
+  const helperFn = helper.slice(0, helper.indexOf("\n}\n"));
+  const write = helperFn.indexOf("await stampDesktopTreeManifest(out, `${basename(out)}.exe`, {");
+  assert(write > helperFn.indexOf("if (!meta.identifier)"), "no identifier, no manifest");
+  assertStringIncludes(helperFn.slice(write, write + 200), "appId: meta.identifier");
+  assertStringIncludes(helperFn.slice(write, write + 200), "version: meta.version");
   // The package script signs after buildDesktopBundle and adds only PE images in between.
   const script = WINDOWS_PACKAGE_SCRIPT;
   const built = script.indexOf("const dir = await buildBundle(name, arch);");

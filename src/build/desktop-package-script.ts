@@ -620,27 +620,35 @@ export async function buildDesktopBundle(
     : undefined;
   if (meta) await desktopWindowsCefLayout(o.out, meta);
   await writeLaufeyLaunchConfig(entryUrl, os, o.out);
-  if (meta) {
-    // The last file written: the tree manifest of the app's identifier and version and every
-    // file but the .exe goes into the .exe before the package script signs it, so the .exe's
-    // Authenticode signature covers laufey-launch.json, CEF's resources, sidecar JS and the DLLs
-    // as shipped, and the runtime refuses an update whose files differ from it. PE images added
-    // after (the VC++ runtime's DLLs) and the DLLs' own signatures are taken in by the stamp
-    // `desktopSignWindows` writes again before it signs the .exe. Without an identifier the
-    // updater is off for the app (it needs one), and no manifest is written.
-    if (meta.identifier) {
-      await stampDesktopTreeManifest(o.out, `${basename(o.out)}.exe`, {
-        appId: meta.identifier,
-        version: meta.version,
-      });
-    } else {
-      console.warn(
-        "  no desktop.app.identifier: the bundle's .exe gets no tree manifest (the full-app " +
-          "updater needs an identifier anyway).",
-      );
-    }
-  }
+  // The last file written (after laufey-launch.json): see stampWindowsBundleTree.
+  if (meta) await stampWindowsBundleTree(o.out, meta);
   return o.out;
+}
+
+/**
+ * The tree manifest of the app's identifier and version and every file but the .exe goes into the
+ * .exe before the package script signs it, so the .exe's Authenticode signature covers
+ * laufey-launch.json, CEF's resources, sidecar JS and the DLLs as shipped, and the runtime refuses
+ * an update whose files differ from it. PE images added after (the VC++ runtime's DLLs) and the
+ * DLLs' own signatures are taken in by the stamp `desktopSignWindows` writes again before it signs
+ * the .exe. Without an identifier the updater is off for the app (it needs one), and no manifest
+ * is written.
+ *
+ * @param out The Windows bundle directory.
+ * @param meta The app's package metadata.
+ */
+async function stampWindowsBundleTree(out: string, meta: DesktopPackageMeta): Promise<void> {
+  if (!meta.identifier) {
+    console.warn(
+      "  no desktop.app.identifier: the bundle's .exe gets no tree manifest (the full-app " +
+        "updater needs an identifier anyway).",
+    );
+    return;
+  }
+  await stampDesktopTreeManifest(out, `${basename(out)}.exe`, {
+    appId: meta.identifier,
+    version: meta.version,
+  });
 }
 
 /**
