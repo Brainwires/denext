@@ -1034,3 +1034,65 @@ button {
 .setting-range input {
   width: 100%;
 }
+
+/* What Loopy remembers (Settings → Memories). */
+.memory-list {
+  max-height: 140px;
+  margin: 0 0 4px;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.memory {
+  position: relative;
+  display: grid;
+  padding: 3px 22px 3px 0;
+  border-bottom: 1px solid var(--bubble-edge);
+}
+
+.memory time,
+.memory-assistant {
+  color: #8a8478;
+  font-size: 11px;
+}
+
+.memory-user,
+.memory-assistant {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.settings .memory-forget {
+  position: absolute;
+  top: 3px;
+  right: 0;
+  padding: 0 6px;
+}
+
+.memory-sure {
+  color: #b3412e;
+}
+
+/* A web search's sources under the reply, and a tool's question (lib/voice-machine.ts). */
+.bubble-sources {
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+}
+
+.bubble-sources li {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.bubble-sources a {
+  color: var(--wire-edge);
+}
+
+.bubble-question {
+  margin-top: 6px;
+}

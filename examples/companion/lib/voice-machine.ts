@@ -9,6 +9,7 @@
 // `.stopped` / `.cleared` (Loopy's voice playing), `response.done` and `error`.
 
 import { isVisible, type LoopyEvent, type LoopyMood, type LoopyState } from "./loopy-machine.ts";
+import type { SourceLink } from "./voice-backend.ts";
 
 /** Where a voice session is. */
 export type VoicePhase =
@@ -30,6 +31,10 @@ export interface VoiceModel {
   readonly mood: LoopyMood | null;
   /** The last problem, worded for the user, or `null`. */
   readonly error: string | null;
+  /** Links a tool found this turn (web-search sources). */
+  readonly sources: readonly SourceLink[];
+  /** A tool's question waiting for the user's Yes or No, or `null`. */
+  readonly question: string | null;
 }
 
 /** A server event from the data channel (the fields read here). */
@@ -52,6 +57,9 @@ export type VoiceEvent =
   | { readonly type: "failed"; readonly message: string; readonly closed: boolean }
   | { readonly type: "closed" }
   | { readonly type: "clear" }
+  | { readonly type: "sources"; readonly sources: readonly SourceLink[] }
+  | { readonly type: "ask"; readonly prompt: string }
+  | { readonly type: "answered" }
   | { readonly type: "server"; readonly event: ServerEvent };
 
 /** No session yet. */
@@ -61,7 +69,12 @@ export const INITIAL_VOICE: VoiceModel = {
   assistant: "",
   mood: null,
   error: null,
+  sources: [],
+  question: null,
 };
+
+/** The most source links kept for a turn. */
+export const MAX_SOURCES = 5;
 
 /** The most transcript text kept per side (the bubble shows the end of a long one). */
 export const MAX_TRANSCRIPT = 1_000;
@@ -150,7 +163,15 @@ export function voiceReducer(model: VoiceModel, event: VoiceEvent): VoiceModel {
     case "connected":
       return model.phase === "connecting" ? { ...model, phase: "ready" } : model;
     case "listen":
-      return { ...model, phase: "listening", user: "", assistant: "", error: null };
+      return {
+        ...model,
+        phase: "listening",
+        user: "",
+        assistant: "",
+        error: null,
+        sources: [],
+        question: null,
+      };
     case "send":
       return model.phase === "listening" ? { ...model, phase: "thinking" } : model;
     case "cancel":
@@ -162,7 +183,13 @@ export function voiceReducer(model: VoiceModel, event: VoiceEvent): VoiceModel {
     case "closed":
       return { ...model, phase: "off" };
     case "clear":
-      return { ...model, user: "", assistant: "", error: null };
+      return { ...model, user: "", assistant: "", error: null, sources: [], question: null };
+    case "sources":
+      return { ...model, sources: mergeSources(model.sources, event.sources) };
+    case "ask":
+      return { ...model, question: event.prompt };
+    case "answered":
+      return { ...model, question: null };
     case "server":
       return onServer(model, event.event);
   }
@@ -185,10 +212,36 @@ export function voiceLook(
   }
 }
 
+/** `kept` with the http(s) links of `found` added, each URL once, at most {@linkcode MAX_SOURCES}. */
+function mergeSources(
+  kept: readonly SourceLink[],
+  found: readonly SourceLink[],
+): readonly SourceLink[] {
+  const out = [...kept];
+  for (const s of found) {
+    if (out.length >= MAX_SOURCES) break;
+    if (!/^https?:\/\//i.test(s.url) || out.some((o) => o.url === s.url)) continue;
+    out.push({ title: s.title.slice(0, 120) || s.url, url: s.url });
+  }
+  return out;
+}
+
+/**
+ * How long a finished turn's transcript stays up before it hides, or `null` while it must stay
+ * (a turn is going on, a question waits for an answer, or there is nothing to hide).
+ */
+export function transcriptHoldMs(voice: VoiceModel): number | null {
+  if (voiceBusy(voice.phase) || voice.question !== null) return null;
+  const shown = voice.user !== "" || voice.assistant !== "" || voice.error !== null ||
+    voice.sources.length > 0;
+  if (!shown) return null;
+  return voice.error ? 10_000 : 8_000;
+}
+
 /** Whether a turn, or its transcript, is on screen (it owns the bubble and Loopy's look). */
 export function voiceOnScreen(voice: VoiceModel): boolean {
   return voiceBusy(voice.phase) || voice.user !== "" || voice.assistant !== "" ||
-    voice.error !== null;
+    voice.error !== null || voice.question !== null || voice.sources.length > 0;
 }
 
 /**

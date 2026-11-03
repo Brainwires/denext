@@ -1,4 +1,5 @@
-// Loopy's settings: how a voice turn starts (each activation switchable) and Loopy's size. Kept in
+// Loopy's settings: how a voice turn starts (each activation switchable), which tools it may use
+// (web search, the browser, memory; each can be switched off at any time) and Loopy's size. Kept in
 // the page's localStorage like the read-aloud toggle (the API key is NOT here: it lives in the OS
 // keychain or the dev server's environment, voice/keys.ts). Pure apart from the storage it is
 // handed, so it is unit-tested.
@@ -25,6 +26,12 @@ export interface LoopySettings {
   readonly globalShortcut: boolean;
   /** "Hey Loopy" (not built yet: always off). */
   readonly wakeWord: false;
+  /** Loopy may search the web (`web_search`). */
+  readonly webSearch: boolean;
+  /** Loopy may drive a browser window (off until turned on). */
+  readonly browser: boolean;
+  /** Loopy keeps and recalls past conversations (off until turned on: nothing is kept while off). */
+  readonly memory: boolean;
   /** Loopy's size in percent. */
   readonly scale: number;
 }
@@ -35,8 +42,18 @@ export const DEFAULT_SETTINGS: LoopySettings = {
   clickToTalk: true,
   globalShortcut: false,
   wakeWord: false,
+  webSearch: true,
+  browser: false,
+  memory: false,
   scale: SCALE.default,
 };
+
+/** The tool features the settings switch on, as the backend takes them. */
+export function featuresOf(
+  settings: LoopySettings,
+): { webSearch: boolean; browser: boolean; memory: boolean } {
+  return { webSearch: settings.webSearch, browser: settings.browser, memory: settings.memory };
+}
 
 /** The slice of `Storage` the settings use. */
 export type SettingsStorage = Pick<Storage, "getItem" | "setItem">;
@@ -80,6 +97,9 @@ export function loadSettings(storage: SettingsStorage | undefined): LoopySetting
     clickToTalk: flag(r, "clickToTalk", DEFAULT_SETTINGS.clickToTalk),
     globalShortcut: flag(r, "globalShortcut", DEFAULT_SETTINGS.globalShortcut),
     wakeWord: false,
+    webSearch: flag(r, "webSearch", DEFAULT_SETTINGS.webSearch),
+    browser: flag(r, "browser", DEFAULT_SETTINGS.browser),
+    memory: flag(r, "memory", DEFAULT_SETTINGS.memory),
     scale: clampScale(r.scale) ?? DEFAULT_SETTINGS.scale,
   };
 }

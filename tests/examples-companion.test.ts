@@ -1228,6 +1228,12 @@ Deno.test("loopy voice desktop: the page's bridge loses secureStore; loopyVoice 
   assertEquals(answers[2], { value: "ek_ephemeral", expiresAt: 1_900_000_000 });
   assertEquals(Object.keys(voice.methods).sort(), [
     "clearKey",
+    "configure",
+    "confirm",
+    "forget",
+    "forgetAll",
+    "memories",
+    "remember",
     "session",
     "setKey",
     "status",
@@ -1337,7 +1343,9 @@ Deno.test("loopy voice page backend: the dev route's answers and refusals", asyn
   });
   const backend = routeBackend(net.fn);
   assertEquals(await backend.status(), { hasKey: true, keySource: "env" });
-  const err = await backend.session().catch((e) => e);
+  const err = await backend.session({ webSearch: true, browser: false, memory: false }).catch((
+    e,
+  ) => e);
   assert(err instanceof VoiceBackendError);
   assertEquals([err.code, err.message], ["no_key", "Add a key"]);
   assertEquals(net.calls[0].url, VOICE_ROUTE);
@@ -1591,9 +1599,19 @@ Deno.test("loopy settings: defaults, kept in storage, every field checked", () =
     clickToTalk: true,
     globalShortcut: false,
     wakeWord: false,
+    webSearch: true,
+    browser: false,
+    memory: false,
     scale: 125,
   });
-  const mine = { ...DEFAULT_SETTINGS, clickToTalk: false, globalShortcut: true, scale: 200 };
+  const mine = {
+    ...DEFAULT_SETTINGS,
+    clickToTalk: false,
+    globalShortcut: true,
+    browser: true,
+    memory: true,
+    scale: 200,
+  };
   saveSettings(storage, mine);
   assertEquals(loadSettings(storage), mine);
   assert(!map.get(SETTINGS_KEY)!.includes("sk-"), "no key in the settings");

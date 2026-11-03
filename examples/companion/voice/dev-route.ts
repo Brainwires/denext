@@ -1,6 +1,7 @@
 // Loopy's voice backend for the browser (`denext task dev`): `POST /api/voice` with
-// `{ "op": "status" | "session" | "tool" | "setKey" | "clearKey", ... }`, answered as JSON. The key
-// is the dev server's `OPENAI_API_KEY` (voice/keys.ts); `setKey` / `clearKey` answer 409 there.
+// `{ "op": "status" | "session" | "configure" | "tool" | "confirm" | "setKey" | "clearKey" |
+// "remember" | "memories" | "forget" | "forgetAll", ... }`, answered as JSON. The key is the dev
+// server's `OPENAI_API_KEY` (voice/keys.ts); `setKey` / `clearKey` answer 409 there.
 //
 // Only the page itself may call it, so no other site can mint sessions on the key:
 // - the Host must be loopback (a DNS-rebinding page's Host is its own domain);
@@ -36,22 +37,27 @@ function refuse(request: Request, url: URL): Response | null {
   return null;
 }
 
+/** The operations, each over the request's body. */
+const OPS: Readonly<
+  Record<string, (service: VoiceService, body: Record<string, unknown>) => Promise<unknown>>
+> = {
+  status: (s) => s.status(),
+  session: (s, b) => s.session(b),
+  configure: (s, b) => s.configure(b),
+  tool: (s, b) => s.tool(b),
+  confirm: (s, b) => s.confirm(b),
+  setKey: (s, b) => s.setKey(b),
+  clearKey: (s) => s.clearKey(),
+  remember: (s, b) => s.remember(b),
+  memories: (s) => s.memories(),
+  forget: (s, b) => s.forget(b),
+  forgetAll: (s) => s.forgetAll(),
+};
+
 /** Run the requested operation. */
 function dispatch(service: VoiceService, body: Record<string, unknown>): Promise<unknown> {
-  switch (body.op) {
-    case "status":
-      return service.status();
-    case "session":
-      return service.session();
-    case "tool":
-      return service.tool(body);
-    case "setKey":
-      return service.setKey(body);
-    case "clearKey":
-      return service.clearKey();
-    default:
-      return Promise.reject(new VoiceError("validation", "unknown op", 404));
-  }
+  const op = typeof body.op === "string" && Object.hasOwn(OPS, body.op) ? OPS[body.op] : undefined;
+  return op ? op(service, body) : Promise.reject(new VoiceError("validation", "unknown op", 404));
 }
 
 /**

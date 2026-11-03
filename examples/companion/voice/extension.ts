@@ -4,13 +4,18 @@
 // capability becomes the backend's keychain and leaves the page's bridge, so the page can set or
 // clear the API key but never read it back.
 //
+// The tools (web search, the browser, memory; voice/toolset.ts) run here too, with the memory
+// file and the browser profile in the app's data folder.
+//
 // The shapes are `denext/desktop`'s `DesktopCapability`, written structurally, and the bridge's
 // error class (`DesktopCapError`) is passed in, so this module imports nothing from the desktop
 // runtime and the unit tests load it as it is.
 
+import { dataDir } from "../inbox/paths.ts";
 import { envKeyStore, keychainKeyStore, type KeyStore, type StoreCapability } from "./keys.ts";
 import { VoiceError } from "./realtime.ts";
 import { createVoiceService, type VoiceService } from "./service.ts";
+import { createToolset, type Toolset } from "./toolset.ts";
 
 /** The capability's name on the bridge. */
 export const VOICE_CAPABILITY = "loopyVoice";
@@ -31,6 +36,7 @@ export interface Capability {
   readonly methods: Readonly<
     Record<string, {
       readonly permissions?: { readonly net?: readonly string[] };
+      readonly timeoutMs?: number | false;
       readonly handler: (args: unknown, ctx: never) => unknown;
     }>
   >;
@@ -46,6 +52,12 @@ function bridged<T>(CapError: CapErrorClass, call: () => Promise<T>): Promise<T>
     throw new CapError("failed", "Loopy's voice backend failed.", { status: 500 });
   });
 }
+
+/** OpenAI, which `session`, the tools and `remember` call. */
+const OPENAI = { net: ["api.openai.com"] } as const;
+
+/** How long a tool call may take: a page load in the browser, or a web search. */
+const TOOL_TIMEOUT_MS = 60_000;
 
 /**
  * The `loopyVoice` capability over `service`. No method returns the key: `status` says whether one
@@ -63,10 +75,23 @@ function voiceCapability(service: VoiceService, CapError: CapErrorClass): Capabi
       setKey: { handler: (args, ctx) => run(() => service.setKey(args, ctx)) },
       clearKey: { handler: (_args, ctx) => run(() => service.clearKey(ctx)) },
       session: {
-        permissions: { net: ["api.openai.com"] },
-        handler: (_args, ctx) => run(() => service.session(ctx)),
+        permissions: OPENAI,
+        handler: (args, ctx) => run(() => service.session(args, ctx)),
       },
-      tool: { handler: (args) => run(() => service.tool(args)) },
+      configure: { handler: (args) => run(() => service.configure(args)) },
+      tool: {
+        permissions: OPENAI,
+        timeoutMs: TOOL_TIMEOUT_MS,
+        handler: (args, ctx) => run(() => service.tool(args, ctx)),
+      },
+      confirm: { timeoutMs: TOOL_TIMEOUT_MS, handler: (args) => run(() => service.confirm(args)) },
+      remember: {
+        permissions: OPENAI,
+        handler: (args, ctx) => run(() => service.remember(args, ctx)),
+      },
+      memories: { handler: () => run(() => service.memories()) },
+      forget: { handler: (args) => run(() => service.forget(args)) },
+      forgetAll: { handler: () => run(() => service.forgetAll()) },
     },
   };
 }
@@ -78,16 +103,19 @@ function voiceCapability(service: VoiceService, CapError: CapErrorClass): Capabi
  * @param resolved The capabilities `resolveDesktopCapabilities` built from the config.
  * @param CapError The bridge's error class (`DesktopCapError`).
  * @param fetchFn The fetch OpenAI is called with (tests pass a fake).
+ * @param toolset The tools (default: Loopy's, keeping memory and the browser profile in the app's
+ *   data folder).
  */
 export function voiceCapabilities(
   resolved: readonly Capability[],
   CapError: CapErrorClass,
   fetchFn?: typeof fetch,
+  toolset: Toolset = createToolset({ dataDir: dataDir(), fetch: fetchFn }),
 ): Capability[] {
   const store = resolved.find((c) => c.name === SECURE_STORE);
   const keys: KeyStore = store ? keychainKeyStore(store as StoreCapability) : envKeyStore();
   return [
     ...resolved.filter((c) => c !== store),
-    voiceCapability(createVoiceService({ keys, fetch: fetchFn }), CapError),
+    voiceCapability(createVoiceService({ keys, fetch: fetchFn, toolset }), CapError),
   ];
 }

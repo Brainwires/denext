@@ -43,8 +43,11 @@ Deno.test("examples/companion: exports Loopy's page, its client bundle and its s
     const text = await Deno.readTextFile(entry.path);
     if (text.includes("/_loopy/reply") && text.includes("Fold up")) bundled = true;
     if (text.includes("oai-events") && text.includes("/v1/realtime/calls")) voice = true;
-    // The voice backend (voice/: the key, minting secrets) stays on the server.
-    assert(!text.includes("/v1/realtime/client_secrets"), `${entry.path} holds the backend`);
+    // The voice backend (voice/: the key, minting secrets, the tools) stays on the server.
+    for (const backend of ["/v1/realtime/client_secrets", "/v1/responses", "/v1/embeddings"]) {
+      assert(!text.includes(backend), `${entry.path} holds the backend (${backend})`);
+    }
+    assert(!text.includes("DevTools listening on"), `${entry.path} holds the browser driver`);
   }
   assert(bundled, "the client bundle holds the companion");
   assert(voice, "and its WebRTC voice client");

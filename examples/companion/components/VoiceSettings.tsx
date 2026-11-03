@@ -1,8 +1,9 @@
 // Loopy's settings panel: the OpenAI API key (write-only: it can be set, replaced or cleared, never
-// shown), each way of starting a voice turn on or off, and Loopy's size.
+// shown), each way of starting a voice turn on or off, the tools (web search, the browser, memory)
+// on or off, what Loopy remembers (newest first; forget one, or all), and Loopy's size.
 "use client";
 import { useState } from "denext";
-import type { KeyStatus } from "../lib/voice-backend.ts";
+import type { KeyStatus, MemoryItem } from "../lib/voice-backend.ts";
 import {
   GLOBAL_SHORTCUT,
   type LoopySettings,
@@ -24,6 +25,12 @@ export interface VoiceSettingsProps {
   readonly desktop: boolean;
   /** Why the global shortcut could not be registered, if it couldn't. */
   readonly shortcutProblem: string | null;
+  /** What Loopy remembers, newest first (`null` while asking). */
+  readonly memories?: readonly MemoryItem[] | null;
+  /** Forget one memory. */
+  readonly onForget?: (id: number) => void;
+  /** Forget every memory. */
+  readonly onForgetAll?: () => void;
   readonly onClose: () => void;
 }
 
@@ -121,6 +128,90 @@ function KeySection(
   );
 }
 
+/** When a memory was kept, for the list. */
+function memoryDate(ms: number): string {
+  try {
+    return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+  } catch {
+    return new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+  }
+}
+
+/** One memory: when, what the user said and what Loopy answered, and a button to forget it. */
+function MemoryRow({ memory, onForget }: { memory: MemoryItem; onForget?: (id: number) => void }) {
+  return (
+    <li class="memory">
+      <time dateTime={new Date(memory.createdAt).toISOString()}>
+        {memoryDate(memory.createdAt)}
+      </time>
+      <span class="memory-user">{memory.user}</span>
+      {memory.assistant && <span class="memory-assistant">{memory.assistant}</span>}
+      <button
+        type="button"
+        class="memory-forget"
+        aria-label="Forget this"
+        title="Forget this"
+        onClick={() => onForget?.(memory.id)}
+      >
+        ×
+      </button>
+    </li>
+  );
+}
+
+/** "Forget all", which asks once more before it forgets. */
+function ForgetAll({ onForgetAll }: { onForgetAll?: () => void }) {
+  const [sure, setSure] = useState(false);
+  if (!sure) return <button type="button" onClick={() => setSure(true)}>Forget all</button>;
+  return (
+    <span class="memory-sure">
+      Forget everything?{" "}
+      <button
+        type="button"
+        onClick={() => {
+          setSure(false);
+          onForgetAll?.();
+        }}
+      >
+        Yes, forget all
+      </button>{" "}
+      <button type="button" onClick={() => setSure(false)}>Keep</button>
+    </span>
+  );
+}
+
+/** What Loopy remembers. */
+function MemorySection(
+  { memories, onForget, onForgetAll, on }:
+    & Pick<
+      VoiceSettingsProps,
+      "memories" | "onForget" | "onForgetAll"
+    >
+    & { on: boolean },
+) {
+  const note = on
+    ? "Each conversation is kept on this computer."
+    : "Memory is off: nothing new is kept.";
+  return (
+    <fieldset class="settings-memory">
+      <legend>Memories</legend>
+      <p class="settings-note">{note}</p>
+      {memories === null || memories === undefined
+        ? <p class="settings-note">Loading…</p>
+        : memories.length === 0
+        ? <p class="settings-note">Nothing remembered.</p>
+        : (
+          <>
+            <ul class="memory-list" aria-label="What Loopy remembers">
+              {memories.map((m) => <MemoryRow key={m.id} memory={m} onForget={onForget} />)}
+            </ul>
+            <ForgetAll onForgetAll={onForgetAll} />
+          </>
+        )}
+    </fieldset>
+  );
+}
+
 /** Loopy's settings. */
 export function VoiceSettings(props: VoiceSettingsProps) {
   const { settings, onChange, desktop, shortcutProblem } = props;
@@ -159,6 +250,33 @@ export function VoiceSettings(props: VoiceSettingsProps) {
         />
         <Toggle label={`"Hey Loopy"`} note="coming soon" checked={false} disabled />
       </fieldset>
+      <fieldset>
+        <legend>Tools</legend>
+        <Toggle
+          label="Web search"
+          note="answers current questions, with sources"
+          checked={settings.webSearch}
+          onChange={(on) => set({ webSearch: on })}
+        />
+        <Toggle
+          label="Browser"
+          note="opens and drives a Chrome window you can watch; asks before submitting"
+          checked={settings.browser}
+          onChange={(on) => set({ browser: on })}
+        />
+        <Toggle
+          label="Memory"
+          note="remembers your conversations and recalls them"
+          checked={settings.memory}
+          onChange={(on) => set({ memory: on })}
+        />
+      </fieldset>
+      <MemorySection
+        memories={props.memories}
+        onForget={props.onForget}
+        onForgetAll={props.onForgetAll}
+        on={settings.memory}
+      />
       <fieldset>
         <legend>Size</legend>
         <label class="setting setting-range">

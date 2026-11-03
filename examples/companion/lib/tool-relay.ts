@@ -2,25 +2,41 @@
 // the data channel; each is relayed to the backend (the `loopyVoice` capability on desktop, the dev
 // route in a browser), which runs it in Deno (voice/tools.ts). Its output goes back to the model as
 // a `function_call_output` item, then a `response.create` asks for the rest of the reply. A tool's
-// effect (a mood) is handed to the page. Pure apart from what it is handed, so it is unit-tested.
+// effects (a mood, source links) are handed to the page. A tool that must ask the user first (a
+// form submit in the browser) answers with a question: the relay shows it with Yes / No, waits,
+// and sends the answer back (`confirm`); the output the model gets is that call's. Pure apart from
+// what it is handed, so it is unit-tested.
 //
 // https://developers.openai.com/api/docs/guides/realtime-conversations#function-calling
 
 import { type LoopyMood, MOODS } from "./loopy-machine.ts";
+import type { SourceLink, ToolAnswer } from "./voice-backend.ts";
 import { functionCalls, type ServerEvent } from "./voice-machine.ts";
 
 /** Runs a tool call on the backend. */
 export type ToolCaller = (
   call: { readonly name: string; readonly arguments: string },
-) => Promise<{ readonly output: string; readonly mood?: string }>;
+) => Promise<ToolAnswer>;
 
-/** The most tool rounds one user turn may take before Loopy stops asking for more. */
-export const MAX_TOOL_ROUNDS = 4;
+/**
+ * The most tool rounds one user turn may take before Loopy stops asking for more (browsing takes a
+ * few: open, read, click, read).
+ */
+export const MAX_TOOL_ROUNDS = 8;
+
+/** The most questions one call may ask in a row. */
+const MAX_QUESTIONS = 3;
 
 /** What {@linkcode relayToolCalls} needs. */
 export interface RelayOptions {
   /** Runs a call in the backend. */
   readonly call: ToolCaller;
+  /** Sends the user's answer to a tool's question to the backend. */
+  readonly confirm?: (id: string, approved: boolean) => Promise<ToolAnswer>;
+  /** Asks the user (Loopy's bubble with Yes / No); resolves with their answer. */
+  readonly ask?: (prompt: string) => Promise<boolean>;
+  /** Shows the links a tool found. */
+  readonly onSources?: (sources: readonly SourceLink[]) => void;
   /** Sends a client event on the data channel. */
   readonly send: (event: Record<string, unknown>) => void;
   /** Shows a mood a tool set. */
@@ -36,6 +52,30 @@ function spoke(event: ServerEvent): boolean {
   );
 }
 
+/** A failure as the model's output. */
+const failure = (err: unknown): ToolAnswer => ({
+  output: JSON.stringify({ ok: false, error: (err as Error)?.message || "tool failed" }),
+});
+
+/** What the model hears when nobody can be asked. */
+const UNASKED: ToolAnswer = {
+  output: JSON.stringify({ ok: false, error: "Loopy couldn't ask the user, so it didn't." }),
+};
+
+/** Run one call, asking the user whenever it asks a question, until it has an output. */
+async function answer(
+  options: RelayOptions,
+  call: { readonly name: string; readonly arguments: string },
+): Promise<ToolAnswer> {
+  let result = await options.call(call).catch(failure);
+  for (let i = 0; result.confirm && i < MAX_QUESTIONS; i++) {
+    if (!options.ask || !options.confirm) return UNASKED;
+    const approved = await options.ask(result.confirm.prompt).catch(() => false);
+    result = await options.confirm(result.confirm.id, approved).catch(failure);
+  }
+  return result.confirm ? UNASKED : result;
+}
+
 /**
  * Relay the function calls in `event` (a `response.done`), send their outputs back, and ask for
  * the reply to continue when the response had nothing else in it.
@@ -46,13 +86,11 @@ export async function relayToolCalls(event: ServerEvent, options: RelayOptions):
   const calls = functionCalls(event);
   if (calls.length === 0) return false;
   for (const c of calls) {
-    const result = await options.call({ name: c.name, arguments: c.arguments }).catch((err) => ({
-      output: JSON.stringify({ ok: false, error: (err as Error)?.message ?? "tool failed" }),
-      mood: undefined,
-    }));
+    const result = await answer(options, { name: c.name, arguments: c.arguments });
     if (result.mood && (MOODS as readonly string[]).includes(result.mood)) {
       options.onMood(result.mood as LoopyMood);
     }
+    if (result.sources?.length) options.onSources?.(result.sources);
     options.send({
       type: "conversation.item.create",
       item: { type: "function_call_output", call_id: c.callId, output: result.output },

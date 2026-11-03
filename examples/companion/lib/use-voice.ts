@@ -1,8 +1,10 @@
 // Loopy's voice in the page: one hook that opens a Realtime session on the first turn (the
 // microphone, an ephemeral secret from the backend, WebRTC), runs push-to-talk turns on it, relays
-// the model's tool calls to the backend, and measures the two audio levels Loopy is drawn from (the
-// microphone while listening, Loopy's voice while speaking). The session closes after a few idle
-// minutes and opens again on the next turn.
+// the model's tool calls to the backend (asking the user in the bubble when a tool needs a yes),
+// hands each finished turn to memory while it is on, and measures the two audio levels Loopy is
+// drawn from (the microphone while listening, Loopy's voice while speaking). Switching a tool
+// feature on or off updates the open session's tools. The session closes after a few idle minutes
+// and opens again on the next turn.
 "use client";
 import { useEffect, useReducer, useRef, useState } from "denext";
 import type { LoopyMood } from "./loopy-machine.ts";
@@ -15,7 +17,8 @@ import {
   type RealtimeConnection,
 } from "./realtime-client.ts";
 import { relayToolCalls } from "./tool-relay.ts";
-import type { VoiceBackend } from "./voice-backend.ts";
+import { createTurnRecorder } from "./turn-memory.ts";
+import type { VoiceBackend, VoiceFeatures } from "./voice-backend.ts";
 import { INITIAL_VOICE, type ServerEvent, type VoiceModel, voiceReducer } from "./voice-machine.ts";
 
 /** A turn shorter than this is a slip of the key: dropped, not sent. */
@@ -35,8 +38,10 @@ export interface VoiceControls {
   readonly end: () => void;
   /** Start a turn, or send the one in progress. */
   readonly toggle: () => void;
-  /** Hide the transcript. */
+  /** Hide the transcript (a question waiting is answered No). */
   readonly clear: () => void;
+  /** The user's answer to the question in the bubble. */
+  readonly answer: (approved: boolean) => void;
 }
 
 /** The audio graph that measures a stream's level. */
@@ -79,6 +84,8 @@ interface Session {
   round: number;
   listenSince: number;
   wantListen: boolean;
+  /** Resolves the question waiting in the bubble. */
+  asking: ((approved: boolean) => void) | null;
 }
 
 const newSession = (): Session => ({
@@ -90,10 +97,19 @@ const newSession = (): Session => ({
   round: 0,
   listenSince: 0,
   wantListen: false,
+  asking: null,
 });
+
+/** Answer the question waiting, if any. */
+function settleQuestion(s: Session, approved: boolean): void {
+  const resolve = s.asking;
+  s.asking = null;
+  resolve?.(approved);
+}
 
 /** Close everything a session holds. */
 function teardown(s: Session): void {
+  settleQuestion(s, false);
   s.conn?.close();
   s.audio?.pause();
   void s.ctx?.close().catch(() => {});
@@ -142,12 +158,13 @@ function playRemote(s: Session, stream: MediaStream): void {
 async function openSession(
   s: Session,
   backend: VoiceBackend,
+  features: VoiceFeatures,
   on: { onEvent: (e: ServerEvent) => void; onClose: () => void },
 ): Promise<void> {
   s.ctx = audioContext();
   const mic = await openMicrophone(globalThis.navigator?.mediaDevices);
   s.mic = s.ctx ? meter(s.ctx, mic) : null;
-  const secret = await backend.session();
+  const secret = await backend.session(features);
   s.conn = await connectRealtime({
     secret: secret.value,
     mic,
@@ -169,11 +186,13 @@ function openProblem(err: unknown, desktop: boolean): string {
  * @param backend The voice backend (lib/voice-backend.ts).
  * @param desktop Running in the desktop app (for the microphone message).
  * @param onMood Called with each mood the model sets.
+ * @param features The tool features switched on (lib/voice-settings.ts).
  */
 export function useVoice(
   backend: VoiceBackend,
   desktop: boolean,
   onMood: (mood: LoopyMood) => void,
+  features: VoiceFeatures,
 ): VoiceControls {
   const [voice, dispatch] = useReducer(voiceReducer, INITIAL_VOICE);
   const latest = useRef(voice);
@@ -182,18 +201,42 @@ export function useVoice(
   const level = useLevels(session, voice.phase);
   const moodRef = useRef(onMood);
   moodRef.current = onMood;
+  const featuresRef = useRef(features);
+  featuresRef.current = features;
+  const recorder = useRef(createTurnRecorder());
+  useSessionFeatures(backend, session, features);
+
+  const ask = (prompt: string) =>
+    new Promise<boolean>((resolve) => {
+      const s = session.current;
+      settleQuestion(s, false);
+      s.asking = (approved) => {
+        dispatch({ type: "answered" });
+        resolve(approved);
+      };
+      dispatch({ type: "ask", prompt });
+    });
+
+  const remember = (event: ServerEvent) => {
+    const turn = recorder.current.onEvent(event);
+    if (turn && featuresRef.current.memory) void backend.remember(turn).catch(() => {});
+  };
 
   const onEvent = (event: ServerEvent) => {
     dispatch({ type: "server", event });
+    remember(event);
     if (event.type !== "response.done") return;
     const s = session.current;
     void relayToolCalls(event, {
       call: (c) => backend.tool(c),
+      confirm: (id, approved) => backend.confirm(id, approved),
+      ask,
       send: (e) => s.conn?.send(e),
       onMood: (mood) => {
         dispatch({ type: "mood", mood });
         moodRef.current(mood);
       },
+      onSources: (sources) => dispatch({ type: "sources", sources }),
       round: ++s.round,
     });
   };
@@ -206,9 +249,11 @@ export function useVoice(
       s.conn.send({ type: "output_audio_buffer.clear" });
     }
     s.conn.send({ type: "input_audio_buffer.clear" });
+    settleQuestion(s, false);
     s.conn.setMicOn(true);
     s.listenSince = Date.now();
     s.round = 0;
+    recorder.current.start();
     dispatch({ type: "listen" });
   };
 
@@ -216,7 +261,7 @@ export function useVoice(
     const s = session.current;
     dispatch({ type: "connect" });
     try {
-      await openSession(s, backend, {
+      await openSession(s, backend, featuresRef.current, {
         onEvent,
         onClose: () => {
           teardown(s);
@@ -275,6 +320,35 @@ export function useVoice(
       latest.current.phase === "listening" || latest.current.phase === "connecting"
         ? end()
         : begin(),
-    clear: () => dispatch({ type: "clear" }),
+    clear: () => {
+      settleQuestion(session.current, false);
+      dispatch({ type: "clear" });
+    },
+    answer: (approved) => settleQuestion(session.current, approved),
   };
+}
+
+/**
+ * Tell the backend when a tool feature is switched on or off, and update the open session's tools
+ * and instructions to match (`session.update`). The first features go with the session itself.
+ */
+function useSessionFeatures(
+  backend: VoiceBackend,
+  session: { current: Session },
+  features: VoiceFeatures,
+): void {
+  const first = useRef(true);
+  const key = `${features.webSearch}/${features.browser}/${features.memory}`;
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    backend.configure(features).then((t) => {
+      session.current.conn?.send({
+        type: "session.update",
+        session: { type: "realtime", tools: t.tools, instructions: t.instructions },
+      });
+    }, () => {});
+  }, [key]);
 }

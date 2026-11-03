@@ -67,13 +67,17 @@ export class VoiceError extends Error {
  * turns is sent: the page disables its track outside a turn.
  *
  * @param tools The function tools the model may call (voice/tools.ts).
+ * @param instructions Loopy's persona, with what the tools switched on add (voice/toolset.ts).
  * @returns The `session` object of a client-secret request.
  */
-function realtimeSession(tools: readonly ToolDefinition[]): Record<string, unknown> {
+function realtimeSession(
+  tools: readonly ToolDefinition[],
+  instructions: string,
+): Record<string, unknown> {
   return {
     type: "realtime",
     model: REALTIME_MODEL,
-    instructions: LOOPY_INSTRUCTIONS,
+    instructions,
     output_modalities: ["audio"],
     audio: {
       input: {
@@ -89,10 +93,13 @@ function realtimeSession(tools: readonly ToolDefinition[]): Record<string, unkno
 }
 
 /** The request body for a client secret: the session and how long the secret lives. */
-function clientSecretRequest(tools: readonly ToolDefinition[]): Record<string, unknown> {
+function clientSecretRequest(
+  tools: readonly ToolDefinition[],
+  instructions: string,
+): Record<string, unknown> {
   return {
     expires_after: { anchor: "created_at", seconds: SECRET_TTL_SECONDS },
-    session: realtimeSession(tools),
+    session: realtimeSession(tools, instructions),
   };
 }
 
@@ -124,6 +131,8 @@ export interface MintOptions {
   readonly apiKey: string;
   /** The function tools for the session. */
   readonly tools: readonly ToolDefinition[];
+  /** The session's instructions (default {@linkcode LOOPY_INSTRUCTIONS}). */
+  readonly instructions?: string;
   /** The fetch to use (tests pass a fake). */
   readonly fetch?: typeof fetch;
   /** Aborts the request. */
@@ -146,7 +155,9 @@ export async function mintClientSecret(options: MintOptions): Promise<ClientSecr
         authorization: `Bearer ${options.apiKey}`,
         "content-type": "application/json",
       },
-      body: JSON.stringify(clientSecretRequest(options.tools)),
+      body: JSON.stringify(
+        clientSecretRequest(options.tools, options.instructions ?? LOOPY_INSTRUCTIONS),
+      ),
       signal: options.signal,
     });
   } catch {

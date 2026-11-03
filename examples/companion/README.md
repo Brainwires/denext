@@ -165,8 +165,9 @@ shrinks to fit about its bottom-right corner, the click-through region following
 - `voice/` runs in Deno only: in the desktop app as the `loopyVoice` capability
   (`voice/extension.ts`, called through the runtime's bridge), in the browser as `POST /api/voice`
   (`app/api/voice/route.ts`; loopback host, same origin and JSON only). `voice/service.ts` answers
-  five calls — `status` (is a key set; never the key), `setKey`, `clearKey`, `session` and `tool` —
-  each rate-limited.
+  `status` (is a key set; never the key), `setKey`, `clearKey`, `session` (with the tools switched
+  on), `configure` (a switch changed mid-session), `tool`, `confirm` (your Yes or No), `remember`,
+  `memories`, `forget` and `forgetAll`, each rate-limited.
 - `session` mints an ephemeral client secret (`POST /v1/realtime/client_secrets`, valid for 60 s,
   `voice/realtime.ts`) with Loopy's session: its persona, push-to-talk turns
   (`turn_detection: null`), input transcription (`gpt-4o-mini-transcribe`) and the tools. The page
@@ -179,8 +180,63 @@ shrinks to fit about its bottom-right corner, the click-through region following
   mouth and pulse steps; `lib/use-voice.ts` runs the turns.
 - Tools: the model's function calls arrive in `response.done`; `lib/tool-relay.ts` relays each to
   the backend's registry (`voice/tools.ts`), sends the output back as a `function_call_output` and
-  asks for the rest of the reply. `set_mood` is the only tool so far; new ones register in
-  `voice/tools.ts` and run in Deno.
+  asks for the rest of the reply. Every tool runs in Deno, never in the page (see Tools below).
+
+### Tools
+
+Besides `set_mood`, Loopy has three tools, each switched on or off under **⚙ Settings → Tools** (at
+any time: a switched-off tool leaves the open session and refuses calls):
+
+| Tool                                                                | Default | What it does                                         |
+| ------------------------------------------------------------------- | ------- | ---------------------------------------------------- |
+| `web_search`                                                        | on      | answers current questions; the sources show as links |
+| `browser_open` / `_read` / `_click` / `_type` / `_scroll` / `_back` | off     | drives a Chrome window you can watch                 |
+| `recall`                                                            | off     | searches past conversations (Memory)                 |
+
+**Web search** (`voice/web-search.ts`): the backend calls OpenAI's
+[Responses API](https://developers.openai.com/api/docs/guides/tools-web-search) with its built-in
+`web_search` tool (`gpt-6-luna`, `search_context_size: "low"`, `store: false`) on the same key. The
+voice model gets a short answer, wrapped as untrusted web data, and the source titles; the bubble
+shows the sources (citations first, then the consulted pages, http(s) only, at most five) as links
+that open in your own browser (`openExternal`; on desktop the `shell` capability, limited to
+`https:` and `http:`).
+
+**The browser** (`voice/browser-tools.ts`, `voice/chrome.ts`, `@astral/astral`): your installed
+Google Chrome or Chromium, started visible on first use with a fresh profile in Loopy's data folder
+(`.loopy/browser-profile` in dev), and closed when Loopy quits or the switch goes off. The model
+opens a page, reads it (its text and a numbered list of links, buttons and inputs), then clicks,
+types, scrolls or goes back by number. The rules are enforced in code (`voice/browser-safety.ts`,
+`voice/post-gate.ts`, `voice/confirm.ts`):
+
+- only `http:` and `https:` addresses open;
+- page content goes back to the model wrapped in `<untrusted_page_data>` and labelled as data, not
+  instructions (a page can't close the block early);
+- it never types into password, payment-card or one-time-code fields (by `type`, `autocomplete`,
+  name, id, label and placeholder), and typing sets the field's value without key presses (no Enter,
+  no implicit submit); field values are never read back;
+- a click on anything submit-like (a submit button, a button in a form that posts, anything labelled
+  like Pay, Send, Delete or Place order) asks first: Loopy's bubble shows the question with **Yes**
+  / **No**, and only Yes clicks. A navigation that posts data while Loopy acts is held in the
+  browser (DevTools `Fetch` interception of documents) and asked about the same way; what you do in
+  the window yourself is never held;
+- no downloads (`Browser.setDownloadBehavior: deny`), no file uploads (file inputs are refused and
+  file choosers never answered), no pop-ups (`--block-new-web-contents`), and JavaScript dialogs are
+  dismissed.
+
+**Memory** (`voice/memory.ts`, `voice/memory-store.ts`, `lib/turn-memory.ts`): while it is on, each
+finished turn (what you said and Loopy's whole reply) is kept in SQLite (`node:sqlite`) in
+`loopy-memory.db` in the app's data folder (`.loopy/` in dev), owner-only, with an OpenAI embedding
+(`text-embedding-3-small`, 512 dimensions), and searched by cosine similarity in plain JS. A new
+session's instructions carry the memories closest to your latest conversations, and the model can
+`recall(query)` the rest. Off means nothing is written: the page sends no turns and the backend
+refuses them, and the file isn't created until the first memory. **Settings → Memories** lists them
+newest first with their dates; forget one, or all (deleted rows are overwritten and the file
+vacuumed).
+
+**Permissions** (`denext.config.ts`): `net` is `api.openai.com` only (sessions, web search and
+embeddings; the browser's DevTools socket is loopback, in the baseline), `run` is Chrome's or
+Chromium's install path on each OS and nothing else, and `write` is the app's data folder (the inbox
+file, the memory database, the browser profile).
 
 **Not yet in the desktop app.** The desktop window can't capture audio yet (the Deno Desktop runtime
 has no microphone permission handling), so in the app Loopy says it can't hear you and points at the
@@ -219,6 +275,7 @@ runs, catching every click in its window and showing a Dock icon for a moment at
 
 ```sh
 deno test -A tests/examples-companion.test.ts               # from the repo root
+deno test -A tests/examples-companion-tools.test.ts         # the tools
 deno test -A tests/integration/example-companion.test.ts    # exports a copy of the app
 ```
 
@@ -229,3 +286,9 @@ hook parsing; and the voice: the client-secret request (against a fake fetch) an
 key store and that no call returns the key, the dev route's checks, the tool registry and relay, the
 voice state machine, the WebRTC exchange (with fake peers), the microphone messages, lip-sync levels
 and mouth shapes, the settings and the size math and anchoring.
+`tests/examples-companion-tools.test.ts` covers the tools without OpenAI, a key or a browser window:
+web search against a fake fetch, the browser's rules and tools against a fake browser (the URL
+check, the untrusted wrapping, the field refusals, submit detection, the post gate and the
+confirmations), the memory store on an in-memory database with fake embeddings, cosine ranking, the
+toolset's feature switches, the backend's new operations, and the page's relay, turn recording,
+bubble and settings.

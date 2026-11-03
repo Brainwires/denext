@@ -4,5 +4,9 @@
 import { createVoiceRoute } from "../../../voice/dev-route.ts";
 import { envKeyStore } from "../../../voice/keys.ts";
 import { createVoiceService } from "../../../voice/service.ts";
+import { createToolset } from "../../../voice/toolset.ts";
 
-export const POST = createVoiceRoute(createVoiceService({ keys: envKeyStore() }));
+// The tools' files (the memory database, the browser profile) go in `.loopy/` under the example.
+const toolset = createToolset({ dataDir: `${Deno.cwd()}/.loopy` });
+
+export const POST = createVoiceRoute(createVoiceService({ keys: envKeyStore(), toolset }));

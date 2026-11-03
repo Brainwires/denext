@@ -15,8 +15,14 @@ function bridgeBackend(): VoiceBackend {
     status: () => wrap(ext.status({})),
     setKey: (key) => wrap(ext.setKey({ key })),
     clearKey: () => wrap(ext.clearKey({})),
-    session: () => wrap(ext.session({})),
+    session: (features) => wrap(ext.session({ features })),
+    configure: (features) => wrap(ext.configure({ features })),
     tool: (c) => wrap(ext.tool({ name: c.name, arguments: c.arguments })),
+    confirm: (id, approved) => wrap(ext.confirm({ id, approved })),
+    remember: (turn) => wrap(ext.remember({ user: turn.user, assistant: turn.assistant })),
+    memories: () => wrap(ext.memories({})),
+    forget: (id) => wrap(ext.forget({ id })),
+    forgetAll: () => wrap(ext.forgetAll({})),
   };
 }
 

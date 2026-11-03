@@ -5,14 +5,17 @@
 //
 // Voice (lib/use-voice.ts): hold Space, click Loopy, or press the global shortcut to talk to Loopy
 // through OpenAI's Realtime API; the transcripts show in the bubble, Loopy listens, thinks and
-// lip-syncs, and the model sets its mood. The settings panel turns each way of talking on or off,
-// takes the API key (write-only) and sets Loopy's size.
+// lip-syncs, and the model sets its mood. Tools (web search, a browser window, memory) run on the
+// Deno side; a web search's sources show as links that open in the user's browser, and a browser
+// action that would submit something asks in the bubble first. The settings panel turns each way
+// of talking and each tool on or off, takes the API key (write-only), lists and forgets memories,
+// and sets Loopy's size.
 "use client";
 import { useEffect, useMemo, useReducer, useRef, useState } from "denext";
 import type { Dispatch, RefObject } from "denext";
 import { onDesktopEvent } from "denext/desktop/client";
 import { registerShortcut } from "denext/desktop/app";
-import { speak, stopSpeaking } from "denext/mobile";
+import { openExternal, speak, stopSpeaking } from "denext/mobile";
 import { Loopy } from "../components/Loopy.tsx";
 import { SpeechBubble } from "../components/SpeechBubble.tsx";
 import { VoiceBubble } from "../components/VoiceBubble.tsx";
@@ -33,11 +36,12 @@ import { type LoopyMessage, parseSayRequest, type SayRequest } from "../lib/mess
 import { dragWindowBy, quit, setupWindow, type WindowSetup } from "../lib/window-setup.ts";
 import { readAloudOn, saveReadAloud, spokenText } from "../lib/speech.ts";
 import { useVoice, type VoiceControls } from "../lib/use-voice.ts";
-import type { KeyStatus, VoiceBackend } from "../lib/voice-backend.ts";
+import type { KeyStatus, MemoryItem, VoiceBackend } from "../lib/voice-backend.ts";
 import { voiceBackend } from "../lib/voice-bridge.ts";
-import { voiceBusy, type VoiceModel, voiceNudge, voiceStage } from "../lib/voice-machine.ts";
+import { transcriptHoldMs, type VoiceModel, voiceNudge, voiceStage } from "../lib/voice-machine.ts";
 import {
   DEFAULT_SETTINGS,
+  featuresOf,
   GLOBAL_SHORTCUT,
   loadSettings,
   type LoopySettings,
@@ -247,12 +251,12 @@ function useVoiceStatus(
 
 /** Hide the transcript a while after a turn ends. */
 function useTranscriptTimeout(voice: VoiceModel, clear: () => void): void {
-  const hasText = voice.user !== "" || voice.assistant !== "" || voice.error !== null;
+  const hold = transcriptHoldMs(voice);
   useEffect(() => {
-    if (voiceBusy(voice.phase) || !hasText) return;
-    const timer = setTimeout(clear, voice.error ? 10_000 : 8_000);
+    if (hold === null) return;
+    const timer = setTimeout(clear, hold);
     return () => clearTimeout(timer);
-  }, [voice.phase, hasText]);
+  }, [voice.phase, hold]);
 }
 
 /** The page's storage, where the read-aloud toggle is kept (none during SSR). */
@@ -407,15 +411,35 @@ function useLoopyFollowsVoice(
   }, [phase]);
 }
 
-/** The settings panel's state and the backend's word on the key. */
+/** What Loopy remembers, asked for whenever the panel opens; and forgetting. */
+function useMemories(backend: VoiceBackend, open: boolean) {
+  const [memories, setMemories] = useState<readonly MemoryItem[] | null>(null);
+  const reload = () => backend.memories().then(setMemories, () => setMemories([]));
+  useEffect(() => {
+    if (!open) {
+      setMemories(null);
+      return;
+    }
+    void reload();
+  }, [backend, open]);
+  return {
+    memories,
+    forget: (id: number) => void backend.forget(id).then(reload, reload),
+    forgetAll: () => void backend.forgetAll().then(reload, reload),
+  };
+}
+
+/** The settings panel's state, the backend's word on the key, and the memories. */
 function useSettingsPanel(backend: VoiceBackend) {
   const [open, setOpen] = useState(false);
   const [status, setStatus] = useVoiceStatus(backend, open);
+  const memory = useMemories(backend, open);
   const keyResult = (p: Promise<KeyStatus>) =>
     p.then((s) => (setStatus(s), null), (err) => (err as Error).message);
   return {
     open,
     status,
+    ...memory,
     toggle: () => setOpen(!open),
     close: () => setOpen(false),
     setKey: (key: string) => keyResult(backend.setKey(key)),
@@ -434,7 +458,12 @@ function useCompanionVoice(
   const backend = useMemo(() => voiceBackend(desktop), [desktop]);
   const panel = useSettingsPanel(backend);
   // A mood the model sets plays its move too (a hop for success, a point for attention, …).
-  const controls = useVoice(backend, desktop, (mood) => dispatch({ type: "say", mood }));
+  const features = useMemo(() => featuresOf(settings), [
+    settings.webSearch,
+    settings.browser,
+    settings.memory,
+  ]);
+  const controls = useVoice(backend, desktop, (mood) => dispatch({ type: "say", mood }), features);
   usePushToTalk(settings.pushToTalk, controls);
   const shortcutProblem = useGlobalShortcut(desktop && settings.globalShortcut, controls);
   useTranscriptTimeout(controls.voice, controls.clear);
@@ -461,25 +490,34 @@ function SettingsPanel(
       onClearKey={panel.clearKey}
       desktop={desktop}
       shortcutProblem={shortcutProblem}
+      memories={panel.memories}
+      onForget={panel.forget}
+      onForgetAll={panel.forgetAll}
       onClose={panel.close}
     />
   );
 }
 
+/** Open a source link in the user's own browser (the system browser on desktop). */
+function openLink(url: string): void {
+  void openExternal(url).catch(() => {});
+}
+
 /** The bubble on screen: the voice turn's while one is up, else the message's. */
 function Bubbles(
-  { voice, voiceUp, message, onClear, onFinish }: {
+  { voice, voiceUp, message, onClear, onAnswer, onFinish }: {
     voice: VoiceModel;
     voiceUp: boolean;
     message: LoopyMessage | undefined;
     onClear: () => void;
+    onAnswer: (approved: boolean) => void;
     onFinish: (message: LoopyMessage, actionId: string | null) => void;
   },
 ) {
   if (!voiceUp) return <BubbleSlot message={message} onFinish={onFinish} />;
   return (
     <div class="bubble-slot">
-      <VoiceBubble voice={voice} onClose={onClear} />
+      <VoiceBubble voice={voice} onClose={onClear} onAnswer={onAnswer} onOpenLink={openLink} />
     </div>
   );
 }
@@ -530,6 +568,7 @@ export function Companion() {
         voiceUp={stage.voiceUp}
         message={current}
         onClear={controls.clear}
+        onAnswer={controls.answer}
         onFinish={finish}
       />
       <Stage
