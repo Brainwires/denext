@@ -196,3 +196,26 @@ export function assertMediaCaptureRuntime(
     );
   }
 }
+
+/** The fix for {@linkcode linuxWebRtcProblem}: the one key that picks the engine. */
+export const LINUX_WEBRTC_FIX = 'an app that uses WebRTC: set deno.json desktop.backend to "cef" ' +
+  "(Chromium; the one key picks the engine on every OS, so macOS and Windows ship CEF too). An " +
+  "app that only records needs nothing";
+
+/**
+ * Why WebRTC is missing from the Linux build: the microphone or camera is on and the Linux engine
+ * is the webview backend (WebKitGTK). No distribution builds WebKitGTK with WebRTC, so
+ * `RTCPeerConnection` is undefined there; `getUserMedia` itself works, so an app that only
+ * records is fine. The CEF backend (Chromium) has WebRTC on every OS.
+ *
+ * @param config The project config.
+ * @param backend The deno.json `desktop.backend` (`"webview"` or `"cef"`; `null` when unknown).
+ * @returns The message (one line), or `null` when it does not apply.
+ */
+export function linuxWebRtcProblem(config: unknown, backend: string | null): string | null {
+  const kinds = enabledKinds(config);
+  if (kinds.length === 0 || backend === null || backend === "cef") return null;
+  return `desktop.capabilities.${kinds.join(" / ")} is on and the Linux engine is the webview ` +
+    "backend (WebKitGTK): no distribution's WebKitGTK is built with WebRTC, so " +
+    "RTCPeerConnection is undefined in the Linux app (getUserMedia works)";
+}

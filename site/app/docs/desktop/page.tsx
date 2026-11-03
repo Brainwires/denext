@@ -3170,6 +3170,18 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
         (from runtime 3.0.0-denext.9 it refuses the device): build and test the capture UI in the
         browser with <code>denext dev</code>, where the browser asks.
       </p>
+      <p>
+        WebRTC on Linux needs the CEF backend. No distribution builds WebKitGTK with WebRTC, so on
+        the webview backend <code>RTCPeerConnection</code> is undefined in the Linux app;{" "}
+        <code>getUserMedia</code>{" "}
+        itself works, so an app that only records is fine. An app that uses WebRTC sets deno.json
+        {" "}
+        <code>desktop.backend</code> to <code>"cef"</code>{" "}
+        (Chromium, about 150 MB larger; the one key picks the engine on every OS).{" "}
+        <code>denext desktop doctor --linux</code> and <code>denext doctor</code>{" "}
+        warn when the microphone or camera is on with the webview backend, and{" "}
+        <code>denext desktop package</code> warns once for a Linux target.
+      </p>
       <Code lang="ts">
         {`// denext.config.ts
 desktop: {

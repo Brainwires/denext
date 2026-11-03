@@ -44,9 +44,13 @@ import {
   stalePackageScripts,
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
-import { mediaCaptureRuntimeProblem } from "../../build/desktop-media-capture.ts";
+import {
+  LINUX_WEBRTC_FIX,
+  linuxWebRtcProblem,
+  mediaCaptureRuntimeProblem,
+} from "../../build/desktop-media-capture.ts";
 import { DENEXT_EXCLUDE, denextExemptions } from "../../build/dep-age.ts";
-import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
+import { desktopRuntimeStatus, projectDesktopBackend } from "../../build/desktop-runtime.ts";
 import {
   DENO_TOOLCHAIN,
   denoToolchainStatus,
@@ -843,12 +847,39 @@ export async function desktopLaunchPolicyCheck(
   };
 }
 
-/** The desktop checks that apply to the project: the app origin, the runtime, the launch policy. */
+/**
+ * The Linux WebRTC check, for a desktop project with the microphone or camera on the webview
+ * backend (null otherwise): no distribution's WebKitGTK is built with WebRTC, so the Linux build
+ * has no `RTCPeerConnection` (`getUserMedia` works). Advisory, whatever the host: any host can
+ * package for Linux.
+ *
+ * @param dir The project directory (its deno.json `desktop.backend` picks the engine).
+ * @param config The loaded project config.
+ * @returns The check, or `null` when it does not apply.
+ */
+export async function desktopLinuxWebRtcCheck(dir: string, config: unknown): Promise<Check | null> {
+  if (!await isDesktopProject(dir)) return null;
+  const backend = await projectDesktopBackend(dir).catch(() => null);
+  const problem = linuxWebRtcProblem(config, backend);
+  if (problem === null) return null;
+  return {
+    name: "desktop Linux WebRTC",
+    ok: false,
+    detail: `${problem} — ${LINUX_WEBRTC_FIX}`,
+    critical: false,
+  };
+}
+
+/**
+ * The desktop checks that apply to the project: the app origin, the runtime, the launch policy,
+ * Linux WebRTC.
+ */
 async function desktopChecks(dir: string, config: unknown): Promise<Check[]> {
   const checks = [
     await desktopOriginCheck(dir, config),
     await desktopRuntimeCheck(dir),
     await desktopLaunchPolicyCheck(dir, config),
+    await desktopLinuxWebRtcCheck(dir, config),
   ];
   return checks.filter((c): c is Check => c !== null);
 }

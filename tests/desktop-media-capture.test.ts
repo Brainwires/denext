@@ -8,6 +8,8 @@ import {
   assertMediaCaptureRuntime,
   defaultUsageDescription,
   desktopMediaCapture,
+  LINUX_WEBRTC_FIX,
+  linuxWebRtcProblem,
   mediaCaptureEntitlements,
   mediaCaptureLaunchGrant,
   mediaCaptureRuntimeProblem,
@@ -31,7 +33,10 @@ import { dictGet, parsePlist, type PlistDict, renderPlist } from "../src/build/p
 import { addDesktopCapabilities, DESKTOP_CAPABILITIES } from "../src/build/desktop-capabilities.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
-import { desktopLaunchPolicyCheck } from "../src/cli/commands/doctor.ts";
+import { desktopLaunchPolicyCheck, desktopLinuxWebRtcCheck } from "../src/cli/commands/doctor.ts";
+import { projectLinuxWebRtc } from "../src/cli/commands/desktop-doctor.ts";
+import type { prepareDesktopPackage } from "../src/build/desktop-package-script.ts";
+import { inChild } from "./helpers/isolated.ts";
 
 const STRICT = strictLaunchRuntime() ? { strictPolicy: true } : {};
 
@@ -533,6 +538,95 @@ Deno.test("media capture: the doctor names a runtime without the grant", async (
       runtimeVersion: "3.0.0-denext.7",
     });
     assert(!none!.detail.includes("needs Deno Desktop runtime"), none!.detail);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("media capture: Linux WebRTC needs the CEF backend", () => {
+  const mic = { desktop: { capabilities: { microphone: true } } };
+  const problem = linuxWebRtcProblem(mic, "webview");
+  assertStringIncludes(problem!, "desktop.capabilities.microphone is on");
+  assertStringIncludes(problem!, "RTCPeerConnection is undefined");
+  assertStringIncludes(problem!, "getUserMedia works");
+  assertStringIncludes(linuxWebRtcProblem(BOTH, "webview")!, "microphone / camera");
+  assertEquals(linuxWebRtcProblem(mic, "cef"), null);
+  assertEquals(linuxWebRtcProblem(mic, null), null);
+  assertEquals(
+    linuxWebRtcProblem({ desktop: { capabilities: { microphone: false } } }, "webview"),
+    null,
+  );
+  assertStringIncludes(LINUX_WEBRTC_FIX, 'desktop.backend to "cef"');
+});
+
+Deno.test("media capture: both doctors warn that the Linux webview build has no WebRTC", async () => {
+  const { dir } = await project(BOTH);
+  try {
+    await Deno.writeTextFile(join(dir, "desktop.ts"), "// entry\n");
+    // `denext doctor`: the loaded config, the default (webview) backend.
+    const check = await desktopLinuxWebRtcCheck(dir, BOTH);
+    assertEquals([check!.name, check!.ok, check!.critical], ["desktop Linux WebRTC", false, false]);
+    assertStringIncludes(check!.detail, "RTCPeerConnection is undefined");
+    assertStringIncludes(check!.detail, 'desktop.backend to "cef"');
+    assertEquals(await desktopLinuxWebRtcCheck(dir, { desktop: { app: BOTH.desktop.app } }), null);
+    // `denext desktop doctor --linux`: the config read as data.
+    assertStringIncludes((await projectLinuxWebRtc(dir))!, "microphone / camera is on");
+
+    // The CEF backend has WebRTC: neither says anything.
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ desktop: { backend: "cef" } }),
+    );
+    assertEquals(await desktopLinuxWebRtcCheck(dir, BOTH), null);
+    assertEquals(await projectLinuxWebRtc(dir), null);
+    // An unknown backend is the runtime check's to report.
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ desktop: { backend: "x" } }));
+    assertEquals(await desktopLinuxWebRtcCheck(dir, BOTH), null);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  // Not a desktop project, or a config that can't be read as data.
+  const plain = await Deno.makeTempDir({ prefix: "denext-media-capture-" });
+  try {
+    assertEquals(await desktopLinuxWebRtcCheck(plain, BOTH), null);
+    assertEquals(await projectLinuxWebRtc(plain), null);
+    await Deno.writeTextFile(join(plain, "desktop.ts"), "// entry\n");
+    await Deno.writeTextFile(join(plain, "denext.config.ts"), "export default make();\n");
+    assertEquals(await projectLinuxWebRtc(plain), null);
+  } finally {
+    await Deno.remove(plain, { recursive: true });
+  }
+});
+
+/** Run `prepareDesktopPackage` for `os` in its own process; its stderr. */
+async function prepareStderr(dir: string, os: "linux" | "windows"): Promise<string> {
+  const entry = toFileUrl(join(dir, "scripts", `package-${os}.ts`)).href;
+  const run = await inChild<Awaited<ReturnType<typeof prepareDesktopPackage>>>({
+    imports: `import { prepareDesktopPackage } from "@repo/src/build/desktop-package-script.ts";`,
+    body: `return await prepareDesktopPackage(${JSON.stringify(entry)}, ${JSON.stringify(os)}, ` +
+      `{ formats: [${
+        JSON.stringify(os === "linux" ? "tar.gz" : "zip")
+      }], add: [], export: false });`,
+    env: { DENEXT_APP_NAME: "Voice" },
+    cwd: dir,
+  });
+  return run.stderr;
+}
+
+Deno.test("media capture: a Linux package run warns once that the webview build has no WebRTC", async () => {
+  const { dir } = await project(BOTH);
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ version: "1.2.3" }));
+    const linux = await prepareStderr(dir, "linux");
+    assertEquals(linux.split("RTCPeerConnection is undefined").length - 1, 1, linux);
+    assertStringIncludes(linux, 'desktop.backend to "cef"');
+    // A warning, not a refusal; and only for a Linux target.
+    assert(!(await prepareStderr(dir, "windows")).includes("RTCPeerConnection"));
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ version: "1.2.3", desktop: { backend: "cef" } }),
+    );
+    assert(!(await prepareStderr(dir, "linux")).includes("RTCPeerConnection"));
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

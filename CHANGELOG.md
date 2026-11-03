@@ -23,6 +23,13 @@ and this project adheres to
   `denext desktop package` refuses an older runtime, which cannot restrict capture to the app's
   origin, and `denext doctor` says so. An unpackaged window (`denext desktop run` / `dev`) gets no
   grant and says so at launch. Docs: https://denext.dev/docs/desktop#desktop-media-capture
+- **The doctors and Linux packaging say when a capturing app has no WebRTC on Linux.** No
+  distribution builds WebKitGTK with WebRTC, so on the webview backend `RTCPeerConnection` is
+  undefined in the Linux app (`getUserMedia` itself works). With the microphone or camera on and
+  deno.json `desktop.backend` not `"cef"`, `denext desktop doctor --linux` and `denext doctor`
+  warn, and `denext desktop package` warns once for a Linux target (it still packages: an app that
+  only records is fine). An app that uses WebRTC sets `desktop.backend` to `"cef"`, which applies
+  to every OS. Docs: https://denext.dev/docs/desktop#desktop-media-capture
 
 ## [4.11.13] - 2026-11-02
 

@@ -39,7 +39,11 @@ import {
 } from "./code-signing.ts";
 import { basename, fromFileUrl, join, toFileUrl } from "@std/path";
 import { runToExit } from "./exited-output.ts";
-import { assertMediaCaptureRuntime } from "./desktop-media-capture.ts";
+import {
+  assertMediaCaptureRuntime,
+  LINUX_WEBRTC_FIX,
+  linuxWebRtcProblem,
+} from "./desktop-media-capture.ts";
 import { desktopRuntimeLabel, mediaCaptureRuntime } from "./desktop-launch-policy.ts";
 
 /** A package script's parsed command line. */
@@ -328,7 +332,9 @@ export interface PreparedDesktopPackage {
  * `desktop.installers.<os>`, else the defaults), `dist/`, unless `--no-export` the static export
  * (`deno task export`), then the `.deno-desktop/app.json` + `compile.include` + deno.json
  * `desktop.app` sync and the package metadata (read after that sync wrote the deep links into
- * deno.json; a made-up version or identifier is warned about).
+ * deno.json; a made-up version or identifier is warned about). A Linux run with the microphone or
+ * camera on the webview backend is warned, once, that WebKitGTK has no WebRTC
+ * ({@linkcode linuxWebRtcProblem}).
  *
  * The sync runs AFTER the export, right before `deno desktop` reads deno.json: under
  * `denext desktop package` the CLI's CSS re-exec keeps a backup of the project's deno.json while the
@@ -352,6 +358,10 @@ export async function prepareDesktopPackage(
   await syncDesktopAppConfig(entryUrl);
   const meta = await desktopPackageMeta(entryUrl, appName);
   for (const line of await desktopPackageMetaWarnings(entryUrl, meta)) console.warn(line);
+  const webrtc = os === "linux"
+    ? linuxWebRtcProblem(await loadConfigBeside(entryUrl), meta.backend)
+    : null;
+  if (webrtc) console.warn(`  ⚠ ${webrtc}. For ${LINUX_WEBRTC_FIX}.`);
   return { name: desktopSlug(appName), plan, meta };
 }
 
