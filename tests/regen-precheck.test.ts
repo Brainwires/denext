@@ -3,8 +3,8 @@
 // generated file.
 
 import { assert, assertEquals, assertFalse } from "@std/assert";
-import { join } from "@std/path";
-import { allOutputs, regen, type RegenStep, STEPS } from "../scripts/regen.ts";
+import { fromFileUrl, join } from "@std/path";
+import { allOutputs, formatInputsStep, regen, type RegenStep, STEPS } from "../scripts/regen.ts";
 import { rewriteSerialList } from "../scripts/gen-serial-tests.ts";
 import {
   AFFECTED_TESTS_CAP,
@@ -22,7 +22,7 @@ Deno.test("regen: every output is a committed file, and no two steps of one phas
   for (const p of allOutputs()) {
     assert((await Deno.stat(new URL(p, ROOT))).isFile, `${p} is missing`);
   }
-  for (const phase of [1, 2, 3, 4]) {
+  for (const phase of [0, 1, 2, 3, 4]) {
     const outs = STEPS.filter((s) => s.phase === phase).flatMap((s) => s.outputs);
     assertEquals(outs.length, new Set(outs).size, `phase ${phase} writes a file twice`);
   }
@@ -170,6 +170,85 @@ Deno.test("regen: one run converges from a stale native-templates pack (the pack
     await Deno.remove(dir, { recursive: true });
   }
   assert(phaseOf("package scripts") > phaseOf("gen:native-templates"));
+});
+
+Deno.test("regen: one run is final when a corpus input is not formatted yet (fmt runs first)", async () => {
+  // The docs corpus fingerprints its inputs' bytes. A hand-edited page that `deno fmt` (the commit
+  // hook's check:fix) reformats AFTER regen left the corpus one regen behind: a second regen
+  // rewrote packages/docs-corpus/mod.ts. Phase 0 formats the inputs before anything reads them.
+  const dir = await Deno.makeTempDir({ prefix: "denext_regen_fmt_" });
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), '{ "fmt": { "proseWrap": "preserve" } }\n');
+    await Deno.writeTextFile(
+      join(dir, "page.md"),
+      "# Page\n\n| a | bbbbbb |\n|---|---|\n| long cell | x |\n",
+    );
+    const corpus: RegenStep = {
+      name: "corpus (fingerprints page.md)",
+      run: async (root) => {
+        const text = await Deno.readTextFile(join(root, "page.md"));
+        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+        await Deno.writeTextFile(join(root, "corpus.txt"), new Uint8Array(digest).join(",") + "\n");
+      },
+      outputs: ["corpus.txt"],
+      phase: 3,
+    };
+    const steps = [corpus, formatInputsStep(() => Promise.resolve(["page.md"]))];
+    const first = await regen({ quiet: true, steps, root: dir });
+    assertEquals(first.stale, ["corpus.txt", "page.md"]);
+    assertEquals(first.staleBy.get("page.md"), "deno fmt (the docs corpus's inputs)");
+    // What the commit hook does next: fmt the tree. Nothing may change, so a second regen is a no-op.
+    const fmt = await new Deno.Command(Deno.execPath(), {
+      args: ["fmt", "--check", "page.md"],
+      cwd: dir,
+      stdout: "null",
+      stderr: "null",
+    }).output();
+    assert(fmt.success, "regen left page.md unformatted");
+    assertEquals((await regen({ check: true, quiet: true, steps, root: dir })).stale, []);
+    // --check reports an unformatted input and puts it back as it was.
+    const raw = "| a | b |\n|---|---|\n| long cell | x |\n";
+    await Deno.writeTextFile(join(dir, "page.md"), raw);
+    const check = await regen({ check: true, quiet: true, steps, root: dir });
+    assertEquals(check.stale, ["corpus.txt", "page.md"]);
+    assertEquals(await Deno.readTextFile(join(dir, "page.md")), raw, "restored");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("regen: an input deno fmt cannot parse fails the run and is put back (--check)", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_regen_fmt_bad_" });
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
+    await Deno.writeTextFile(join(dir, "bad.ts"), "const = ;\n");
+    const steps = [formatInputsStep(() => Promise.resolve(["bad.ts", "notes.txt"]))];
+    let err: unknown;
+    await regen({ check: true, quiet: true, steps, root: dir }).catch((e) => (err = e));
+    assert(err instanceof Error && err.message.includes("deno fmt failed"), String(err));
+    assertEquals(await Deno.readTextFile(join(dir, "bad.ts")), "const = ;\n");
+    // Nothing formattable: the step does nothing.
+    const none = [formatInputsStep(() => Promise.resolve(["notes.txt"]))];
+    assertEquals((await regen({ check: true, quiet: true, steps: none, root: dir })).stale, []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("regen: the real steps format exactly the docs corpus's inputs, before every generator", async () => {
+  const fmt = STEPS.filter((s) => s.runtimeOutputs);
+  assertEquals(fmt.map((s) => s.name), ["deno fmt (the docs corpus's inputs)"]);
+  assertEquals(fmt[0].phase, 0);
+  assert(STEPS.every((s) => s === fmt[0] || s.phase > 0), "only the fmt step runs in phase 0");
+  assertEquals(
+    STEPS.at(-1),
+    fmt[0],
+    "listed last: a generated input is reported under its generator",
+  );
+  const { corpusInputs } = await import("../scripts/gen-docs-corpus.ts");
+  const inputs = (await corpusInputs()).map((i) => i.path);
+  assertEquals(await fmt[0].runtimeOutputs!(fromFileUrl(ROOT)), inputs);
+  assert(inputs.includes("AGENTS.md") && inputs.some((p) => p.endsWith("/content.md")));
 });
 
 Deno.test("precheck: the drift tests it runs exist", async () => {
