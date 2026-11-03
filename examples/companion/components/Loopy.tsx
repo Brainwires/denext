@@ -1,19 +1,54 @@
-// Loopy, drawn: two triangular paper clips in teal vinyl-coated wire, crossed into a little figure:
-// the clips' bottom edges make a skirt, their tops cross at the waist and open into two wings, and
-// a polished steel bead sits between the wings as the head. The face is on the bead: two big eyes
-// under heavy, expressive brows, and a small mouth. Hand-written SVG, no assets. Every move is CSS
-// keyed off `data-state` (public/styles.css); the arm is the right wing, which swings about the
-// waist to point at the speech bubble.
+// Loopy, drawn: one teal vinyl-coated wire bent like two triangle clips crossed into a little
+// figure: from one cut end it runs up into the left wing, down through the waist to the base, along
+// the base, back up through the waist into the right wing, and ends at the other cut end, so the
+// base and the two wings are one continuous piece. A polished steel bead sits between the wings as
+// the head, with the face on it: two big eyes under expressive brows and a small mouth.
+// Hand-written SVG, no assets; the wire is ONE path with rounded bends. Every move is CSS keyed off
+// `data-state` (public/styles.css).
 //
 // Pure: no hooks, no timers — app/companion.tsx owns the state machine and the squash on poke.
 import type { LoopyState } from "../lib/loopy-machine.ts";
 
-/** The skirt: both clips' bottom edges and the two diagonals up to the waist crossing (80, 138). */
-const SKIRT = "M150 182 H10 L80 138 M150 182 L80 138";
-/** The left wing: up from the waist to its tip, across, and the clip's inner tail back down. */
-const LEFT_WING = "M80 138 L8 88 L52 94 L81 128";
-/** The right wing (the arm that swings to point), the mirror of the left one. */
-const ARM = "M80 138 L152 88 L108 94 L79 128";
+/**
+ * The wire's bend points, in order along the wire: a cut end near the waist, the left wing's inner
+ * corner and tip, the base's right and left corners, the right wing's tip and inner corner, and the
+ * other cut end. The two long diagonals cross at the waist, about (80, 137).
+ */
+const BENDS: ReadonlyArray<readonly [number, number]> = [
+  [81, 128],
+  [52, 94],
+  [8, 88],
+  [150, 182],
+  [10, 182],
+  [152, 88],
+  [108, 94],
+  [79, 128],
+];
+
+/** A path through `points` with each interior corner rounded by radius `r` (a bent wire). */
+function bentWire(points: ReadonlyArray<readonly [number, number]>, r: number): string {
+  const [first] = points;
+  let d = `M${first[0]} ${first[1]}`;
+  for (let i = 1; i < points.length - 1; i++) {
+    const [px, py] = points[i - 1];
+    const [cx, cy] = points[i];
+    const [nx, ny] = points[i + 1];
+    const toPrev = Math.hypot(px - cx, py - cy);
+    const toNext = Math.hypot(nx - cx, ny - cy);
+    const k1 = Math.min(r, toPrev / 2) / toPrev;
+    const k2 = Math.min(r, toNext / 2) / toNext;
+    const ax = cx + (px - cx) * k1;
+    const ay = cy + (py - cy) * k1;
+    const bx = cx + (nx - cx) * k2;
+    const by = cy + (ny - cy) * k2;
+    d += ` L${ax.toFixed(1)} ${ay.toFixed(1)} Q${cx} ${cy} ${bx.toFixed(1)} ${by.toFixed(1)}`;
+  }
+  const last = points[points.length - 1];
+  return `${d} L${last[0]} ${last[1]}`;
+}
+
+/** The whole wire, bent once at module load. */
+const WIRE = bentWire(BENDS, 7);
 
 /** The props of {@linkcode Loopy}. */
 export interface LoopyProps {
@@ -34,7 +69,7 @@ function Wire({ d }: { d: string }) {
   );
 }
 
-/** Loopy, the paper-clip figure. */
+/** Loopy, the paper clip. */
 export function Loopy({ state, label = "Loopy" }: LoopyProps) {
   return (
     <svg
@@ -56,11 +91,7 @@ export function Loopy({ state, label = "Loopy" }: LoopyProps) {
       </defs>
       <ellipse class="loopy-shadow" cx="80" cy="192" rx="68" ry="5" />
       <g class="loopy-body">
-        <Wire d={SKIRT} />
-        <Wire d={LEFT_WING} />
-        <g class="loopy-arm">
-          <Wire d={ARM} />
-        </g>
+        <Wire d={WIRE} />
         <g class="loopy-head">
           <circle class="loopy-bead" cx="80" cy="76" r="29" fill="url(#loopy-bead)" />
           <g class="loopy-brows">
