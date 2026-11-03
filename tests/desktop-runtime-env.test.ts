@@ -27,6 +27,7 @@ const DYNAMIC_READS: Readonly<Record<string, number>> = {
   "src/desktop/app-dirs.ts": 1,
   "src/desktop/sidecar-child.ts": 3,
   "src/runtime/env-safe.ts": 1,
+  "src/utils/system-programs.ts": 1,
 };
 
 /**
@@ -52,6 +53,8 @@ const FORWARDED: ReadonlySet<string> = new Set([
   "src/build/desktop-package-script.ts desktopExportEnv",
   "src/build/desktop-package-script.ts desktopRuntimeEnv",
   "src/build/desktop-runtime.ts localRuntimeEnv",
+  "src/build/desktop-runtime.ts mismatchedDenoEnv",
+  "src/build/desktop-runtime.ts stockRuntimeEnv",
   "src/build/verified-download.ts env",
   "src/desktop/caps/shell.ts shellPathEnv",
   "src/desktop/sidecar-launch.ts sidecarEnv",
@@ -60,10 +63,11 @@ const FORWARDED: ReadonlySet<string> = new Set([
   "src/runtime/public-env.ts envGet",
   "src/server/config-validate.ts validateCacheAndEnv",
   "src/server/config.ts envGet",
+  "src/utils/system-programs.ts env",
 ]);
 
 /** Readers whose first argument is a name read by a wrapper they call. */
-const NAME_READERS = ["downloadTimeoutMs"];
+const NAME_READERS = ["downloadTimeoutMs", "windowsDir"];
 /** Readers that also read the lowercase spelling of the name. */
 const CASE_FOLDING_READERS = new Set(["proxyEnv"]);
 

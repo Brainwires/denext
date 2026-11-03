@@ -63,6 +63,7 @@ export const DESKTOP_RUNTIME_ENV: readonly string[] = [
   "NO_PROXY",
   "PATH",
   "PORT",
+  "ProgramFiles",
   "SESSION_SECRET",
   "SOURCE_DATE_EPOCH",
   "SystemRoot",
