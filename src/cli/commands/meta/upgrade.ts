@@ -27,6 +27,9 @@ export const upgradeMeta: CommandMeta = {
     "exceptions the dependencies need (sharp, Prisma's engines, …) are written, as create does.\n" +
     'A .vscode/settings.json that turns the Deno LSP on and sets no "deno.unstable" gets\n' +
     '"deno.unstable": ["tsgo-lsp"] (the TypeScript 7 language server; DENEXT_TSGO_LSP=0 skips it).\n' +
+    "Native templates in ios/ / android/ older than this denext writes (`denext mobile add`'s\n" +
+    "files) are listed, --dry-run included, with the command that refreshes each (such as\n" +
+    "`denext mobile add auth-session`); upgrade never rewrites native files itself.\n" +
     "Upgrading the Deno binary itself is Deno's `deno upgrade`: `denext deno upgrade`.",
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [
