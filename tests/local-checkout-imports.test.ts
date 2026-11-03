@@ -3,7 +3,7 @@
 // maps itself and reports the clash, and `denext doctor` flags an entry at another major.
 
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { dirname, join, toFileUrl } from "@std/path";
+import { dirname, fromFileUrl, join, toFileUrl } from "@std/path";
 import {
   frameworkRuntimeDeps,
   layeredFrameworkImports,
@@ -16,6 +16,7 @@ import { checkMigration } from "../src/build/migrate-check.ts";
 import { ensureMergedConfig } from "../src/build/dev-unbundled/resolve.ts";
 import { createUnbundledState } from "../src/build/dev-unbundled/state.ts";
 import { buildAppCss } from "../src/build/css.ts";
+import { writeMergedModuleConfig } from "../src/build/module-config.ts";
 import { migrateProject } from "../src/build/migrate.ts";
 import { importVersionsCheck, localCheckoutImportsCheck } from "../src/cli/commands/doctor.ts";
 import { createMigrateCommand } from "../src/cli/commands/migrate.ts";
@@ -371,5 +372,26 @@ Deno.test("denext doctor: an npm: import-map entry at another major than the app
     assert((await importVersionsCheck(dir))?.ok);
     await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ imports: {} }));
     assertEquals(await importVersionsCheck(dir), null);
+  });
+});
+
+Deno.test("module re-exec config: denext's test-only `effect` never shadows the app's own", async () => {
+  // The config the CLI re-execs a manual-node_modules build under, against this checkout.
+  const framework = fromFileUrl(new URL("../deno.json", import.meta.url));
+  await withTree({
+    "package.json": { name: "app", dependencies: { effect: "4.0.0-beta.1" } },
+    "deno.json": { nodeModulesDir: "manual", imports: {} },
+  }, async (dir) => {
+    const path = await writeMergedModuleConfig(
+      join(dir, ".denext"),
+      join(dir, "deno.json"),
+      framework,
+    );
+    const imports = JSON.parse(await Deno.readTextFile(path)).imports;
+    assertEquals(imports.effect, undefined, "the app's node_modules effect resolves, not denext's");
+    assertEquals(imports.jsqr, undefined, "a dep only denext's tests import");
+    assertStringIncludes(imports["@std/path"], "jsr:@std/path", "the CLI's own deps stay");
+    assertStringIncludes(imports.sass, "npm:sass", "a build dep the CLI imports stays");
+    assert(imports["denext"], "denext's own entries stay");
   });
 });

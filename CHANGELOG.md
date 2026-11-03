@@ -38,13 +38,13 @@ and this project adheres to
   dependency only denext's CLI imports (its profiler's headless-browser client) no longer lands in
   the app's import map, and neither does one of the checkout's workspace packages or tests.
 - **denext's own import map no longer shadows an app's package in dev and build configs.** The
-  merged configs the unbundled dev loop, the stylesheet build and the runtime prebuild resolve
-  through layered denext's whole root import map under the app's, so a package the app leaves
-  unmapped and resolves from its own `node_modules` (an app on Effect 4) got denext's test-only
-  `effect@^3` instead. They now carry denext's `jsr:` / `npm:` entries only where denext's own
-  module graph imports them, and never for a package the app has in package.json or
-  `node_modules` (the runtime prebuild, which bundles none of the app's modules, applies only the
-  first rule).
+  merged configs the unbundled dev loop, the stylesheet build, the runtime prebuild and the
+  module re-exec of a build resolve through layered denext's whole root import map under the
+  app's, so a package the app leaves unmapped and resolves from its own `node_modules` (an app on
+  Effect 4) got denext's test-only `effect@^3` instead. They now carry denext's `jsr:` / `npm:`
+  entries only where denext's own module graph imports them, and never for a package the app has
+  in package.json or `node_modules` (the runtime prebuild, which bundles none of the app's
+  modules, applies only the first rule).
 
 ## [4.11.13] - 2026-11-02
 

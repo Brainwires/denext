@@ -355,6 +355,24 @@ export interface LayeredFrameworkImportsOptions {
   readonly appDir?: string;
   /** Whether a process under this config runs denext's CLI too (its deps are then needed). */
   readonly cli?: boolean;
+  /** The framework's config file, when it is not `deno.json` at `root`. */
+  readonly configPath?: string;
+}
+
+/**
+ * The specifiers a checkout's graph imports, or null when its config declares no exports to walk
+ * from (then nothing is dropped for not being imported).
+ */
+async function checkoutSpecifiers(
+  options: LayeredFrameworkImportsOptions,
+): Promise<Set<string> | null> {
+  const checkout = fromFileUrl(options.root);
+  const cfg = options.configPath
+    ? parseConfig(await Deno.readTextFile(options.configPath).catch(() => null))
+    : await readDenoConfig(checkout);
+  const exportsMap = (cfg?.exports ?? {}) as Record<string, string>;
+  if (Object.keys(exportsMap).length === 0) return null;
+  return await reachableFrom(checkout, exportsMap, options.cli);
 }
 
 /**
@@ -375,15 +393,7 @@ export async function layeredFrameworkImports(
 ): Promise<Record<string, string>> {
   const registry = (v: string) => v.startsWith("jsr:") || v.startsWith("npm:");
   let used: Set<string> | null = null;
-  if (options.root.startsWith("file:")) {
-    const checkout = fromFileUrl(options.root);
-    const cfg = await readDenoConfig(checkout);
-    used = await reachableFrom(
-      checkout,
-      (cfg?.exports ?? {}) as Record<string, string>,
-      options.cli,
-    );
-  }
+  if (options.root.startsWith("file:")) used = await checkoutSpecifiers(options);
   const candidates = Object.entries(framework).filter(([, v]) => registry(v))
     .map(([k]) => packageOfKey(k));
   const owned = options.appDir
