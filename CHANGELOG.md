@@ -44,6 +44,13 @@ and this project adheres to
 
 ### Changed
 
+- **The Deno toolchain and the Deno Desktop runtime are pinned to `3.0.0-denext.8`**, with
+  `3.0.0-denext.7` as the rollback. Everything above marked "takes effect with 3.0.0-denext.8" is
+  now in effect. **Known issue:** a CEF app on an Intel (x86_64) Mac can crash in Chromium's own
+  teardown when it quits (seen about once in 5,600 quits); the app has already finished, but
+  profile writes in flight can be lost and a crash report is left. The fix comes with the next
+  runtime. The first passkey request on macOS after a login takes 1.3 to 2.5 s while the OS starts
+  its authentication agent on demand; later requests take a few milliseconds.
 - **`DENEXT_DESKTOP_RUNTIME=stock` needs a stock Deno CLI, and denext now says so.** On denext's
   Deno it stops before anything is built (`desktop run` / `dev` / `package` and the package scripts),
   naming the fix: unset it, or set `DENEXT_DENO=stock` with a stock `deno`. That combination could
@@ -65,6 +72,56 @@ and this project adheres to
 
 ### Security
 
+- **Rebuild and reship: V8 moves to 15.6 (Chrome Extended Stable 156).** denext's Deno and the
+  Deno Desktop runtime were on V8 15.2.124.45, the last of a branch that gets no more fixes, and
+  they now run V8 15.6.75.33. It carries the V8 fixes from Chrome 153 through 156 that were never
+  merged back to 15.2: 27 CVEs by Chrome's release notes (15 High, 7 Medium, 5 Low), none reported
+  exploited in the wild. This covers `denext start`, `denext build --compile` binaries and packaged
+  desktop apps on every backend. A binary or a packaged app keeps the engine it was built with
+  until it is rebuilt. V8 15.6 has no live edit, so `deno run --watch-hmr` restarts the program on
+  each change and the desktop dev loop reloads the window instead of replacing a module in place.
+  The engine build also holds other isolates back while a snapshot is being made, because V8 frees
+  the read-only heap such an isolate is attached to; denext embeds the prebuilt snapshot, so no
+  program reaches that window.
+- **Rebuild CEF apps: the CEF hosts move to CEF 156.0.15 (Chromium 156.0.8078.80).** This brings
+  Chrome's fixes from 156.0.8078.73 on, the part
+  [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)
+  left open. Apps on a system web view (WebView2, WKWebView, WebKitGTK) are not affected.
+- **`--deny-write` can no longer be bypassed through a parent of the denied path.** With
+  `--allow-write=base --deny-write=base/a/b`, stock Deno 2.9.8 and every runtime through
+  `3.0.0-denext.7` let `Deno.rename("base/a", …)` move the denied folder away, let a rename or a
+  symlink put another tree at a denied path or one of its parents, and let `node:fs` `cp` recreate
+  or remove links the same way. `node:wasi`'s `path_rename` and `path_symlink` had the same gaps
+  under a scoped grant, and a `path_symlink` target could point out of the preopen. Renames (both
+  paths), symlink paths, a non-recursive removal of a link and `chmod` / `chown` of a parent now
+  get the strict check a recursive remove has: a deny scope inside the path refuses the operation.
+  A `node:wasi` link target must stay in the preopen. `node:wasi` also unlinks, removes and renames
+  a link rather than its target, and `path_open` with `O_CREAT` no longer writes outside the
+  preopen through a dangling link.
+- **Windows permission checks compare paths the way NTFS does.** Each of these got past
+  `--deny-write` (or `--deny-read`) through another spelling of the denied path: an 8.3 short name
+  (`LONGNA~1`), a letter case outside ASCII (`Ärger` / `ärger`; the fold is now NTFS's own upcase
+  table), trailing dots and spaces (`base\a.\b`) and named streams (`prog::$DATA`, `prog:evil`).
+  The same applied to a Unix-socket deny, a run deny by name and a drive-relative path (`D:dir\f`).
+  Paths are compared by their long names with the dots, spaces and stream suffixes trimmed, and
+  each operation still receives the path as written. Write deny scopes with long names: a scope
+  written as the short name of an entry that does not exist yet matches only that spelling.
+- **A full-app update's rollback puts back only the app tree it checked, and only for the app it
+  replaced.** Before the swap, the update helper now writes a trial record to its private staging
+  folder with the installed app's digest and version and the version going in. A rollback holds
+  the tree it is about to restore, checks it against that record before the move and again right
+  before it, and marks the version compiled into the installed app as rejected, not the one the
+  state file names. Earlier, a program that could write the install's parent could swap another
+  tree in at `.old` during the check, and an edited state file chose what counted as the previous
+  and rejected versions. A swap made by an older runtime that then fails its trial under this one
+  is not rolled back: the refusal is recorded and the installed version stays. The staged app is
+  also checked through a held, private (0700) staging folder; the extraction uses the exact bytes
+  the download verified; and on Windows an update is refused whenever certificate revocation can't
+  be checked (an offline machine waits until the revocation servers can be reached).
+- **The runtime's build pins fail closed.** A CLI with the embedded `denort` SHA-256 list refuses a
+  target the list doesn't name, rather than trusting the release's `SHA256SUMS`, which a swapped
+  release could change along with the archive. A runtime build that skipped the verified V8
+  prebuilt fails, rather than linking a V8 without the fork's patches.
 - **A Windows app's files are all under its Authenticode signature for full-app updates, and the
   signature is bound to the app and version** (5.0-gate review A, M2; the runtime denext.8 audit,
   F2). The runtime verified the signature of every `.exe` / `.dll` / `.node` of a staged update,
