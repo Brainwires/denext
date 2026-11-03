@@ -23,8 +23,9 @@ denext task say "Deploy to staging?" --action yes:Deploy --action no:Later --wai
 
 ## What you see
 
-Loopy is a Gem-style double-oval clip in teal vinyl-coated wire, with two dot eyes and a small mouth
-inside its top loop. Its moves (`data-state` on the SVG, drawn by `public/styles.css`):
+Loopy is two triangular clips in teal vinyl-coated wire, crossed into a little figure with a steel
+bead head: big eyes under expressive brows and a small mouth. Its moves (`data-state` on the SVG,
+drawn by `public/styles.css`):
 
 | Move        | When                                   | What it looks like                                        |
 | ----------- | -------------------------------------- | --------------------------------------------------------- |

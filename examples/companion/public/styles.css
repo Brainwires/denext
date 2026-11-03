@@ -223,14 +223,14 @@ button {
 
 .loopy {
   display: block;
-  width: 120px;
+  width: 160px;
   height: 200px;
   overflow: visible;
 }
 
 /* In the small desktop window Loopy is a little smaller, leaving room for the bubble. */
 .is-desktop .loopy {
-  width: 90px;
+  width: 120px;
   height: 150px;
 }
 
@@ -245,23 +245,45 @@ button {
 
 .loopy-wire-edge {
   stroke: var(--wire-edge);
-  stroke-width: 10;
+  stroke-width: 15;
 }
 
 .loopy-wire {
   stroke: var(--wire);
-  stroke-width: 7.5;
+  stroke-width: 11.5;
 }
 
 .loopy-wire-shine {
   stroke: var(--wire-shine);
-  stroke-width: 2;
+  stroke-width: 3;
   opacity: 0.8;
-  transform: translate(-1.6px, -1.2px);
+  transform: translate(-2.4px, -1.8px);
 }
 
 .loopy-eyes circle {
   fill: var(--ink);
+}
+
+.loopy-eyes .loopy-eye-white {
+  fill: #ffffff;
+  stroke: var(--ink);
+  stroke-width: 1;
+}
+
+.loopy-bead {
+  stroke: #4b545b;
+  stroke-width: 1;
+}
+
+.loopy .loopy-brows path {
+  stroke: var(--ink);
+  stroke-width: 3.4;
+}
+
+.loopy-brows {
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: transform 200ms ease-out;
 }
 
 .loopy-eyes {
@@ -271,7 +293,7 @@ button {
 
 .loopy .loopy-mouth {
   stroke: var(--ink);
-  stroke-width: 2.2;
+  stroke-width: 2.8;
 }
 
 .loopy-shadow {
@@ -282,12 +304,12 @@ button {
 
 .loopy-body {
   transform-box: view-box;
-  transform-origin: 60px 186px;
+  transform-origin: 80px 186px;
 }
 
 .loopy-arm {
   transform-box: view-box;
-  transform-origin: 84px 160px;
+  transform-origin: 80px 138px;
   transition: transform 300ms cubic-bezier(0.3, 1.5, 0.5, 1);
 }
 
@@ -381,6 +403,15 @@ button {
   opacity: 1;
 }
 
+.loopy[data-state="think"] .loopy-brows {
+  transform: translateY(-2px) rotate(-4deg);
+}
+
+.loopy[data-state="celebrate"] .loopy-brows,
+.loopy[data-state="appear"] .loopy-brows {
+  transform: translateY(-2.5px);
+}
+
 .loopy[data-state="think"] .loopy-thought circle {
   animation: dot 1.2s ease-in-out infinite;
 }
@@ -405,7 +436,7 @@ button {
 
 /* point: the outer leg unbends up toward the bubble, and Loopy leans after it */
 .loopy[data-state="point"] .loopy-arm {
-  transform: rotate(34deg);
+  transform: rotate(12deg);
 }
 
 .loopy[data-state="point"] .loopy-body {
