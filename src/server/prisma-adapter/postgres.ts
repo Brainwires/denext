@@ -176,11 +176,31 @@ const columnConstraint = (e: ServerFields) => {
   return column ? { fields: [column] } : undefined;
 };
 
+/** The table a default `<table>_<fields>_key` constraint name is on, as adapter-pg derives it. */
+function keyConstraintTable(index: string | undefined, fields: string[]): string | undefined {
+  const suffix = `_${fields.join("_")}_key`;
+  return fields.length && index?.endsWith(suffix) ? index.slice(0, -suffix.length) : undefined;
+}
+
+/**
+ * A unique violation as `@prisma/adapter-pg` reports it: the constraint by name (`index`) when the
+ * server names it, else the `Key (…)` fields; the table from the server's `table` field, else
+ * from a default `<table>_<fields>_key` constraint name.
+ */
+function uniqueViolation(e: ServerFields): MappedError {
+  const index = str(e.constraint);
+  const fields = keyFields(e.detail)?.fields ?? [];
+  const table = str(e.table) ?? keyConstraintTable(index, fields);
+  const constraint = index ? { index } : fields.length ? { fields } : undefined;
+  return { kind: "UniqueConstraintViolation", constraint, ...(table && { table }) };
+}
+
 /** Prisma's error kind for each SQLSTATE it has one for. */
 const SERVER_ERRORS: Record<string, (e: ServerFields, message: string) => MappedError> = {
   "22001": (e) => ({ kind: "LengthMismatch", column: str(e.column) }),
   "22003": (_e, message) => ({ kind: "ValueOutOfRange", cause: message }),
-  "23505": (e) => ({ kind: "UniqueConstraintViolation", constraint: keyFields(e.detail) }),
+  "22P02": (_e, message) => ({ kind: "InvalidInputValue", message }),
+  "23505": (e) => uniqueViolation(e),
   "23502": (e) => ({
     kind: "NullConstraintViolation",
     constraint: keyFields(e.detail) ?? columnConstraint(e),
@@ -192,6 +212,13 @@ const SERVER_ERRORS: Record<string, (e: ServerFields, message: string) => Mapped
       constraint: columnConstraint(e) ?? (index ? { index } : undefined),
     };
   },
+  "23001": (e) => {
+    const index = str(e.constraint);
+    return {
+      kind: "RestrictViolation",
+      constraint: columnConstraint(e) ?? (index ? { index } : undefined),
+    };
+  },
   "3D000": (_e, message) => ({ kind: "DatabaseDoesNotExist", db: quoted(message) }),
   "28000": (_e, message) => ({
     kind: "DatabaseAccessDenied",
@@ -199,6 +226,7 @@ const SERVER_ERRORS: Record<string, (e: ServerFields, message: string) => Mapped
   }),
   "28P01": (_e, message) => ({ kind: "AuthenticationFailed", user: quoted(message) }),
   "40001": () => ({ kind: "TransactionWriteConflict" }),
+  "40P01": () => ({ kind: "TransactionWriteConflict" }),
   "42P01": (_e, message) => ({ kind: "TableDoesNotExist", table: quoted(message) }),
   "42703": (_e, message) => ({ kind: "ColumnNotFound", column: quoted(message) }),
   "42P04": (_e, message) => ({ kind: "DatabaseAlreadyExists", db: quoted(message) }),

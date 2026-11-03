@@ -41,6 +41,7 @@
  */
 
 import { exitedOutput } from "../../build/exited-output.ts";
+import { withOwnModules } from "../../build/windows-powershell.ts";
 import { basename } from "@std/path";
 import { allExtensions } from "@std/media-types";
 import { base64ToBytes, bytesToBase64 } from "../../mobile/base64.ts";
@@ -94,7 +95,8 @@ export function sanitizeSuggestedName(raw: unknown): string | undefined {
  * A PowerShell one-liner that shows `dialog`, runs `body` on OK, and prints nothing on cancel.
  * NOTHING page-supplied may be appended to this argv: `powershell.exe -Command` joins every
  * trailing argument into the command TEXT, so a trailing value would be parsed as PowerShell. The
- * suggested name reaches the script through {@link DIALOG_NAME_ENV} instead.
+ * suggested name reaches the script through {@link DIALOG_NAME_ENV} instead. The script loads
+ * Windows PowerShell's own modules ({@link withOwnModules}), whatever module path it inherited.
  */
 function psDialog(setup: string, ok: string, env?: Record<string, string>): DialogCandidate {
   return {
@@ -103,8 +105,10 @@ function psDialog(setup: string, ok: string, env?: Record<string, string>): Dial
       "-STA",
       "-NoProfile",
       "-Command",
-      `& { $n = $env:${DIALOG_NAME_ENV}; Add-Type -AssemblyName System.Windows.Forms; ${setup} ` +
-      `if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${ok} } }`,
+      withOwnModules(
+        `& { $n = $env:${DIALOG_NAME_ENV}; Add-Type -AssemblyName System.Windows.Forms; ${setup} ` +
+          `if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { ${ok} } }`,
+      ),
     ],
     ...(env ? { env } : {}),
   };

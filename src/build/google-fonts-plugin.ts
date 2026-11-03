@@ -9,7 +9,8 @@
 // correct). esbuild tree-shakes the ~1,900 unused loaders away.
 
 import type * as esbuild from "./esbuild/mod.ts";
-import { GOOGLE_FONT_FAMILIES } from "../compat/next/font/google-families.ts";
+import { GOOGLE_FONT_FAMILIES_BROTLI_BASE64 } from "../compat/next/font/google-families.packed.ts";
+import { unpackText } from "./packed-text.ts";
 
 const SPECIFIER = "next/font/google";
 const NS = "denext-font-google";
@@ -19,12 +20,23 @@ function exportName(family: string): string {
   return family.replace(/ /g, "_");
 }
 
+let families: readonly string[] | undefined;
+
+/**
+ * Every Google Fonts family name, sorted (scripts/gen-google-fonts.ts), decoded on the first call.
+ *
+ * @returns The family names.
+ */
+export function googleFontFamilies(): readonly string[] {
+  return families ??= JSON.parse(unpackText(GOOGLE_FONT_FAMILIES_BROTLI_BASE64));
+}
+
 /**
  * The virtual module's source: the runtime module's exports plus a loader per family.
  * Exported for testing.
  */
 export function googleFontFamiliesModule(
-  families: readonly string[] = GOOGLE_FONT_FAMILIES,
+  families: readonly string[] = googleFontFamilies(),
 ): string {
   const lines = [
     `export * from ${JSON.stringify(SPECIFIER)};`,

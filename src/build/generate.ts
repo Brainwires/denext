@@ -1,6 +1,6 @@
 // Codegen for `denext generate`: scaffold routes, layouts, components, API
 // handlers, and server actions into an existing app. Placement honors the project's
-// layout (App Router root, `src/app` when present) via {@link resolveProject}, and
+// layout (App Router root, `src/app` when present) via {@link resolveProjectLayout}, and
 // existing files are never overwritten.
 //
 // Build-time only; never imported by a shipped bundle.
@@ -9,7 +9,7 @@ import { dirname, join, relative } from "@std/path";
 import { type DockerRequest, resolveDocker } from "./docker-detect.ts";
 import { type DockerOptions, dockerPlan } from "./docker-template.ts";
 import { ciPlan, migrationPlan, seedPlan, vectorSearchPlan } from "./generate-ops.ts";
-import { resolveProject } from "./paths.ts";
+import { resolveProjectLayout } from "./paths.ts";
 import { appPlan } from "./generate-app.ts";
 
 /**
@@ -360,11 +360,11 @@ async function planArtifacts(
   docker?: DockerOptions | DockerRequest,
 ): Promise<GeneratePreviewFile[]> {
   // Docker, migration, seed and CI files live at the project root and don't need an App
-  // Router `app/` dir (a SPA app may not have one), so handle them before `resolveProject`.
+  // Router `app/` dir (a SPA app may not have one), so handle them before the layout.
   // `name`, when present, is the override (`server` | `spa`, the data flavor, the provider) —
   // or, for a migration, its name.
   if (isOpsKind(kind)) return await opsPlan(projectDir, kind, name, docker);
-  const paths = await resolveProject(projectDir);
+  const paths = await resolveProjectLayout(projectDir);
   const segment = name.replace(/^[\\/]+|[\\/]+$/g, "");
   // Reject `..` path components early with a clear message (safeJoin also guards).
   if (segment.split(/[\\/]+/).some((s) => s === "..")) {

@@ -22,6 +22,8 @@
   [KNOWN-DIFFERENCES.md](./KNOWN-DIFFERENCES.md), and compat is the on-ramp, not the
   headline (pillar 3 of [MISSION.md](./MISSION.md)). Likewise the typed API surface is
   not marketed as "NestJS on Deno".
+- **Vendored codecs are maintained.** Track each vendored codec's upstream CVEs, rebuild it
+  SHA-256-pinned and regenerate its `THIRD-PARTY-LICENSES.md` before re-publishing.
 - **No decorator-metadata transpile stage.** A proposal for `experimentalDecorators` /
   `emitDecoratorMetadata` must clear a much higher bar than "it's how Nest does it."
 - **Out of scope: native rendering.** Capacitor/WebView stays the mobile story, and a

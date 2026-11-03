@@ -283,6 +283,192 @@ trim baked in, and a flag baked into a binary can't be removed when it runs, so
 event loop at half the idle delay (`DENO_IDLE_TRIM_DELAY_MS`, 1 s by default), so it is never idle
 long enough to trim. `DENO_IDLE_TRIM_TRACE=1` prints one line per trim to stderr.
 
+## Resource limits
+
+`start: { limits }` in `denext.config.ts` caps the production server process, enforced by denext's
+Deno from runtime `3.0.0-rc.2`. Each limit ends the whole process with its own exit code and one
+line on stderr, for a supervisor (Docker's restart policy, systemd's `Restart=always`, Kubernetes)
+to start it again:
+
+```ts
+export default {
+  start: {
+    limits: {
+      memory: "384m", // the main thread's JavaScript heap (a number is megabytes; at least 32 MB)
+      cpuSeconds: 86_400, // process CPU time, every thread, counted from the start
+      deadlineSeconds: 604_800, // wall clock, idle included: a weekly restart
+    },
+  },
+};
+```
+
+| Limit             | Runtime flag            | Exit code | Message                                    |
+| ----------------- | ----------------------- | --------- | ------------------------------------------ |
+| `memory`          | `--max-memory=<size>`   | 137       | `Memory limit exceeded (--max-memory)`     |
+| `cpuSeconds`      | `--max-cpu-time=<secs>` | 152       | `CPU time limit exceeded (--max-cpu-time)` |
+| `deadlineSeconds` | `--max-time=<secs>`     | 124       | `Time limit exceeded (--max-time)`         |
+
+137 is how a shell reports an OOM-killed process, 152 is `RLIMIT_CPU`'s SIGXCPU and 124 is GNU
+`timeout`'s, so supervisors read them as they read those. denext puts the flags where the
+production server starts:
+
+| Where                                                  | How                                                         |
+| ------------------------------------------------------ | ----------------------------------------------------------- |
+| `denext start`, on the process that serves             | on that `deno run`, with `DENEXT_LIMITS_APPLIED`            |
+| `denext build --compile`                               | baked into the binary, which enforces them as it runs       |
+| `denext generate docker`, the `docker` / `fly` presets | on the `CMD`'s `deno run`, with `ENV DENEXT_LIMITS_APPLIED` |
+| the `genericHost()` systemd unit                       | on `ExecStart`, with `Environment=DENEXT_LIMITS_APPLIED`    |
+
+`denext dev` (where a limit would end the dev server), tests and `denext job` never get
+them. A `start` task run straight on the toolchain (`denext task start`) re-runs itself once with
+them when it has `--allow-run` for its own Deno; the least-privilege task has not, so it warns
+instead: put the flags after `run` in the task, and set `DENEXT_LIMITS_APPLIED` to them
+(space-separated) to say so.
+Every runtime denext 5.0 runs on takes them (`DENEXT_DENO=stock` is refused); on a toolchain older
+than 3.0.0-rc.2 they would never be passed, and `denext start` / `build --compile` would warn. The Docker image
+needs a start task that is a plain `deno run` line, and the fly preset warns when `memory` is not
+below the machine's memory (the OOM killer would end the server first).
+
+The config is read as the idle trim's is: what the last `denext build` recorded in
+`.denext/deploy-manifest.json` (`server.limits`), and before a first build the literal values in the
+config file. A generated file keeps the limits it was written with; regenerate after a change.
+
+`denext start` may re-run itself before it serves: onto denext's Deno toolchain from stock Deno, a
+compiled `denext` handing the project to its pinned version, a source checkout's CSS or module
+config. Only the last process, the one that serves, runs with the flags; the ones before it hand
+the limits down as data and run without them, so no CLI hop's `--max-time` ends before the
+server's (leaving it running without its parent) and no hop's own CPU time or heap counts.
+`DENEXT_LIMITS_APPLIED` is compared with the flags the serving process's runtime takes, and every
+re-run sets it for its child, so a value left in the environment by another process, or written
+before the limits changed, makes the server re-run with the current ones rather than be believed.
+When the hop before the server may still re-run, the server re-runs once more to take them, which
+costs one more short-lived `deno` start and one more waiting parent process. The serving process
+removes both variables from its own environment, so nothing it starts inherits them.
+
+### Compiled binaries: `job` and `db` run under the limits too
+
+`build --compile` bakes the limits into the executable, and denort reads them only from the
+binary's own metadata: it takes no `--max-*` flag at run time (every argument goes to the program)
+and no variable that lifts or changes them. So `./app job <name>` and `./app db migrate` run under
+the server's `memory`, `cpuSeconds` and `deadlineSeconds` as well, and a long migration or job past
+them ends with the limit's exit code. Those verbs print a notice naming the baked flags. Run long
+jobs and migrations with `denext job` / `denext db` from the project, or from a second binary
+compiled without `start.limits`.
+
+These are best-effort guardrails, not a security boundary: subprocesses are neither counted nor
+stopped, a `Worker` has its own heap (cap it with `new Worker(url, { deno: { memoryMb } })`), memory
+outside the JavaScript heap is not counted, and sampling can overshoot by a 20 ms tick.
+
+## Crash reports
+
+denext's Deno from runtime `3.0.0-denext.5` can report its own crashes. Set
+`DENEXT_CRASH_REPORT_URL` in the server's environment and, when the CLI or a compiled program
+(`denort`) panics, it sends one JSON report (`schema: 2`) there: an `https:` endpoint gets one
+POST (waited on for about 5 s at most, no retries, the answer ignored) and a
+`file:///absolute/path.jsonl` gets one line appended. Reports are off while the variable is unset;
+`http:`, a `file://` URL with a host and a value that is not a URL turn them off with one warning.
+The fields, what is never sent (the environment, the command line, the working directory, host and
+user names, addresses, JavaScript source) and what is not covered (the `--max-memory` exit 137,
+SIGKILL, a native crash outside Rust) are in the
+[runtime reference](/docs/runtime-reference#crashes-and-process-exit).
+
+The URL is read when the process starts, from the environment only: no config key, build flag or
+deploy-manifest field takes it, because such a URL often carries an ingest token and builds, images
+and manifests get copied around. So it goes where the rest of the server's secrets go:
+
+| Where                                      | How                                                                     |
+| ------------------------------------------ | ----------------------------------------------------------------------- |
+| `denext generate docker` / `denext stack`  | `DENEXT_CRASH_REPORT_URL=` in `.env` (listed, empty, in `.env.example`) |
+| the `genericHost()` systemd unit           | a line in the unit's `EnvironmentFile`                                  |
+| `denext build --compile`                   | the binary's environment when it runs                                   |
+| `denext start`, `denext job`, `denext dev` | the shell's environment, or `.env`                                      |
+
+Each report carries an application name. denext's CLI hands `DENEXT_CRASH_REPORT_APP=denext@<version>`
+to the Deno processes it re-runs itself on (the toolchain, a pinned denext, the CSS or module-config
+and resource-limit re-runs), unless the variable is already set: set it yourself (up to 64 of
+`A-Z a-z 0-9 @ . _ + / -`, for example `shop@2.3.1`) to name your app instead.
+
+`denext doctor` checks a set URL: it warns on `http:` and on any URL the runtime would ignore, and
+on stock Deno or an older runtime, which send no reports. `denext crash-report test` checks the
+pipeline end to end: it runs the toolchain's `deno --version` with `DENEXT_CRASH_REPORT_SELFTEST=1`,
+which panics on purpose just after start-up and sends one report with `kind: "selftest"`. For a
+`file:` URL it prints the line that was written; for an endpoint, look for the report there.
+Neither prints the URL's value.
+
+## HTTPS without a proxy
+
+`start: { tls }` in `denext.config.ts` makes `denext start` (and a `build --compile` server) serve
+HTTPS itself, with no proxy in front. Each certificate lists the host names it serves, and names
+the environment variables that hold the paths of its PEM certificate (chain) and private key
+files; the paths never go in the config, so neither a key nor where it lives is committed:
+
+```ts
+export default {
+  start: {
+    tls: {
+      certificates: [
+        {
+          hostnames: ["example.com", "www.example.com"],
+          certFileEnv: "SITE_CERT",
+          keyFileEnv: "SITE_KEY",
+        },
+        { hostnames: ["*.example.org"], certFileEnv: "ORG_CERT", keyFileEnv: "ORG_KEY" },
+        { hostnames: ["*"], certFileEnv: "DEFAULT_CERT", keyFileEnv: "DEFAULT_KEY" },
+      ],
+    },
+  },
+};
+```
+
+```sh
+SITE_CERT=/etc/ssl/site/fullchain.pem SITE_KEY=/etc/ssl/site/privkey.pem \
+ORG_CERT=… ORG_KEY=… DEFAULT_CERT=… DEFAULT_KEY=… denext start --port 443
+```
+
+A host name is an exact name, a wildcard for one label (`*.example.org` serves `api.example.org`,
+not `example.org` or `a.b.example.org`), or `"*"`: every name no other certificate lists, and a
+client that sends no name at all (one connecting to an IP address). A handshake for a name nothing
+matches is refused. The config validator rejects a malformed name, an environment variable name
+that isn't one, and a name two certificates both list.
+
+| Certificates | Runtime                                                                                |
+| ------------ | -------------------------------------------------------------------------------------- |
+| one          | any Deno: it is served for every name (`Deno.serve`'s `cert` / `key`)                  |
+| several      | denext's Deno from runtime `3.0.0-denext.3`, with `"unstable": ["net"]` in `deno.json` |
+
+Several certificates use the runtime's `resolveCertificate`, which picks one per connection by the
+name the client asks for (SNI) and caches it per name. It is behind the unstable net APIs, so the
+project's `deno.json` turns them on (`"unstable": ["net"]`), which every `deno` that runs the
+server reads: `denext start` and a Docker image's or systemd unit's `deno run`; `denext build
+--compile` bakes `--unstable-net` into the binary itself. On stock Deno, an older toolchain, or without the flag, the server
+does not start and says which is missing, rather than serve one certificate for every name.
+
+The files are read once, when the server starts: a variable that is unset or a file that can't be
+read fails the start, and a renewed certificate takes a restart (a rolling one, as above). The
+banner and `localServerOrigin()` say `https://`. `denext dev` never serves TLS.
+
+### The generated deploy files
+
+`denext generate docker`, `denext deploy prepare` and `denext build --compile` read `start.tls`
+(from the last build's deploy manifest, `server.tls`; before a first build, the literal values in
+`denext.config.ts`) and write what it needs. Each certificate's and key's variable is a
+placeholder, never a value or a path of yours:
+
+| Target                     | What `start.tls` changes                                                                                                                                                                                                                                                                                                                             |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `generate docker` / docker | `./certs` is mounted read-only at `/certs` and kept out of the image (`.dockerignore`); the variables are required in the compose file and listed empty in `.env.example` (set them to `/certs/…` paths); the `HEALTHCHECK` probes `https://localhost` without checking the certificate; a start task that scopes `--allow-read` gets `/certs` added |
+| `genericHost()`            | the unit runs the server facing clients on every interface, default port 443 (`CAP_NET_BIND_SERVICE` below 1024), with no `DENEXT_TRUST_PROXY`; no `nginx.conf` or `Caddyfile` is written; `env.example` lists the variables, whose files the service user must read (or `LoadCredential=` hands a root-only key over, as the unit's comment shows)  |
+| `fly()`                    | `fly.toml` passes TLS through as raw TCP on 443 (`[[services]]`, a TCP check) instead of Fly's HTTP proxy, and trusts no forwarded header                                                                                                                                                                                                            |
+| `denoDeploy()`             | warns: the platform terminates TLS, and the server can't read the files there; leave `start.tls` out on Deno Deploy                                                                                                                                                                                                                                  |
+| `build --compile`          | several certificates bake `--unstable-net` into the executable (the compile's own config carries no `unstable` from `deno.json`)                                                                                                                                                                                                                     |
+
+The image's `CMD` and the unit's `ExecStart` run the start task's `deno run` from the project
+directory, so `"unstable": ["net"]` in `deno.json` reaches them; with several certificates and
+without it, the generators warn. With several certificates the Docker health probe's handshake
+(server name `localhost`) needs a certificate that lists `"localhost"` or `"*"`; the generator
+warns when none does. The static (SPA) image serves its files with Deno's std file server, which
+`start.tls` doesn't reach (a warning says so).
+
 ## A single binary with `denext build --compile`
 
 ```sh
@@ -445,9 +631,12 @@ packager's: `DENEXT_WINDOWS_CERT` (a `.pfx`) with `DENEXT_WINDOWS_CERT_PASSWORD`
 it signs with `signtool` (Windows SDK). On macOS and Linux it signs with `osslsigncode` (`brew
 install osslsigncode`, `apt install osslsigncode`), which reads the password from a private
 temporary file, never from its command line; a store thumbprint needs `signtool`. `signtool`
-takes a `.pfx` password only on its command line (`/p`), where process auditing (Sysmon, an EDR)
-on the signing machine records it: on a shared or monitored Windows signing host, import the
-certificate into the user's store and sign by `DENEXT_WINDOWS_CERT_THUMBPRINT` instead.
+takes a `.pfx` password only on its command line (`/p`), where a process listing or process
+auditing (Sysmon, an EDR) would record it, so denext never passes it there: a
+password-protected `.pfx` is imported into the user's certificate store (`CurrentUser\My`, its
+key not exportable) by PowerShell, which reads the password from its standard input, signed with
+by thumbprint, and removed again, key included, when signing ends or fails. A certificate the
+store already held is left in place.
 
 A Linux executable carries no OS signature, so `--sign` refuses a Linux target. Publish a
 checksum, or a detached signature of the archive.

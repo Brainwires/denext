@@ -504,9 +504,10 @@ Deno.test("Notification shim: an OS that never answers requestPermission → def
 Deno.test("Notification shim: the permission bound is configurable; a prompt answer clears it", async () => {
   const slow = page({ permission: "never", permissionTimeoutMs: 50 });
   try {
-    void slow.g.Notification.requestPermission();
+    const asked = slow.g.Notification.requestPermission();
     await settle();
     assertEquals(slow.delays, [50]);
+    await asked; // answered with the state known so far once the bound passes (its timer ends)
   } finally {
     await slow.end();
   }
@@ -594,7 +595,8 @@ Deno.test("Notification shim: silent: true posts the OS notification without a s
 
 Deno.test("capability: schedule({ silent }) posts silently and keeps a series' top-up silent", async () => {
   const os = fakeOs();
-  const cap = notificationsCapability({ api: os.api, autoTopUp: false });
+  // The series' top-up is not this test's: a timer of its own keeps it from arming a real one.
+  const cap = notificationsCapability({ api: os.api, autoTopUp: false, timer: () => () => {} });
   await cap.methods.schedule.handler(
     { id: 1, title: "t", body: "b", data: {}, silent: true },
     ctx(),

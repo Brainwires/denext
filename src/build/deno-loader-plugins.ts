@@ -28,6 +28,15 @@
 // fields, plus `"workspace": []` so discovery stops there — removed when the process exits. An
 // app a glob member names (`"workspace": ["./apps/*"]`) gets one too, since the loader can't expand
 // the glob, carrying the workspace's entries (its siblings by name) as plain imports and scopes.
+// The loader reads package.json dependencies only beside a config named `deno.json`, never the
+// stand-in, so the stand-in carries them as `npm:` imports: the app's, and for a member the
+// workspace root's, with the root's `nodeModulesDir` when the app sets none. The loader resolves
+// an `npm:` import from `<absWorkingDir>/node_modules` alone; when the app has none (its packages
+// are hoisted), it is handed the nearest ancestor's instead, and esbuild's own lookup walks up from
+// there, as Deno's does.
+//
+// On every OS the loader's `deno info` children are bounded and serialized like the build's own
+// (loader-deno-info.ts).
 
 import {
   DEFAULT_LOADER,
@@ -38,7 +47,8 @@ import {
 import { dirname, extname, fromFileUrl, join, resolve, toFileUrl } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
 import type * as esbuild from "./esbuild/mod.ts";
-import { workspaceImportsSync } from "./workspace-imports.ts";
+import { workspaceImportsSync, workspaceRootSync } from "./workspace-imports.ts";
+import { withBoundedDenoInfo } from "./loader-deno-info.ts";
 
 const WINDOWS = Deno.build.os === "windows";
 
@@ -198,6 +208,46 @@ export function withLoaderMap(plugin: esbuild.Plugin): esbuild.Plugin {
   };
 }
 
+/** The nearest `node_modules` directory at or above `dir`, or `null`. */
+function nearestNodeModules(dir: string): string | null {
+  for (let at = dir, up = dirname(dir);; at = up, up = dirname(up)) {
+    try {
+      if (Deno.statSync(join(at, "node_modules")).isDirectory) return join(at, "node_modules");
+    } catch { /* none here */ }
+    if (up === at) return null;
+  }
+}
+
+/**
+ * `plugin` (the loader) with its `node_modules` lookups made from a directory that exists: the
+ * loader resolves an npm package from `<absWorkingDir>/node_modules` only, and esbuild resolves
+ * nothing from a directory that is missing — an app whose packages a workspace hoisted to the
+ * root has none. Such a lookup is made from the nearest ancestor's `node_modules` instead, and
+ * esbuild walks up from there.
+ *
+ * @param plugin The loader plugin.
+ * @returns The same plugin, its npm packages found in a hoisted `node_modules`.
+ */
+function withHoistedNodeModules(plugin: esbuild.Plugin): esbuild.Plugin {
+  return {
+    name: plugin.name,
+    setup(build) {
+      const own = join(build.initialOptions.absWorkingDir ?? Deno.cwd(), "node_modules");
+      let hoisted: string | null | undefined;
+      const resolveDir = (dir: string | undefined) => {
+        if (dir !== own) return dir;
+        hoisted ??= nearestNodeModules(dirname(own));
+        return hoisted ?? dir;
+      };
+      return plugin.setup({
+        ...build,
+        resolve: (path, options) =>
+          build.resolve(path, { ...options, resolveDir: resolveDir(options?.resolveDir) }),
+      });
+    },
+  };
+}
+
 /** The loader plugin's options on Windows (see the header for why they differ). */
 function windowsLoaderOptions(options: DenoPluginsOptions): DenoPluginsOptions {
   if (options.configPath === undefined) return options;
@@ -219,6 +269,11 @@ function readConfigObject(path: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+/** The `deno.json(c)` object in `dir`, if any. */
+function configIn(dir: string): Record<string, unknown> | null {
+  return readConfigObject(join(dir, "deno.json")) ?? readConfigObject(join(dir, "deno.jsonc"));
 }
 
 /**
@@ -247,6 +302,51 @@ function outsideItsWorkspace(configPath: string, config: Record<string, unknown>
   return false;
 }
 
+/** The package.json fields whose entries a bare import resolves through (as Deno reads them). */
+const DEPENDENCY_FIELDS = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+] as const;
+
+/**
+ * The `npm:` package (`name@range`) a package.json dependency names, or `null` for one that is
+ * not on the registry (a `workspace:` / `file:` / `link:` protocol, a git or tarball URL, a
+ * GitHub `user/repo`): left to the loader, as before.
+ */
+function npmPackageOf(name: string, spec: unknown): string | null {
+  if (typeof spec !== "string") return null;
+  const alias = /^npm:(.+)$/.exec(spec);
+  if (alias) return alias[1];
+  if (/^[a-z][a-z0-9+.-]*:/i.test(spec) || (spec.includes("/") && !spec.startsWith("@"))) {
+    return null;
+  }
+  return `${name}@${spec || "*"}`;
+}
+
+/**
+ * A package.json's dependencies as import-map entries (`ms` → `npm:ms@^2.1.3`, `ms/` →
+ * `npm:/ms@^2.1.3/`), the earlier fields' entries kept on a clash; empty without one.
+ *
+ * @param dir The directory of the package.json.
+ */
+export function packageJsonImports(dir: string): Record<string, string> {
+  const pkg = readConfigObject(join(dir, "package.json"));
+  const out: Record<string, string> = {};
+  for (const field of DEPENDENCY_FIELDS) {
+    const deps = pkg?.[field];
+    if (!deps || typeof deps !== "object" || Array.isArray(deps)) continue;
+    for (const [name, spec] of Object.entries(deps as Record<string, unknown>)) {
+      const npm = npmPackageOf(name, spec);
+      if (!npm || name in out) continue;
+      out[name] = `npm:${npm}`;
+      out[`${name}/`] = `npm:/${npm}/`;
+    }
+  }
+  return out;
+}
+
 /**
  * The stand-in for the app config at `path`: its own fields as a workspace of its own
  * (`"workspace": []`), plus, when a glob member of its workspace names it (`"./apps/*"`, which the
@@ -264,7 +364,20 @@ function standInConfig(path: string, config: Record<string, unknown>): Record<st
       : {};
   };
   const out: Record<string, unknown> = { ...config, workspace: [] };
-  if (Object.keys(ws.imports).length > 0) out.imports = { ...ws.imports, ...own("imports") };
+  // The loader reads no package.json beside the stand-in: its dependencies, as imports — and a
+  // member's workspace root's, with the root's `nodeModulesDir` (the app's own wins).
+  const rootDir = workspaceRootSync(path);
+  const rootConfig = rootDir === null ? null : configIn(rootDir);
+  const deps = {
+    ...(rootDir === null ? {} : packageJsonImports(rootDir)),
+    ...packageJsonImports(dirname(path)),
+  };
+  if (Object.keys(ws.imports).length > 0 || Object.keys(deps).length > 0) {
+    out.imports = { ...deps, ...ws.imports, ...own("imports") };
+  }
+  if (config.nodeModulesDir === undefined && rootConfig?.nodeModulesDir !== undefined) {
+    out.nodeModulesDir = rootConfig.nodeModulesDir;
+  }
   if (Object.keys(ws.scopes).length > 0) out.scopes = { ...ws.scopes, ...own("scopes") };
   return out;
 }
@@ -307,20 +420,37 @@ function standaloneConfig(configPath: string): string {
   return standIn;
 }
 
+/** Options for {@linkcode denoLoaderPlugins} beyond the loader's own. */
+export interface DenoLoaderBounds {
+  /**
+   * Each `deno info` attempt's deadline in milliseconds (see loader-deno-info.ts); by default
+   * `DENEXT_CHILD_DEADLINE_MS`, else 2 minutes.
+   */
+  readonly infoDeadlineMs?: number;
+}
+
 /**
- * `denoPlugins(options)` with the Windows path fixes applied (identical elsewhere).
+ * `denoPlugins(options)` with the Windows path fixes applied (identical elsewhere), and the
+ * loader's `deno info` children bounded on every OS ({@linkcode withBoundedDenoInfo}).
  *
- * @param options The loader options; `configPath` may be a path or a `file://` URL.
+ * @param given The loader options; `configPath` may be a path or a `file://` URL.
+ * @param bounds The loader's `deno info` deadline.
  * @returns The plugins to append to an esbuild plugin chain.
  */
-export function denoLoaderPlugins(given: DenoPluginsOptions = {}): esbuild.Plugin[] {
+export function denoLoaderPlugins(
+  given: DenoPluginsOptions = {},
+  bounds: DenoLoaderBounds = {},
+): esbuild.Plugin[] {
   const options = given.configPath === undefined
     ? given
     : { ...given, configPath: standaloneConfig(given.configPath) };
   if (!WINDOWS) {
     return [
       denoResolverPlugin(options) as esbuild.Plugin,
-      withLoaderMap(denoLoaderPlugin(options) as esbuild.Plugin),
+      withBoundedDenoInfo(
+        withHoistedNodeModules(withLoaderMap(denoLoaderPlugin(options) as esbuild.Plugin)),
+        bounds.infoDeadlineMs,
+      ),
     ];
   }
   const resolverOptions = options.configPath === undefined
@@ -329,8 +459,11 @@ export function denoLoaderPlugins(given: DenoPluginsOptions = {}): esbuild.Plugi
   return [
     windowsPathSpecifiers(),
     withWindowsWasmPaths(denoResolverPlugin(resolverOptions) as esbuild.Plugin),
-    withLoaderMap(
-      withWindowsWasmPaths(denoLoaderPlugin(windowsLoaderOptions(options)) as esbuild.Plugin),
+    withBoundedDenoInfo(
+      withHoistedNodeModules(withLoaderMap(
+        withWindowsWasmPaths(denoLoaderPlugin(windowsLoaderOptions(options)) as esbuild.Plugin),
+      )),
+      bounds.infoDeadlineMs,
     ),
   ];
 }

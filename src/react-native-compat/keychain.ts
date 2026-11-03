@@ -9,9 +9,10 @@
  * asks for biometrics or the device passcode (`BIOMETRY_*`, `USER_PRESENCE`,
  * `DEVICE_PASSCODE`) stores the value biometric-gated: every later read shows the prompt, and
  * a refusal resolves `false`, as the package's does. That gate is enforced by denext's code,
- * not by the Keychain item (see `secureStore`'s `requireBiometric`). `accessible`,
- * `securityLevel`, `storage`, `accessGroup` and `cloudSync` are accepted and do not change how
- * the value is stored. Shared web credentials (iOS password AutoFill) are not available. Where
+ * not by the Keychain item (see `secureStore`'s `requireBiometric`). `accessible`
+ * picks the iOS Keychain class (`secureStore.set`'s `accessibility`; `ALWAYS`, which Apple
+ * deprecated, takes `afterFirstUnlock`); `securityLevel`, `storage`, `accessGroup` and
+ * `cloudSync` are accepted and do not change how the value is stored. Shared web credentials (iOS password AutoFill) are not available. Where
  * there is no secret store (the web's plain IndexedDB fallback), an access-controlled set
  * resolves `false` instead of storing the value in the clear, and `canImplyAuthentication` is
  * `false`.
@@ -28,17 +29,21 @@
  * @module
  */
 
-import { secureStore, secureStoreIsSecret } from "../mobile/secure-store.ts";
+import {
+  secureStore,
+  type SecureStoreAccessibility,
+  secureStoreIsSecret,
+} from "../mobile/secure-store.ts";
 import { authenticateBiometric, isBiometricAvailable } from "../mobile/biometrics.ts";
 import { nativePlatform } from "../mobile/bridge.ts";
 
-/** When the item may be read (iOS; accepted and ignored). */
+/** When the item may be read (iOS Keychain class). */
 export enum ACCESSIBLE {
   /** While the device is unlocked. */
   WHEN_UNLOCKED = "AccessibleWhenUnlocked",
   /** After the first unlock since boot. */
   AFTER_FIRST_UNLOCK = "AccessibleAfterFirstUnlock",
-  /** Always. */
+  /** Always (deprecated by Apple; stored as `AFTER_FIRST_UNLOCK`). */
   ALWAYS = "AccessibleAlways",
   /** While a passcode is set, on this device only. */
   WHEN_PASSCODE_SET_THIS_DEVICE_ONLY = "AccessibleWhenPasscodeSetThisDeviceOnly",
@@ -138,7 +143,7 @@ export type BaseOptions = {
 
 /** Options for storing. */
 export type SetOptions = BaseOptions & {
-  /** When the item may be read (ignored). */
+  /** When the item may be read (default `WHEN_UNLOCKED`). */
   accessible?: ACCESSIBLE;
   /** Android's security level (ignored). */
   securityLevel?: SECURITY_LEVEL;
@@ -231,11 +236,25 @@ function serviceOf(options?: BaseOptions): string {
   return options?.service ?? DEFAULT_SERVICE;
 }
 
-/** Store `entry` under `key`. */
-async function put(key: string, entry: Stored): Promise<void> {
+/**
+ * react-native-keychain's `accessible` values as `secureStore` classes. `ALWAYS` is deprecated on
+ * iOS (Apple points to `AfterFirstUnlock`), so it takes that class.
+ */
+const ACCESSIBILITY: Readonly<Record<string, SecureStoreAccessibility>> = {
+  [ACCESSIBLE.WHEN_UNLOCKED]: "whenUnlocked",
+  [ACCESSIBLE.AFTER_FIRST_UNLOCK]: "afterFirstUnlock",
+  [ACCESSIBLE.ALWAYS]: "afterFirstUnlock",
+  [ACCESSIBLE.WHEN_PASSCODE_SET_THIS_DEVICE_ONLY]: "whenPasscodeSetThisDeviceOnly",
+  [ACCESSIBLE.WHEN_UNLOCKED_THIS_DEVICE_ONLY]: "whenUnlockedThisDeviceOnly",
+  [ACCESSIBLE.AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY]: "afterFirstUnlockThisDeviceOnly",
+};
+
+/** Store `entry` under `key` in the Keychain class `accessible` names (default when unknown). */
+async function put(key: string, entry: Stored, accessible?: ACCESSIBLE): Promise<void> {
   // The gate is ours (a prompt before handing the value out), so the value is stored plainly
   // and `control` records it; `secureStore`'s own gate would prompt on every index read.
-  await secureStore.set(key, JSON.stringify(entry));
+  const accessibility = accessible === undefined ? undefined : ACCESSIBILITY[accessible];
+  await secureStore.set(key, JSON.stringify(entry), accessibility && { accessibility });
 }
 
 /** The entry under `key`, or null. */
@@ -317,7 +336,7 @@ export async function setGenericPassword(
   const service = serviceOf(options);
   if (!(await gateHolds(options))) return false;
   try {
-    await put(GENERIC + service, entryFor(username, password, options));
+    await put(GENERIC + service, entryFor(username, password, options), options?.accessible);
     await index(service, true);
   } catch {
     return false;
@@ -409,7 +428,7 @@ export async function setInternetCredentials(
 ): Promise<false | Result> {
   if (!(await gateHolds(options))) return false;
   try {
-    await put(INTERNET + server, entryFor(username, password, options));
+    await put(INTERNET + server, entryFor(username, password, options), options?.accessible);
   } catch {
     return false;
   }

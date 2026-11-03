@@ -43,6 +43,15 @@ export class FakeNode {
     }
   }
 
+  /** DOM `prepend` — variadic, like {@linkcode append} but before the first child. */
+  // fallow-ignore-next-line unused-class-member -- DOM API: the DevTools console's copy box calls it
+  prepend(...kids: (FakeNode | string)[]): void {
+    const first = this.firstChild;
+    for (const kid of kids) {
+      this.insertBefore(typeof kid === "string" ? new FakeText(kid) : kid, first);
+    }
+  }
+
   /** DOM `replaceChildren` — clear existing children, then append the given ones. */
   replaceChildren(...kids: (FakeNode | string)[]): void {
     clearChildren(this);
@@ -205,6 +214,10 @@ export class FakeElement extends FakeNode {
 
   /** No-op focus (the panel focuses its search box; tests just need it not to throw). */
   focus(): void {}
+
+  /** No-op text selection (the DevTools console's copy box selects its text). */
+  // fallow-ignore-next-line unused-class-member -- DOM API: the DevTools console's copy box calls it
+  select(): void {}
 
   /** A zeroed layout box — enough for the DevTools highlight overlay math. */
   getBoundingClientRect(): { top: number; left: number; width: number; height: number } {

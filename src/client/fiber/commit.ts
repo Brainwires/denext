@@ -511,14 +511,13 @@ function runEffectPass(queue: Array<Fiber | CommitEffect>, i: number, teardown: 
 // phase (synchronous), so their observable timing is unchanged.
 
 const pendingPassive: Fiber[] = [];
-let passiveScheduled = false;
+/** The macrotask that will flush the queued passive effects, if one is scheduled. */
+let passiveTimer: ReturnType<typeof setTimeout> | undefined;
 let flushingPassive = false;
 
 function schedulePassiveFlush(): void {
-  if (passiveScheduled) return;
-  passiveScheduled = true;
-  setTimeout(() => {
-    passiveScheduled = false;
+  passiveTimer ??= setTimeout(() => {
+    passiveTimer = undefined;
     flushPassiveEffects();
   }, 0);
 }
@@ -530,7 +529,11 @@ export function hasPendingPassiveEffects(): boolean {
 
 /** Run all queued passive effects (useEffect). Safe to call repeatedly. */
 export function flushPassiveEffects(): void {
-  if (flushingPassive || pendingPassive.length === 0) return;
+  if (flushingPassive) return;
+  // Flushed now (flushSync, act, the next render): the scheduled task has nothing left to do.
+  clearTimeout(passiveTimer);
+  passiveTimer = undefined;
+  if (pendingPassive.length === 0) return;
   flushingPassive = true;
   try {
     const batch = pendingPassive.splice(0);

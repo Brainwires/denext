@@ -101,8 +101,6 @@ async function stepRerenders({ origin }: Ctx): Promise<void> {
 
 Deno.test({
   name: "dev server pushes the right live-reload frame per edit kind",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await Deno.makeTempDir({ prefix: "denext_hmr_int_" });
   // The build cache is skipped so nothing stale is served (and no racing SQLite side files).

@@ -15,7 +15,11 @@
 # Environment:
 #   DENEXT_VERSION   the release tag to install (`v2.5.0`); default: the latest stable release
 #   DENEXT_INSTALL   where to install (the binary lands in its `bin\`); default: ~\.denext
-#   DENEXT_INSECURE  `1` installs even when no checksum can be fetched (never on a mismatch)
+#   DENEXT_INSECURE  `1` installs even when no checksum can be fetched, or when the release's
+#                    build attestation can't be verified (never on a checksum mismatch, never on
+#                    a broken Authenticode signature)
+#   DENEXT_REQUIRE_ATTESTATION  `1` refuses to install unless the archive's build attestation is
+#                    verified (needs the GitHub CLI, `gh`, signed in)
 #   DENEXT_MODIFY_PATH  `0` leaves your user Path alone (the script prints the line to add);
 #                    `1` (the default) or `all` adds denext's bin to it. DENEXT_NO_PATH=1 is `0`.
 #   DENEXT_NO_TOOLCHAIN  `1` skips `denext toolchain install` (and the link): the toolchain then
@@ -146,8 +150,10 @@ function Install-Denext {
       }
       Write-Host 'denext: checksum verified'
     }
+    Assert-Attestation $zip $asset $repo
 
     Expand-Archive -Path $zip -DestinationPath (Join-Path $tmp 'x') -Force
+    Assert-Authenticode (Join-Path $tmp 'x\denext.exe')
     New-Item -ItemType Directory -Force -Path $bin | Out-Null
     Move-Item -Force (Join-Path $tmp 'x\denext.exe') (Join-Path $bin 'denext.exe')
     # What -Uninstall may remove: only the files this script put here.
@@ -264,6 +270,73 @@ function Save-Download([string]$uri, [string]$outFile) {
   } finally {
     $client.Dispose()
   }
+}
+
+# The checksum proves the archive is the one the release lists, not that the release is
+# denext's: whoever can replace a release's files can replace SHA256SUMS too. Every archive also
+# carries a build-provenance attestation (Sigstore, signed by GitHub for publish.yml on this
+# repository), which the GitHub CLI verifies: with `gh` installed and signed in, the archive must
+# pass `gh attestation verify` or nothing is installed. Without it the install goes ahead on the
+# checksum and says so, unless DENEXT_REQUIRE_ATTESTATION=1. A local DENEXT_ARTIFACTS build has
+# no attestation and skips this.
+function Assert-Attestation([string]$zip, [string]$asset, [string]$repo) {
+  if ($env:DENEXT_ARTIFACTS) { return }
+  # `gh` writes its refusals to stderr; under 'Stop' Windows PowerShell 5.1 turns that into a
+  # terminating NativeCommandError (even redirected), so the exit codes below never decide.
+  $ErrorActionPreference = 'Continue'
+  $gh = Get-Command gh -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+  $signedIn = $false
+  if ($gh) {
+    & $gh.Source auth status *> $null
+    $signedIn = $LASTEXITCODE -eq 0
+  }
+  if (-not $signedIn) {
+    if ($env:DENEXT_REQUIRE_ATTESTATION -eq '1') {
+      throw ('denext: DENEXT_REQUIRE_ATTESTATION=1 needs the GitHub CLI (gh), signed in, to verify ' +
+        "the release's build attestation - not installing.")
+    }
+    Write-Host ('denext: build attestation not checked (install and sign in to the GitHub CLI, gh, ' +
+      'to verify it; DENEXT_REQUIRE_ATTESTATION=1 makes it required)')
+    return
+  }
+  & $gh.Source attestation verify $zip --repo $repo --signer-workflow "$repo/.github/workflows/publish.yml" *> $null
+  if ($LASTEXITCODE -eq 0) {
+    Write-Host "denext: build attestation verified (built by $repo's publish workflow)"
+    return
+  }
+  if ($env:DENEXT_INSECURE -eq '1') {
+    Write-Warning "denext: the build attestation of $asset could not be verified; installing on the checksum alone because DENEXT_INSECURE=1 is set."
+    return
+  }
+  throw ("denext: build attestation verification FAILED for $asset - not installing. " +
+    "``gh attestation verify $asset --repo $repo`` found no attestation from $repo's publish " +
+    'workflow. denext 4.9.0 and earlier carry none: DENEXT_INSECURE=1 installs one on its ' +
+    'checksum alone.')
+}
+
+# The extracted denext.exe's Authenticode signature: a signed binary must verify (a signature
+# that no longer matches the file, or one that chains to no trusted root, is refused even under
+# DENEXT_INSECURE); an unsigned one (a release built without the signing secrets) is installed
+# on the checks above, with a note. The signature must be the file's own: Windows also vouches
+# for its system files through catalogs, and since Authenticode's hash leaves the embedded
+# signature out, any Windows binary - re-signed by anyone, or not at all - still matches its
+# catalog. denext.exe is never one of those, so a catalog signature is refused.
+# TODO: once releases are signed with denext's own certificate, also require its publisher
+# (DENEXT_WINDOWS_PUBLISHER, the certificate's subject) instead of any trusted one.
+function Assert-Authenticode([string]$exe) {
+  $sig = Get-AuthenticodeSignature -LiteralPath $exe
+  $status = "$($sig.Status)"
+  if ("$($sig.SignatureType)" -eq 'Catalog' -or $sig.IsOSBinary) {
+    throw "denext: denext.exe is a Windows system file (vouched for by a Windows catalog, not by a signature of its own) - not installing."
+  }
+  if ($status -eq 'NotSigned') {
+    Write-Host 'denext: denext.exe carries no Authenticode signature (this release was built unsigned)'
+    return
+  }
+  if ($status -ne 'Valid') {
+    throw "denext: denext.exe's Authenticode signature is $status ($($sig.StatusMessage)) - not installing."
+  }
+  Write-Host "denext: Authenticode signature verified ($($sig.SignerCertificate.Subject))"
 }
 
 # Whether a person is watching this console (a progress bar is worth drawing).

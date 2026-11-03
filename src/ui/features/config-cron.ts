@@ -361,6 +361,7 @@ async function discover(dir: string, offline: boolean): Promise<Listing> {
       cwd: dir,
       onLine: (line) => lines.push(line),
       signal: AbortSignal.timeout(discoveryBudgetMs),
+      jsonDocument: {},
     });
   } catch {
     return empty("the job listing did not finish — jobs and schedules are not shown");
@@ -513,6 +514,27 @@ function unavailable(reason: string): JobHistory {
 }
 
 /**
+ * What the panel says about a history child the deadline killed: the deadline, and where the
+ * child stopped — its last meaningful line ({@linkcode lastMeaningful}), or that it printed
+ * nothing — so a hang says what it was doing.
+ *
+ * @internal Exported for tests.
+ * @param flag The child's verb flag.
+ * @param budgetMs The deadline it ran under.
+ * @param lines Everything it wrote before it was killed, stdout and stderr, in order.
+ * @returns The reason.
+ */
+export function historyDeadlineReason(
+  flag: string,
+  budgetMs: number,
+  lines: readonly string[],
+): string {
+  const last = lastMeaningful(lines);
+  return `denext job ${flag} did not finish within ${Math.round(budgetMs / 1000)} s ` +
+    (last === null ? "(it printed nothing)" : `(its last output: ${last})`);
+}
+
+/**
  * Run `denext job --history --json` (or `--clear-history`) in the project — a custom store is
  * project code, which never runs in this process — and return the document it printed, or the
  * reason it printed none. Same invocation rules as discovery (`--deny-run`, offline flags).
@@ -535,14 +557,15 @@ async function historyChild(
   ];
   const budget = historyBudgetMs;
   const signal = AbortSignal.timeout(budget);
-  const late = `denext job ${flag} did not finish within ${Math.round(budget / 1000)} s`;
+  const late = () => historyDeadlineReason(flag, budget, lines);
   try {
-    await runDeno(argv, { cwd: dir, onLine: (line) => lines.push(line), signal });
+    // One JSON document: a child that printed it whole and then never exits is not waited on.
+    await runDeno(argv, { cwd: dir, onLine: (line) => lines.push(line), signal, jsonDocument: {} });
   } catch {
-    return signal.aborted ? late : `denext job ${flag} did not finish`;
+    return signal.aborted ? late() : `denext job ${flag} did not finish`;
   }
   // A child the deadline killed exits without throwing; its partial output is not an answer.
-  if (signal.aborted) return late;
+  if (signal.aborted) return late();
   const doc = parseJsonDocument<Record<string, unknown>>(lines.join("\n"));
   if (doc && typeof doc === "object") return doc;
   const why = lastMeaningful(lines);

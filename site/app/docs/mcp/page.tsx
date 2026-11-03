@@ -10,7 +10,8 @@ export const metadata = {
 const SETUP = `# with the denext CLI installed
 denext mcp
 
-# or with nothing installed at all
+# or with nothing installed at all, in a project you trust
+# (Deno applies the working directory's deno.json to this CLI)
 deno run -A jsr:@denext/denext/cli mcp`;
 
 const PROJECT_INSTALL = `# a new app: the picker pre-checks it, or pass the flag

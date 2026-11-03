@@ -385,6 +385,7 @@ Deno.test("windows DENEXT_DENO=<path>: a drive-letter path (as cmd.exe sets it) 
       pin: DENO_TOOLCHAIN,
       target: WIN,
       os: "windows",
+      cacheRoot: "Z:\\nonexistent\\denext-deno",
       identify,
     });
     assertEquals([status.mode, status.path, status.ok], ["path", resolve(exe), true]);
@@ -414,6 +415,7 @@ Deno.test("windows DENEXT_DENO=stock: any case, cmd's trailing space, refused be
     pin: DENO_TOOLCHAIN,
     target: WIN,
     os: "windows",
+    cacheRoot: "Z:\\nonexistent\\denext-deno",
   });
   assertEquals([status.mode, status.ok, status.path], ["refused", false, null]);
 });

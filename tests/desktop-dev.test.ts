@@ -2,7 +2,7 @@
 // (invariant 5 — the dev server is stopped only when this verb started it). Every edge is
 // injected: no dev server starts and no window spawns.
 
-import { assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { assertEquals, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 import {
   type DesktopDevDeps,
   type DesktopDevServer,
@@ -10,7 +10,8 @@ import {
   type DesktopWindow,
   runDesktopDev,
 } from "../src/build/desktop-dev.ts";
-import { devChildEnv, REEXEC_GUARD_ENV } from "../src/cli/dev-attach.ts";
+import { devChildEnv, REEXEC_GUARD_ENV, waitForShutdownSignal } from "../src/cli/dev-attach.ts";
+import { readDesktopAppFile } from "../src/build/desktop-dev-file.ts";
 
 // ---- the target: loopback-only unless --lan (invariant 3) ------------------------------------
 
@@ -121,10 +122,50 @@ Deno.test("desktop dev leaves an attached dev server running on exit (invariant 
 
 Deno.test("desktop dev stops a started dev server when the window closes itself", async () => {
   const f = fakes(false, Promise.resolve()); // the window exits on its own
-  const deps = { ...f.deps, waitForStop: () => new Promise<void>(() => {}) }; // no Ctrl-C
+  let until: AbortSignal | undefined;
+  const deps = {
+    ...f.deps,
+    waitForStop: (signal: AbortSignal) => { // no Ctrl-C
+      until = signal;
+      return new Promise<void>(() => {});
+    },
+  };
   await runDesktopDev(deps);
   assertEquals(f.windowStopped(), 1);
   assertEquals(f.serverStopped(), 1);
+  assertEquals(until?.aborted, true, "the session stops listening for Ctrl-C when it ends");
+});
+
+Deno.test("desktop dev stops listening for Ctrl-C when the dev server fails to start", async () => {
+  const f = fakes(false);
+  let until: AbortSignal | undefined;
+  await assertRejects(
+    () =>
+      runDesktopDev({
+        ...f.deps,
+        startServer: () => Promise.reject(new Error("no dev server")),
+        waitForStop: (signal) => {
+          until = signal;
+          return new Promise<void>(() => {});
+        },
+      }),
+    Error,
+    "no dev server",
+  );
+  assertEquals(until?.aborted, true);
+});
+
+Deno.test("waitForShutdownSignal removes its signal listeners once `until` aborts", async () => {
+  // Under the op / resource sanitizers a listener left registered fails this test: it keeps the
+  // event loop alive and would swallow the next Ctrl-C after the session ended.
+  const ac = new AbortController();
+  let settled = false;
+  waitForShutdownSignal(ac.signal).then(() => settled = true);
+  ac.abort();
+  await new Promise((r) => setTimeout(r, 0));
+  assertEquals(settled, false, "an ended session's wait never settles");
+  // Already aborted: nothing is registered at all.
+  waitForShutdownSignal(ac.signal).then(() => settled = true);
 });
 
 // ---- the dev server child: never the parent's re-exec guards --------------------------------
@@ -146,4 +187,44 @@ Deno.test("devChildEnv: the dev server child drops the CSS / module re-exec guar
   assertEquals(env.DENEXT_DEV_TOKEN, "ab".repeat(32));
   assertEquals(parent.DENEXT_CSS_ACTIVE, "1", "the parent's environment is not changed");
   assertEquals(devChildEnv({ A: "1" }), { A: "1" });
+});
+
+// ---- files read by app path (the tray's icon) in a build with no export ----------------------
+
+Deno.test("readDesktopAppFile: desktop dev reads a file the export lacks from the dev server", async () => {
+  // Live test on Windows 11 Arm64: `denext desktop dev` of an app with `desktop.tray.icon:
+  // "/tray.png"` failed at launch ("the tray icon /tray.png is not in the export"): a dev build
+  // has no export, the icon is the dev server's.
+  const noExport = () => Promise.resolve(null);
+  const asked: { url: string; token: string | null }[] = [];
+  const devFetch = ((input: URL, init?: RequestInit) => {
+    const url = String(input);
+    asked.push({ url, token: new Headers(init?.headers).get("x-denext-dev-token") });
+    return Promise.resolve(
+      url.endsWith("/tray.png")
+        ? new Response(new Uint8Array([1, 2, 3]))
+        : new Response("missing", { status: 404 }),
+    );
+  }) as typeof fetch;
+  const dev = { url: "http://localhost:3000/?x=1", headers: { "x-denext-dev-token": "t" } };
+  assertEquals(
+    await readDesktopAppFile(noExport, "/tray.png", { ...dev, fetch: devFetch }),
+    new Uint8Array([1, 2, 3]),
+  );
+  assertEquals(asked, [{ url: "http://localhost:3000/tray.png", token: "t" }]);
+  assertEquals(await readDesktopAppFile(noExport, "/nope.png", { ...dev, fetch: devFetch }), null);
+  // A dev server that is down: missing, not a throw.
+  const down = (() => Promise.reject(new TypeError("connection refused"))) as typeof fetch;
+  assertEquals(await readDesktopAppFile(noExport, "/tray.png", { ...dev, fetch: down }), null);
+});
+
+Deno.test("readDesktopAppFile: the export wins, and a built app never asks a dev server", async () => {
+  let fetched = 0;
+  const devFetch = (() => (fetched++, Promise.resolve(new Response("dev")))) as typeof fetch;
+  const exported = (path: string) =>
+    Promise.resolve(path === "/tray.png" ? new Uint8Array([7]) : null);
+  const dev = { url: "http://localhost:3000", headers: {}, fetch: devFetch };
+  assertEquals(await readDesktopAppFile(exported, "/tray.png", dev), new Uint8Array([7]));
+  assertEquals(await readDesktopAppFile(exported, "/other.png"), null);
+  assertEquals(fetched, 0);
 });

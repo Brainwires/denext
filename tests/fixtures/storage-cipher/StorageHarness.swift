@@ -25,6 +25,18 @@ func code(_ fn: () throws -> Void) -> String {
     }
 }
 
+/// `code`, with the store's message after the code (for a FAIL line).
+func detail(_ fn: () throws -> Void) -> String {
+    do {
+        try fn()
+        return "none"
+    } catch let error as DenextStorageError {
+        return "\(error.code): \(error.description)"
+    } catch {
+        return "\(error)"
+    }
+}
+
 let store = DenextStorageStore(folder: folder)
 do {
     try store.setMany("prefs", [("theme", "dark"), ("font", "serif")], key: nil)
@@ -69,9 +81,15 @@ if mode == "plain" {
         try other.setMany("quoted", [("a", "b")], key: "it's")
         _ = try DenextStorageStore(folder: folder).getMany("quoted", ["a"], key: "it's")
     } == "none")
+    // The app has one store per process (the plugin's), so one connection per encrypted file. Drop
+    // `store`'s: a call under another key closes the cached handle (then fails to open with it).
+    // A rekey folds WAL off, which needs the file to itself.
+    check("a call under another key releases the store's handle",
+          code { _ = try store.keys("secret", key: "release") } == "WRONG_KEY")
     check("a rekey with a wrong key is refused",
           code { try other.rekey("secret", key: "nope", newKey: "k2") } == "WRONG_KEY")
-    check("a rekey runs", code { try other.rekey("secret", key: "k1", newKey: "k2'b") } == "none")
+    let rekeyRun = detail { try other.rekey("secret", key: "k1", newKey: "k2'b") }
+    check("a rekey runs", rekeyRun == "none", rekeyRun)
     check("the rekeyed store reads under the new key on the same handle",
           (try? other.getMany("secret", ["pin", "token"], key: "k2'b")) == ["4321", "PLAINTEXT-MARKER-123"])
     let fresh = DenextStorageStore(folder: folder)
@@ -84,7 +102,8 @@ if mode == "plain" {
           (try? fresh.getMany("secret", ["after"], key: "k2'b")) == ["rekey"])
     let rekeyed = (try? Data(contentsOf: store.encryptedFile("secret"))) ?? Data()
     check("the rekeyed file holds no plaintext", rekeyed.range(of: Data("PLAINTEXT-MARKER".utf8)) == nil)
-    check("a rekey to the same key is a no-op", code { try fresh.rekey("secret", key: "k2'b", newKey: "k2'b") } == "none")
+    let sameKey = detail { try fresh.rekey("secret", key: "k2'b", newKey: "k2'b") }
+    check("a rekey to the same key is a no-op", sameKey == "none", sameKey)
 }
 print("done \(failures)")
 exit(failures == 0 ? 0 : 1)

@@ -12,7 +12,7 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { fromFileUrl, join, toFileUrl } from "@std/path";
 import { removeTempDir } from "../helpers/temp.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
-import { onFreePort } from "../helpers/port.ts";
+import { boundPort } from "../helpers/port.ts";
 
 const FW = fromFileUrl(new URL("../../", import.meta.url));
 const FW_URL = toFileUrl(FW).href;
@@ -245,18 +245,14 @@ interface Served {
 }
 
 /**
- * Start `bin` in `cwd` on a free port and wait until `/` answers 200; a port taken between the
- * pick and the bind is retried on another.
+ * Start `bin` in `cwd` on `--port 0` and wait until `/` answers 200 on the port it says it bound
+ * (nothing picks a port another process could take first).
  */
-function serve(bin: string, cwd: string): Promise<Served> {
-  return onFreePort((port) => serveOn(port, bin, cwd));
-}
-
-/** {@linkcode serve} on `port`. */
-async function serveOn(port: number, bin: string, cwd: string): Promise<Served> {
+async function serve(bin: string, cwd: string): Promise<Served> {
   const child = new Deno.Command(bin, {
+    args: ["--port", "0"],
     cwd,
-    env: { NO_COLOR: "1", PORT: String(port) },
+    env: { NO_COLOR: "1" },
     stdin: "null",
     stdout: "piped",
     stderr: "piped",
@@ -269,6 +265,7 @@ async function serveOn(port: number, bin: string, cwd: string): Promise<Served> 
   const drained = Promise.all([drain(child.stdout), drain(child.stderr)]);
   let exited = false;
   child.status.then(() => exited = true);
+  const port = await boundPort(() => output, () => exited);
   const origin = `http://127.0.0.1:${port}`;
   const get = async (path: string) => {
     const res = await fetch(origin + path);
@@ -284,7 +281,7 @@ async function serveOn(port: number, bin: string, cwd: string): Promise<Served> 
     await drained;
     return output;
   };
-  for (let i = 0; i < 1200 && !exited; i++) {
+  for (let i = 0; i < 1200 && port !== undefined && !exited; i++) {
     try {
       if ((await get("/")).status === 200) return { get, stop };
     } catch { /* not listening yet */ }
@@ -345,8 +342,6 @@ async function compiledApp(
 
 Deno.test({
   name: "denext build --compile: a next-compat drop-in app serves pages, API routes and assets",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: () =>
     compiledApp("denext_compile_compat_", NEXT_COMPAT, "framework", async (app) => {
       const home = await app.get("/");
@@ -372,8 +367,6 @@ Deno.test({
 
 Deno.test({
   name: "denext build --compile: a Pages Router app serves pages, API routes and assets",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: () =>
     compiledApp("denext_compile_pages_", PAGES_ROUTER, "project", async (app) => {
       const home = await app.get("/");
@@ -407,8 +400,6 @@ Deno.test({
 
 Deno.test({
   name: "denext build --compile: a compat (npm React) Pages Router app serves its pages",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: () =>
     compiledApp("denext_compile_compat_pages_", COMPAT_PAGES, "framework", async (app) => {
       const home = await app.get("/");

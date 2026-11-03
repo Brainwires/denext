@@ -52,8 +52,6 @@ const FIXTURE = fromFileUrl(new URL("./fixtures/client-layout", import.meta.url)
 
 Deno.test({
   name: "e2e: same-page <ViewTransition> + hidden <Activity> effects (React 19.2 semantics)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

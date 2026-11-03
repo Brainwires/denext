@@ -12,7 +12,17 @@ import type { DeployAdapter, DeployContext } from "../adapter.ts";
 import type { DeployManifest } from "../manifest.ts";
 import { appName, header } from "./shared.ts";
 import { splitNetFlag } from "../../build/net-permissions.ts";
+import {
+  LIMITS_APPLIED_ENV,
+  pinnedLimitFlags,
+  withLimitFlags,
+} from "../../build/resource-limits.ts";
 import { drainMsOf, stopTimeoutSec } from "./shared.ts";
+import {
+  projectUnstableNet,
+  tlsEnvNames,
+  tlsUnstableNetWarnings,
+} from "../../build/start-tls-deploy.ts";
 
 /** Options for {@linkcode genericHost}. */
 export interface GenericHostPresetOptions {
@@ -22,7 +32,11 @@ export interface GenericHostPresetOptions {
   directory?: string;
   /** The user the service runs as (default: the service's name). */
   user?: string;
-  /** The port the server listens on behind the proxy (default 3000). */
+  /**
+   * The port the server listens on behind the proxy (default 3000). With `start.tls` the server
+   * serves HTTPS itself on every interface, with no proxy: default 443 (the unit grants
+   * `CAP_NET_BIND_SERVICE` for a port below 1024).
+   */
   port?: number;
   /**
    * The public domain the proxy serves. Default: `denext deploy prepare --domain <host>`, else the
@@ -110,7 +124,7 @@ function resolveOptions(options: GenericHostPresetOptions, ctx: DeployContext): 
     name,
     directory,
     user: options.user ?? name,
-    port: options.port ?? 3000,
+    port: options.port ?? (ctx.manifest.server.tls ? 443 : 3000),
     domain: options.domain ?? domainFromEnv(ctx.env),
     deno: options.deno ?? `${directory}/${TOOLCHAIN_LINK}`,
     maxConnections: options.maxConnections ?? 100,
@@ -137,16 +151,32 @@ function cliModule(manifest: DeployManifest): string {
  * server without passing the proxy.
  */
 function execStart(manifest: DeployManifest, o: Resolved): string {
-  const loopback = ["--host", "127.0.0.1"];
+  // With start.tls there is no proxy: the server binds every interface (start's default).
+  const loopback = manifest.server.tls ? [] : ["--host", "127.0.0.1"];
   if (manifest.compile) {
     return [`${o.directory}/${basename(manifest.compile.output)}`, ...loopback].join(" ");
   }
   const [first, ...words] = manifest.server.command;
   const binds = words.some((w) => /^--(host|hostname)(=|$)/.test(w));
   const rest = first === "deno" && o.deno === `${o.directory}/${TOOLCHAIN_LINK}`
-    ? toolchainNet(words, manifest, binds ? null : o.port)
+    ? withLimits(toolchainNet(words, manifest, binds ? null : o.port), manifest)
     : words;
   return [first === "deno" ? o.deno : first, ...rest, ...(binds ? [] : loopback)].join(" ");
+}
+
+/**
+ * The server's resource limits (`server.limits`, on the pinned toolchain) after `run` in the start
+ * command's words (`deno` dropped); the words as they are when there are none or it is no
+ * `deno run` command.
+ */
+function withLimits(words: readonly string[], manifest: DeployManifest): readonly string[] {
+  const limits = unitLimits(manifest);
+  return withLimitFlags(["deno", ...words], limits)?.slice(1) ?? words;
+}
+
+/** The limit flags the unit's `ExecStart` gets (none for a `--compile` executable: baked in). */
+function unitLimits(manifest: DeployManifest): string[] {
+  return manifest.compile ? [] : pinnedLimitFlags(manifest.server.limits ?? []);
 }
 
 /**
@@ -164,24 +194,87 @@ function toolchainNet(
   const net = manifest.permissions.net;
   if (!net) return words;
   const scoped = (values: readonly string[]) => values.includes("*") ? undefined : values;
-  const listen = scoped(net.listen) ?? (port === null ? undefined : [`127.0.0.1:${port}`]);
+  const own = manifest.server.tls ? [`:${port}`, `[::]:${port}`] : [`127.0.0.1:${port}`];
+  const listen = scoped(net.listen) ?? (port === null ? undefined : own);
   return splitNetFlag(words, listen, scoped(net.connect));
 }
 
 /**
  * The unit's idle-trim lines: `DENO_UNSTABLE_IDLE_TRIM=1` when the manifest asks for it
  * (`server.idleTrim`) and `ExecStart` runs on the toolchain `build.sh` links (a `--compile`
- * executable has it baked in; another `deno` may be stock). Before the env file, which may set
+ * executable has it baked in; another `deno` may not be denext's runtime). Before the env file, which may set
  * `DENO_UNSTABLE_IDLE_TRIM=0` to turn it off.
  */
 function idleTrimLines(manifest: DeployManifest, o: Resolved): string {
-  const onToolchain = manifest.server.command[0] === "deno" &&
-    o.deno === `${o.directory}/${TOOLCHAIN_LINK}`;
-  if (!manifest.server.idleTrim || manifest.compile || !onToolchain) return "";
+  if (!manifest.server.idleTrim || manifest.compile || !onToolchain(manifest, o)) return "";
   return `# Hand the memory a load burst leaves behind back to the OS once the server goes idle (a full
 # GC, then malloc_trim). DENO_UNSTABLE_IDLE_TRIM=0 in the env file below turns it off.
 Environment=DENO_UNSTABLE_IDLE_TRIM=1
 `;
+}
+
+/** Whether `ExecStart` runs the start command's `deno` on the toolchain `build.sh` links. */
+function onToolchain(manifest: DeployManifest, o: Resolved): boolean {
+  return manifest.server.command[0] === "deno" && o.deno === `${o.directory}/${TOOLCHAIN_LINK}`;
+}
+
+/**
+ * The unit's resource-limit lines: what `ExecStart` carries (`start.limits`), or why it carries
+ * none, and `DENEXT_LIMITS_APPLIED`, which tells `denext start` the process runs under them.
+ */
+function limitLines(manifest: DeployManifest, o: Resolved): string {
+  const limits = unitLimits(manifest);
+  if (limits.length === 0) return "";
+  const applied = onToolchain(manifest, o) &&
+    withLimitFlags(manifest.server.command, limits) !== null;
+  if (!applied) {
+    return `# start.limits (${
+      limits.join(" ")
+    }) are not applied: ExecStart is no \`deno run\` on denext's Deno toolchain.
+`;
+  }
+  return `# start.limits from denext.config, on ExecStart: each ends the server with its own exit code (heap
+# 137, CPU time 152, wall clock 124), and Restart=always starts it again.
+Environment="${LIMITS_APPLIED_ENV}=${limits.join(" ")}"
+`;
+}
+
+/** The public origin: `https://<domain>`, with the port when the server serves TLS off 443. */
+function publicOrigin(manifest: DeployManifest, o: Resolved): string {
+  const port = manifest.server.tls && o.port !== 443 ? `:${o.port}` : "";
+  return `https://${o.domain}${port}`;
+}
+
+/**
+ * Behind a proxy: trust its forwarded headers. With `start.tls` the server faces clients itself:
+ * trust none (a client's own X-Forwarded-For must not reach clientIp()), say where the
+ * certificate files come from, and grant the bind of a port below 1024.
+ */
+function proxyOrTlsLines(manifest: DeployManifest, o: Resolved): string {
+  const tls = manifest.server.tls;
+  if (!tls) {
+    return `# Behind nginx / Caddy every request comes from 127.0.0.1: trust the proxy's X-Forwarded-*
+# headers so clientIp() and the per-address limits (rateLimit(), auth's per-IP budgets, Live's
+# per-IP cap) see each client. Safe because the server listens on 127.0.0.1 only (ExecStart).
+Environment=DENEXT_TRUST_PROXY=1
+`;
+  }
+  const names = tlsEnvNames(tls);
+  const bind = o.port < 1024
+    ? `# Port ${o.port} is privileged: let the unprivileged service user bind it, and nothing more.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+`
+    : "";
+  const key = tls.certificates[0].keyFileEnv;
+  return `# start.tls: the server serves HTTPS itself on port ${o.port}, every interface, with no proxy in
+# front, so it trusts no X-Forwarded-* header. The env file's variables name the PEM files:
+#   ${names.join(" ")}
+# and ${o.user} must be able to read them (ProtectHome hides /home). For a root-only key, let
+# systemd hand it over instead: \`LoadCredential=key:/etc/ssl/private/site.pem\` and
+# \`Environment=${key}=%d/key\` here, with that variable left out of the env file (whose values
+# win over Environment=).
+${bind}`;
 }
 
 /**
@@ -213,15 +306,13 @@ Environment=PORT=${o.port}
 Environment=DENO_DIR=${o.directory}/${DENO_DIR}
 ${
     o.domain
-      ? `Environment=DENEXT_CANONICAL_ORIGIN=https://${o.domain}`
+      ? `Environment=DENEXT_CANONICAL_ORIGIN=${publicOrigin(manifest, o)}`
       : "# DENEXT_CANONICAL_ORIGIN (the public https:// origin) comes from the env file below."
   }
 Environment=DENEXT_LOG=json
-# Behind nginx / Caddy every request comes from 127.0.0.1: trust the proxy's X-Forwarded-*
-# headers so clientIp() and the per-address limits (rateLimit(), auth's per-IP budgets, Live's
-# per-IP cap) see each client. Safe because the server listens on 127.0.0.1 only (ExecStart).
-Environment=DENEXT_TRUST_PROXY=1
-${idleTrimLines(manifest, o)}EnvironmentFile=-/etc/${o.name}/env
+${proxyOrTlsLines(manifest, o)}${idleTrimLines(manifest, o)}${
+    limitLines(manifest, o)
+  }EnvironmentFile=-/etc/${o.name}/env
 ExecStart=${execStart(manifest, o)}
 Restart=always
 RestartSec=2
@@ -354,14 +445,26 @@ function envLine(v: DeployManifest["env"][number]): string {
   }${secret}\n${v.name}=`;
 }
 
+/** `start.tls`'s variables, required, with what each names. */
+function tlsEnvExample(manifest: DeployManifest, o: Resolved): string {
+  const tls = manifest.server.tls;
+  if (!tls) return "";
+  return "\n" + tlsEnvNames(tls).map((name) => {
+    const what = tls.certificates.some((c) => c.keyFileEnv === name)
+      ? "private key"
+      : "certificate (chain)";
+    return `# required — start.tls: the path of the PEM ${what} file (readable by ${o.user})\n${name}=`;
+  }).join("\n");
+}
+
 /** The server's own variables, the ones the unit does not set itself. */
 function frameworkEnv(manifest: DeployManifest, o: Resolved): string {
   const origin = o.domain
-    ? `# DENEXT_CANONICAL_ORIGIN=https://${o.domain}  (set in the unit)`
+    ? `# DENEXT_CANONICAL_ORIGIN=${publicOrigin(manifest, o)}  (set in the unit)`
     : "# required — the public origin (https://your-domain): Server Actions, auth callbacks and\n" +
       "# redirects are checked against it\nDENEXT_CANONICAL_ORIGIN=";
   return `# The server's own settings.
-${origin}
+${origin}${tlsEnvExample(manifest, o)}
 # The shutdown drain (${manifest.server.drain.env}) is set in the unit, with TimeoutStopSec above
 # it: change it with the preset's drainMs and re-run \`denext deploy prepare\`, not here.`;
 }
@@ -388,6 +491,31 @@ ${frameworkEnv(manifest, o)}${app}
 `;
 }
 
+/** What `start.tls` changes on a generic host, and what it needs that the files can't give. */
+async function tlsWarnings(ctx: DeployContext): Promise<void> {
+  const { manifest } = ctx;
+  ctx.warn(
+    "generic-host: start.tls serves HTTPS from the server itself, so no nginx.conf or Caddyfile " +
+      "is written (the unit binds every interface and trusts no proxy header)",
+  );
+  for (
+    const w of tlsUnstableNetWarnings(
+      manifest.server.tls,
+      await projectUnstableNet(ctx.projectDir),
+      "generic-host",
+    )
+  ) {
+    // A compiled executable has --unstable-net baked in (build --compile).
+    if (!manifest.compile) ctx.warn(w);
+  }
+  if (!manifest.compile && manifest.server.command.some((w) => w.startsWith("--allow-read="))) {
+    ctx.warn(
+      "generic-host: the start command scopes --allow-read; add the directories of the " +
+        "start.tls certificate and key files to it, or the server can't read them",
+    );
+  }
+}
+
 /**
  * The generic-host preset: a systemd unit, nginx and Caddy snippets and an env example.
  *
@@ -410,8 +538,11 @@ export function genericHost(options: GenericHostPresetOptions = {}): DeployAdapt
       if (!ctx.manifest.compile) {
         await ctx.writeFile("build.sh", renderBuildScript(ctx.manifest, o));
       }
-      await ctx.writeFile("nginx.conf", renderNginx(ctx.manifest, o));
-      await ctx.writeFile("Caddyfile", renderCaddyfile(o));
+      if (ctx.manifest.server.tls) await tlsWarnings(ctx);
+      else {
+        await ctx.writeFile("nginx.conf", renderNginx(ctx.manifest, o));
+        await ctx.writeFile("Caddyfile", renderCaddyfile(o));
+      }
       await ctx.writeFile("env.example", renderEnvExample(ctx.manifest, o));
       if (ctx.manifest.schedules.length) {
         ctx.warn(

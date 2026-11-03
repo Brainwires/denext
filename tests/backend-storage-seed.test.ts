@@ -16,8 +16,6 @@ const load = ((path: string) => import(path)) as unknown as ModuleLoader;
 
 Deno.test({
   name: "seedBuckets: config buckets, then supabase/buckets/<bucket>/** uploaded",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const root = await Deno.makeTempDir({ prefix: "dnx-seed-buckets-" });
   try {
@@ -68,8 +66,6 @@ Deno.test({
 
 Deno.test({
   name: "denext storage ls / cp / mv / rm over the app's storage",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const { createStorageCommand, parseStoragePath } = await import(
     "../packages/backend/src/storage-command.ts"

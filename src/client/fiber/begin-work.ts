@@ -13,7 +13,11 @@ import type { VNode, VNodeChildren } from "../../jsx/types.ts";
 import { enterScope, rootScope } from "../../jsx/tree-id.ts";
 import { SUSPENSE_LIST_PROP, type SuspenseListMarker } from "../../runtime/suspense.ts";
 import { PROVIDER } from "../../runtime/context.ts";
-import { createFormStatusSignal, FormStatusContext } from "../../runtime/form-status.ts";
+import {
+  createFormStatusSignal,
+  FormStatusContext,
+  type FormStatusSignal,
+} from "../../runtime/form-status.ts";
 import { STRICT_MODE_PROP } from "../../runtime/strict-mode.ts";
 import { PROFILER_PROP, type ProfilerMarker } from "../../runtime/profiler.ts";
 import { toError } from "../../runtime/error-boundary.ts";
@@ -42,7 +46,7 @@ import {
 import { noteOffscreen, notePortalTarget, noteProfiler } from "./state.ts";
 import { listenOn } from "./events.ts";
 import { getSingletonSupport } from "./singleton-support.ts";
-import { fragmentRefs, loadFragmentRefs } from "./fragment-ref-support.ts";
+import { fragmentRuntimeLoad } from "./fragment-ref-support.ts";
 import { renderLanes } from "./scheduler.ts";
 
 /** Perform one unit of work; return the next unit (first child) or null. */
@@ -208,9 +212,10 @@ export function installStrictBoundaries(on = true): void {
 function beginFragment(wip: Fiber): Fiber | null {
   // React 19.3's `<Fragment ref>` (or a Fragment whose ref went away, still holding its
   // instance): the commit hands it to the Fragment-ref runtime, loaded on first use — this render
-  // suspends until it is (fragment-ref-support.ts).
+  // suspends until it is, or until a failed load is retried (fragment-ref-support.ts).
   if (wip.tag === "fragment" && (wip.vnode.props?.ref != null || wip.stateNode !== null)) {
-    if (fragmentRefs === null) throw loadFragmentRefs();
+    const load = fragmentRuntimeLoad();
+    if (load) throw load;
     wip.flags |= RefAttach;
   }
   const { profiler, provInfo, listPolicy } = readFragmentMarkers(wip);
@@ -377,21 +382,34 @@ function beginHost(wip: Fiber): Fiber | null {
   return getSingletonSupport()?.adopt(wip) ? beginFragment(wip) : beginElement(wip);
 }
 
-// A DOM element: claim its server node during hydration, and — for a `<form action={fn}>` —
+/**
+ * The context a host element's children inherit: a `<form>`'s own `useFormStatus` signal over its
+ * subtree (a form submits through a function action of its own or of one of its buttons'
+ * `formAction`s: in an app that writes either, per the build's scan, every form gets one), and a
+ * button with a function `formAction` takes its form's signal, which dom-props drives.
+ */
+function formStatusScope(wip: Fiber): Fiber["inherited"] {
+  const props = wip.vnode.props ?? {};
+  const scanned = typeof __DENEXT_FORM_ACTIONS__ === "undefined" || __DENEXT_FORM_ACTIONS__;
+  if (wip.vnode.type === "form" && (scanned || typeof props.action === "function")) {
+    const x = fiberExt(wip);
+    x.formStatus ??= createFormStatusSignal();
+    return new ContextScope(wip.inherited, FormStatusContext._id, x.formStatus);
+  }
+  if (scanned && typeof props.formAction === "function") {
+    fiberExt(wip).formStatus = wip.inherited.get(FormStatusContext._id) as
+      | FormStatusSignal
+      | undefined;
+  }
+  return wip.inherited;
+}
+
+// A DOM element: claim its server node during hydration, and — for a `<form>` with a function action —
 // establish a form-scoped pending signal seeded into descendant context so useFormStatus reads
 // the nearest form. Split out of {@linkcode beginWork}.
 function beginElement(wip: Fiber): Fiber | null {
   beginHostHydration(wip);
-  let childInherited = wip.inherited;
-  if (wip.vnode.type === "form") {
-    const props = wip.vnode.props ?? {};
-    const act = props.action ?? props.formAction;
-    if (typeof act === "function") {
-      const x = fiberExt(wip);
-      x.formStatus ??= createFormStatusSignal();
-      childInherited = new ContextScope(wip.inherited, FormStatusContext._id, x.formStatus);
-    }
-  }
+  const childInherited = formStatusScope(wip);
   reconcileChildren(
     wip,
     (wip.vnode.props?.children ?? null) as VNodeChildren,

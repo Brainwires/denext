@@ -91,3 +91,33 @@ Deno.test("desktopBuildFlags: an invalid permission list fails the build instead
   const flags = desktopBuildFlags({ desktop: { extraPermissions: { run: ["git"] } } }, "linux");
   assertEquals(flags.includes("--allow-run=git"), true, flags.join(" "));
 });
+
+Deno.test("desktop.update.hosts: each entry is one host, in the config and in the baked flags", () => {
+  validate({ desktop: { update: { hosts: ["cdn.example.net", "*.example.org", ":8443"] } } });
+  for (
+    const hosts of [
+      ["cdn.example.net,0.0.0.0"],
+      ["https://cdn.example.net"],
+      [""],
+      ["a b"],
+      "cdn.example.net",
+      [1],
+    ]
+  ) {
+    assertThrows(
+      () => validate({ desktop: { update: { hosts } } }),
+      Error,
+      "desktop.update.hosts",
+      JSON.stringify(hosts),
+    );
+    // The package scripts read the raw config: the flag derivation refuses it too.
+    assertThrows(
+      () => desktopBuildFlags({ desktop: { update: { hosts } } }, "linux"),
+      Error,
+      "desktop.update.hosts",
+      JSON.stringify(hosts),
+    );
+  }
+  const flags = desktopBuildFlags({ desktop: { update: { hosts: ["cdn.example.net"] } } }, "linux");
+  assertEquals(flags[0], "--allow-net=127.0.0.1,cdn.example.net,localhost");
+});

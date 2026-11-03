@@ -7,14 +7,17 @@
 import { assert, assertEquals } from "@std/assert";
 import {
   CATALOG_OUT,
+  CATALOG_PACKED_OUT,
   type CatalogEntry,
   generatePluginCatalog,
   type PluginCatalog,
+  renderPackedCatalog,
   specFor,
   workspaceDirs,
 } from "../scripts/gen-plugin-catalog.ts";
 import { resolvePluginNames } from "../src/build/plugin-install.ts";
 import { PAGES_ROUTER_SPEC } from "../src/build/migrate.ts";
+import { pluginCatalog } from "../src/plugin/catalog.ts";
 
 const catalog = JSON.parse(Deno.readTextFileSync(CATALOG_OUT)) as PluginCatalog;
 const entries: CatalogEntry[] = catalog.plugins;
@@ -47,6 +50,19 @@ Deno.test("plugin catalog: catalog.json is regenerated from packages/*", async (
     await generatePluginCatalog(),
     "src/plugin/catalog.json is stale — run `deno task gen:plugin-catalog` and commit",
   );
+});
+
+Deno.test("plugin catalog: the published packed copy is catalog.json, and decodes to it", async () => {
+  // The package ships src/plugin/catalog.packed.ts (Brotli), not catalog.json: a regenerated
+  // catalog.json with a stale packed module would ship the old catalog.
+  const json = await Deno.readTextFile(CATALOG_OUT);
+  assertEquals(
+    await Deno.readTextFile(CATALOG_PACKED_OUT),
+    renderPackedCatalog(json),
+    "src/plugin/catalog.packed.ts is stale — run `deno task gen:plugin-catalog` and commit",
+  );
+  assertEquals(pluginCatalog(), JSON.parse(json));
+  assert(pluginCatalog() === pluginCatalog(), "decoded once");
 });
 
 Deno.test("plugin catalog: every workspace member is catalogued, in sorted order", () => {

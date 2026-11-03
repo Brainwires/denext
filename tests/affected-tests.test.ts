@@ -5,6 +5,7 @@ import { assertEquals } from "@std/assert";
 import {
   affectedTests,
   importSpecifiers,
+  INDIRECT_TESTS,
   isTestFile,
   resolveSpecifier,
 } from "../scripts/affected-tests.ts";
@@ -46,4 +47,39 @@ Deno.test("affected tests: specifiers resolve relative paths and the repo's alia
   assertEquals(resolveSpecifier("tests/x.test.ts", "../src/a.ts"), "src/a.ts");
   assertEquals(resolveSpecifier("tests/x.test.ts", "jsr:@std/assert"), null);
   assertEquals(resolveSpecifier("tests/x.test.ts", "denext/server"), "src/server/mod.ts");
+});
+
+Deno.test("affected tests: a module's indirect tests are selected without importing it", () => {
+  const tests = new Map<string, string>([
+    ["tests/deno-version.test.ts", `import "../src/build/deno-version.ts";\n`],
+    ["tests/deno-toolchain.test.ts", `import "../src/build/deno-toolchain.ts";\n`],
+    ["tests/deno-toolchain-tsgo.test.ts", `import "../src/build/deno-toolchain.ts";\n`],
+    ["tests/deno-toolchain-windows.test.ts", `import "../src/build/deno-toolchain.ts";\n`],
+    ["tests/toolchain-audit.test.ts", `import "../src/build/deno-toolchain.ts";\n`],
+    ["tests/toolchain-prune.test.ts", `import "../src/build/toolchain-prune.ts";\n`],
+    ["tests/esbuild-binary.test.ts", `import "../src/build/deno-toolchain.ts";\n`],
+    ["tests/gleam-toolchain.test.ts", `import "../src/build/deno-toolchain.ts";\n`],
+    ["tests/e2e/deno-toolchain.e2e.test.ts", ""],
+  ]);
+  assertEquals(affectedTests(["src/build/deno-version.ts"], tests), [
+    "tests/deno-toolchain-tsgo.test.ts",
+    "tests/deno-toolchain-windows.test.ts",
+    "tests/deno-toolchain.test.ts",
+    "tests/deno-version.test.ts",
+    "tests/esbuild-binary.test.ts",
+    "tests/toolchain-audit.test.ts",
+    "tests/toolchain-prune.test.ts",
+  ]);
+  // Only for the module that lists them.
+  assertEquals(affectedTests(["src/build/other.ts"], tests), []);
+  assertEquals(affectedTests(["src/build/deno-version.ts"], tests, {}), [
+    "tests/deno-version.test.ts",
+  ]);
+  // Every listed pattern names a test file that exists.
+  for (const [module, patterns] of Object.entries(INDIRECT_TESTS)) {
+    for (const re of patterns) {
+      const hits = [...Deno.readDirSync("tests")].filter((e) => re.test(`tests/${e.name}`));
+      assertEquals(hits.length > 0, true, `${module}: ${re}`);
+    }
+  }
 });

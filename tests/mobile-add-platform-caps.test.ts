@@ -106,6 +106,7 @@ async function inProject(
     "capacitor.config.ts": "export default { appId: 'com.example.app', webDir: 'out' };\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
     // The web export `cap sync` copies (without it the run falls back to `cap update`).
     "out/index.html": "<!doctype html>\n",
     ".git/HEAD": "ref: refs/heads/main\n",
@@ -254,9 +255,9 @@ Deno.test("mobile add: the permission capabilities install DenextSettings once",
       run,
     });
     assertEquals(lines(), [
-      "npm install --ignore-scripts @capacitor/local-notifications@^8.3.1 @aparajita/capacitor-biometric-auth@^10.0.0 " +
-      "@capacitor/geolocation@^8.2.2",
-      "npx cap sync",
+      "npm install --ignore-scripts --save-exact @capacitor/local-notifications@8.3.1 @aparajita/capacitor-biometric-auth@10.0.0 " +
+      "@capacitor/geolocation@8.2.2",
+      "npx --no cap sync",
     ]);
     assert(report.written.includes(IOS_SETTINGS));
     const plist = await read(dir, INFO_PLIST);
@@ -287,8 +288,8 @@ Deno.test("mobile add social-login: the Apple entitlement, Google's scheme, the 
       schemes: ["com.googleusercontent.apps.1234-abcd"],
     });
     assertEquals(lines(), [
-      "npm install --ignore-scripts @capgo/capacitor-social-login@^8.5.11",
-      "npx cap sync",
+      "npm install --ignore-scripts --save-exact @capgo/capacitor-social-login@8.5.11",
+      "npx --no cap sync",
     ]);
     const entitlements = await read(dir, ENTITLEMENTS);
     assertStringIncludes(entitlements, "<key>com.apple.developer.applesignin</key>");
@@ -308,8 +309,8 @@ Deno.test("mobile add purchases: RevenueCat's SDK and the store steps", async ()
     const { run, lines } = fakeRunner();
     const report = await addMobileCapabilities({ capabilities: ["purchases"], cwd: dir, run });
     assertEquals(lines(), [
-      "npm install --ignore-scripts @revenuecat/purchases-capacitor@^13.6.1",
-      "npx cap sync",
+      "npm install --ignore-scripts --save-exact @revenuecat/purchases-capacitor@13.6.1",
+      "npx --no cap sync",
     ]);
     assertEquals(report.written, []);
     const manual = report.plan.manual.join("\n");
@@ -483,8 +484,8 @@ Deno.test("mobile add background-location: the plugin, the keys, no background p
       run,
     });
     assertEquals(lines(), [
-      "npm install --ignore-scripts @capgo/background-geolocation@^8.4.7 @capacitor/background-runner@^3.0.0",
-      "npx cap sync",
+      "npm install --ignore-scripts --save-exact @capgo/background-geolocation@8.4.7 @capacitor/background-runner@3.0.0",
+      "npx --no cap sync",
     ]);
     const plist = await read(dir, INFO_PLIST);
     for (
@@ -521,8 +522,8 @@ Deno.test("mobile add application: @capacitor/app + @capacitor/device, each pack
     const { run, lines } = fakeRunner();
     await addMobileCapabilities({ capabilities: ["application"], cwd: dir, run });
     assertEquals(lines(), [
-      "npm install --ignore-scripts @capacitor/app@^8.1.1 @capacitor/device@^8.0.3",
-      "npx cap sync",
+      "npm install --ignore-scripts --save-exact @capacitor/app@8.1.1 @capacitor/device@8.0.3",
+      "npx --no cap sync",
     ]);
     const plan = await planMobileCapabilities({
       capabilities: ["restore", "device", "application", "back"],
@@ -531,8 +532,9 @@ Deno.test("mobile add application: @capacitor/app + @capacitor/device, each pack
     assertEquals(plan.install?.args, [
       "install",
       "--ignore-scripts",
-      "@capacitor/app@^8.1.1",
-      "@capacitor/device@^8.0.3",
+      "--save-exact",
+      "@capacitor/app@8.1.1",
+      "@capacitor/device@8.0.3",
     ]);
   });
 });
@@ -548,8 +550,8 @@ Deno.test("mobile add toast + action-sheet: the plugins RN's overlays feature-de
       run,
     });
     assertEquals(lines(), [
-      "npm install --ignore-scripts @capacitor/toast@^8.0.1 @capacitor/action-sheet@^8.1.1",
-      "npx cap sync",
+      "npm install --ignore-scripts --save-exact @capacitor/toast@8.0.1 @capacitor/action-sheet@8.1.1",
+      "npx --no cap sync",
     ]);
     // Neither plugin needs a usage string, a permission or an entitlement.
     assertEquals(await read(dir, INFO_PLIST), plistBefore);
@@ -579,31 +581,35 @@ Deno.test("mobile add: no web export yet runs `cap update` and says what is left
     const { run, lines } = fakeRunner();
     const report = await addMobileCapabilities({ capabilities: ["dialog"], cwd: dir, run });
     assertEquals(lines(), [
-      "npm install --ignore-scripts @capacitor/dialog@^8.0.1",
-      "npx cap update",
+      "npm install --ignore-scripts --save-exact @capacitor/dialog@8.0.1",
+      "npx --no cap update",
     ]);
     assertEquals(report.plan.webAssetsMissing, "out");
     const warning = report.plan.warnings.join("\n");
     assertStringIncludes(warning, "no web export at out/index.html");
     assertStringIncludes(warning, "Run `denext export`, then `npx cap sync`");
     const text = formatCapabilityPlan(report.plan);
-    assertStringIncludes(text, "sync           npx cap update");
+    assertStringIncludes(text, "sync           npx --no cap update");
     assertStringIncludes(text, "WARNING        no web export");
   });
   // An empty folder is not an export either (cap sync wants its index.html).
   await inProject({ "out/index.html": null, "out/.keep": "" }, async (dir) => {
     const plan = await planMobileCapabilities({ capabilities: ["dialog"], cwd: dir });
-    assertEquals(plan.sync?.args, ["cap", "update"]);
+    assertEquals(plan.sync?.args, ["--no", "cap", "update"]);
   });
 });
 
 Deno.test("mobile add: the web-export check follows webDir, server.url and Capacitor's default", async () => {
   const cases: Array<[Record<string, string | null>, string[], string | undefined]> = [
     // No webDir: Capacitor's default, www.
-    [{ "capacitor.config.ts": "export default { appId: 'a.b' };\n" }, ["cap", "update"], "www"],
+    [
+      { "capacitor.config.ts": "export default { appId: 'a.b' };\n" },
+      ["--no", "cap", "update"],
+      "www",
+    ],
     [
       { "capacitor.config.ts": "export default { appId: 'a.b' };\n", "www/index.html": "x" },
-      ["cap", "sync"],
+      ["--no", "cap", "sync"],
       undefined,
     ],
     // A JSON config naming its own folder.
@@ -613,7 +619,7 @@ Deno.test("mobile add: the web-export check follows webDir, server.url and Capac
         "capacitor.config.json": JSON.stringify({ appId: "a.b", webDir: "dist" }),
         "dist/index.html": "x",
       },
-      ["cap", "sync"],
+      ["--no", "cap", "sync"],
       undefined,
     ],
     // server.url: cap sync skips the copy check.
@@ -623,7 +629,7 @@ Deno.test("mobile add: the web-export check follows webDir, server.url and Capac
           "export default { appId: 'a.b', webDir: 'out', server: { url: 'http://10.0.0.2:3000' } };\n",
         "out/index.html": null,
       },
-      ["cap", "sync"],
+      ["--no", "cap", "sync"],
       undefined,
     ],
     // A webDir computed by code: left to Capacitor.
@@ -633,7 +639,7 @@ Deno.test("mobile add: the web-export check follows webDir, server.url and Capac
           "const d = () => 'out';\nexport default { appId: 'a.b', webDir: d() };\n",
         "out/index.html": null,
       },
-      ["cap", "sync"],
+      ["--no", "cap", "sync"],
       undefined,
     ],
   ];

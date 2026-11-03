@@ -38,14 +38,14 @@ export const EXPO_SDK_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   "text-to-speech": {
     npm: "@capacitor-community/text-to-speech",
-    version: "^8.0.2",
+    version: "8.0.2",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "expo-speech's speak / stop / getAvailableVoicesAsync on the OS speech engine " +
       "(AVSpeechSynthesizer / Android TextToSpeech; the Android WebView has no speechSynthesis)",
   },
   brightness: {
     npm: "@capacitor-community/screen-brightness",
-    version: "^8.0.0",
+    version: "8.0.0",
     capacitorMajor: CAPACITOR_MAJOR,
     // WRITE_SETTINGS is special access: declared here, granted by the user in the settings
     // screen requestPermissionsAsync() opens.
@@ -57,7 +57,7 @@ export const EXPO_SDK_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   print: {
     npm: "@capgo/capacitor-printer",
-    version: "^8.1.4",
+    version: "8.1.4",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "expo-print's printAsync (HTML or a file through the system print dialog; a " +
       "WebView cannot print by itself), printToFileAsync (HTML to PDF) and iOS's " +
@@ -66,7 +66,7 @@ export const EXPO_SDK_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   "intent-launcher": {
     npm: "@capgo/capacitor-intent-launcher",
-    version: "^8.3.33",
+    version: "8.3.33",
     capacitorMajor: CAPACITOR_MAJOR,
     notes:
       "expo-intent-launcher's startActivityAsync / openApplication / getApplicationIconAsync " +
@@ -74,7 +74,7 @@ export const EXPO_SDK_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   contacts: {
     npm: "@capgo/capacitor-contacts",
-    version: "^8.1.4",
+    version: "8.1.4",
     capacitorMajor: CAPACITOR_MAJOR,
     iosPlist: { NSContactsUsageDescription: "Find and save your contacts." },
     androidPermissions: ["android.permission.READ_CONTACTS", "android.permission.WRITE_CONTACTS"],
@@ -85,7 +85,7 @@ export const EXPO_SDK_CAPABILITIES: Readonly<Record<string, MobileCapability>> =
   },
   calendar: {
     npm: "@ebarooni/capacitor-calendar",
-    version: "^8.7.1",
+    version: "8.7.1",
     capacitorMajor: CAPACITOR_MAJOR,
     iosPlist: {
       NSCalendarsFullAccessUsageDescription: "Add and show your events.",

@@ -2,7 +2,7 @@
   "name": "denext-drizzle-example",
   "private": true,
   "dependencies": {
-    "drizzle-orm": "^0.44.7",
+    "drizzle-orm": "^0.45.2",
     "better-sqlite3": "file:./vendor/better-sqlite3"
   }
 }

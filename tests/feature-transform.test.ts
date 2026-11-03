@@ -281,8 +281,6 @@ Deno.test("e2e (--define): an ON flag keeps the gated branch in deno bundle", as
 // the marker string it alone carries) is gone from the shipped bundle.
 Deno.test({
   name: "SPA export (esbuild path): feature() folds in .ts/.mts/.js/.mjs modules",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_spa_feature_" });
   const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;

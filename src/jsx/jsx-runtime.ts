@@ -103,6 +103,8 @@ export const jsxs: (
  * the runtime imports nothing of the client renderer.
  */
 const JSX_DEV: unique symbol = Symbol.for("denext.jsxDev");
+/** The server render's owner recorder (src/jsx/server-owner.ts), installed by `denext dev`. */
+const SERVER_OWNERS: unique symbol = Symbol.for("denext.serverOwners");
 
 /**
  * Development-mode JSX factory — what a dev build's JSX compiles to (esbuild's `jsxDev`, Deno's
@@ -110,7 +112,8 @@ const JSX_DEV: unique symbol = Symbol.for("denext.jsxDev");
  * (`{ fileName, lineNumber, columnNumber }` of the JSX) and `self`. The element is the one
  * `jsx` makes; when the client dev path is installed it also notes the component rendering
  * (the element's owner) and `source`, which `captureOwnerStack()` and the DevTools owner stack
- * read. A production build compiles to `jsx`, so none of this is in it.
+ * read; during a server render the dev server's recorder notes the rendering Server Component
+ * instead. A production build compiles to `jsx`, so none of this is in it.
  */
 export const jsxDEV = (
   type: VNodeType,
@@ -121,7 +124,12 @@ export const jsxDEV = (
   _self?: unknown,
 ): VNode => {
   const el = createElement(type, props, key);
-  (globalThis as { [JSX_DEV]?: (el: VNode, source: unknown) => void })[JSX_DEV]?.(el, source);
+  const g = globalThis as {
+    [JSX_DEV]?: (el: VNode, source: unknown) => void;
+    [SERVER_OWNERS]?: { record(el: VNode, source: unknown): void };
+  };
+  g[JSX_DEV]?.(el, source);
+  g[SERVER_OWNERS]?.record(el, source);
   return el;
 };
 

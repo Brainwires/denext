@@ -86,8 +86,6 @@ Deno.test("react/compiler-runtime entry: exactly React's surface, `c`, on denext
 
 Deno.test({
   name: "next-compat drop-in: a React-Compiler-precompiled library in node_modules renders on SSR",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_compiler_rt_nc_" }));
   try {
@@ -147,8 +145,6 @@ async function localizeChunks(clientDir: string): Promise<void> {
 Deno.test({
   name:
     "compat SPA build: a React-Compiler-precompiled library resolves to the shared prebuilt runtime",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext_compiler_rt_spa_" }));
   try {

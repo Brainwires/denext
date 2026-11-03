@@ -25,10 +25,15 @@
 
 import { Activity, cache, ViewTransition } from "../runtime/react-extras.ts";
 import { REACT_COMPAT_VERSION } from "./react-version.ts";
-import { dispatched, type ReactSharedInternals, sharedInternals } from "./react-internals.ts";
-export type { ReactDispatcher, ReactSharedInternals } from "./react-internals.ts";
 import {
-  createContext,
+  createReactContext,
+  dispatched,
+  type ReactSharedInternals,
+  sharedInternals,
+} from "./react-internals.ts";
+export type { ReactDispatcher, ReactSharedInternals } from "./react-internals.ts";
+import type { Context } from "../runtime/hooks.ts";
+import {
   Fragment,
   h,
   memo,
@@ -90,7 +95,18 @@ export type {
   PureComponent as PureClassComponent,
 } from "./class-base.ts";
 
-export { act, createContext, Fragment, memo, Profiler, startTransition, Suspense, SuspenseList };
+export { act, Fragment, memo, Profiler, startTransition, Suspense, SuspenseList };
+
+/**
+ * React's `createContext`: denext's context, whose provider and `.Consumer` a `react-reconciler`
+ * renderer can also render (see react-internals.ts).
+ *
+ * @param defaultValue The value read with no provider above.
+ * @returns The context.
+ */
+export function createContext<T>(defaultValue: T): Context<T> {
+  return createReactContext(defaultValue);
+}
 
 /**
  * React's shared internals: a `react-reconciler` renderer (React Native Skia, react-three-fiber,

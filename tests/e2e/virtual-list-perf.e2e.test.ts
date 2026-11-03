@@ -116,8 +116,6 @@ const SCROLL_SCRIPT = `(async () => {
 
 Deno.test({
   name: "perf: 1M variable rows scroll without long tasks and with bounded DOM (headless Chromium)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const result = await esbuild.build({
     stdin: { contents: ENTRY, loader: "js", resolveDir: FW },

@@ -16,6 +16,10 @@ import {
 import { createSchema, graphql } from "../packages/graphql/mod.ts";
 import { traceExport } from "../packages/graphql/trace.ts";
 
+// graphql-yoga's parse / validate caches (lru-cache) memoize their clock for 1 ms behind a timer:
+// let it fire inside each test rather than after it.
+Deno.test.afterEach(() => new Promise((r) => setTimeout(r, 10)));
+
 const noopLoad = (() => Promise.resolve({})) as unknown as ModuleLoader;
 
 let resolved = 0;

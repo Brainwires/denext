@@ -114,8 +114,6 @@ function assertHydratedGlobalError(html: string, marker: string, entry = GE_ENTR
 
 Deno.test({
   name: "next-compat build: global-error.tsx gets a hydration entry the 500 document loads",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ge_compat_build_" });
   try {
@@ -146,8 +144,6 @@ Deno.test({
 
 Deno.test({
   name: "export (next-compat): global-error.tsx is pre-rendered to 500.html and hydrates",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ge_compat_export_" });
   try {
@@ -173,8 +169,6 @@ Deno.test({
 
 Deno.test({
   name: "export (native): global-error.tsx is pre-rendered to 500.html and hydrates",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ge_native_export_" });
   try {
@@ -193,8 +187,6 @@ Deno.test({
 
 Deno.test({
   name: "export: an app without global-error.tsx writes no 500.html and no entry",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ge_none_export_" });
   try {
@@ -214,8 +206,6 @@ Deno.test({
 
 Deno.test({
   name: "native build: a route at /global-error keeps its own bundle beside the global-error entry",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ge_route_collision_" });
   try {

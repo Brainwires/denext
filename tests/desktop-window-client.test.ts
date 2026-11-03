@@ -14,6 +14,7 @@ import {
   makeWindowDraggable,
   maximizeWindow,
   minimizeWindow,
+  onBeforeQuit,
   onCloseRequested,
   onDisplayChanged,
   onFileDrop,
@@ -185,7 +186,7 @@ Deno.test("window client: onCloseRequested guards, acks, then answers with the h
     // A replayed request that is no longer current runs no handler and sends no answer.
     current = false;
     rt.emit("window", "closeRequested", { id: "r1" });
-    await new Promise((r) => setTimeout(r, 30));
+    await rt.settled();
     assertEquals(responses.length, 2);
     stopA();
     assert(
@@ -220,6 +221,104 @@ Deno.test("window client: a throwing close handler keeps the window open", async
       await until(() => responses.length === 1);
       assertEquals(responses[0], { id: "x", close: false });
       stop();
+    });
+  } finally {
+    console.error = errors;
+  }
+});
+
+Deno.test("window client: a close handler is told why — close, or the app quitting", async () => {
+  let reason: unknown = "quit";
+  const responses: unknown[] = [];
+  await inDesktop({
+    window: {
+      setCloseGuard: () => null,
+      closeAck: () => ({ current: true, reason }),
+      closeRespond: (args) => void responses.push(args),
+    },
+  }, async (rt) => {
+    const seen: string[] = [];
+    // Close to the tray, but let the app quit.
+    const stop = onCloseRequested((event) => {
+      seen.push(event.reason);
+      return event.reason === "quit";
+    });
+    // A handler written without the event keeps working.
+    const plain = onCloseRequested(() => true);
+    rt.emit("window", "closeRequested", { id: "q" });
+    await until(() => responses.length === 1);
+    assertEquals(responses[0], { id: "q", close: true });
+    reason = undefined; // a runtime that does not say: a plain close
+    rt.emit("window", "closeRequested", { id: "c" });
+    await until(() => responses.length === 2);
+    assertEquals(responses[1], { id: "c", close: false });
+    assertEquals(seen, ["quit", "close"]);
+    stop();
+    plain();
+  });
+});
+
+Deno.test("window client: onBeforeQuit guards quits only, runs first, and its refusal asks no close handler", async () => {
+  let reason = "quit";
+  const responses: unknown[] = [];
+  const errors = console.error;
+  console.error = () => {};
+  try {
+    await inDesktop({
+      window: {
+        setCloseGuard: () => null,
+        closeAck: () => ({ current: true, reason }),
+        closeRespond: (args) => void responses.push(args),
+      },
+    }, async (rt) => {
+      const order: string[] = [];
+      let keep: boolean | void = false;
+      const guards = () => rt.calls.filter((c) => c.method === "setCloseGuard").map((c) => c.args);
+      const stopQuit = onBeforeQuit(() => {
+        order.push("beforeQuit");
+        return keep;
+      });
+      await until(() => guards().length === 1);
+      assertEquals(guards(), [{ enabled: true, quitOnly: true }]);
+      const stopClose = onCloseRequested(({ reason }) => {
+        order.push(`close:${reason}`);
+      });
+      await until(() => guards().length === 2);
+      assertEquals(guards()[1], { enabled: true }, "a close handler guards every close");
+      rt.emit("window", "closeRequested", { id: "1" });
+      await until(() => responses.length === 1);
+      assertEquals(responses[0], { id: "1", close: false });
+      assertEquals(order, ["beforeQuit"], "refused before any close handler");
+      keep = undefined;
+      rt.emit("window", "closeRequested", { id: "2" });
+      await until(() => responses.length === 2);
+      assertEquals(responses[1], { id: "2", close: true });
+      assertEquals(order, ["beforeQuit", "beforeQuit", "close:quit"]);
+      // A plain close does not ask the before-quit handlers.
+      reason = "close";
+      rt.emit("window", "closeRequested", { id: "3" });
+      await until(() => responses.length === 3);
+      assertEquals(order.at(-1), "close:close");
+      assertEquals(order.length, 4);
+      // Without close handlers the guard goes back to quits only, then off.
+      stopClose();
+      await until(() => guards().length === 3);
+      assertEquals(guards()[2], { enabled: true, quitOnly: true });
+      stopQuit();
+      stopQuit();
+      await until(() => guards().length === 4);
+      assertEquals(guards()[3], { enabled: false });
+      // A throwing before-quit handler keeps the app running.
+      const stopThrow = onBeforeQuit(() => {
+        throw new Error("boom");
+      });
+      reason = "quit";
+      await until(() => guards().length === 5 && rt.openStreams() === 1);
+      rt.emit("window", "closeRequested", { id: "4" });
+      const fourth = () => responses.find((r) => (r as { id: string }).id === "4");
+      await until(() => fourth() !== undefined);
+      assertEquals(fourth(), { id: "4", close: false });
+      stopThrow();
     });
   } finally {
     console.error = errors;
@@ -265,7 +364,7 @@ Deno.test("window client: onFileDrop takes the queue on each signal", async () =
     });
     // A replayed signal finds the queue empty.
     rt.emit("window", "drop", null);
-    await new Promise((r) => setTimeout(r, 30));
+    await rt.settled();
     assertEquals(drops.length, 1);
     stop();
   });
@@ -321,13 +420,13 @@ Deno.test("makeWindowDraggable: CSS app-region always; the WebKit path moves the
         assertEquals(el.styleMap.get("app-region"), "drag");
         el.fire("pointerdown", { button: 0, pointerId: 1, screenX: 100, screenY: 100 });
         await until(() => calls(rt).includes("window.state"));
-        await new Promise((r) => setTimeout(r, 10));
+        await rt.settled();
         el.fire("pointermove", { pointerId: 1, screenX: 130, screenY: 90 });
         await until(() => calls(rt).includes("window.setPosition"));
         assertEquals(rt.calls.at(-1)!.args, { x: 31, y: -8 });
         el.fire("pointerup", { pointerId: 1 });
         el.fire("pointermove", { pointerId: 1, screenX: 500, screenY: 500 });
-        await new Promise((r) => setTimeout(r, 20));
+        await rt.settled();
         assertEquals(rt.calls.filter((c) => c.method === "setPosition").length, 1);
         // An interactive child keeps its own mouse handling.
         el.fire("pointerdown", {
@@ -412,10 +511,10 @@ Deno.test("makeWindowDraggable: a double click does the user's title bar action 
       const reads = () => calls(rt).filter((c) => c === "window.titleBarPreferences").length;
       el.fire("dblclick", { button: 0 });
       await until(() => reads() === 4);
-      await new Promise((r) => setTimeout(r, 10));
+      await rt.settled();
       action = "maximize";
       el.fire("dblclick", { button: 0, target: { closest: () => ({}) } });
-      await new Promise((r) => setTimeout(r, 30));
+      await rt.settled();
       assertEquals(actions().length, 3);
       undo();
       assertEquals(el.listeners.size, 0);
@@ -534,7 +633,7 @@ Deno.test("window client: a close request without a string id is ignored; a stal
     rt.emit("window", "closeRequested", null);
     rt.emit("window", "closeRequested", { id: "old" }); // acked, but not current
     await until(() => calls(rt).includes("window.closeAck"));
-    await new Promise((r) => setTimeout(r, 20));
+    await rt.settled();
     assertEquals(asked, 0);
     assertEquals(calls(rt).filter((c) => c === "window.closeAck").length, 1);
     assert(!calls(rt).includes("window.closeRespond"));
@@ -546,7 +645,7 @@ Deno.test("window client: a close request without a string id is ignored; a stal
     stop();
     stop(); // idempotent: the guard is released once
     await until(() => rt.calls.filter((c) => c.method === "setCloseGuard").length === 2);
-    await new Promise((r) => setTimeout(r, 10));
+    await rt.settled();
     assertEquals(
       rt.calls.filter((c) => c.method === "setCloseGuard").map((c) => c.args),
       [{ enabled: true }, { enabled: false }],
@@ -608,7 +707,7 @@ Deno.test("window client: onFileDrop drops malformed drops and files; defaults m
     });
     rt.emit("window", "drop", null); // a non-array answer is no drops
     await until(() => rt.calls.length === 2);
-    await new Promise((r) => setTimeout(r, 10));
+    await rt.settled();
     assertEquals(drops.length, 1);
     stop();
   });
@@ -630,7 +729,7 @@ Deno.test("window client: onFileDrop delivers nothing after unsubscribe, even mi
     await until(() => release !== undefined);
     stop(); // the take is in flight
     release();
-    await new Promise((r) => setTimeout(r, 20));
+    await rt.settled();
     assertEquals(drops, []);
   });
 });
@@ -652,7 +751,7 @@ Deno.test("makeWindowDraggable: a legacy WebView2 host scales by devicePixelRati
           await until(() => calls(rt).includes("window.capabilities"));
           el.fire("pointerdown", { button: 0, pointerId: 5, screenX: 10, screenY: 10 });
           await until(() => calls(rt).includes("window.state"));
-          await new Promise((r) => setTimeout(r, 10));
+          await rt.settled();
           el.fire("pointermove", { pointerId: 5, screenX: 20, screenY: 15 });
           await until(() => calls(rt).includes("window.setPosition"));
           // origin (1, 2) + delta (10, 5) × scale
@@ -682,13 +781,13 @@ Deno.test("makeWindowDraggable: ignores other buttons and pointers; a failed sta
       assertEquals(el.captured, []);
       el.fire("pointerdown", { button: 0, pointerId: 1, screenX: 0, screenY: 0 });
       await until(() => calls(rt).includes("window.state"));
-      await new Promise((r) => setTimeout(r, 10));
+      await rt.settled();
       el.fire("pointermove", { pointerId: 1, screenX: 50, screenY: 50 }); // the drag was cancelled
       el.fire("pointerup", { pointerId: 1 });
       failState = false;
       el.fire("pointerdown", { button: 0, pointerId: 2, screenX: 0, screenY: 0 });
       await until(() => rt.calls.filter((c) => c.method === "state").length === 2);
-      await new Promise((r) => setTimeout(r, 10));
+      await rt.settled();
       el.fire("pointermove", { pointerId: 9, screenX: 50, screenY: 50 }); // another pointer
       el.fire("pointerup", { pointerId: 9 }); // does not end pointer 2's drag
       el.fire("pointermove", { pointerId: 2, screenX: 4, screenY: 6 });
@@ -715,7 +814,7 @@ Deno.test("makeWindowDraggable: moves during an in-flight setPosition coalesce t
       const undo = makeWindowDraggable(el);
       el.fire("pointerdown", { button: 0, pointerId: 1, screenX: 0, screenY: 0 });
       await until(() => calls(rt).includes("window.state"));
-      await new Promise((r) => setTimeout(r, 10));
+      await rt.settled();
       el.fire("pointermove", { pointerId: 1, screenX: 1, screenY: 1 });
       await until(() => releases.length === 1);
       el.fire("pointermove", { pointerId: 1, screenX: 2, screenY: 2 });
@@ -723,7 +822,7 @@ Deno.test("makeWindowDraggable: moves during an in-flight setPosition coalesce t
       releases[0]();
       await until(() => releases.length === 2);
       releases[1]();
-      await new Promise((r) => setTimeout(r, 10));
+      await rt.settled();
       assertEquals(rt.calls.filter((c) => c.method === "setPosition").map((c) => c.args), [
         { x: 2, y: 3 },
         { x: 4, y: 5 }, // the intermediate move (2, 2) was skipped

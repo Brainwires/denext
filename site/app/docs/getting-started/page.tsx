@@ -103,14 +103,25 @@ curl -fsSL https://denext.dev/install.sh | sh -s -- --uninstall`}
         With Deno 2.9+ installed, every command on this page also works without the binary — replace
         {" "}
         <code>denext</code> with <code>deno run -A jsr:@denext/denext/cli</code>, and{" "}
-        <code>denext task</code> with <code>deno task</code>.
+        <code>denext task</code> with <code>deno task</code>. Deno applies the working directory's
+        {" "}
+        <code>deno.json</code> to that CLI, so add <code>--no-config</code>{" "}
+        on a repository you don't trust.
       </p>
       <p>
         The installer downloads the release archive for your platform (<code>
           denext-&lt;target&gt;.tar.gz
         </code>), verifies it against the release's <code>SHA256SUMS</code> (or the per-archive{" "}
         <code>&lt;archive&gt;.sha256</code>) and refuses to install without a checksum —{" "}
-        <code>DENEXT_INSECURE=1</code> is the one loud override. It resolves the{" "}
+        <code>DENEXT_INSECURE=1</code>{" "}
+        is the one loud override. A checksum from the same release proves integrity, not origin, so
+        every archive also carries a build-provenance attestation signed for the release workflow:
+        with the GitHub CLI (<code>gh</code>) installed and signed in, the archive must pass{" "}
+        <code>gh attestation verify</code>{" "}
+        or nothing is installed (<code>DENEXT_REQUIRE_ATTESTATION=1</code>{" "}
+        refuses an install that can't check it). On Windows, a signed <code>denext.exe</code>{" "}
+        must also carry a valid Authenticode signature of its own: a file Windows vouches for only
+        through a system catalog (one of its own binaries) is refused. It resolves the{" "}
         <em>latest stable</em>{" "}
         release: release candidates are GitHub prereleases and are never "latest", so pick one with
         {" "}

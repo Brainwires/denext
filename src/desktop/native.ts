@@ -49,6 +49,11 @@ export function warnStorageFallback(cap: string): void {
   );
 }
 
+/** Forget which capabilities were warned about (tests: each starts with no warning given). */
+export function resetStorageFallbackWarningsForTesting(): void {
+  warned.clear();
+}
+
 // --- secure store (cap "secureStore") ---------------------------------------
 
 /** `secureStore.get` on desktop: the OS keychain entry, or `null`. */
@@ -208,12 +213,37 @@ export async function fsPauseDownload(id: string): Promise<boolean> {
 
 /**
  * Cancel desktop download `id`: a running one stops, and a paused one's kept partial file and
- * sidecar are dropped.
+ * sidecar are dropped (an earlier launch's too), with its record.
  *
  * @param id The download's id.
+ * @returns Whether it was cancelled (`false` for one that had already finished).
  */
-export async function fsCancelDownload(id: string): Promise<void> {
-  await desktopRpc("fs", "cancelDownload", { id });
+export async function fsCancelDownload(id: string): Promise<boolean> {
+  const out = await desktopRpc<{ cancelled?: unknown }>("fs", "cancelDownload", { id });
+  return out?.cancelled === true;
+}
+
+/**
+ * The runtime's records of the downloads started with an id (kept across restarts): running,
+ * paused, failed, and done ones not yet forgotten, in the shape the transfer plugin lists them.
+ *
+ * @returns The records, as the runtime sends them.
+ */
+export async function fsListDownloads(): Promise<Record<string, unknown>[]> {
+  const out = await desktopRpc<{ transfers?: unknown }>("fs", "listDownloads", {});
+  const list = Array.isArray(out?.transfers) ? out.transfers : [];
+  return list.filter((r): r is Record<string, unknown> => typeof r === "object" && r !== null);
+}
+
+/**
+ * Drop settled desktop download `id`'s record (a failed one's kept partial file with it).
+ *
+ * @param id The download's id.
+ * @returns Whether a record was dropped.
+ */
+export async function fsForgetDownload(id: string): Promise<boolean> {
+  const out = await desktopRpc<{ forgotten?: unknown }>("fs", "forgetDownload", { id });
+  return out?.forgotten === true;
 }
 
 // --- sqlite (cap "sqlite") --------------------------------------------------

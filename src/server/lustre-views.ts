@@ -7,7 +7,10 @@
 // registered view and a token the server signed over exactly these props (under the Lustre
 // namespace, so a live-view token never mounts one; either failing is `gone`); the props decode;
 // the view's `authorize` in the viewer's session (a throw is a deny); a post-await connected + cap
-// re-check. Then a runtime parked here under the `resume` id (same view, same signed props) is
+// re-check. A connection's mounts run one at a time in arrival order (`createMountQueue`), each
+// for at most `renderTimeoutSeconds`; an unmount or a close cancels the ones still waiting or
+// running. Then a runtime parked here under the `resume` id (same view, same signed props
+// whatever token now carries them — `resumeKey`, same viewer — `viewerIdentity`) is
 // reattached, or a new one starts (`init` runs). Lustre's model is not serialisable, so nothing is
 // written to the shared view store: another instance runs `init` again.
 //
@@ -43,12 +46,14 @@ import { inRootContext } from "./root-context.ts";
 import {
   type AdmitPolicy,
   authorizeView,
+  createMountQueue,
   endView,
   enqueueEvent,
   type MountShape,
-  mountView,
+  resumeKey,
   str,
   takeParked,
+  viewerIdentity,
   type ViewHubBaseDeps,
   type ViewHubFrames,
 } from "./view-hub-common.ts";
@@ -77,8 +82,10 @@ export interface LustreViewInstance {
 interface Instance<C> extends LustreViewInstance {
   vid: string;
   props: unknown;
-  /** `view + "\0" + token`: a resume must present the same signed props. */
+  /** `resumeKey` (view-hub-common.ts): a resume must present the same signed props. */
   signed: string;
+  /** The viewer it was mounted for (`viewerIdentity`): only the same viewer resumes it. */
+  identity: string;
   owner: C;
   attached: boolean;
   stopped: boolean;
@@ -316,6 +323,9 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
     connect(inst);
   };
 
+  /** Each connection's mounts, placed in arrival order. */
+  const mounts = createMountQueue<C>(deps);
+
   const atCap = (conn: C, vid: string): boolean =>
     !conn.lustreViews.has(vid) && conn.lustreViews.size >= deps.limits().maxViewsPerConnection;
 
@@ -333,6 +343,7 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
     vid: string,
     admitted: { def: LustreViewDef; props: unknown },
     signed: string,
+    identity: string,
   ): Instance<C> | null => {
     const { def, props } = admitted;
     let self: Instance<C> | null = null;
@@ -350,6 +361,7 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
       def,
       props,
       signed,
+      identity,
       owner: conn,
       attached: false,
       stopped: false,
@@ -364,17 +376,26 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
     return self;
   };
 
-  /** Put an admitted view on the connection: the runtime parked here, else a new one. */
-  const place = (
+  /**
+   * Put an admitted view on the connection: the runtime parked here for the same viewer, else a
+   * new one.
+   */
+  const place = async (
     conn: C,
     shape: MountShape,
     admitted: { def: LustreViewDef; props: unknown },
-  ): void => {
-    const signed = `${shape.view}\0${shape.token}`;
+    live: () => boolean,
+  ): Promise<void> => {
+    const signed = await resumeKey(shape.view, shape.props);
+    const identity = await viewerIdentity(deps, conn);
+    if (!live()) return;
+    if (atCap(conn, shape.vid)) {
+      return deps.sendError(conn, "limit", "too many views", { subId: shape.vid });
+    }
     const replaced = own(conn, shape.vid);
     if (replaced) stop(replaced);
-    const inst = takeParked(parkedViews, shape.resume, shape.view, signed) ??
-      start(conn, shape.vid, admitted, signed);
+    const inst = takeParked(parkedViews, shape.resume, shape.view, signed, identity) ??
+      start(conn, shape.vid, admitted, signed, identity);
     if (inst) attach(conn, shape.vid, inst);
   };
 
@@ -437,8 +458,7 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
   };
 
   return {
-    mount: (conn, msg) =>
-      mountView(deps, conn, msg, policy(conn), (shape, admitted) => place(conn, shape, admitted)),
+    mount: (conn, msg) => mounts.mount(conn, msg, policy(conn), place),
 
     event(conn, msg) {
       const vid = str(msg.vid, 64);
@@ -456,6 +476,7 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
     },
 
     unmount(conn, vid) {
+      if (typeof vid === "string") mounts.cancel(conn, vid);
       const inst = typeof vid === "string" ? own(conn, vid) : undefined;
       if (inst) stop(inst);
     },
@@ -466,6 +487,7 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
     },
 
     drop(conn) {
+      mounts.cancel(conn);
       for (const v of [...conn.lustreViews.values()]) {
         const inst = v as Instance<C>;
         conn.lustreViews.delete(inst.vid);
@@ -475,6 +497,7 @@ export function createLustreViewHub<C extends LustreConn>(deps: LustreHubDeps<C>
     },
 
     discard(conn) {
+      mounts.cancel(conn);
       for (const v of [...conn.lustreViews.values()]) stop(v as Instance<C>);
       conn.lustreViews.clear();
       conn.recoverLustre = undefined;

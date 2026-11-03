@@ -59,6 +59,4 @@ const TAMAGUI: Bed = {
 
 Deno.test({
   name: "migration bed: Tamagui's starter (Expo app) builds, renders and navigates on the web",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, (t) => runBed(t, TAMAGUI));

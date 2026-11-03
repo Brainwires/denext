@@ -433,3 +433,47 @@ Deno.test("native passkeys: the origin gate and the feature switches", async () 
     assertEquals(res?.status ?? 404, 404);
   }
 });
+
+Deno.test("native passkeys: a foreign origin is refused on every row", async () => {
+  const a = await app();
+  const evil = { origin: "https://evil.test" };
+  const options = await post(a, "/native/passkey/authenticate", {}, evil);
+  assertEquals(options.status, 403);
+  const headers = { ...await bearer(a), ...evil };
+  assertEquals((await post(a, "/native/passkey/register/options", {}, headers)).status, 403);
+  assertEquals((await post(a, "/native/passkey/register", {}, headers)).status, 403);
+});
+
+Deno.test("native passkeys: a presence-only passkey of a user owing no second factor signs in", async () => {
+  const a = await app({ androidApps: [ANDROID], userVerification: "preferred" });
+  const auth = await Authenticator.create();
+  auth.flags = 0x01; // user present, not verified
+  assertEquals((await registerNative(a, auth)).status, 200);
+  const res = await signInNative(a, auth);
+  assertEquals(res.status, 200);
+  const tokens = await res.json();
+  const session = await verifyNativeAccessToken(a.config, tokens.access_token);
+  assertEquals(session?.amr, ["hwk"], "one factor: no mfa claim");
+});
+
+Deno.test("native passkeys: a vanished owner and a refusing signIn callback are refused", async () => {
+  const a = await app();
+  const auth = await Authenticator.create();
+  assertEquals((await registerNative(a, auth)).status, 200);
+  // callbacks.signIn says no: 403, reported as access_denied.
+  const denied = { ...a, config: { ...a.config, callbacks: { signIn: () => false } } };
+  const refused = await signInNative(denied, auth);
+  assertEquals(refused.status, 403);
+  assertEquals(await refused.json(), { error: "access denied" });
+  assert(a.failures.includes("access_denied"));
+  // The passkey's owner no longer resolves: the uniform passkey refusal.
+  const getUser = a.adapter.getUser;
+  a.adapter.getUser = () => Promise.resolve(undefined);
+  try {
+    const gone = await signInNative(a, auth);
+    assertEquals(gone.status, 401);
+    assertEquals(await gone.json(), { error: "invalid passkey" });
+  } finally {
+    a.adapter.getUser = getUser;
+  }
+});

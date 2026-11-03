@@ -12,12 +12,20 @@
 // - **The runtime mock** (dev) is Start's recursive Proxy: any property, call or `new` gives
 //   another mock. In the browser it reports its first use of each access (`mockAccess`:
 //   `console.error` by default, `"warn"`, `"off"`); on the server it is silent, as in Start.
+//   Its message lists the import trace (the app modules from an entry to the importer), as
+//   Start's dev server builds it from the imports resolved so far ({@link importTrail}).
 //
 // The ids are Start's (`tanstack-start-import-protection:…`); esbuild resolves them into the
 // plugin's own namespace and loads them with Start's loaders.
 
 import { relative } from "@std/path";
-import type { ImportProtection, ProtectionEnv } from "./protect.ts";
+import {
+  type ImportProtection,
+  isAppModule,
+  type ProtectionEnv,
+  type TraceStep,
+  traceTo,
+} from "./protect.ts";
 import type { StartMocks } from "./toolchain.ts";
 
 /** The namespace Start's mock modules load from. */
@@ -43,7 +51,14 @@ const rel = (path: string, root: string) => relative(root, path).replace(/\\/g, 
 export function mockEdgeId(
   mocks: StartMocks,
   protection: ImportProtection,
-  v: { env: ProtectionEnv; importer: string; importerCode: string; specifier: string },
+  v: {
+    env: ProtectionEnv;
+    importer: string;
+    importerCode: string;
+    specifier: string;
+    /** The app modules from an entry to the importer (the runtime mock's message lists them). */
+    trace?: TraceStep[];
+  },
 ): string {
   let names: string[] = [];
   try {
@@ -54,7 +69,7 @@ export function mockEdgeId(
   const runtime = protection.command === "build"
     ? `${mocks.MOCK_BUILD_PREFIX}${buildMocks++}`
     : mocks.mockRuntimeModuleIdFromViolation(
-      { env: v.env, importer: v.importer, specifier: v.specifier, trace: [] },
+      { env: v.env, importer: v.importer, specifier: v.specifier, trace: v.trace ?? [] },
       protection.mockAccess,
       protection.root,
     );
@@ -72,7 +87,13 @@ export function mockEdgeId(
 export function selfDenialSource(
   mocks: StartMocks,
   protection: ImportProtection,
-  v: { env: ProtectionEnv; file: string; source: string },
+  v: {
+    env: ProtectionEnv;
+    file: string;
+    source: string;
+    /** The app modules from an entry to the file (the runtime mock's message lists them). */
+    trace?: TraceStep[];
+  },
 ): string {
   let names: string[] = [];
   try {
@@ -82,7 +103,12 @@ export function selfDenialSource(
   }
   if (protection.command === "build") return mocks.generateSelfContainedMockModule(names).code;
   const runtime = mocks.mockRuntimeModuleIdFromViolation(
-    { env: v.env, importer: v.file, specifier: rel(v.file, protection.root), trace: [] },
+    {
+      env: v.env,
+      importer: v.file,
+      specifier: rel(v.file, protection.root),
+      trace: v.trace ?? [],
+    },
     protection.mockAccess,
     protection.root,
   );
@@ -104,4 +130,62 @@ export function mockModuleSource(mocks: StartMocks, id: string): string {
     return mocks.loadMockRuntimeModule(id.slice(mocks.MOCK_RUNTIME_PREFIX.length)).code;
   }
   return mocks.loadSilentMockModule().code;
+}
+
+/** One import an app module made, as the build saw it (before it was resolved). */
+export interface SeenImport {
+  /** The importing module (absolute). */
+  importer: string;
+  /** The import as written. */
+  specifier: string;
+  /** The directory it resolves from. */
+  resolveDir: string;
+  /** esbuild's import kind. */
+  kind: string;
+}
+
+/** Each app module's imports in a dev build, and the trace to a module they lead to. */
+export interface ImportTrail {
+  /** Note an import (one from a module outside the app is left out). */
+  note(seen: SeenImport): void;
+  /** The app modules from an entry to `target` (absolute), entry first. */
+  trace(target: string): Promise<TraceStep[]>;
+}
+
+/**
+ * The trace a mocked import's runtime message lists, as Start's dev server builds it from the
+ * imports resolved so far (its `ImportGraph` and `buildTrace`): an app module is loaded only
+ * after its importers resolved the import that reached it, so every module above a violation
+ * has been noted by the time the violation resolves. The noted imports are resolved only when a
+ * trace is asked for (a violation, rare), each once, by `resolve`.
+ *
+ * @param resolve The module an import resolves to (absolute), or `null` (a package, external).
+ * @param cwd The build's working directory (app modules lie under it).
+ * @param maxDepth How many importers a trace walks up at most.
+ */
+export function importTrail(
+  resolve: (seen: SeenImport) => Promise<string | null>,
+  cwd: string,
+  maxDepth: number,
+): ImportTrail {
+  let pending: SeenImport[] = [];
+  const importers = new Map<string, Array<{ from: string; specifier: string }>>();
+  return {
+    note(seen) {
+      if (isAppModule(seen.importer, cwd)) pending.push(seen);
+    },
+    async trace(target) {
+      const batch = pending;
+      pending = [];
+      const resolved = await Promise.all(batch.map((seen) => resolve(seen).catch(() => null)));
+      batch.forEach((seen, i) => {
+        const to = resolved[i];
+        if (!to) return;
+        const list = importers.get(to) ?? [];
+        list.push({ from: seen.importer, specifier: seen.specifier });
+        importers.set(to, list);
+      });
+      return traceTo({ importers }, target, cwd, maxDepth);
+    },
+  };
 }

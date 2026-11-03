@@ -75,6 +75,8 @@ Deno.test("jail hosts: on rc.6 a browser download gets its hosts and a `~` cache
       env: ["PUPPETEER_CACHE_DIR", "PUPPETEER_DOWNLOAD_BASE_URL", "PUPPETEER_SKIP_DOWNLOAD"],
       write: ["~/.cache/puppeteer"],
       net: ["storage.googleapis.com"],
+      // rc.6 sweeps executables out of a `~` path unless the entry keeps them (item 111)
+      executables: true,
     });
     assertEquals(pkgs.sharp.net, [
       "github.com",
@@ -132,6 +134,44 @@ Deno.test("jail workspace: a member's dependencies are configured in the root de
     );
     const again = await applyJailExceptions(member, { version: RC5, env: NO_ENV });
     assertEquals(again.action, "configured");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("jail workspace: an npm workspace's members (package.json workspaces) are read too", async () => {
+  const root = await project({
+    "deno.json": "{}\n",
+    "package.json": { private: true, workspaces: ["apps/web", "packages/*"] },
+    "apps/web/package.json": { dependencies: { keytar: "7" } },
+    "packages/ui/package.json": {
+      dependencies: { msw: "2" },
+      msw: { workerDirectory: ["public"] },
+    },
+    // Not a member: never read.
+    "tools/x/package.json": { dependencies: { sharp: "0.34" } },
+  });
+  try {
+    // From the root, and from a member (the root's deno.json is the one written).
+    const r = await applyJailExceptions(root, { version: RC5, env: NO_ENV });
+    assertEquals(r.action, "written");
+    assertEquals(Object.keys(await packagesIn(root)).sort(), ["keytar", "msw"]);
+    assertEquals((await packagesIn(root)).msw, { write: ["packages/ui/public"] });
+    await Deno.writeTextFile(join(root, "deno.json"), "{}\n");
+    const fromMember = await applyJailExceptions(join(root, "apps/web"), {
+      version: RC5,
+      env: NO_ENV,
+    });
+    assertEquals(fromMember.configPath, join(root, "deno.json"));
+    assertEquals(Object.keys(await packagesIn(root)).sort(), ["keytar", "msw"]);
+    // Yarn's object form.
+    await Deno.writeTextFile(
+      join(root, "package.json"),
+      JSON.stringify({ workspaces: { packages: ["apps/*"] } }),
+    );
+    await Deno.writeTextFile(join(root, "deno.json"), "{}\n");
+    await applyJailExceptions(root, { version: RC5, env: NO_ENV });
+    assertEquals(Object.keys(await packagesIn(root)), ["keytar"]);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

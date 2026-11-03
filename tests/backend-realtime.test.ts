@@ -45,6 +45,8 @@ import {
 } from "../packages/backend/src/realtime-sql.ts";
 import {
   grantOf,
+  grantStampOf,
+  groupRereadQuery,
   identityOf,
   installRealtime,
   journaled,
@@ -318,6 +320,40 @@ Deno.test("realtime: a burst of 500 inserts is coalesced into one re-read per id
           ca.frames.length + ca2.frames.length + cb.frames.length
         } frames`,
     );
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime: frames sent while a re-authorization runs all arrive, in order", async () => {
+  // The Live hub re-authorizes a subscription when its TTL has run out and holds its frames
+  // meanwhile. It kept only the latest one, so a burst re-read during a slow re-authorization (a
+  // loaded server) lost whole frames of changes: 180 of 250 arrived, and the rest never came.
+  const env = await setUp();
+  try {
+    const ca = env.hub.conn(env.a);
+    await env.hub.subscribe(ca, "notes");
+    const engine = realtimeEngine();
+    const before = engine.stats.frames;
+    const release = env.hub.holdAuth();
+    ca.channelSubs.get("s1")!.authExpires = 0; // the TTL ran out
+    for (let i = 1; i <= 250; i++) {
+      env.sql.insert("notes", { id: i, owner: A, body: `note ${i} ${"x".repeat(60)}` });
+    }
+    await engine.flush();
+    // Every frame of the burst has gone to the hub while the re-authorization is still held.
+    await until(() => engine.stats.frames - before >= 4, 30_000, "the burst's frames sent");
+    await settle();
+    assertEquals(changesOf(ca).length, 0, "held until the re-authorization answers");
+    release();
+    await until(
+      () => changesOf(ca).length === 250,
+      30_000,
+      () => `250 changes, got ${changesOf(ca).length} in ${ca.frames.length} frames`,
+    );
+    assertEquals(changesOf(ca).map((c) => Number(c.key)), [...Array(250)].map((_, i) => i + 1));
+    assertEquals(ca.frames.map((f) => f.seq), ca.frames.map((_, i) => i + 1));
+    assertEquals(ca.errors, []);
   } finally {
     await env.done();
   }
@@ -837,16 +873,28 @@ Deno.test("realtime: subscribe-time seed queries are bounded — a few at once, 
     env.sql.delay.seed = 0;
 
     // A signed-out connection opening (and closing) subscriptions as fast as it can: a burst of
-    // 32, then about 8 a second.
+    // 32, then 8 a second. The clock is held still, so a slow host's loop refills nothing.
     const anon = env.hub.conn();
-    let admitted = 0;
-    for (let i = 0; i < 48; i++) {
-      if ((await env.hub.subscribe(anon, "notes")).ok) admitted++;
-      env.hub.unsubscribe(anon);
+    const realNow = Date.now;
+    let clock = realNow();
+    Date.now = () => clock;
+    try {
+      const burst = async (n: number) => {
+        let admitted = 0;
+        for (let i = 0; i < n; i++) {
+          if ((await env.hub.subscribe(anon, "notes")).ok) admitted++;
+          env.hub.unsubscribe(anon);
+        }
+        return admitted;
+      };
+      assertEquals(await burst(48), 32);
+      assertEquals((await env.hub.subscribe(anon, "notes")).ok, false);
+      clock += 1000;
+      assertEquals(await burst(12), 8, "a second refills eight");
+      assert((await env.hub.subscribe(env.hub.conn(), "notes")).ok, "another connection's budget");
+    } finally {
+      Date.now = realNow;
     }
-    assert(admitted >= 32 && admitted < 40, `admitted ${admitted}`);
-    assertEquals((await env.hub.subscribe(anon, "notes")).ok, false);
-    assert((await env.hub.subscribe(env.hub.conn(), "notes")).ok, "another connection's budget");
   } finally {
     await env.done();
   }
@@ -1247,6 +1295,66 @@ Deno.test("realtime: a timestamptz key is spelled in UTC by the re-read and the 
   );
 });
 
+Deno.test("realtime: the re-read binds every filter value; the statement text never carries one", () => {
+  const { tables } = resolveRealtime({ tables: { notes: {} } });
+  const table = tables.get("notes")!;
+  const types = new Map([["id", "bigint"], ["owner", "text"]]);
+  const hostile = [
+    "x' or true; --",
+    "'); select pg_sleep(10); --",
+    " as r from ",
+    "$1",
+    "$' $& $` $$",
+    '") or true --',
+  ];
+  const benign = rereadQuery(table, { column: "owner", value: "alice" }, ["1"], types);
+  const benignGroup = groupRereadQuery(table, [{ column: "owner", value: "alice" }], ["1"], types);
+  const alice = { column: "owner", value: "alice" };
+  const benignTriple = groupRereadQuery(table, [undefined, alice, alice], ["1"], types);
+  const benignIn = groupRereadQuery(
+    table,
+    [parseFilter({ owner: { in: ["a", "b"] } })],
+    ["1"],
+    types,
+  );
+  for (const value of hostile) {
+    const filter = { column: "owner", value };
+    const one = rereadQuery(table, filter, ["1", value], types);
+    assertEquals(one.text, benign.text);
+    assertEquals(one.params, [JSON.stringify(["1", value]), value]);
+    const group = groupRereadQuery(table, [undefined, filter, filter], ["1"], types);
+    assertEquals(group.text, benignTriple.text);
+    assertEquals(group.params, [JSON.stringify(["1"]), value, value]);
+    const inList = parseFilter({ owner: { in: [value, "b"] } })!;
+    const grouped = groupRereadQuery(table, [inList], [value], types);
+    assertEquals(grouped.text, benignIn.text);
+    assertEquals(grouped.params, [JSON.stringify([value]), JSON.stringify([value, "b"])]);
+  }
+  assertEquals(
+    benignGroup.text,
+    `select to_jsonb(t."id") #>> '{}' as k, to_jsonb(t)::text as r, ` +
+      `coalesce(t."owner" = $2::text::text, false) as m0 from "notes" t ` +
+      `where t."id" = any(array(select jsonb_array_elements_text($1::jsonb)::bigint))`,
+  );
+});
+
+Deno.test("realtime: a grouped re-read keeps a catalog type spelled with $ as the catalog spells it", () => {
+  // `$'`, `$&` and `$$` are replacement patterns to String#replace: a column type whose quoted
+  // name holds one must reach the statement unchanged, not spliced with the statement's own text.
+  const { tables } = resolveRealtime({ tables: { notes: {} } });
+  const table = tables.get("notes")!;
+  for (const type of [`"price$'"`, `"tag$&"`, `"cents$$"`, `"x$\`"`]) {
+    const types = new Map([["id", "bigint"], ["amount", type]]);
+    const { text } = groupRereadQuery(table, [{ column: "amount", value: "1" }], ["1"], types);
+    assertEquals(
+      text,
+      `select to_jsonb(t."id") #>> '{}' as k, to_jsonb(t)::text as r, ` +
+        `coalesce(t."amount" = $2::text::${type}, false) as m0 from "notes" t ` +
+        `where t."id" = any(array(select jsonb_array_elements_text($1::jsonb)::bigint))`,
+    );
+  }
+});
+
 // ── Raw mode (Supabase postgres_changes), truncate, old rows, operators ─────
 
 const rawScope = (sub: string) => ({
@@ -1478,8 +1586,6 @@ async function captureTick(fn: () => Promise<unknown>): Promise<() => void> {
 
 Deno.test({
   name: "realtime publication: its tables join the registry, with triggers, and leave it",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({
       notes: { policy: ownerOnly },
@@ -1566,8 +1672,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime: a key naming a publication table is admitted once the publication is read",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({
       notes: { policy: ownerOnly },
@@ -1595,8 +1699,6 @@ Deno.test({
 
 Deno.test({
   name: "realtime: the notify source turns realtime triggers on; the logical one turns them off",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
     sql.catalog.triggers.set(
@@ -1640,8 +1742,6 @@ function assertUnderMigrationLock(sql: FakeRealtimeClient, match: RegExp): void 
 
 Deno.test({
   name: "realtime DDL at startup runs under the backend's migration lock",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
     sql.catalog.publication.push({
@@ -1703,8 +1803,6 @@ function fakeSlot(sql: FakeRealtimeClient, batches: Uint8Array[][]) {
 Deno.test({
   name:
     "realtime source logical: no trigger migrations, the denext_realtime publication, WAL events",
-  sanitizeOps: false,
-  sanitizeResources: false,
   async fn() {
     const sql = fakeRealtimeClient({ notes: { policy: ownerOnly }, items: { key: "sku" } });
     sql.catalog.triggers.set(
@@ -1896,6 +1994,24 @@ Deno.test("publicationTable / triggerArgs / dropTriggersSql: a catalog row as a 
 /** Every frame of `conns`, in order, without their `seq`. */
 const unnumbered = (frames: TableChangesFrame[]) => frames.map(({ seq: _seq, ...rest }) => rest);
 
+/**
+ * Wait for the replayed frame carrying `key` (the last a replay sends): the hub delivers a
+ * subscriber's frames in order, so every frame before it has arrived too, and a lost one shows
+ * as a wrong list rather than a timeout.
+ */
+const untilReplayed = (conn: { frames: TableChangesFrame[] }, key: string) =>
+  until(
+    () => conn.frames.some((f) => f.changes?.some((c) => c.key === key)),
+    3_000,
+    () => `the replayed change to ${key} (frames so far: ${JSON.stringify(conn.frames)})`,
+  );
+
+/** Block the event loop for `ms` (a loaded host's stall). */
+function stall(ms: number): void {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { /* busy */ }
+}
+
 Deno.test("realtime replay: a reconnecting subscriber gets what it missed, re-read under its policies", async () => {
   const env = await setUp();
   try {
@@ -1966,12 +2082,48 @@ Deno.test("realtime replay: a truncate while away clears the subscriber's rows b
     await realtimeEngine().flush();
     const back = env.hub.conn(env.a);
     assert((await env.hub.subscribe(back, "notes", { key })).ok);
-    await until(() => back.frames.length === 3, 3_000, "resumed, truncate, insert");
+    await untilReplayed(back, "2");
     assertEquals(unnumbered(back.frames), [
       { resumed: true },
       { changes: [{ op: "truncate" }] },
       { changes: [{ op: "insert", key: "2", row: { id: 2, owner: A, body: "after it" } }] },
     ]);
+  } finally {
+    await env.done();
+  }
+});
+
+// The engine paces a subscriber's frames by the wall clock, which once kept the Live hub from
+// merging two of them only while the event loop ran on time: a loaded host that stalled between
+// the truncate's publish and the replayed rows (the re-read's completion runs before the hub's
+// coalescing timer) had the hub keep only the rows, and the truncate frame was lost. The
+// realtime channel is `ordered` now, so the hub delivers every frame whatever the timing.
+Deno.test("realtime replay: a stalled event loop between the truncate and the replayed rows loses neither", async () => {
+  const env = await setUp();
+  try {
+    env.sql.tables.get("notes")!.set("7", { id: 7, owner: A, body: "old" });
+    const ca = env.hub.conn(env.a);
+    const { key } = await env.hub.subscribe(ca, "notes");
+    env.hub.drop(ca);
+    env.sql.tables.get("notes")!.clear();
+    env.sql.notify(JSON.stringify({ table: "notes", op: "truncate", ts: 1 }));
+    env.sql.insert("notes", { id: 2, owner: A, body: "after it" });
+    await realtimeEngine().flush();
+    // The replay's re-read is issued just after the truncate went out: stall the loop (longer
+    // than the engine's pace) in a timer due before both the re-read's and the hub's.
+    env.sql.failWhen = (text) => {
+      if (/to_jsonb\(t\)::text as r/.test(text)) setTimeout(() => stall(40), 0);
+      return false;
+    };
+    const back = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(back, "notes", { key })).ok);
+    await untilReplayed(back, "2");
+    assertEquals(unnumbered(back.frames), [
+      { resumed: true },
+      { changes: [{ op: "truncate" }] },
+      { changes: [{ op: "insert", key: "2", row: { id: 2, owner: A, body: "after it" } }] },
+    ]);
+    assertEquals(back.frames.map((f) => f.seq), [1, 2, 3], "no frame lost");
   } finally {
     await env.done();
   }
@@ -2162,9 +2314,6 @@ Deno.test("realtime replay: a reconnect under other claims drops what was kept a
     await engine.flush();
     await until(() => first.frames.length >= 1, 5_000, "the first frame");
     env.hub.drop(first);
-    // A frame already handed to the Live hub before the drop is fanned out on the hub's next
-    // flush (a few ms): let that window pass, as any real reconnect does.
-    await settle(100);
     env.sql.insert("notes", { id: 900, email: "one@x.test", body: "while away" });
     env.sql.insert("notes", { id: 950, email: "two@x.test", body: "theirs under the new claims" });
     await engine.flush();
@@ -2190,6 +2339,161 @@ Deno.test("realtime replay: a reconnect under other claims drops what was kept a
   } finally {
     await env.done();
   }
+});
+
+Deno.test("realtime replay: a frame handed to the Live hub before the drop never reaches a reconnect under other claims", async () => {
+  const byEmail = (claims: Record<string, unknown>, row: Record<string, unknown>) =>
+    claims.email !== undefined && claims.email === row.email;
+  const sql = fakeRealtimeClient({ notes: { policy: byEmail } });
+  const env = await setUp({}, sql);
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(await cookieFor(A, "one@x.test"));
+    const { key } = await env.hub.subscribe(first, "notes");
+    // The frame for row 1 is published while the subscriber is connected, but the hub's flush
+    // has not fanned it out yet when the connection drops.
+    const window = env.hub.holdDelivery();
+    env.sql.insert("notes", { id: 1, email: "one@x.test", body: "read under the old claims" });
+    await engine.flush();
+    await until(() => window.held() === 1, 3_000, "the frame handed to the hub");
+    env.hub.drop(first);
+
+    // The same subject is back within that window, with other claims; then the hub flushes.
+    const back = env.hub.conn(await cookieFor(A, "two@x.test"));
+    assert((await env.hub.subscribe(back, "notes", { key })).ok, "the same subject may come back");
+    await until(() => window.held() === 2, 3_000, "the resync");
+    window.release();
+    await until(() => back.frames.length >= 1, 3_000, "the answer to the reconnect");
+    await settle(100);
+    assertEquals(first.frames, []);
+    assertEquals(unnumbered(back.frames), [{ resync: true }]);
+    assertEquals(changesOf(back), [], "no row read under the old claims");
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime replay: a frame in the hub's window still reaches a reconnect under the same claims", async () => {
+  const env = await setUp();
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(env.a);
+    const { key } = await env.hub.subscribe(first, "notes");
+    const window = env.hub.holdDelivery();
+    env.sql.insert("notes", { id: 1, owner: A, body: "x" });
+    await engine.flush();
+    await until(() => window.held() === 1, 3_000, "the frame handed to the hub");
+    env.hub.drop(first);
+    const back = env.hub.conn(env.a);
+    assert((await env.hub.subscribe(back, "notes", { key })).ok);
+    await until(() => window.held() === 2, 3_000, "the resume");
+    window.release();
+    await until(() => back.frames.length >= 2, 3_000, "the frame and the resume");
+    assertEquals(changesOf(back).map((c) => c.key), ["1"], "the same grant keeps it");
+    assertEquals(unnumbered(back.frames).at(-1), { resumed: true });
+  } finally {
+    await env.done();
+  }
+});
+
+Deno.test("realtime replay: a frame another instance read under the old claims never reaches a reconnect there under other claims", async () => {
+  // Two replicas behind one channel transport, no sticky sessions: the subscriber is on A, its
+  // frame is published there, and the reconnect under other claims lands on B — where A's
+  // per-instance discard cannot reach, and where B's hub had nothing to discard.
+  const byEmail = (claims: Record<string, unknown>, row: Record<string, unknown>) =>
+    claims.email !== undefined && claims.email === row.email;
+  const sql = fakeRealtimeClient({ notes: { policy: byEmail } });
+  const env = await setUp({}, sql);
+  const hubB = realtimeHarness({ instance: "replica-b" });
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(await cookieFor(A, "one@x.test"));
+    const { key } = await env.hub.subscribe(first, "notes");
+    // The frame for row 1 reaches both hubs' transports while `first` is connected to A; neither
+    // hub has fanned it out when the connection drops.
+    const windowA = env.hub.holdDelivery();
+    const windowB = hubB.holdDelivery();
+    env.sql.insert("notes", { id: 1, email: "one@x.test", body: "read under the old claims" });
+    await engine.flush();
+    await until(() => windowB.held() === 1, 3_000, "the frame on its way to B");
+    env.hub.drop(first);
+
+    // The same subject is back on B, with other claims, before B's hub flushes A's frame.
+    const back = hubB.conn(await cookieFor(A, "two@x.test"));
+    assert((await hubB.subscribe(back, "notes", { key })).ok, "the same subject may come back");
+    await until(() => windowB.held() === 2, 3_000, "the resync");
+    windowB.release();
+    await until(() => back.frames.length >= 1, 3_000, "the answer to the reconnect");
+    await settle(100);
+    assertEquals(unnumbered(back.frames), [{ resync: true }]);
+    assertEquals(changesOf(back), [], "no row read under the old claims, from any instance");
+    // The grant stamp stays between the servers: no frame to the browser carries it.
+    for (const text of back.raw) {
+      assert(!text.includes("grant"), `a frame leaked the stamp: ${text}`);
+    }
+    windowA.release();
+    await settle(50);
+    assertEquals(first.frames, []);
+  } finally {
+    hubB.dispose();
+    await env.done();
+  }
+});
+
+Deno.test("realtime replay: a frame another instance read under the same claims still reaches a reconnect there", async () => {
+  const env = await setUp();
+  const hubB = realtimeHarness({ instance: "replica-b" });
+  try {
+    const engine = realtimeEngine();
+    const first = env.hub.conn(env.a);
+    const { key } = await env.hub.subscribe(first, "notes");
+    const windowB = hubB.holdDelivery();
+    env.sql.insert("notes", { id: 1, owner: A, body: "x" });
+    await engine.flush();
+    await until(() => windowB.held() === 1, 3_000, "the frame on its way to B");
+    env.hub.drop(first);
+    const back = hubB.conn(env.a);
+    assert((await hubB.subscribe(back, "notes", { key })).ok);
+    await until(() => windowB.held() === 2, 3_000, "the resume");
+    windowB.release();
+    await until(() => back.frames.length >= 2, 3_000, "the frame and the resume");
+    assertEquals(
+      changesOf(back).map((c) => c.key),
+      ["1"],
+      "the same grant keeps it, cross-instance",
+    );
+    assertEquals(unnumbered(back.frames).at(-1), { resumed: true });
+    for (const text of back.raw) {
+      assert(!text.includes("grant"), `a frame leaked the stamp: ${text}`);
+    }
+  } finally {
+    hubB.dispose();
+    await env.done();
+  }
+});
+
+Deno.test("realtime: the grant stamp is the grant's SHA-256 — stable across token refreshes, distinct across claims", async () => {
+  const scope = (claims: Record<string, unknown>) => ({
+    role: "authenticated" as const,
+    claims: JSON.stringify(claims),
+  });
+  const one = await grantStampOf(scope({ sub: "u1", tenant: 1, exp: 1 }));
+  assertEquals(one, await grantStampOf(scope({ tenant: 1, sub: "u1", exp: 2, iat: 3 })));
+  assert(/^[0-9a-f]{64}$/.test(one));
+  assert(one !== await grantStampOf(scope({ sub: "u1", tenant: 2 })));
+  assert(one !== await grantStampOf({ role: "anon", claims: "{}" }));
+  assertEquals(
+    await grantStampOf(scope({ sub: "u1", tenant: 1 })),
+    Array.from(
+      new Uint8Array(
+        await crypto.subtle.digest(
+          "SHA-256",
+          new TextEncoder().encode(grantOf(scope({ sub: "u1", tenant: 1 }))),
+        ),
+      ),
+      (b) => b.toString(16).padStart(2, "0"),
+    ).join(""),
+  );
 });
 
 Deno.test("realtime: a subscription's identity and grant — a token without a subject is its own identity", () => {

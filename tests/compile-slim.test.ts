@@ -27,7 +27,7 @@ import { resolveProject } from "../src/build/paths.ts";
 import type { BuildInfo } from "../src/build/prod-server/manifest.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { removeTempDir } from "./helpers/temp.ts";
-import { quietDeno } from "./helpers/quiet-deno.ts";
+import { boundedDeno } from "../scripts/deno-doc.ts";
 
 const FW = new URL("../", import.meta.url);
 
@@ -68,7 +68,7 @@ interface DenoInfo {
 
 /** Run `deno info --json` on `root` (with `config`, when given). */
 async function denoInfo(root: string, config?: string): Promise<DenoInfo> {
-  const { code, stdout, stderr } = await quietDeno(
+  const { code, stdout, stderr } = await boundedDeno(
     ["info", "--json", ...(config ? ["--config", config] : []), root],
     { cwd: fromFileUrl(FW) },
   );

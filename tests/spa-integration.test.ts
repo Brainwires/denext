@@ -113,8 +113,6 @@ async function stepBundledReloadSse(origin: string): Promise<void> {
 
 Deno.test({
   name: "SPA dev server (bundled): serves shell, entry bundle, reload SSE, history fallback",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   // Per-server bundled mode (parallel-safe), not the process-global DENEXT_DEV_UNBUNDLED.
   const server = await startSpaDevOnDir(SPA, {}, { unbundled: false });
@@ -155,8 +153,6 @@ Deno.test({
 
 Deno.test({
   name: "SPA dev server (unbundled): shell points at the per-module entry, modules served",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const server = await startSpaDevOnDir(SPA);
   try {
@@ -220,8 +216,6 @@ async function stepProdImmutableAssets(origin: string): Promise<void> {
 
 Deno.test({
   name: "SPA production server: serves the built shell + immutable assets, history fallback",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const paths = await resolveProject(SPA);
   await buildSpa(paths);

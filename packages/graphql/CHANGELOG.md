@@ -1,6 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.7.0
+
+### Security
+
+- **`graphql-yoga` is required at `^5.24.6`** (was `^5.10.0`). Yoga 5.24.4 and later depend on
+  `@graphql-tools/utils@^12.0.3`, which fixes two prototype-pollution advisories:
+  [GHSA-7mx3-vvmw-hjmv](https://github.com/advisories/GHSA-7mx3-vvmw-hjmv) (`mergeDeep`, through
+  12.0.0) and [GHSA-c4qx-w738-7hr3](https://github.com/advisories/GHSA-c4qx-w738-7hr3)
+  (`mergeIncrementalResult`, 10.10.1 to 12.0.1). Yoga 5.22 to 5.24.3 pinned the vulnerable
+  `@graphql-tools/utils@^11`. The old range already admitted the fixed releases, so an app that
+  updates its lockfile was covered; the new floor keeps a stale lock from resolving an older Yoga.
+  Yoga 6 is not adopted here: it removes `createGraphQLError`, which the plugin uses and
+  re-exports alongside Yoga's options.
 
 ### Added
 

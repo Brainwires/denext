@@ -711,11 +711,18 @@ Deno.test("sqlite: a query that keeps producing rows stops at its time budget", 
       DesktopCapError,
     );
     assertEquals(err.code, "timeout");
-    // A bounded query still works on the same handle.
-    const ok = await call(cap, "query", { handle, sql: "SELECT 1 AS one" }) as {
-      columns: string[];
-      rows: unknown[][];
-    };
+    // A bounded query still works on the same handle. Its one row is checked against the same
+    // 5 ms budget, which a loaded machine's scheduling stall mid-query can pass: the clock is held
+    // still for it, as the timeout above already proved the budget.
+    const realNow = Date.now;
+    const frozen = realNow();
+    Date.now = () => frozen;
+    let ok: unknown;
+    try {
+      ok = await call(cap, "query", { handle, sql: "SELECT 1 AS one" });
+    } finally {
+      Date.now = realNow;
+    }
     assertEquals(ok, { columns: ["one"], rows: [[1]] });
     await call(cap, "close", { handle });
   } finally {
@@ -1240,6 +1247,27 @@ Deno.test("secureStore: Windows PasswordVault round-trips via the stdin JSON pay
   assertEquals(await call(cap, "get", { key: "absent" }), null);
   await call(cap, "delete", { key: "token" });
   assertEquals(await call(cap, "get", { key: "token" }), null);
+});
+
+Deno.test({
+  name: "secureStore (real Windows PasswordVault): deleting an absent key exits 0; a round trip",
+  ignore: OS !== "windows",
+}, async () => {
+  const service = `denext.test.${crypto.randomUUID()}`;
+  const vault = (op: "get" | "set" | "delete", b64?: string) => {
+    const c = secureStoreCommand("windows", op, service, "token", b64);
+    return realSecureRun(c.cmd, c.args, c.stdin);
+  };
+  const absent = await vault("delete");
+  assertEquals(absent.code, 0, `deleting an absent key: ${absent.stderr}`);
+  assertEquals((await vault("set", "QjY0")).code, 0);
+  try {
+    assertEquals((await vault("get")).stdout.trim(), "QjY0");
+  } finally {
+    assertEquals((await vault("delete")).code, 0);
+  }
+  assertEquals((await vault("get")).code, 1, "gone");
+  assertEquals((await vault("delete")).code, 0, "a second delete is a no-op too");
 });
 
 Deno.test("secureStore SECURITY: a key with a leading '-' or control chars is refused (CLI getopt)", async () => {
@@ -2454,8 +2482,10 @@ Deno.test("fs.download: progress events carry the id; a failure's code says what
     const dl = (url: string) => call(cap, "download", { url, path: "n.bin", directory: "data" });
     assertEquals(await rejectCode(dl("https://files.test/offline")), "network");
     assertEquals(await rejectCode(dl("https://files.test/cut")), "network");
-    // A cut connection keeps the bytes so far (and the sidecar) for a resume.
+    // A cut connection keeps the bytes so far (and the sidecar) for a resume. (`dl-1`'s record
+    // is in the runtime's reserved folder.)
     assertEquals((await Array.fromAsync(Deno.readDir(root))).map((e) => e.name).sort(), [
+      "denext-transfers",
       "f.bin",
       "g.bin",
       "n.bin.part",

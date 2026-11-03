@@ -121,9 +121,13 @@ Deno.test("maybeReexecToolchain never loops: the marker on its own version, or t
   for (
     const over of [
       { vars: { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.15" }, denoVersion: "2.9.7-denext.15" },
-      // A DENEXT_DENO=<path> build's child: the marker is that build's own version.
+      // A DENEXT_DENO=<path> build's child: the marker is that build's own version (and the
+      // variable it inherited names the build, so the revoked-runtimes recheck is skipped).
       {
-        vars: { DENEXT_TOOLCHAIN_ACTIVE: "3.0.0-rc.6" },
+        vars: { DENEXT_TOOLCHAIN_ACTIVE: "3.0.0-rc.6", DENEXT_DENO: "/opt/my/deno" } as Record<
+          string,
+          string
+        >,
         denoVersion: "3.0.0-rc.6",
         denext: "3.0.0-rc.6",
       },
@@ -137,6 +141,32 @@ Deno.test("maybeReexecToolchain never loops: the marker on its own version, or t
   const { d, seen } = deps(TOOLCHAIN);
   assertEquals(await maybeReexecToolchain(false, d), false, "a verb that runs no project code");
   assertEquals(seen.resolved, 0);
+});
+
+Deno.test("maybeReexecToolchain on the pin's rollback: stays only while the resolver still picks it", async () => {
+  // A process on 2.9.7-denext.14 whose marker names it (the command that started it ran the pin's
+  // rollback because the pinned release is revoked): the resolver is asked again.
+  const rolled = {
+    vars: { DENEXT_TOOLCHAIN_ACTIVE: "2.9.7-denext.14" },
+    denoVersion: "2.9.7-denext.14",
+    denext: "2.9.7-denext.14",
+  };
+  const back: DenoToolchainChoice = { deno: "/cache/rb", version: "2.9.7-denext.14" };
+  const still = deps(back, rolled);
+  assertEquals(await maybeReexecToolchain(true, still.d), false, "still the rollback: stays");
+  assertEquals([still.seen.resolved, still.seen.spawned.length], [1, 0]);
+  // The list no longer revokes the pin (or the marker leaked): onto the pinned toolchain.
+  const leaked = deps(TOOLCHAIN, rolled);
+  assert(await maybeReexecToolchain(true, leaked.d));
+  assertEquals(leaked.seen.spawned, [["/cache/deno", "2.9.7-denext.15"]]);
+  // DENEXT_DENO=stock appeared: refused (denext 5.0), nothing re-runs.
+  const stock = deps(back, {
+    ...rolled,
+    vars: { ...rolled.vars, DENEXT_DENO: "stock" },
+    resolve: refuseStock,
+  });
+  await assertRejects(() => maybeReexecToolchain(true, stock.d), DenoToolchainRequiredError);
+  assertEquals(stock.seen.spawned, []);
 });
 
 Deno.test("maybeReexecToolchain: a leaked marker or a stale -denext.N build re-execs onto the pin", async () => {
@@ -157,8 +187,9 @@ Deno.test("maybeReexecToolchain: a leaked marker or a stale -denext.N build re-e
 });
 
 Deno.test("maybeReexecToolchain: upstream Deno of the pinned version is not the toolchain", async () => {
-  // Upstream Deno releases a 3.0.0-rc.N / 3.0.0 too: from 3.0.0-rc.3 the toolchain says it is
-  // denext's with Deno.build.denext, and a Deno without it re-execs onto the pin.
+  // There is no upstream Deno 3.0, so denext tells its runtime apart by the identity marker: from
+  // 3.0.0-rc.3 the toolchain says it is denext's with Deno.build.denext, and a Deno without it
+  // re-execs onto the pin.
   const pinned: DenoToolchainChoice = { deno: "/cache/deno", version: "3.0.0-rc.3" };
   for (
     const over of [

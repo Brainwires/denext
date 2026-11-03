@@ -61,12 +61,13 @@ Deno.test("assertInsideProject: paths, linked folders and files, dangling links"
     await assertInsideProject(dir, join(dir, "in/page.tsx")); // a link that stays inside
     if (!FILE_SYMLINKS) return;
     await Deno.writeTextFile(join(outside, "secret"), "s");
-    await Deno.symlink(join(outside, "secret"), join(dir, "deno.json"));
+    await Deno.symlink(join(outside, "secret"), join(dir, "deno.json"), { type: "file" });
     await assertRejects(
       () => assertInsideProject(dir, join(dir, "deno.json")),
       OutsideProjectError,
     );
-    await Deno.symlink(join(outside, "missing"), join(dir, "dangling"));
+    // Windows needs the link's type when the target does not exist.
+    await Deno.symlink(join(outside, "missing"), join(dir, "dangling"), { type: "file" });
     await assertRejects(
       () => assertInsideProject(dir, join(dir, "dangling")),
       OutsideProjectError,

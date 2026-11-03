@@ -2,10 +2,12 @@
 // `scripts/gen-config-schema.ts`): resolve the node at a form path, unwrap an array's item
 // schema, pick a union branch for a value, and walk every node the schema contains.
 //
-// The schema ships with the framework, so it is imported as JSON rather than fetched — the UI
-// works offline, from a JSR install, and inside `deno compile`.
+// The schema ships with the framework, so it is imported rather than fetched — the UI works
+// offline, from a JSR install, from a checkout, and inside `deno compile`. It ships packed
+// (config-schema.packed.ts, a third of its size against JSR's 20 MiB package cap).
 
-import CONFIG_SCHEMA from "../../../denext.config.schema.json" with { type: "json" };
+import { unpackText } from "../../build/packed-text.ts";
+import { CONFIG_SCHEMA_BROTLI_BASE64 } from "./config-schema.packed.ts";
 import { OVERRIDES } from "./schema-overrides.ts";
 
 /** The subset of JSON Schema the config schema actually uses, plus denext's `x-denext` hints. */
@@ -57,13 +59,15 @@ export interface SchemaNode {
  */
 export const MAP_SEGMENT = "*";
 
+let configSchema: SchemaNode | undefined;
+
 /**
- * The framework's generated config schema.
+ * The framework's generated config schema, parsed on the first call.
  *
  * @returns The root schema node of `denext.config.schema.json`.
  */
 export function loadConfigSchema(): SchemaNode {
-  return CONFIG_SCHEMA as SchemaNode;
+  return configSchema ??= JSON.parse(unpackText(CONFIG_SCHEMA_BROTLI_BASE64)) as SchemaNode;
 }
 
 /**

@@ -1,0 +1,6 @@
+--- a/node_modules/@scope/util/lib/main.js
++++ b/node_modules/@scope/util/lib/main.js
+@@ -1,2 +1,2 @@
+-export const x = 1;
++export const x = 2;
+ export const y = 1;

@@ -176,7 +176,14 @@ export interface ResumableRow {
   /** Bytes held back as a tail chunk, not yet a part (s3). */
   tail_size: number;
   /** The chunk objects received so far (a driver without multipart), in order. */
-  chunks: { offset: number; size: number }[];
+  chunks: {
+    offset: number;
+    size: number;
+    /** Where the chunk is stored (default `<id>/<offset>`, what uploads before the key had). */
+    key?: string;
+  }[];
+  /** Where the tail is stored (default `<id>/tail`, what uploads before the key had). */
+  tail_key?: string;
   /** The object version the upload will write. */
   version: string;
   /**
@@ -377,8 +384,12 @@ export interface MetaStore {
   getResumable(id: string): Promise<ResumableRow | null>;
   /** Take the lease when it is free (or stale) and the offset is `offset`; `null` when not. */
   leaseResumable(id: string, offset: number, lease: string, until: number): Promise<boolean>;
-  /** Save progress and release the lease. */
-  saveResumable(row: ResumableRow): Promise<void>;
+  /**
+   * Save progress — only while `lease` is still the upload's: a PATCH that stalled past its
+   * lease and was taken over must never write its state over the newer PATCH's. Releases the
+   * lease, or with `keepUntil` keeps it (until then). `false` when the lease was lost.
+   */
+  saveResumable(row: ResumableRow, lease: string, keepUntil?: number): Promise<boolean>;
   deleteResumable(id: string): Promise<void>;
   /** Uploads whose `expires_at` has passed, at most `limit`. */
   expiredResumables(now: number, limit: number): Promise<ResumableRow[]>;

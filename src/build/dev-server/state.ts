@@ -349,6 +349,11 @@ export interface DevState extends DevInspectState {
   readonly devEvents: DevEventLog;
   /** Monotonic token so a stale `deno check` run is dropped when a newer edit lands. */
   typeCheckToken: number;
+  /**
+   * The background runs in flight (a `deno check` child): the server's `finished` waits for them,
+   * so a stopped server leaves no child behind (holding the project directory on Windows).
+   */
+  readonly background: Set<Promise<void>>;
 
   /** The dev module loader (wired by `startDevServer` once the manifest getter exists). */
   load: ModuleLoader;
@@ -412,6 +417,7 @@ export function createDevState(options: DevServerOptions): DevState {
     devEvents: new DevEventLog(),
     ...createDevInspectState(),
     typeCheckToken: 0,
+    background: new Set(),
     load: () => Promise.reject(new Error("denext: dev loader used before startDevServer wired it")),
     tagLoad: () =>
       Promise.reject(new Error("denext: dev tag loader used before startDevServer wired it")),

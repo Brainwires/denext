@@ -2,7 +2,7 @@
 // Gleam, fastlane's Ruby): bytes and percent, redrawn at most every 100 ms on a terminal, cleared
 // at the end, and nothing at all when stderr is not a terminal.
 
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertRejects } from "@std/assert";
 import { join } from "@std/path";
 import { downloadProgress, streamHashed } from "../src/build/verified-download.ts";
 
@@ -69,6 +69,40 @@ Deno.test("streamHashed reports the running byte count after each chunk", async 
     }, (n) => seen.push(n));
     assertEquals(got.size, 7);
     assertEquals(seen, [3, 7]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("streamHashed cancels a download it refuses as too large (the connection is let go)", async () => {
+  const dir = await Deno.makeTempDir();
+  try {
+    let cancelled: unknown = "not cancelled";
+    let pulls = 0;
+    // An endless body, as a server sending more than the pin allows: refusing it must cancel the
+    // stream, or the response (and its connection) stays open for as long as the process lives.
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        pulls++;
+        c.enqueue(new Uint8Array(64));
+      },
+      cancel(reason) {
+        cancelled = reason;
+      },
+    });
+    const big = new Error("big");
+    await assertRejects(
+      () =>
+        streamHashed(body, join(dir, "f"), 100, {
+          tooLarge: () => big,
+          interrupted: () => new Error("cut"),
+        }),
+      Error,
+      "big",
+    );
+    assertEquals(cancelled, undefined);
+    assertEquals(body.locked, false);
+    assertEquals(pulls < 10, true);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

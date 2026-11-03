@@ -5,6 +5,7 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
+  CORPUS_DATA_MODULES,
   CORPUS_MODULE,
   CORPUS_PACKAGE,
   corpusVersion,
@@ -17,6 +18,7 @@ import {
   gateRefusal,
   type PublishDeps,
   publishFrom,
+  type PublishRun,
   readGatePass,
   ReleaseAbort,
   releaseSubject,
@@ -29,6 +31,15 @@ import {
 const VERSION = await corpusVersion();
 const TARGET = { version: VERSION, tag: `v${VERSION}`, branch: "development" };
 const LOCAL_HASH = moduleSourceHash(await Deno.readTextFile(CORPUS_MODULE))!;
+/** The corpus package's data modules as this tree has them (JSR serves the same). */
+const LOCAL_DATA: Record<string, string> = Object.fromEntries(
+  await Promise.all(
+    CORPUS_DATA_MODULES.map(async (m) => [
+      `/${CORPUS_PACKAGE}/${VERSION}/${m}`,
+      await Deno.readTextFile(new URL(`../packages/docs-corpus/${m}`, import.meta.url)),
+    ]),
+  ),
+);
 
 /** A fake jsr.io whose listed versions the test changes as time passes. */
 class FakeJsr {
@@ -59,6 +70,7 @@ class FakeJsr {
         new Response(`export const CORPUS_SOURCE_HASH: string = "${LOCAL_HASH}";\n`),
       );
     }
+    if (Object.hasOwn(LOCAL_DATA, path)) return Promise.resolve(new Response(LOCAL_DATA[path]));
     return Promise.resolve(new Response("", { status: 404 }));
   };
 }
@@ -106,7 +118,12 @@ class FakeGit {
 }
 
 /** Deps over the fakes, on a virtual clock that `sleep` advances (calling `onSleep`). */
-function deps(git: FakeGit, jsr: FakeJsr, onSleep: (now: number) => void = () => {}) {
+function deps(
+  git: FakeGit,
+  jsr: FakeJsr,
+  onSleep: (now: number) => void = () => {},
+  run: { current: PublishRun } = { current: { state: "success" } },
+) {
   let now = 0;
   const sleeps: number[] = [];
   const logs: string[] = [];
@@ -121,6 +138,7 @@ function deps(git: FakeGit, jsr: FakeJsr, onSleep: (now: number) => void = () =>
     },
     now: () => now,
     log: (line) => logs.push(line),
+    publishRun: () => Promise.resolve(run.current),
   };
   return { d, sleeps, logs, elapsed: () => now };
 }
@@ -173,6 +191,7 @@ Deno.test("release resume: a stopped corpus wait names the command that resumes 
   // JSR lists the corpus now: the corpus tag is neither made nor pushed again, then the tag,
   // the pushes and the PR hand-over.
   jsr.list(CORPUS_PACKAGE, VERSION);
+  jsr.list("@denext/denext", VERSION);
   git.calls = [];
   const resumed = deps(git, jsr);
   await publishFrom(TARGET, "corpus", resumed.d);
@@ -190,6 +209,7 @@ Deno.test("release resume: a stopped corpus wait names the command that resumes 
 Deno.test("release resume: a failed push resumes at the push, with the tag already made", async () => {
   const git = new FakeGit();
   const jsr = new FakeJsr(await pinnedListing(true));
+  jsr.list("@denext/denext", VERSION);
   const { d } = deps(git, jsr);
   git.failPush = true;
   const err = await assertRejects(() => publishFrom(TARGET, "corpus", d), ReleaseAbort);
@@ -306,4 +326,68 @@ Deno.test("release: the gate pass is recorded after both gates and required by e
   // No "commit by hand" escape hatch, and `deno cache` is fail-stop.
   assert(!src.includes("commit by hand"));
   assert(/if \(await run\("deno", "cache", "mod\.ts"\) !== 0\)/.test(src));
+});
+
+/** A tag already on origin, every pin on JSR, and the given publish run: resume at `pr`. */
+async function prResume(run: PublishRun, listed: boolean, wait?: number) {
+  const git = new FakeGit();
+  git.local.add(TARGET.tag);
+  git.remote.add(TARGET.tag);
+  const jsr = new FakeJsr(await pinnedListing(true));
+  if (listed) jsr.list("@denext/denext", VERSION);
+  const state = { current: run };
+  const made = deps(git, jsr, () => {}, state);
+  return { ...made, git, jsr, state, d: { ...made.d, jsrWaitMs: wait } };
+}
+
+Deno.test("release resume: a failed publish run is never reported as released", async () => {
+  const { d, logs } = await prResume(
+    { state: "failed", id: "42", url: "https://github.com/x/actions/runs/42" },
+    false,
+  );
+  assertEquals(await detectResume(TARGET, d), "pr");
+  const err = await assertRejects(() => publishFrom(TARGET, "pr", d), ReleaseAbort);
+  assertStringIncludes(err.message, "FAILED");
+  assertStringIncludes(err.message, "gh run rerun 42 --failed");
+  assertStringIncludes(err.message, "burned");
+  assertStringIncludes(err.message, "do NOT merge main");
+  assertStringIncludes(err.message, resumeCommand(TARGET, "pr"));
+  assert(!logs.some((l) => l.includes("✓ Released")), logs.join("\n"));
+});
+
+Deno.test("release resume: a successful run that JSR does not list is not a release", async () => {
+  const { d, logs } = await prResume({ state: "success" }, false, 10 * MINUTE);
+  const err = await assertRejects(() => publishFrom(TARGET, "pr", d), ReleaseAbort);
+  assertStringIncludes(err.message, "not confirmed released");
+  assertStringIncludes(err.message, "on jsr.io: no");
+  assert(!logs.some((l) => l.includes("✓ Released")));
+});
+
+Deno.test("release resume: a run GitHub cannot report stops instead of claiming success", async () => {
+  const { d, logs } = await prResume({ state: "unknown", detail: "gh: not logged in" }, true);
+  const err = await assertRejects(() => publishFrom(TARGET, "pr", d), ReleaseAbort);
+  assertStringIncludes(err.message, "gh: not logged in");
+  assert(!logs.some((l) => l.includes("✓ Released")));
+});
+
+Deno.test("release resume: a publish still running is waited for, then reported released", async () => {
+  const made = await prResume({ state: "pending" }, false);
+  const { d, logs, state, jsr } = made;
+  const waited = deps(made.git, jsr, (now) => {
+    if (now >= 20 * MINUTE) {
+      jsr.list("@denext/denext", VERSION);
+      state.current = { state: "success" };
+    }
+  }, state);
+  await publishFrom(TARGET, "pr", { ...waited.d, jsrWaitMs: 3 * 60 * MINUTE });
+  assert(waited.elapsed() >= 20 * MINUTE, "polled until the publish finished");
+  assert(waited.logs.some((l) => l.includes(`✓ Released ${VERSION}`)));
+  assert(d && logs.length === 0);
+});
+
+Deno.test("release resume: a published release on JSR with a green run hands over the PR", async () => {
+  const { d, logs } = await prResume({ state: "success" }, true);
+  await publishFrom(TARGET, "pr", d);
+  assert(logs.some((l) => l.includes(`✓ Released ${VERSION}`)));
+  assert(logs.some((l) => l.includes("gh pr create --base main --head development")));
 });

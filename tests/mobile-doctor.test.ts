@@ -8,6 +8,7 @@ import {
   formatMobileDoctor,
   mobileDoctorChecks,
   type MobileDoctorReport,
+  releaseGateFindings,
   runMobileDoctor,
 } from "../src/build/mobile-doctor.ts";
 import { mergePrivacyManifest, privacyEntriesFor } from "../src/build/mobile-privacy.ts";
@@ -151,6 +152,41 @@ Deno.test("mobile doctor --release: OTA installed without a public key is an err
     await Deno.remove(join(dir, androidStore));
     const none = await runMobileDoctor({ root: dir, profile: "release" });
     assert(!none.checks.includes("ota-signing"));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("mobile doctor: plugins.DenextBridge.otaFileGuard: false is a warning in both profiles", async () => {
+  const dir = await project(cleanFiles());
+  const doctor = async (profile: "store" | "release", denextBridge?: Record<string, unknown>) => {
+    await Deno.writeTextFile(
+      join(dir, "capacitor.config.json"),
+      JSON.stringify({
+        appId: "dev.example",
+        appName: "Example",
+        webDir: "out",
+        ...(denextBridge ? { plugins: { DenextBridge: denextBridge } } : {}),
+      }),
+    );
+    const report = await runMobileDoctor({ root: dir, profile });
+    assert(report.checks.includes("ota-file-guard"), profile);
+    return report.findings.filter((f) => f.check === "ota-file-guard");
+  };
+  try {
+    for (const profile of ["store", "release"] as const) {
+      assertEquals(await doctor(profile), [], profile);
+      assertEquals(await doctor(profile, { otaFileGuard: true }), [], profile);
+      const off = await doctor(profile, { otaFileGuard: false });
+      assertEquals(off.length, 1, profile);
+      assertEquals(off[0].level, "warning");
+      assertStringIncludes(
+        off[0].message,
+        "capacitor.config.json: plugins.DenextBridge.otaFileGuard is false, so ",
+      );
+      assertStringIncludes(off[0].message, "/_capacitor_file_");
+      assertStringIncludes(off[0].fix, "remove otaFileGuard: false");
+    }
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -338,6 +374,158 @@ Deno.test("mobile doctor: a com.example placeholder app id is an error in both p
     for (const profile of ["store", "release"] as const) {
       const report = await runMobileDoctor({ root: dir, profile });
       assertEquals(flagged(report, "error"), ["placeholder-app-id"], profile);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("mobile doctor: allowNavigation's broad wildcards and http entries are flagged", async () => {
+  const cases: Array<[string, "error" | "warning" | null, "error" | "warning" | null]> = [
+    // entry, --release level, --store level
+    ["*", "error", "error"],
+    ["https://*", "error", "error"],
+    ["*.com", "error", "error"],
+    ["app.*", "error", "error"],
+    ["*.example.*", "error", "error"],
+    ["*.example.com", "warning", "warning"],
+    ["http://api.example.com", "error", "warning"],
+    ["http://*.example.com", "error", "warning"],
+    ["api.example.com", null, null],
+    ["https://api.example.com", null, null],
+  ];
+  for (const [entry, release, store] of cases) {
+    const dir = await project({
+      ...cleanFiles(),
+      "capacitor.config.json": JSON.stringify({
+        appId: "dev.example",
+        webDir: "out",
+        server: { allowNavigation: [entry] },
+      }),
+    });
+    try {
+      for (const [profile, want] of [["release", release], ["store", store]] as const) {
+        const report = await runMobileDoctor({ root: dir, profile });
+        const found = report.findings.filter((f) => f.check === "allow-navigation");
+        assertEquals(found.map((f) => f.level), want ? [want] : [], `${entry} (${profile})`);
+        if (want) assertStringIncludes(found[0].message, "server.allowNavigation");
+      }
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});
+
+Deno.test("mobile doctor: a network security config that permits cleartext is flagged", async () => {
+  const manifest =
+    '<manifest xmlns:android="http://schemas.android.com/apk/res/android"><application ' +
+    'android:networkSecurityConfig="@xml/network_security_config"></application></manifest>';
+  const xml = (body: string) =>
+    `<?xml version="1.0" encoding="utf-8"?>\n<network-security-config>\n${body}\n</network-security-config>\n`;
+  const cases: Array<[string, string | null]> = [
+    ['<base-config cleartextTrafficPermitted="true" />', "<base-config> (every host)"],
+    [
+      '<domain-config cleartextTrafficPermitted="true"><domain>10.0.0.2</domain></domain-config>',
+      "a <domain-config>",
+    ],
+    ['<base-config cleartextTrafficPermitted="false" />', null],
+    ['<!-- <base-config cleartextTrafficPermitted="true" /> -->', null],
+  ];
+  for (const [body, where] of cases) {
+    const dir = await project({
+      ...cleanFiles(),
+      "android/app/src/main/AndroidManifest.xml": manifest,
+      "android/app/src/main/res/xml/network_security_config.xml": xml(body),
+    });
+    try {
+      const release = await runMobileDoctor({ root: dir, profile: "release" });
+      const found = release.findings.filter((f) =>
+        f.check === "cleartext" && f.message.includes("network_security_config.xml")
+      );
+      if (where === null) {
+        assertEquals(found, [], body);
+        continue;
+      }
+      assertEquals(found.map((f) => f.level), ["error"], body);
+      assertStringIncludes(found[0].message, `cleartextTrafficPermitted="true" on ${where}`);
+      const store = await runMobileDoctor({ root: dir, profile: "store" });
+      assertEquals(
+        store.findings.filter((f) => f.message.includes("network_security_config.xml"))
+          .map((f) => f.level),
+        ["warning"],
+      );
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  }
+});
+
+Deno.test("mobile doctor --release: frameGuard off over a third-party allowNavigation origin is an error", async () => {
+  const config = (server: Record<string, unknown>) =>
+    JSON.stringify({
+      appId: "dev.example",
+      webDir: "out",
+      server,
+      plugins: { DenextBridge: { frameGuard: false } },
+    });
+  const level = async (server: Record<string, unknown>, profile: "release" | "store") => {
+    const dir = await project({ ...cleanFiles(), "capacitor.config.json": config(server) });
+    try {
+      const report = await runMobileDoctor({ root: dir, profile });
+      return report.findings.filter((f) => f.check === "bridge-origin-guard").map((f) => f.level);
+    } finally {
+      await Deno.remove(dir, { recursive: true });
+    }
+  };
+  const others = { allowNavigation: ["https://partner.example"] };
+  assertEquals(await level(others, "release"), ["error"]);
+  assertEquals(await level(others, "store"), ["warning"]);
+  // A hosted app's own server.url alone (what `denext migrate` opts out for) stays a warning.
+  assertEquals(await level({ url: "https://app.example" }, "release"), ["warning"]);
+});
+
+Deno.test("mobile doctor: the release gate is the release-security findings only", async () => {
+  const dir = await project({
+    ...cleanFiles(),
+    "capacitor.config.json": JSON.stringify({
+      appId: "dev.example",
+      webDir: "out",
+      server: { url: "https://app.example", allowNavigation: ["*.example.com", "*"] },
+      android: {
+        webContentsDebuggingEnabled: true,
+        useLegacyBridge: true,
+        allowMixedContent: true,
+      },
+    }),
+    "android/app/src/main/AndroidManifest.xml":
+      '<manifest><application android:debuggable="true" ' +
+      'android:usesCleartextTraffic="true"></application></manifest>',
+    "ios/App/App/Info.plist": plist(
+      "\t<key>NSAppTransportSecurity</key>\n\t<dict>\n\t\t<key>NSAllowsLocalNetworking</key>\n" +
+        "\t\t<true/>\n\t\t<key>NSAllowsArbitraryLoads</key>\n\t\t<true/>\n\t</dict>",
+    ),
+    "out/index.html": "<!doctype html><html><head></head></html>",
+  });
+  try {
+    const report = await runMobileDoctor({ root: dir, profile: "release" });
+    const gate = releaseGateFindings(report);
+    assertEquals([...new Set(gate.map((f) => f.check))].sort(), [
+      "allow-navigation",
+      "android-debuggable",
+      "cleartext",
+      "legacy-bridge",
+      "webview-debugging",
+    ]);
+    const cleartext = gate.filter((f) => f.check === "cleartext").map((f) => f.message);
+    assertEquals(cleartext.length, 2, cleartext.join("\n"));
+    assertStringIncludes(cleartext.join("\n"), "NSAllowsLocalNetworking");
+    assertStringIncludes(cleartext.join("\n"), 'android:usesCleartextTraffic="true"');
+    // The wildcard subdomain is a warning, never a gate.
+    assertEquals(gate.filter((f) => f.check === "allow-navigation").length, 1);
+    // Errors outside the gate: a hosted https server.url, NSAllowsArbitraryLoads, the CSP.
+    const rest = report.findings.filter((f) => f.level === "error" && !f.releaseGate);
+    for (const id of ["server-url", "cleartext", "csp", "mixed-content"]) {
+      assert(rest.some((f) => f.check === id), id);
     }
   } finally {
     await Deno.remove(dir, { recursive: true });

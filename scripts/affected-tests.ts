@@ -1,6 +1,8 @@
-// The test files a change should run first: every changed test file, and every test file that
-// imports a changed module directly (resolved import specifiers, not a name grep). Direct
-// importers only — cheap enough for the pre-push precheck; the full suite stays in CI.
+// The test files a change should run first: every changed test file, every test file that
+// imports a changed module directly (resolved import specifiers, not a name grep), and the tests
+// listed in INDIRECT_TESTS for a module whose rules other tests reach only through another module
+// and their fixtures. Direct importers otherwise — cheap enough for the pre-push precheck; the full
+// suite stays in CI.
 //
 //   git diff --name-only origin/development... | deno run -A scripts/affected-tests.ts
 //   deno run -A scripts/affected-tests.ts src/build/serial-child.ts tests/helpers/port.ts
@@ -12,6 +14,21 @@ import { dirname, fromFileUrl, join, normalize, relative } from "@std/path";
 import { ALIASES, parallelSuiteFiles } from "./lib/serial-scan.ts";
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
+
+/**
+ * Tests a module's change must select although they do not import it: they reach its rules
+ * through another module, with fixtures that depend on them. `src/build/deno-version.ts`'s version
+ * schemes decide how the toolchain (src/build/deno-toolchain.ts, toolchain-prune.ts) reads the
+ * `X.Y.Z-denext.N` / `3.0.0-rc.N` versions in those tests' fixtures; a change there broke five
+ * deno-toolchain tests that no direct importer ran.
+ */
+export const INDIRECT_TESTS: Readonly<Record<string, readonly RegExp[]>> = {
+  "src/build/deno-version.ts": [
+    /^tests\/deno-toolchain(?:-[\w-]+)?\.test\.ts$/,
+    /^tests\/toolchain-(?:audit|prune)\.test\.ts$/,
+    /^tests\/esbuild-binary\.test\.ts$/,
+  ],
+};
 
 /** Whether `path` is a test file the parallel suites run. */
 export function isTestFile(path: string): boolean {
@@ -42,30 +59,35 @@ export function resolveSpecifier(importer: string, spec: string): string | null 
 }
 
 /**
- * The tests to run for `changed`: the changed test files themselves, then every test file whose
- * imports name a changed file, sorted.
+ * The tests to run for `changed`: the changed test files themselves, every test file whose
+ * imports name a changed file, and the {@linkcode INDIRECT_TESTS} of a changed module, sorted.
  *
  * @param changed Repo-relative paths that changed.
  * @param tests Every test file and its source (`parallelSuiteFiles()` by default).
+ * @param indirect Tests selected by a module they do not import (default {@linkcode INDIRECT_TESTS}).
  */
 export function affectedTests(
   changed: readonly string[],
   tests: ReadonlyMap<string, string>,
+  indirect: Readonly<Record<string, readonly RegExp[]>> = INDIRECT_TESTS,
 ): string[] {
   const wanted = new Set(changed.map((p) => p.replaceAll("\\", "/")));
   const out = new Set<string>();
   for (const path of wanted) if (isTestFile(path) && tests.has(path)) out.add(path);
+  const patterns = [...wanted].flatMap((p) => indirect[p] ?? []);
   for (const [path, src] of tests) {
     if (!isTestFile(path) || out.has(path)) continue;
-    for (const spec of importSpecifiers(src)) {
-      const target = resolveSpecifier(path, spec);
-      if (target && wanted.has(target)) {
-        out.add(path);
-        break;
-      }
-    }
+    if (patterns.some((re) => re.test(path)) || importsAny(path, src, wanted)) out.add(path);
   }
   return [...out].sort();
+}
+
+/** Whether the test file `path` (source `src`) imports one of `modules`. */
+function importsAny(path: string, src: string, modules: ReadonlySet<string>): boolean {
+  return importSpecifiers(src).some((spec) => {
+    const target = resolveSpecifier(path, spec);
+    return target !== null && modules.has(target);
+  });
 }
 
 /** The paths named on the command line, else read from stdin (one per line). */

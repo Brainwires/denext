@@ -18,6 +18,7 @@ import { memberDirs } from "../../build/workspace-imports.ts";
 import { assertInsideProject } from "../../build/project-confine.ts";
 import {
   DENEXT_EXCLUDE,
+  denextExemptions,
   type DepAgeRule,
   holdMessage,
   readProjectRule,
@@ -32,6 +33,7 @@ import {
 } from "../../build/scaffold.ts";
 import { deleteJsonValue, setJsonValue } from "../../build/json-edit.ts";
 import { applyJailExceptions, type JailReport } from "../../build/jail-scripts.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** The project config `upgrade` edits: `deno.json`, else `deno.jsonc`. */
 async function configPath(dir: string): Promise<string | null> {
@@ -55,8 +57,10 @@ async function memberConfigs(
   const paths: string[] = [];
   const unresolved: string[] = [];
   const outside: string[] = [];
-  for (const entry of workspaceEntries(text)) {
-    const dirs = await memberDirs(dir, entry);
+  const entries = workspaceEntries(text);
+  for (const entry of entries) {
+    if (entry.startsWith("!")) continue; // an exclusion names no member of its own
+    const dirs = await memberDirs(dir, entry, entries);
     const found = (await Promise.all(dirs.map(configPath))).filter((p): p is string => !!p);
     // A member entry (`"../other"`) or a member linked out of the project is never rewritten.
     const inside = (await Promise.all(found.map((p) => insideProject(dir, p))))
@@ -113,6 +117,11 @@ interface UpgradeOutcome {
   readonly lock: boolean | undefined;
   /** The configs whose `"jsr:@denext/*"` exclude entry was (or would be) removed. */
   readonly stripped: readonly string[];
+  /**
+   * The other `@denext` entries in a config's `minimumDependencyAge.exclude`, by config: denext
+   * never writes them, so they are flagged, not removed.
+   */
+  readonly exemptions: readonly { readonly path: string; readonly entries: readonly string[] }[];
   /** The clock the plan was made at (for the hold lines). */
   readonly now: Date;
   /** The editor settings that get (or would get) the TypeScript 7 language server, if any. */
@@ -356,20 +365,31 @@ function outcomeJson(
   o: UpgradeOutcome,
   files: { changedFiles: string[]; unresolved: string[]; outside: string[] },
 ): Record<string, unknown> {
+  // Each optional key only when it says something (an empty list, `null` or `undefined` is left out).
+  const optional: [string, unknown][] = [
+    ["removedExclude", o.stripped],
+    ["denextExemptions", o.exemptions],
+    ["lockRefreshed", o.lock],
+    ["editorSettings", o.editor],
+    ["denoExclude", o.denoExclude],
+    ["jailExceptions", o.jail && { action: o.jail.action, lines: o.jail.lines }],
+    ["retiredConfig", o.retired],
+    ["unresolvedMembers", files.unresolved],
+    ["outsideMembers", files.outside],
+  ];
   return {
     config: o.path,
     ...o.plan,
     written: o.written,
     files: files.changedFiles,
-    ...(o.stripped.length ? { removedExclude: o.stripped } : {}),
-    ...(o.lock === undefined ? {} : { lockRefreshed: o.lock }),
-    ...(o.editor ? { editorSettings: o.editor } : {}),
-    ...(o.denoExclude ? { denoExclude: o.denoExclude } : {}),
-    ...(o.jail ? { jailExceptions: { action: o.jail.action, lines: o.jail.lines } } : {}),
-    ...(o.retired.length ? { retiredConfig: o.retired } : {}),
-    ...(files.unresolved.length ? { unresolvedMembers: files.unresolved } : {}),
-    ...(files.outside.length ? { outsideMembers: files.outside } : {}),
+    ...Object.fromEntries(optional.filter(([, v]) => presentValue(v))),
   };
+}
+
+/** Whether an optional `--json` value is worth a key: not `undefined` / `null` / an empty list. */
+function presentValue(value: unknown): boolean {
+  if (value === undefined || value === null) return false;
+  return !Array.isArray(value) || value.length > 0;
 }
 
 /** Print the outcome: one JSON document, or the human report. */
@@ -382,6 +402,7 @@ function printOutcome(
   if (json) return void console.log(JSON.stringify(outcomeJson(o, files)));
   report(o.plan, o.path, o.check, o.written, o.now);
   reportExclude(o.dir, o.stripped, o.written);
+  reportExemptions(o.dir, o.exemptions);
   reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved, outside);
   reportEditor(o.dir, o.editor);
   reportProjectRepairs(o);
@@ -456,6 +477,11 @@ export async function runUpgrade(
   // picks only versions the hold lets in.
   const files = read.map((f) => ({ ...f, ...stripDenextExclude(f.text) }));
   const stripped = files.filter((f) => f.removed).map((f) => f.path);
+  const exemptions = files.flatMap((f) => {
+    const entries = denextExemptions(configObject(f.text)?.minimumDependencyAge)
+      .filter((e) => e !== DENEXT_EXCLUDE);
+    return entries.length ? [{ path: f.path, entries }] : [];
+  });
   const now = options.now ?? new Date();
   const rule = options.rule ?? await readProjectRule(dir, now, files[0].text);
   const plan = await planUpgrade(
@@ -474,7 +500,18 @@ export async function runUpgrade(
     !check && ctx.flags["dry-run"] !== true,
   );
   const lock = written && await hasLockfile(dir) ? await refreshLock(dir) : undefined;
-  const outcome = { dir, path, plan, check, written, lock, stripped, now, ...repairs };
+  const outcome = {
+    dir,
+    path,
+    plan,
+    check,
+    written,
+    lock,
+    stripped,
+    exemptions,
+    now,
+    ...repairs,
+  };
   printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved, outside });
   if (!plan.ok) return 1;
   return check && changed ? 1 : 0;
@@ -626,6 +663,29 @@ function reportExclude(dir: string, stripped: readonly string[], written: boolea
   );
 }
 
+/** A config's parsed object, or null when it doesn't parse. */
+function configObject(text: string): Record<string, unknown> | null {
+  try {
+    const doc = parseJsonc(text);
+    return doc !== null && typeof doc === "object" ? doc as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The other `@denext` exemptions from the hold: flagged, never removed (denext didn't write them). */
+function reportExemptions(dir: string, exemptions: UpgradeOutcome["exemptions"]): void {
+  for (const { path, entries } of exemptions) {
+    console.error(
+      `\ndenext upgrade: ${relative(dir, path) || path} exempts ${
+        entries.map((e) => `"${e}"`).join(", ")
+      } from minimumDependencyAge, so a just-published @denext release resolves before Deno's ` +
+        "dependency-age hold has passed. denext never writes such an entry; remove it unless you " +
+        "publish denext yourself: https://denext.dev/docs/toolchain#supply-chain-hold",
+    );
+  }
+}
+
 /** The workspace part of the human output: the member configs touched, and those not read. */
 function reportWorkspace(
   dir: string,
@@ -671,53 +731,7 @@ function report(
 
 /** `denext upgrade [dir]`. */
 export const upgradeCommand: CommandSpec = {
-  name: "upgrade",
-  summary: "Bump denext, its CLI tasks and the first-party @denext/* packages together",
-  usage: "Reads every jsr:@denext/* pin in deno.json (the import map and the `deno task`s that\n" +
-    "run the CLI) and moves them to the newest versions that work together: the newest denext\n" +
-    "every pinned first-party package has a compatible version for (each package's own\n" +
-    "@denext/denext range, from src/plugin/catalog.json or its published deno.json on JSR).\n" +
-    "Nothing moves backwards; each pin keeps its ^ / ~ / exact operator. A package that imports\n" +
-    "no denext stays within its own caret range unless --allow-major. Workspace members'\n" +
-    "deno.json files move with the root. A JSR request that fails is an error, never read as\n" +
-    "incompatible. --to picks the denext version (an older one needs --allow-downgrade);\n" +
-    "--dry-run prints the plan; --check exits 1 when anything is out of date.\n" +
-    "Only versions Deno's minimum dependency age already lets in are pinned (a newer one is\n" +
-    "named, with when it becomes eligible; a pin still held moves down to one that resolves),\n" +
-    'and the "jsr:@denext/*" entry older projects carry in minimumDependencyAge.exclude is removed.\n' +
-    'A missing ".deno/" entry is added to the top-level "exclude", and the lifecycle-script jail\n' +
-    "exceptions the dependencies need (sharp, Prisma's engines, …) are written, as create does.\n" +
-    'A .vscode/settings.json that turns the Deno LSP on and sets no "deno.unstable" gets\n' +
-    '"deno.unstable": ["tsgo-lsp"] (the TypeScript 7 language server; DENEXT_TSGO_LSP=0 skips it).\n' +
-    'denext 5.0 clean-ups: "no-legacy-abort" leaves "unstable" (the runtime\'s default now), and\n' +
-    "the desktop:package tasks create wrote before 5.0 (`deno run -A scripts/package-*.ts`) become\n" +
-    "`denext desktop package` (a hand-edited one is reported, not rewritten).\n" +
-    "Upgrading the Deno binary itself is Deno's `deno upgrade`: `denext deno upgrade`.",
-  positionals: [{ name: "dir", help: "Project directory (default: .)" }],
-  flags: [
-    { name: "dry-run", type: "boolean", help: "Print the plan without writing deno.json" },
-    {
-      name: "check",
-      type: "boolean",
-      help: "Write nothing; exit 1 when an upgrade is available (for CI)",
-    },
-    {
-      name: "to",
-      type: "string",
-      valueName: "<version>",
-      help: "The denext version to move to (default: the newest every package supports)",
-    },
-    {
-      name: "allow-downgrade",
-      type: "boolean",
-      help: "Let --to name a denext version older than the current pin",
-    },
-    {
-      name: "allow-major",
-      type: "boolean",
-      help: "Let a package that imports no denext move to a new major (breaking) version",
-    },
-  ],
+  ...commandMeta("upgrade"),
   run: async (ctx) => {
     const code = await runUpgrade(ctx);
     if (code !== 0) Deno.exit(code);

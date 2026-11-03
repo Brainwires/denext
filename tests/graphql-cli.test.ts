@@ -10,8 +10,6 @@ const abs = (p: string) => fromFileUrl(new URL(`../${p}`, import.meta.url));
 
 Deno.test({
   name: "denext graphql sdl loads a module-path schema through the app's own import map",
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: async () => {
     // From the example's directory with NO --config: the example's deno.json (and only it) maps
     // `@pothos/core`, which its app/graphql/schema.ts imports.

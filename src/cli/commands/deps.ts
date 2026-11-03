@@ -6,7 +6,14 @@
 import type { CommandContext, CommandSpec } from "../command.ts";
 import { commandCwd, denoGlobalArgs, relayingSignals, spawnDenoAndExit } from "../shared.ts";
 import { denoExecutable } from "../../build/bundle.ts";
-import { applyJailExceptions, npmPackageName } from "../../build/jail-scripts.ts";
+import {
+  applyJailExceptions,
+  jailRuntimeInUse,
+  JailRuntimeRefusedError,
+  type JailRuntimeSeams,
+  npmPackageName,
+} from "../../build/jail-scripts.ts";
+import { commandMeta } from "../command-meta.ts";
 
 function runDeno(
   sub: string,
@@ -57,27 +64,83 @@ export function addedNpmPackages(args: readonly string[]): string[] {
   });
 }
 
-/**
- * `deno add` with the lifecycle-script jail prepared: the exceptions the added packages need
- * (src/build/jail-exceptions.ts) go into deno.json first, since `deno add` runs the approved
- * install scripts itself; when it fails with the jail on, a hint says how to have it explained.
- */
-async function addNpm(ctx: CommandContext): Promise<never> {
-  const cwd = commandCwd(ctx);
-  const jail = await applyJailExceptions(cwd, { deps: addedNpmPackages(ctx.rest) })
-    .catch(() => null);
-  const [first, ...more] = jail?.lines ?? [];
-  if (first) console.error(`denext add: ${[first, ...more.map((l) => `  ${l}`)].join("\n")}`);
+/** Runs `deno add` with these arguments in `cwd`, resolving its exit code. */
+export type DenoAddRunner = (args: string[], cwd: string) => Promise<number>;
+
+const runDenoAdd: DenoAddRunner = async (args, cwd) => {
   const child = new Deno.Command(denoExecutable(), {
-    args: ["add", ...denoGlobalArgs(ctx), ...ctx.rest],
+    args,
     cwd,
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
   }).spawn();
-  const { code } = await relayingSignals(child);
+  return (await relayingSignals(child)).code;
+};
+
+/**
+ * `deno add` with the lifecycle-script jail prepared: the exceptions the added packages need
+ * (src/build/jail-exceptions.ts) go into deno.json first, since `deno add` runs the approved
+ * install scripts itself. When the add fails, those exceptions are taken out again (the
+ * config is put back, unless `deno add` changed it too), and with the jail on a hint says how to
+ * have the failure explained.
+ *
+ * @param ctx The invocation.
+ * @param run Runs `deno add` (test seam).
+ * @param runtimeSeams How the Deno `deno add` runs on is found (test seam).
+ * @returns `deno add`'s exit code.
+ */
+export async function addWithJail(
+  ctx: CommandContext,
+  run: DenoAddRunner = runDenoAdd,
+  runtimeSeams: JailRuntimeSeams = {},
+): Promise<number> {
+  const cwd = commandCwd(ctx);
+  // Planned for the Deno `deno add` runs on (DENEXT_DENO, DENO_BIN), not the pin; a `deno` that is
+  // not denext's runtime is refused (denext 5.0), anything else unreadable plans for the pin.
+  const runtime = await jailRuntimeInUse(runtimeSeams).catch((err) => {
+    if (err instanceof JailRuntimeRefusedError) throw err;
+    return null;
+  });
+  const jail = await applyJailExceptions(cwd, {
+    deps: addedNpmPackages(ctx.rest),
+    ...(runtime ? { version: runtime.version } : {}),
+  }).catch(() => null);
+  const lines = jail?.lines ?? [];
+  const [first, ...more] = runtime?.overridden && lines.length
+    ? [...lines, `(planned for ${runtime.label})`]
+    : lines;
+  if (first) console.error(`denext add: ${[first, ...more.map((l) => `  ${l}`)].join("\n")}`);
+  const path = jail?.action === "written" ? jail.configPath : undefined;
+  const after = path === undefined ? null : await Deno.readTextFile(path).catch(() => null);
+  const code = await run(["add", ...denoGlobalArgs(ctx), ...ctx.rest], cwd);
+  if (code !== 0 && path !== undefined && jail?.before !== undefined) {
+    await undoJailExceptions(path, jail.before, after);
+  }
   if (code !== 0 && jail?.effective) console.error(JAIL_FAILURE_HINT);
-  Deno.exit(code);
+  return code;
+}
+
+/** Put the config back as it was before the exceptions, when nothing else has changed it since. */
+async function undoJailExceptions(
+  path: string,
+  before: string,
+  after: string | null,
+): Promise<void> {
+  const now = await Deno.readTextFile(path).catch(() => null);
+  if (now !== null && now === after) {
+    await Deno.writeTextFile(path, before);
+    console.error("denext add: the add failed, so deno.json's new jail exceptions were taken out.");
+  } else if (now !== null) {
+    console.error(
+      "denext add: the add failed; deno.json changed during it, so the jail exceptions written " +
+        "before it were left in place (remove them from supplyChain.jailScripts if unneeded).",
+    );
+  }
+}
+
+async function addNpm(ctx: CommandContext): Promise<never> {
+  Deno.exit(await addWithJail(ctx));
 }
 
 /** What `denext add` prints when the install fails with the jail on. */
@@ -87,36 +150,16 @@ export const JAIL_FAILURE_HINT = "denext add: if a dependency's install script f
   "explains it and names the exception to add";
 
 export const addCommand: CommandSpec = {
-  name: "add",
-  summary: "Add a dependency (deno add, or a Gleam package)",
-  passthrough: true,
-  usage: "  denext add jsr:@std/assert\n  denext add npm:zod\n" +
-    "  denext add gleam:gleam_json   Compile a Gleam package to JavaScript (@gleam/…)",
-  positionals: [{ name: "packages", help: "Packages to add", required: true }],
+  ...commandMeta("add"),
   run: runAdd,
 };
 
 export const removeCommand: CommandSpec = {
-  name: "remove",
-  summary: "Remove a dependency (deno remove)",
-  passthrough: true,
-  positionals: [{
-    name: "packages",
-    help: "Packages to remove",
-    required: true,
-  }],
+  ...commandMeta("remove"),
   run: (ctx) => runDeno("remove", ctx),
 };
 
 export const updateCommand: CommandSpec = {
-  name: "update",
-  summary: "Update dependencies to latest (deno outdated --update)",
-  passthrough: true,
-  usage: "Forwards to `deno outdated --update`. Pass package names to scope it,\n" +
-    "or `--latest` to cross semver ranges.",
-  positionals: [{
-    name: "packages",
-    help: "Packages to update (default: all)",
-  }],
+  ...commandMeta("update"),
   run: (ctx) => runDeno("outdated", ctx, ["--update"]),
 };

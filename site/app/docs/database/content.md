@@ -352,7 +352,7 @@ const { url, options } = postgresConnection(Deno.env.get("DATABASE_URL")!, undef
 const adapter = new PrismaDenoSql(new Deno.SQL(url, { ...options, max: 20 }));
 ```
 
-**It requires denext's Deno runtime 3.0.0-rc.1 or later** (denext pins 3.0.0-rc.5). The adapter reads
+**It requires denext's Deno runtime 3.0.0-rc.1 or later** (denext pins 3.0.0-denext.7). The adapter reads
 each result column's type from `Deno.SQL`'s `result.columns`, which earlier
 runtimes do not report; on one of them it throws a clear error. `denext dev`,
 `build`, `start` and `test` run on the toolchain runtime; `denoSqlHasColumns()`
@@ -382,7 +382,9 @@ What it reads, and how:
   transactions, batch `$transaction([...])` and every isolation level Postgres
   has (SQLite: `Serializable`). A failed `COMMIT` returns the connection too.
 
-`denext migrate` wires it automatically when the runtime it runs on supports it
+`denext migrate` wires it automatically when the runtime the app runs on supports it (the
+toolchain `denext dev`, `build` and `start` re-run on, even when migrate itself runs on a Deno
+without it)
 (`--prisma-adapter deno-sql` to choose it, `npm` for Prisma's own adapters
 below); the next sections describe the npm adapters, which remain for older
 runtimes, CockroachDB and MySQL.
@@ -391,7 +393,11 @@ Its tests: a type round-trip matrix against Postgres 17 and SQLite
 (`tests/prisma-adapter-postgres-integration.test.ts`,
 `tests/prisma-adapter-sqlite.test.ts`) and an end-to-end test that runs
 `prisma migrate dev` and CRUD with relations on both
-(`tests/e2e/prisma-deno-sql.e2e.test.ts`). They need runtime 3.0.0-rc.1 or later
+(`tests/e2e/prisma-deno-sql.e2e.test.ts`), and a migration bed that migrates a real Remix
+app with Prisma on SQLite (the Epic Stack, `tests/migration-bed/epic-stack.test.ts`) with
+`--prisma-adapter auto`, checks the wiring against goldens, seeds it and renders pages that read
+the seeded users through the adapter. An app that also imports `better-sqlite3` itself (the Epic
+Stack's cache database) keeps the `links` shim for it beside the adapter. They need runtime 3.0.0-rc.1 or later
 (an older runtime skips them); a fake `Deno.SQL` checks the adapter on any runtime
 (`tests/prisma-adapter.test.ts`).
 
@@ -416,37 +422,55 @@ builtin — makes it self-contained):
 ```
 
 ```prisma
-// prisma/schema.prisma — the ESM, Deno-runtime generator. `queryCompiler` +
-// `driverAdapters` select the Rust-free query compiler (no native engine binary);
-// without them the generator emits the library engine, which needs a native `.node`
-// binary and rejects `{ adapter }` under Deno ("driverAdapters preview not enabled").
+// prisma/schema.prisma — the ESM, Deno-runtime generator. Prisma 7 runs the Rust-free
+// query compiler through a driver adapter by default: no native engine binary and no
+// preview features. The datasource names its provider only; Prisma 7 rejects a `url` here.
 generator client {
-  provider        = "prisma-client"
-  output          = "../generated/client"
-  runtime         = "deno"
-  moduleFormat    = "esm"
-  previewFeatures = ["queryCompiler", "driverAdapters"]
+  provider     = "prisma-client"
+  output       = "../generated/client"
+  runtime      = "deno"
+  moduleFormat = "esm"
 }
 datasource db {
   provider = "sqlite"
-  url      = "file:./dev.db"
 }
 ```
 
+```ts
+// prisma.config.ts — Prisma 7's CLI reads the datasource URL here. A relative SQLite
+// path resolves against this file's directory (Prisma 6 resolved the schema's against prisma/).
+import { defineConfig } from "prisma/config";
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+  datasource: { url: "file:./prisma/dev.db" },
+});
+```
+
 > **`denext migrate` does all of this for you.** Migrating a Next.js or Remix
-> app that uses Prisma auto-wires the whole path — it rewrites the schema
-> generator to the block above, repoints every `@prisma/client` import at the
-> generated Deno client, injects the driver adapter at each
-> `new PrismaClient()`, writes the `deno.json` `links` + npm pins + a
+> app that uses Prisma auto-wires the whole path on Prisma 7, whichever major
+> the app was on — it rewrites the schema generator to the block above (keeping
+> the output directory of an app's own `prisma-client` generator and its other
+> preview features), moves a Prisma 6 schema's `url` / `directUrl` /
+> `shadowDatabaseUrl` into `prisma.config.ts` (read from the same variables, with
+> `process.env` so `prisma generate` still runs without one; a Prisma 7 app's own
+> config is kept), repoints every `@prisma/client` import at the generated Deno
+> client, injects the driver adapter at each `new PrismaClient()` that does not
+> already pass one, writes the `deno.json` `links` + npm pins (7.10.1) + a
 > `prisma:setup` task, and drops the superseded `@prisma/client` /`prisma` from
-> `package.json`. The seed and test tooling move with the app: `prisma/seed.ts`
+> `package.json` (pinning any `@prisma/adapter-*` there to 7.10.1). Every
+> Prisma 6 release's `@prisma/config` pins `deepmerge-ts` 7.1.5
+> ([GHSA-ggr8-5vv4-36mx](https://github.com/advisories/GHSA-ggr8-5vv4-36mx)),
+> so migrate does not keep an app on 6. The seed and test tooling move with the app: `prisma/seed.ts`
 > (or the script `prisma.seed` names), `tests/`, `test/`, `e2e/`, mocks,
 > `scripts/` and root test-setup files get the same rewrite, the seed runs as
-> `denext task prisma:seed` (and `prisma.seed` in `package.json` /
-> `prisma.config.ts` becomes `deno run -A <seed>`, so `prisma db seed` seeds on
+> `denext task prisma:seed` (and `migrations.seed` in `prisma.config.ts`, where
+> Prisma 7 reads it, becomes `deno run -A <seed>`, so `prisma db seed` seeds on
 > Deno too), and the tests run under `denext test`. Then just run
-> `denext task prisma:setup` once. The manual steps below are what that
-> automation encodes.
+> `denext task prisma:setup` once: it runs `prisma generate`, then `prisma db
+> push` (or `migrate deploy`), handing the CLI the app's `.env` with
+> `--env-file`, since Prisma 7 loads none itself. The manual steps below are
+> what that automation encodes.
 
 Steps: bundle the compat into the `links` package, install, generate, push, then
 use the adapter:
@@ -454,17 +478,17 @@ use the adapter:
 ```sh
 deno run -A npm:esbuild better-sqlite3.ts --bundle --format=esm --platform=node \
   --external:node:sqlite --outfile=patch/better-sqlite3/index.mjs
-deno install                       # applies the link
-deno run -A npm:prisma generate    # generates ./generated/client
-deno run -A npm:prisma db push     # creates the schema
+deno install                              # applies the link
+deno run -A npm:prisma@7.10.1 generate    # generates ./generated/client
+deno run -A npm:prisma@7.10.1 db push     # creates the schema (it no longer generates)
 ```
 
 ```ts
-import { PrismaBetterSQLite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
 import { PrismaClient } from "./generated/client/client.ts";
 
 const prisma = new PrismaClient({
-  adapter: new PrismaBetterSQLite3({ url: "file:./dev.db" }),
+  adapter: new PrismaBetterSqlite3({ url: "file:./prisma/dev.db" }),
 });
 export const listNotes = () => prisma.note.findMany();
 ```
@@ -503,13 +527,16 @@ const prisma = new PrismaClient({
 // SQL Server: new PrismaMssql(Deno.env.get("DATABASE_URL")!) from "@prisma/adapter-mssql"
 ```
 
-`denext migrate` wires it from the schema: it reads the `datasource` block's
-`provider` and the variable its `url = env("…")` names, injects the matching
-adapter at each `new PrismaClient()`, pins the adapter in `deno.json`, and
-writes a `prisma:setup` task that installs, generates the client and applies
+`denext migrate` wires it from the datasource: the schema's `provider`, and the
+variable the URL reads (`datasource.url` in `prisma.config.ts`, else a Prisma 6
+schema's `url = env("…")`). It injects the matching adapter at each
+`new PrismaClient()`, pins the adapter in `deno.json`, and writes a
+`prisma:setup` task that installs, generates the client and applies
 `prisma/migrations/` with `prisma migrate deploy` (or `db push` without
 migrations). Set the URL variable (or put it in `.env`) before running it. A
-`directUrl` stays in the schema for the Prisma CLI.
+Prisma 6 schema's `directUrl` becomes the config's `url`, the one the CLI
+migrates through (the Prisma 7 upgrade guide's mapping), and the app keeps
+reading the pooled `url` variable.
 
 On denext's Deno runtime 3.0.0-rc.1 and later, migrate wires a Postgres
 datasource to `denext/prisma-adapter` instead (above): no `pg` dependency.
@@ -520,7 +547,8 @@ A `sqlserver` datasource takes `@prisma/adapter-mssql` (over the npm `mssql`
 driver), which reads Prisma's own `sqlserver://host:port;database=…` URL from
 the variable the schema names. A `mongodb` datasource is not wired: migrate
 rewrites the schema and imports, leaves `new PrismaClient()` as it is and says
-so; Prisma 6 has no driver adapter for MongoDB. `tests/e2e/prisma-server-db.e2e.test.ts` migrates a Prisma app and
+so; Prisma has no driver adapter for MongoDB, and Prisma 7 does not support
+MongoDB yet. `tests/e2e/prisma-server-db.e2e.test.ts` migrates a Prisma app and
 runs it against a live Postgres, CockroachDB and MySQL (CRUD, relations,
 transactions, raw queries, `migrate deploy`, a built and served app) when
 `DENEXT_E2E_POSTGRES_URL` / `DENEXT_E2E_COCKROACH_URL` / `DENEXT_E2E_MYSQL_URL`
@@ -732,8 +760,8 @@ export default defineConfig({
 
 ### Prisma: `db push` (verified) vs `migrate deploy`
 
-`examples/prisma` runs `deno run -A npm:prisma@^6.7.0 db push --skip-generate`
-in its setup script, so **`db push`** — schema straight to the database, no
+`examples/prisma` runs `deno run -A npm:prisma@7.10.1 db push` (after
+`prisma generate`) in its setup script, so **`db push`** — schema straight to the database, no
 migration files — is the verified path over the driver adapter.
 **`prisma migrate
 dev` / `migrate deploy`** use the same CLI and the same schema

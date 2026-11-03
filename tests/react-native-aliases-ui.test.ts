@@ -337,6 +337,8 @@ Deno.test("createDrawerNavigator: open drawer, items, overlay, toggle and Escape
   } finally {
     m.done();
   }
+  // Unmounting released the back handler, whose driver stops a tick later: let it, here.
+  await new Promise((r) => setTimeout(r, 10));
 });
 
 Deno.test("createDrawerNavigator: a closed drawer is inert; the core's own actions are used", async () => {

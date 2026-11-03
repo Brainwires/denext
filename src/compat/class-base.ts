@@ -99,6 +99,7 @@ export class Component<P = Record<string, unknown>, S = Record<string, unknown>>
   /** Schedule a state update (merged/queued, batched into one re-render). */
   setState(partial: Partial<S> | ((s: S, p: P) => Partial<S>), callback?: () => void): void {
     const i = internals(this);
+    if (!i) return foreignUpdater(this).enqueueSetState(this, partial, callback, "setState");
     i.pendingState.push(partial);
     if (callback) i.pendingCallbacks.push(callback);
     getClassScheduleUpdate()(i.inst as Any);
@@ -107,6 +108,7 @@ export class Component<P = Record<string, unknown>, S = Record<string, unknown>>
   /** Force a re-render, bypassing `shouldComponentUpdate`. */
   forceUpdate(callback?: () => void): void {
     const i = internals(this);
+    if (!i) return foreignUpdater(this).enqueueForceUpdate(this, callback, "forceUpdate");
     i.forced = true;
     if (callback) i.pendingCallbacks.push(callback);
     getClassScheduleUpdate()(i.inst as Any);
@@ -124,8 +126,27 @@ export class PureComponent<P = Record<string, unknown>, S = Record<string, unkno
   extends Component<P, S> {}
 (PureComponent.prototype as Any).isPureReactComponent = true;
 
+/**
+ * The updater a `react-reconciler` renderer sets on a class instance it renders (`instance.updater`,
+ * as React's `Component` reads it), for an instance denext did not create. With none (an instance
+ * nothing has mounted yet) the update is dropped, as React's no-op queue drops it.
+ */
+function foreignUpdater(c: unknown): ForeignUpdater {
+  return (c as { updater?: ForeignUpdater }).updater ?? NO_UPDATER;
+}
+
+/** React's class-component updater (`classComponentUpdater` in react-reconciler). */
+interface ForeignUpdater {
+  enqueueSetState(inst: unknown, payload: unknown, callback: unknown, name: string): void;
+  enqueueForceUpdate(inst: unknown, callback: unknown, name: string): void;
+}
+
+/** The updater of an instance nothing has mounted: React's no-op queue. */
+const NO_UPDATER: ForeignUpdater = { enqueueSetState() {}, enqueueForceUpdate() {} };
+
 /** Read the denext internals off a class instance. */
 export function internals(c: unknown): ClassInternals {
+  // Absent on an instance a `react-reconciler` renderer created (see `foreignUpdater`).
   return (c as { __denext: ClassInternals }).__denext;
 }
 

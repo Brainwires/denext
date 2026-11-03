@@ -281,7 +281,18 @@ Deno.test("pg metadata store: statements, scoping, dry runs, errors and shapes",
     answers.push([/update storage\.denext_resumable_uploads set lease/, json({ id: "r1" })]);
     assertEquals(await store.leaseResumable("r1", 0, "l", 9), true);
     assertEquals(await store.leaseResumable("r1", 0, "l", 9), false);
-    await store.saveResumable(row);
+    // Progress is saved only under the lease that took the upload.
+    answers.push([/update storage\.denext_resumable_uploads set state/, json({ id: "r1" })]);
+    assertEquals(await store.saveResumable(row, "l"), true);
+    const save = log.findLast((s) => s.text.includes("set state"))!;
+    assert(save.text.includes("where id = $1 and lease = $3"), save.text);
+    assertEquals(save.params.slice(2), ["l", null, null]);
+    assertEquals(await store.saveResumable(row, "stale", 7), false);
+    assertEquals(log.findLast((s) => s.text.includes("set state"))!.params.slice(2), [
+      "stale",
+      "stale",
+      7,
+    ]);
     await store.deleteResumable("r1");
     answers.push([/where expires_at < \$1/, json({ state, lease: null, lease_until: null })]);
     assertEquals((await store.expiredResumables(10, 5))[0].lease_until, null);

@@ -61,3 +61,17 @@ Deno.test("a file with no DA lines still yields a well-formed entry", () => {
   assertEquals(map["/x.ts"].fnMap["0"].loc.end.line, 2);
   assertEquals(map["/x.ts"].s, {});
 });
+
+Deno.test("records of one file under two spellings merge into one entry, hit counts added", () => {
+  const lcov = "SF:/var/r/a.ts\nFN:1,f\nFNDA:0,f\nDA:1,0\nDA:2,1\nBRDA:2,0,0,1\nend_of_record\n" +
+    "SF:/private/var/r/a.ts\nFN:1,f\nFNDA:2,f\nDA:1,2\nBRDA:2,0,0,-\nBRDA:2,0,1,1\nend_of_record\n";
+  const canonical = (p: string) => p.replace(/^\/var\//, "/private/var/");
+  const map = lcovToIstanbul(lcov, "/", canonical);
+  assertEquals(Object.keys(map), ["/private/var/r/a.ts"]);
+  const a = map["/private/var/r/a.ts"];
+  assertEquals(a.s, { "0": 2, "1": 1 });
+  assertEquals(a.f, { "0": 2 });
+  assertEquals(a.b, { "0": [1, 1] });
+  // Without a canonical form the two spellings stay two entries.
+  assertEquals(Object.keys(lcovToIstanbul(lcov, "/")).length, 2);
+});

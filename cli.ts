@@ -231,6 +231,10 @@ function isVersionToken(token: string): boolean {
   return token === "--version" || token === "-v";
 }
 
+/** What `<verb> --help` says about a name the CLI didn't look for in the project. */
+const UNLISTED_VERB_HELP = "If this project or a plugin defines it, run `denext commands` to " +
+  "list the project's verbs, and then its help works.\n  That runs denext.config.*, so do it only in a project you trust.";
+
 /**
  * Parse the argv with denext's precedence: a built-in verb, else one the project contributes
  * (loaded on the first miss, so a plain project pays nothing), else a Deno verb or a script, which
@@ -239,7 +243,9 @@ function isVersionToken(token: string): boolean {
  * The project's config is imported only for a name that can be a project verb
  * (`routeUnknownVerb`): a script never is, a reserved Deno verb (`run`, `x`, `compile`, …) never
  * is, and any other Deno verb is one only when the project's cached `denext commands` listing
- * names it — so `denext main.ts` or `denext bench` runs no project code before Deno does.
+ * names it — so `denext main.ts` or `denext bench` runs no project code before Deno does. Any other
+ * name imports it only when the config's text says it could add verbs (`unknownVerbAction`), and
+ * `<name> --help` never does unless the listing names it.
  *
  * Discovery here runs under the DISPATCH budget, not the listing one: the verb was asked for by
  * name, so a slow config import on a loaded machine must not make it "unknown". When discovery
@@ -250,10 +256,23 @@ async function resolveOutcome(registry: CommandRegistry): Promise<ParseOutcome> 
   if (outcome.kind !== "error" || !outcome.unknownVerb) return outcome;
   const route = await routeUnknownVerb(Deno.args, outcome.unknownVerb);
   if (route.kind === "deno") return await runRouted(route);
+  const { afterPinHandOff, unknownVerbAction } = await lazy<
+    typeof import("./src/cli/unknown-verb.ts")
+  >(
+    "./unknown-verb.ts",
+  );
+  const dir = cwdFromArgs(Deno.args);
+  const verb = outcome.unknownVerb;
+  const action = await afterPinHandOff(
+    () => deferDiscoveryToPinned(dir),
+    () => unknownVerbAction(Deno.args, verb, dir),
+  );
+  if (action === "unknown") return outcome;
+  if (action === "help") return { ...outcome, hint: UNLISTED_VERB_HELP };
   const { COMMAND_DISPATCH_BUDGET_MS, discoveryShortfall } = await lazy<PluginCommandsModule>(
     "./plugin-commands.ts",
   );
-  const loaded = await loadProjectVerbs(registry, cwdFromArgs(Deno.args), {
+  const loaded = await loadProjectVerbs(registry, dir, {
     timeoutMs: COMMAND_DISPATCH_BUDGET_MS,
   });
   outcome = registry.parse(Deno.args, DENO_VERB_NAMES);
@@ -365,6 +384,7 @@ function printOutcome(
     console.error(
       `denext: ${outcome.message}` +
         (outcome.suggestion ? `\n  Did you mean \`${outcome.suggestion}\`?` : "") +
+        (outcome.hint ? `\n  ${outcome.hint}` : "") +
         `\n  Run \`denext --help\` for usage.`,
     );
     Deno.exit(1);

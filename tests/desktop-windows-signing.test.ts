@@ -2,7 +2,7 @@
 // refuses an update of a signed app unless each PE file in the staged bundle (the .exe,
 // <App>.dll, WebView2Loader.dll, the app-local VC++ runtime, CEF's DLLs and helpers, any .node
 // addon) carries the running app's Authenticode signature. PE files are found by their header,
-// not their extension; signing is batched through signtool with the password redacted. With no
+// not their extension; signing is batched through signtool, the password on no command line. With no
 // certificate nothing is signed; a certificate without signtool fails the run.
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
@@ -64,6 +64,49 @@ Deno.test("desktopPeFiles: every PE file in the bundle, found by its MZ/PE heade
   }
 });
 
+Deno.test("desktopPeFiles: takes a PE file exactly as the runtime's update check does, whatever its e_lfanew", async () => {
+  // The runtime's `is_pe_image` puts no bounds on `e_lfanew`, and refuses an update with an
+  // unsigned PE file in it: a file it calls PE must be one denext signs.
+  const dir = await Deno.makeTempDir({ prefix: "denext_win_pe_rule_" });
+  try {
+    await Deno.writeFile(join(dir, "low.dll"), pe(0x10)); // PE header inside the DOS header's span
+    await Deno.writeFile(join(dir, "zero.dll"), pe(0)); // e_lfanew 0: `MZ` is not `PE\0\0`
+    const big = 65 * 1024 * 1024; // past the 64 MiB a bounded check would stop at
+    const head = new Uint8Array(64);
+    head.set([0x4d, 0x5a]);
+    new DataView(head.buffer).setUint32(0x3c, big, true);
+    await Deno.writeFile(join(dir, "far.dll"), head);
+    await Deno.truncate(join(dir, "far.dll"), big);
+    await Deno.writeFile(join(dir, "far.dll"), new Uint8Array([0x50, 0x45, 0, 0]), {
+      append: true,
+    });
+    const past = new Uint8Array(64); // e_lfanew past the end of the file: not PE
+    past.set([0x4d, 0x5a]);
+    new DataView(past.buffer).setUint32(0x3c, 4096, true);
+    await Deno.writeFile(join(dir, "past.dll"), past);
+    await Deno.writeFile(join(dir, "short.dll"), new Uint8Array([0x4d, 0x5a, 0, 0])); // under 64 bytes
+    assertEquals(await desktopPeFiles(dir), [join(dir, "far.dll"), join(dir, "low.dll")]);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+const THUMB = "AB".repeat(20);
+
+/** A fake PowerShell for the certificate-store import: records each call's stdin. */
+function storeFake() {
+  const calls: Array<{ cmd: string[]; stdin: string }> = [];
+  const run = (cmd: readonly string[], stdin: string) => {
+    calls.push({ cmd: [...cmd], stdin });
+    return Promise.resolve({
+      code: 0,
+      stdout: calls.length === 1 ? JSON.stringify({ sha1: THUMB, added: [THUMB] }) : "",
+      stderr: "",
+    });
+  };
+  return { calls, run, runSync: () => {} };
+}
+
 /** A recording signtool stub. */
 function recorder() {
   const calls: Array<{ cmd: string[]; secrets: string[] }> = [];
@@ -74,10 +117,11 @@ function recorder() {
   return { calls, run };
 }
 
-Deno.test("desktopSignWindows: signs every PE file of the bundle in batched signtool calls, password redacted", async () => {
+Deno.test("desktopSignWindows: signs every PE file of the bundle in batched signtool calls, password on no command line", async () => {
   const { dir, pes } = await fakeBundle();
   try {
     const { calls, run } = recorder();
+    const store = storeFake();
     const env: Record<string, string> = {
       DENEXT_WINDOWS_CERT: "C:/certs/app.pfx",
       DENEXT_WINDOWS_CERT_PASSWORD: "s3cret",
@@ -87,6 +131,7 @@ Deno.test("desktopSignWindows: signs every PE file of the bundle in batched sign
       has: (cmd) => Promise.resolve(cmd === "signtool"),
       env: (name) => env[name],
       warn: () => {},
+      store,
     });
     assert(signed);
     assertEquals(calls.length, 1, "one batch for a small bundle");
@@ -96,25 +141,34 @@ Deno.test("desktopSignWindows: signs every PE file of the bundle in batched sign
     for (const notPe of ["fake.dll", "mz-only.dll", "readme.txt", "app.asar"]) {
       assert(!cmd.some((a) => a.endsWith(notPe)), notPe);
     }
+    // The .pfx is imported into the user's store for the run (password on PowerShell's stdin)
+    // and signtool signs by its thumbprint; the store entry is removed afterwards.
     assertStringIncludes(
       cmd.join(" "),
-      "/f C:/certs/app.pfx /fd sha256 /tr http://timestamp.digicert.com /td sha256 /p s3cret",
+      `/sha1 ${THUMB} /fd sha256 /tr http://timestamp.digicert.com /td sha256`,
     );
-    assertEquals(secrets, ["s3cret"], "the /p password is redacted from a failure");
+    assert(!cmd.some((a) => a.includes("s3cret") || a === "/p"), cmd.join(" "));
+    assertEquals(secrets, []);
+    assertEquals(store.calls.length, 2, "imported, then removed");
+    assertEquals(store.calls[0].stdin, btoa("s3cret"));
+    assert(store.calls.every((c) => !c.cmd.join(" ").includes("s3cret")));
     // A large bundle (CEF ships dozens of DLLs) is signed in batches, each with the same flags.
     const many = Array.from({ length: 70 }, (_, i) => `C:/b/lib${i}.dll`);
     const big = recorder();
+    const bigStore = storeFake();
     await desktopSignWindows(many, {
       run: big.run,
       has: () => Promise.resolve(true),
       env: (name) => ({ ...env, DENEXT_SIGN_TIMESTAMP_URL: "http://ts.example" })[name],
+      store: bigStore,
     });
+    assertEquals(bigStore.calls.length, 2, "one import (and one removal) for all the batches");
     assertEquals(big.calls.map((c) => c.cmd.filter((a) => a.startsWith("C:/b/")).length), [
       32,
       32,
       6,
     ]);
-    assert(big.calls.every((c) => c.cmd.includes("http://ts.example") && c.cmd.includes("/f")));
+    assert(big.calls.every((c) => c.cmd.includes("http://ts.example") && c.cmd.includes(THUMB)));
     assertEquals(big.calls.flatMap((c) => c.cmd.filter((a) => a.startsWith("C:/b/"))), many);
   } finally {
     await Deno.remove(dir, { recursive: true });

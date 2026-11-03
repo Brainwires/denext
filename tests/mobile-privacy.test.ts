@@ -47,6 +47,7 @@ async function project(files: Record<string, string> = {}): Promise<string> {
     "capacitor.config.json": JSON.stringify({ appId: "dev.example", webDir: "out" }),
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
     "ios/App/App/Info.plist": INFO_PLIST,
     "ios/App/App.xcodeproj/project.pbxproj": PBXPROJ,
     ".git/HEAD": "ref: refs/heads/main\n",

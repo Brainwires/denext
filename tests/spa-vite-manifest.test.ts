@@ -70,8 +70,6 @@ async function spaFixture(spaExtra: string): Promise<string> {
 
 Deno.test({
   name: "spa.viteManifest: export writes .vite/manifest.json a Vite-manifest server decodes",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await spaFixture(", viteManifest: true");
   try {
@@ -103,8 +101,6 @@ Deno.test({
 
 Deno.test({
   name: "spa.viteManifest: off by default (no .vite/ in the export)",
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const dir = await spaFixture("");
   try {

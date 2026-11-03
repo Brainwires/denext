@@ -85,6 +85,7 @@ import {
   type ObjectReader,
   objectResponse,
   preflight,
+  servedBytes,
   transformedHeaders,
   transformError,
   transformSource,
@@ -309,7 +310,7 @@ async function serve(
   const read: ObjectReader = async (range) => {
     const object = await rt.driver.get(at.bucket, at.key, range);
     if (!object) throw new StorageError("not_found", "Object not found");
-    return object.body;
+    return servedBytes(info, object, range);
   };
   return await objectResponse(info, headers, early.ranges, request.method === "HEAD" ? null : read);
 }

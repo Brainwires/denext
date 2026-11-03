@@ -40,12 +40,14 @@ import {
 } from "./desktop-runtime.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
 import { compareDenoVersions, isSupportedDenextRuntime } from "./deno-version.ts";
+import type { LaunchPolicyProblem } from "./desktop-launch-policy.ts";
 import {
   CEF_SIGNING_FIX,
   cefCertificateProblem,
   certificateTrust,
   type PowerShellRunner,
 } from "./desktop-windows-trust.ts";
+import { runToExitText } from "./exited-output.ts";
 
 /** One problem, with its fix. */
 export interface DesktopDoctorFinding {
@@ -220,6 +222,11 @@ export interface DesktopDoctorOptions {
   readonly pin?: DesktopRuntimePin;
   /** Runs PowerShell for the Windows CEF signing check (default: `powershell.exe`). */
   readonly powershell?: PowerShellRunner;
+  /**
+   * The project's packaged launch-policy gaps (`launchPolicyProblems`); the `launch-policy` check
+   * runs only when given and it answers a list (`null`: not a desktop project).
+   */
+  readonly launchPolicy?: () => Promise<readonly LaunchPolicyProblem[] | null>;
 }
 
 /** The laufey API level that added `Deno.desktop.platformFeatures()`. */
@@ -262,15 +269,11 @@ const LAUNCHER_BADGE_READERS = ["com.canonical.Unity", "org.kde.plasmashell"];
 /** The default runner: `Deno.Command`, stdout and stderr captured, killed after 8 s. */
 export const defaultDoctorRunner: DoctorRunner = async (cmd, args) => {
   try {
-    const out = await new Deno.Command(cmd, {
+    const { code, stdout, stderr } = await runToExitText(cmd, {
       args: [...args],
-      stdin: "null",
-      stdout: "piped",
-      stderr: "piped",
       signal: AbortSignal.timeout(8_000),
-    }).output();
-    const text = new TextDecoder();
-    return { code: out.code, stdout: text.decode(out.stdout), stderr: text.decode(out.stderr) };
+    });
+    return { code, stdout, stderr };
   } catch {
     return null;
   }
@@ -1293,7 +1296,8 @@ export async function runDesktopDoctor(
     )
     : null;
   const cefSigning = os === "windows" && runtime.status.backend === "cef";
-  const checks = ["runtime", ...(linux ? linuxCheckNames(runtime) : [])];
+  const policy = await launchPolicyFindings(options);
+  const checks = ["runtime", ...policy.checks, ...(linux ? linuxCheckNames(runtime) : [])];
   if (cefSigning) checks.push("cef-signing");
   return {
     os,
@@ -1302,11 +1306,29 @@ export async function runDesktopDoctor(
     checks,
     findings: [
       ...runtimeFindings(runtime, linuxChecks),
+      ...policy.findings,
       ...(linux ? linuxFindings(linux, runtime) : []),
       ...(cefSigning
         ? await cefSigningFindings(options.env ?? ((k) => Deno.env.get(k)), options.powershell)
         : []),
     ],
+  };
+}
+
+/** The `launch-policy` check: none without `options.launchPolicy` or off a desktop project. */
+async function launchPolicyFindings(
+  options: DesktopDoctorOptions,
+): Promise<{ checks: string[]; findings: DesktopDoctorFinding[] }> {
+  const problems = options.launchPolicy ? await options.launchPolicy() : null;
+  if (problems === null) return { checks: [], findings: [] };
+  return {
+    checks: ["launch-policy"],
+    findings: problems.map((p) => ({
+      check: "launch-policy",
+      level: "warning",
+      message: p.message,
+      fix: p.fix,
+    })),
   };
 }
 

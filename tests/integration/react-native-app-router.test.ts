@@ -29,8 +29,6 @@ async function clientFiles(outDir: string): Promise<Map<string, string>> {
 
 Deno.test({
   name: "export (App Router, reactNative): react-native-web renders server-side with its sheet",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_rn_app_router_" });
   try {
@@ -64,8 +62,6 @@ Deno.test({
 
 Deno.test({
   name: "export (App Router, no reactNative): react-native stays the real package and fails",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_rn_app_router_off_" });
   try {

@@ -60,8 +60,6 @@ export default function GlobalError({ error, reset }) {
 
 Deno.test({
   name: "e2e: global-error.tsx hydrates on the next-compat build and in a static export",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await Deno.makeTempDir({ prefix: "denext_ge_e2e_" });
   await writeFixture(dir);

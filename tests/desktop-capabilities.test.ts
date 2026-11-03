@@ -2,7 +2,13 @@
 // desktop.capabilities config splice (idempotent, comment-preserving, dry-run), and the
 // permission flags each capability implies.
 
-import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertFalse,
+  assertRejects,
+  assertStringIncludes,
+} from "@std/assert";
 import { join, toFileUrl } from "@std/path";
 import {
   addDesktopCapabilities,
@@ -16,7 +22,10 @@ import {
   desktopPermissionFlags,
   formatDesktopAddReport,
   formatDesktopCapabilityTable,
+  passkeyRpId,
 } from "../src/build/desktop-capabilities.ts";
+import { desktopPasskeyRpIds } from "../src/build/desktop-launch-policy.ts";
+import { readConfigModel } from "../src/build/config-edit.ts";
 import { makeTempDirUntilExit } from "./helpers/temp.ts";
 
 function project(config?: string): string {
@@ -130,6 +139,120 @@ Deno.test("desktop add: unknown or missing capabilities are refused", async () =
     Error,
     "at least one",
   );
+});
+
+/** The config's `desktop.capabilities.passkeys.rpIds`, as the packaging reads it. */
+async function rpIdsIn(dir: string): Promise<string[] | null> {
+  const model = await readConfigModel(await Deno.readTextFile(join(dir, "denext.config.ts")));
+  return desktopPasskeyRpIds({ desktop: model.keys.desktop?.value });
+}
+
+Deno.test("desktop add passkeys --rp-id: writes rpIds instead of an empty pin; repeatable, merged", async () => {
+  const bare = project("export default {};\n");
+  const empty = await addDesktopCapabilities({ capabilities: ["passkeys"], dir: bare });
+  assertEquals(await rpIdsIn(bare), [], "without --rp-id the pin is empty (fail closed)");
+  assert(empty.manual.some((m) => m.includes("--rp-id <domain>")), "and the step says how");
+  const dir = project("export default {};\n");
+  const report = await addDesktopCapabilities({
+    capabilities: ["passkeys"],
+    dir,
+    passkeyRpIds: ["Example.com", "clerk.example.com", "example.com"],
+  });
+  assertEquals(report.added, ["passkeys"]);
+  assertEquals(report.rpIds, ["example.com", "clerk.example.com"]);
+  assertEquals(await rpIdsIn(dir), ["example.com", "clerk.example.com"]);
+  assertFalse(report.manual.some((m) => m.includes("--rp-id <domain>")), "no empty-pin step");
+  assertStringIncludes(formatDesktopAddReport(report, false), "relying parties: example.com");
+  // a second run merges into the list it finds, keeping what is there
+  const again = await addDesktopCapabilities({
+    capabilities: ["passkeys"],
+    dir,
+    passkeyRpIds: ["auth.example.org", "example.com"],
+  });
+  assertEquals(again.kept, ["passkeys"]);
+  assertEquals(await rpIdsIn(dir), ["example.com", "clerk.example.com", "auth.example.org"]);
+  const same = await addDesktopCapabilities({
+    capabilities: ["passkeys"],
+    dir,
+    passkeyRpIds: ["auth.example.org"],
+  });
+  assertEquals(same.diff, "");
+  // an empty pin `add` wrote earlier is filled in; a `false` is replaced (enabled)
+  await addDesktopCapabilities({ capabilities: ["passkeys"], dir: bare, passkeyRpIds: ["a.dev"] });
+  assertEquals(await rpIdsIn(bare), ["a.dev"]);
+  const off = project("export default { desktop: { capabilities: { passkeys: false } } };\n");
+  const on = await addDesktopCapabilities({
+    capabilities: ["passkeys"],
+    dir: off,
+    passkeyRpIds: ["a.dev"],
+  });
+  assertEquals([on.added, await rpIdsIn(off)], [["passkeys"], ["a.dev"]]);
+});
+
+Deno.test("denext desktop add passkeys --rp-id a --rp-id b: the CLI writes both", async () => {
+  const { CommandRegistry } = await import("../src/cli/command.ts");
+  const { desktopCommand } = await import("../src/cli/commands/desktop.ts");
+  const { desktopAdd } = await import("../src/cli/commands/desktop-add.ts");
+  const reg = new CommandRegistry();
+  reg.register(desktopCommand);
+  const dir = project("export default {};\n");
+  const out = reg.parse([
+    "desktop",
+    "add",
+    "passkeys",
+    "--rp-id",
+    "a.dev",
+    "--rp-id=b.example.com",
+  ]);
+  assert(out.kind === "run");
+  const log = console.log;
+  console.log = () => {};
+  try {
+    await desktopAdd(out.ctx, dir);
+  } finally {
+    console.log = log;
+  }
+  assertEquals(await rpIdsIn(dir), ["a.dev", "b.example.com"]);
+});
+
+Deno.test("desktop add passkeys --rp-id: each ID must be a registrable domain", async () => {
+  assertEquals(passkeyRpId(" Example.COM "), "example.com");
+  assertEquals(passkeyRpId("bücher.example"), "xn--bcher-kva.example");
+  for (
+    const bad of [
+      "localhost",
+      "https://example.com",
+      "example.com:443",
+      "example.com/path",
+      "192.168.1.10",
+      "-bad.example.com",
+      "a..example.com",
+      ".example.com",
+      "",
+      "exa mple.com",
+    ]
+  ) {
+    let threw = false;
+    try {
+      passkeyRpId(bad);
+    } catch (err) {
+      threw = true;
+      assertStringIncludes(String(err), "not a registrable domain");
+    }
+    assert(threw, bad);
+  }
+  const dir = project("export default {};\n");
+  await assertRejects(
+    () => addDesktopCapabilities({ capabilities: ["passkeys"], dir, passkeyRpIds: ["localhost"] }),
+    Error,
+    "not a registrable domain",
+  );
+  await assertRejects(
+    () => addDesktopCapabilities({ capabilities: ["fs"], dir, passkeyRpIds: ["example.com"] }),
+    Error,
+    "--rp-id applies to the passkeys capability",
+  );
+  assertEquals(await Deno.readTextFile(join(dir, "denext.config.ts")), "export default {};\n");
 });
 
 Deno.test("desktop add: a config whose desktop value is code is refused with the snippet", async () => {

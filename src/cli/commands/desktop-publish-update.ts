@@ -8,10 +8,9 @@
 // with a fresh expiry, without the artifact, and must run before it passes.
 
 import { join, resolve } from "@std/path";
-import type { CommandContext, FlagSpec } from "../command.ts";
+import type { CommandContext } from "../command.ts";
 import { loadOtaSigningKey, OTA_SIGNING_KEY_ENV } from "../../build/ota-signing.ts";
 import {
-  APP_UPDATE_DEFAULT_EXPIRY_DAYS,
   APP_UPDATE_MANIFEST_FILE,
   appUpdateExpiryWarning,
   type AppUpdateFreshnessOptions,
@@ -21,93 +20,6 @@ import {
 } from "../../build/app-update.ts";
 import { desktopAppVersion } from "../../build/desktop-installers.ts";
 import { resolveProject } from "../../build/paths.ts";
-
-/** The flags `desktop publish-update` adds to the `desktop` verb. */
-export const PUBLISH_UPDATE_FLAGS: FlagSpec[] = [
-  {
-    name: "artifact",
-    type: "string",
-    valueName: "<path>",
-    help:
-      "publish-update: the packaged app (.app, app directory or .AppImage); a macOS .app must be notarized",
-  },
-  {
-    name: "url-base",
-    type: "string",
-    valueName: "<url>",
-    help: "publish-update: the https URL the archives will be served under",
-  },
-  {
-    name: "app-version",
-    type: "string",
-    valueName: "<semver>",
-    help:
-      "publish-update: the version being published (default: deno.json version, else package.json's)",
-  },
-  {
-    name: "app-id",
-    type: "string",
-    valueName: "<id>",
-    help: "publish-update: the app identifier (default: desktop.app.identifier)",
-  },
-  {
-    name: "platform",
-    type: "string",
-    valueName: "<key>",
-    help:
-      "publish-update: <rust-target>-<webview|cef>[-appimage] (default: detected for this host)",
-  },
-  {
-    name: "min-version",
-    type: "string",
-    valueName: "<semver>",
-    help: "publish-update: older versions are told the update is required",
-  },
-  {
-    name: "notes",
-    type: "string",
-    valueName: "<text>",
-    help: "publish-update: release notes",
-  },
-  {
-    name: "key",
-    type: "string",
-    valueName: "<file>",
-    help: `publish-update: the signing key PEM (default: ${OTA_SIGNING_KEY_ENV})`,
-  },
-  {
-    name: "out",
-    type: "string",
-    valueName: "<dir>",
-    help: "publish-update: where the archive and app-update.json go (default: dist/updates)",
-  },
-  {
-    name: "expires-in",
-    type: "string",
-    valueName: "<days>",
-    help:
-      `publish-update: days until installed apps refuse the manifest (default ${APP_UPDATE_DEFAULT_EXPIRY_DAYS}); re-sign before`,
-  },
-  {
-    name: "expires-at",
-    type: "string",
-    valueName: "<rfc3339>",
-    help: "publish-update: an explicit expiry time instead of --expires-in",
-  },
-  {
-    name: "sequence",
-    type: "string",
-    valueName: "<n>",
-    help:
-      "publish-update: the release counter (default: Unix seconds, never below the existing manifest's)",
-  },
-  {
-    name: "resign",
-    type: "boolean",
-    help:
-      "publish-update: re-sign the existing app-update.json in --out with a fresh expiry (no artifact)",
-  },
-];
 
 /** The freshness flags (`--expires-in`, `--expires-at`, `--sequence`) as publisher options. */
 function freshnessFromFlags(

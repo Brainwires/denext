@@ -1,0 +1,10 @@
+.denext/
+# The desktop sync writes these; config.json (the entry's config) is committed so desktop.ts
+# type-checks and `denext desktop run` leaves the folder as it found it.
+.deno-desktop/*
+!.deno-desktop/config.json
+out/
+dist/
+node_modules/
+# Packaging scripts: written from the current scaffold template by `deno task desktop:package`.
+scripts/

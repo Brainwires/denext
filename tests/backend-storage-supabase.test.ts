@@ -13,8 +13,6 @@ import {
 
 Deno.test({
   name: "supabase-js storage on the fs driver (sqlite metadata, TypeScript rules)",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn(t) {
     const h = await storageHarness(backend({
       supabase: await supabaseKeys(),

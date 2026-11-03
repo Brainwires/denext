@@ -5,7 +5,7 @@
 // can never be forwarded, and a value that could split or end a header fails the whole batch.
 
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import type { ApiModule } from "../src/server/types.ts";

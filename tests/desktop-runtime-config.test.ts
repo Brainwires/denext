@@ -17,7 +17,7 @@ import {
 import { resolveDesktopCapabilities } from "../src/desktop/caps/mod.ts";
 import { scaffoldFiles } from "../src/build/scaffold.ts";
 import type { DenextConfig } from "../src/server/config.ts";
-import { quietDeno } from "./helpers/quiet-deno.ts";
+import { boundedDeno } from "../scripts/deno-doc.ts";
 
 const REPO = fromFileUrl(new URL("../", import.meta.url));
 
@@ -115,7 +115,6 @@ Deno.test("the scaffolded desktop entry imports the JSON, and the scaffold write
 
 Deno.test({
   name: "the generated entry's module graph excludes denext.config.ts and the plugins it imports",
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir();
   try {
@@ -144,7 +143,7 @@ Deno.test({
     await syncDesktopAppConfigAt(dir, { desktop: { app: { identifier: "com.example.g" } } });
     // A file URL, not a path: `deno info` reads `C:\…` as a URL whose scheme is `c:`.
     const root = toFileUrl(join(dir, "desktop.ts")).href;
-    const out = await quietDeno(["info", "--json", "--config", join(dir, "deno.json"), root], {
+    const out = await boundedDeno(["info", "--json", "--config", join(dir, "deno.json"), root], {
       cwd: dir,
     });
     assert(out.success, out.stderr);
@@ -164,7 +163,7 @@ Deno.test({
 
 Deno.test("the examples' desktop entries import .deno-desktop/config.json, committed in sync with the config", async () => {
   const { desktopRuntimeConfigText } = await import("../src/build/desktop-app-config.ts");
-  for (const example of ["native", "clerk", "desktop-kitchen-sink", "rn-desktop"]) {
+  for (const example of ["native", "clerk", "desktop-kitchen-sink", "rn-desktop", "companion"]) {
     const dir = join(REPO, "examples", example);
     const entry = await Deno.readTextFile(join(dir, "desktop.ts"));
     assertStringIncludes(

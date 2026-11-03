@@ -87,6 +87,7 @@ async function project(files: Record<string, string> = {}): Promise<string> {
     "capacitor.config.ts": CONFIG_TS,
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
     "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+    "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
     "out/index.html": "<!doctype html>\n",
     "native/ios/App/App/Info.plist": INFO_PLIST,
     "native/ios/App/App.xcodeproj/project.pbxproj": PBXPROJ,

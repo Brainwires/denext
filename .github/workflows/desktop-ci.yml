@@ -65,6 +65,8 @@ on:
       - "src/build/deno-cache-dir.ts"
       - "src/build/deno-toolchain.ts"
       - "src/build/deno-toolchain-pin.json"
+      - "src/build/runtime-revocation*.ts" # the revoked-runtimes list the runtime pins are checked against
+      - "src/build/linux-libc.ts"
       - "src/build/deno-version.ts"
       - "src/build/net-permissions.ts"
       - "src/build/file-lock.ts"
@@ -84,12 +86,16 @@ on:
       - "src/build/precompress.ts"
       - "src/build/bundle.ts"
       - "src/build/exited-output.ts"
+      - "scripts/deno-doc.ts" # bounded `deno doc` / `deno info` children
+      - "src/build/child-probe.ts" # their stall probe (and the build's, under DENEXT_CHILD_PROBE)
+      - "src/build/windows-powershell.ts"
       # The vendored esbuild API (the sidecar bundler) and the esbuild the toolchain ships.
       - "src/build/esbuild/**"
       - "src/build/paths.ts"
       - "src/build/json-edit.ts"
       - "src/build/config-edit.ts"
       - "src/build/config-files.ts"
+      - "src/build/config-static.ts"
       - "src/build/workspace-imports.ts"
       - "src/build/patch-diff.ts"
       - "src/build/css-config-guard.ts"
@@ -99,6 +105,13 @@ on:
       - "src/build/doctor-format.ts"
       - "src/build/spa/shared.ts"
       - "src/build/react-native-desktop.ts"
+      # The pack readers the desktop runtime graph must keep lazy (tests/desktop-runtime-graph.test.ts).
+      - "src/build/packed-text.ts"
+      - "scripts/lib/pack-texts.ts"
+      # The scaffolded packaging scripts ship in the docs-corpus pack (scaffold.ts reads them).
+      - "src/build/native-templates.packed.ts"
+      - "src/build/native-templates/desktop-package-scripts.ts"
+      - "packages/docs-corpus/native-templates.ts"
       - "src/cli/commands/desktop*.ts"
       - "src/cli/commands/doctor.ts"
       - "src/client/live-client.ts"
@@ -112,6 +125,7 @@ on:
       - "src/build/dev-server.ts"
       - "src/build/react-native.ts"
       - "src/cli/command.ts"
+      - "src/cli/command-meta.ts"
       - "src/cli/commands/mobile-build.ts"
       - "src/cli/commands/toolchain.ts"
       - "src/cli/deno-path.ts"
@@ -664,6 +678,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
+          # denext 4.9.0 and earlier carry no build attestation, and a signed-in gh (GITHUB_TOKEN)
+          # makes the installer refuse one: until the latest release is attested it installs on
+          # its checksum (DENEXT_INSECURE=1); from then on the attestation must verify.
+          $latest = (Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" } -Uri 'https://api.github.com/repos/${{ github.repository }}/releases/latest').tag_name
+          if ($latest -match '^v([0-3]|4\.[0-9])\.') { $env:DENEXT_INSECURE = '1' }
           $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext'
           & ./scripts/install.ps1
           $v = & (Join-Path $env:DENEXT_INSTALL 'bin\denext.exe') --version
@@ -762,6 +781,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
+          # denext 4.9.0 and earlier carry no build attestation, and a signed-in gh (GITHUB_TOKEN)
+          # makes the installer refuse one: until the latest release is attested it installs on
+          # its checksum (DENEXT_INSECURE=1); from then on the attestation must verify.
+          $latest = (Invoke-RestMethod -Headers @{ Authorization = "Bearer $env:GITHUB_TOKEN" } -Uri 'https://api.github.com/repos/${{ github.repository }}/releases/latest').tag_name
+          if ($latest -match '^v([0-3]|4\.[0-9])\.') { $env:DENEXT_INSECURE = '1' }
           $env:DENEXT_INSTALL = Join-Path $env:RUNNER_TEMP 'denext'
           & ./scripts/install.ps1
           $v = & (Join-Path $env:DENEXT_INSTALL 'bin\denext.exe') --version
@@ -859,5 +883,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # denext 4.9.0 and earlier carry no build attestation, and a signed-in gh (GITHUB_TOKEN)
+          # makes the installer refuse one: until the latest release is attested it installs on
+          # its checksum (DENEXT_INSECURE=1); from then on the attestation must verify.
+          latest="$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)"
+          case "$latest" in v[0-3].* | v4.[0-9].*) export DENEXT_INSECURE=1 ;; esac
           DENEXT_INSTALL="$RUNNER_TEMP/denext-latest" sh scripts/install.sh
           "$RUNNER_TEMP/denext-latest/bin/denext" --version | grep -E '^denext [0-9]+\.[0-9]+\.[0-9]+.* \(binary\)$'

@@ -80,3 +80,57 @@ export function dirLinkTestName(name: string): string {
     ? `${name} [ignored: this host can't create a directory link]`
     : name;
 }
+
+/**
+ * A test's gate on a host capability probed at load: `ignore` is set only where the capability is
+ * missing and never under CI (a runner without it is broken, and the test fails there), and
+ * `name` says why the test was ignored, so a skipped check reads as one in the report.
+ */
+export interface HostGate {
+  /** Pass as the test's `ignore`. */
+  readonly ignore: boolean;
+  /**
+   * `name`, with the reason appended when the test is ignored.
+   *
+   * @param name The test's name.
+   */
+  name(name: string): string;
+}
+
+/**
+ * The {@linkcode HostGate} for a capability.
+ *
+ * @param available Whether this host has it (a real probe, not an OS check).
+ * @param missing What the host lacks, for the ignored test's name.
+ * @returns The gate.
+ */
+export function hostGate(available: boolean, missing: string): HostGate {
+  const ignore = !available && !inCi();
+  return { ignore, name: (name) => ignore ? `${name} [ignored: ${missing}]` : name };
+}
+
+/**
+ * Tests that create a symlink (a file one, or a directory one a junction can't stand in for):
+ * ignored on a Windows account without the symlink privilege (no Developer Mode, not elevated).
+ */
+export const SYMLINK_GATE: HostGate = hostGate(
+  FILE_SYMLINKS,
+  "this Windows account may not create symlinks",
+);
+
+/**
+ * Whether `cmd` can be started here (it exits, whatever its status).
+ *
+ * @param cmd The program, looked up on PATH.
+ * @param args Arguments that make it exit at once (`--version`).
+ * @returns Whether it spawned.
+ */
+export async function commandRuns(cmd: string, args: readonly string[]): Promise<boolean> {
+  try {
+    await new Deno.Command(cmd, { args: [...args], stdout: "null", stderr: "null", stdin: "null" })
+      .output();
+    return true;
+  } catch {
+    return false;
+  }
+}

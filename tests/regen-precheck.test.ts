@@ -8,6 +8,7 @@ import { allOutputs, regen, type RegenStep, STEPS } from "../scripts/regen.ts";
 import { rewriteSerialList } from "../scripts/gen-serial-tests.ts";
 import {
   AFFECTED_TESTS_CAP,
+  budgetArgs,
   DRIFT_TESTS,
   isCheckable,
   isPublishedSource,
@@ -134,6 +135,43 @@ Deno.test("regen --check: a failing step still restores what earlier steps rewro
   }
 });
 
+Deno.test("regen: one run converges from a stale native-templates pack (the package scripts copy it after it is rewritten)", async () => {
+  // The real steps' phases, on stand-ins: the pack's generator (a subprocess, so it finishes
+  // later than an in-process step starts) and the copy of the scaffold's package scripts out of it.
+  const phaseOf = (name: string) => STEPS.find((s) => s.name.includes(name))!.phase;
+  const dir = await Deno.makeTempDir({ prefix: "denext_regen_pack_" });
+  try {
+    await Deno.writeTextFile(join(dir, "pack.txt"), "old template\n");
+    await Deno.writeTextFile(join(dir, "package-windows.ts"), "old template\n");
+    const steps: RegenStep[] = [
+      {
+        name: "deno task gen:native-templates",
+        run: async () => {
+          await new Promise((r) => setTimeout(r, 20));
+          await Deno.writeTextFile(join(dir, "pack.txt"), "new template\n");
+        },
+        outputs: ["pack.txt"],
+        phase: phaseOf("gen:native-templates"),
+      },
+      {
+        name: "package scripts",
+        run: async () => {
+          const pack = await Deno.readTextFile(join(dir, "pack.txt"));
+          await Deno.writeTextFile(join(dir, "package-windows.ts"), pack);
+        },
+        outputs: ["package-windows.ts"],
+        phase: phaseOf("package scripts"),
+      },
+    ];
+    await regen({ quiet: true, steps, root: dir });
+    assertEquals(await Deno.readTextFile(join(dir, "package-windows.ts")), "new template\n");
+    assertEquals((await regen({ check: true, quiet: true, steps, root: dir })).stale, []);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+  assert(phaseOf("package scripts") > phaseOf("gen:native-templates"));
+});
+
 Deno.test("precheck: the drift tests it runs exist", async () => {
   for (const t of DRIFT_TESTS) assert((await Deno.stat(new URL(t, ROOT))).isFile, t);
 });
@@ -169,6 +207,15 @@ Deno.test("precheck: the type-check runs on denext's toolchain (TypeScript 7), n
   const src = await Deno.readTextFile(new URL("scripts/precheck.ts", ROOT));
   assert(src.includes("deno(typeCheckArgs(checkable))"), "the step runs typeCheckArgs");
   assertFalse(/deno\(\["check"/.test(src), "no type-check on the running Deno");
+});
+
+Deno.test("precheck: the bundle budget runs on denext's toolchain, never PATH's deno", async () => {
+  // CI's bundle-budget job measures with the toolchain; a stock 2.9 bundles examples/hello's
+  // shared chunks larger (64,655 B against 64,600 B) and would block every push.
+  assertEquals(budgetArgs(), ["run", "-A", "scripts/toolchain-deno.ts", "task", "budget"]);
+  const src = await Deno.readTextFile(new URL("scripts/precheck.ts", ROOT));
+  assert(src.includes("deno(budgetArgs())"), "the step runs budgetArgs");
+  assertFalse(src.includes(`deno(["task", "budget"])`), "no budget on the running Deno");
 });
 
 Deno.test("precheck: the badge check and the affected tests run, the tests capped", async () => {

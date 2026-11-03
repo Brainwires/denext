@@ -71,6 +71,4 @@ const UNISTYLES: Bed = {
 
 Deno.test({
   name: "migration bed: Unistyles' Expo example builds, renders, themes and navigates on the web",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, (t) => runBed(t, UNISTYLES));

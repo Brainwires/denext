@@ -9,7 +9,7 @@ import {
   publicEnv,
 } from "../src/server/env.ts";
 import { publicEnv as clientPublicEnv } from "../src/runtime/public-env.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 

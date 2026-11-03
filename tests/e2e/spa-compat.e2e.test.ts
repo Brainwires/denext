@@ -69,8 +69,6 @@ async function setup(): Promise<string> {
 
 Deno.test({
   name: "e2e: SPA mode runs an npm-React app on denext's single React (next-compat)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   const server = await buildAndServe(dir);

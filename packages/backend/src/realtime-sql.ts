@@ -9,6 +9,7 @@
 import type { Migration } from "@denext/denext/server";
 import { positiveOption } from "./options.ts";
 import { IDENTIFIER, REALTIME_NOTIFY_CHANNEL, type TableEvent } from "./realtime-shared.ts";
+import { quoteIdent } from "./rest-query.ts";
 
 /** The Postgres NOTIFY channel broadcasts and presence changes travel on, between instances. */
 export const REALTIME_BUS_CHANNEL = "denext_realtime_bus";
@@ -297,7 +298,7 @@ function resolveTable(name: string, options: RealtimeTableOptions): ResolvedTabl
     events: EVENTS.filter((event) => events.includes(event)),
     key,
     ...(schema ? { schema } : {}),
-    qualified: schema ? `"${schema}"."${name}"` : `"${name}"`,
+    qualified: schema ? `${quoteIdent(schema)}.${quoteIdent(name)}` : quoteIdent(name),
     old,
   };
 }
@@ -723,7 +724,7 @@ export function publicationTable(row: PublicationRow): ResolvedTable | string {
     events: [...EVENTS],
     key: pk[0],
     schema: row.schema,
-    qualified: `"${row.schema}"."${row.table}"`,
+    qualified: `${quoteIdent(row.schema)}.${quoteIdent(row.table)}`,
     old: row.ident === "f" && !row.rls ? "full" : "key",
   };
 }

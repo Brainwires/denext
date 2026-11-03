@@ -49,13 +49,15 @@
  *   that `denext mobile add-ota` installs, which re-verifies a downloaded UI whenever it serves
  *   it ({@linkcode onOtaRejected} hears a refusal); {@linkcode prepareUiUpdate} /
  *   {@linkcode applyUiUpdate} split the download from the switch for an app's own prompt;
- *   {@linkcode otaSignaturePayload} builds the exact bytes a manifest signature covers.
+ *   {@linkcode otaSignaturePayload} / {@linkcode otaAppSignaturePayload} build the exact bytes
+ *   a manifest's `signature` / `appSignature` cover.
  * - Native capabilities, each through its official Capacitor plugin in the shell
  *   (`denext mobile add <capability>` installs it) and a web fallback elsewhere:
  *   {@linkcode haptic}, {@linkcode readClipboard} / {@linkcode writeClipboard} /
  *   {@linkcode clipboardFormats},
  *   {@linkcode share}, {@linkcode deviceInfo}, {@linkcode networkStatus} /
- *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash} and
+ *   {@linkcode useNetworkStatus}, {@linkcode useKeepAwake}, {@linkcode hideSplash},
+ *   {@linkcode speak} / {@linkcode stopSpeaking} (the OS engine, else Web Speech) and
  *   {@linkcode secureStore} (Keychain / Keystore natively; NOT secret on the web).
  * - Files and media: {@linkcode readFile} / {@linkcode writeFile} / {@linkcode deleteFile} /
  *   {@linkcode listDir} (app storage natively, OPFS on the web); {@linkcode downloadToFile} /
@@ -235,8 +237,14 @@ export {
   otaStatus,
   prepareUiUpdate,
 } from "./ota.ts";
-export { type OtaManifest, type OtaManifestFile, otaSignaturePayload } from "./ota-manifest.ts";
+export {
+  otaAppSignaturePayload,
+  type OtaManifest,
+  type OtaManifestFile,
+  otaSignaturePayload,
+} from "./ota-manifest.ts";
 export { haptic, type HapticKind } from "./haptics.ts";
+export { speak, type SpeakOptions, stopSpeaking } from "./speech.ts";
 export {
   type ClipboardContent,
   type ClipboardFormat,
@@ -258,6 +266,7 @@ export { hideSplash } from "./splash.ts";
 export {
   type SecureStore,
   secureStore,
+  type SecureStoreAccessibility,
   type SecureStoreFallback,
   type SecureStoreGetOptions,
   type SecureStoreSetOptions,

@@ -29,8 +29,6 @@ Deno.test("backend(): vault, queues and webhooks need postgres", () => {
 
 Deno.test({
   name: "backend(): the platform services at server start, and teardown",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const sql = scriptedSql(() => [], { withListen: true });
     const root = await Deno.makeTempDir();
@@ -85,8 +83,6 @@ Deno.test({
 
 Deno.test({
   name: "backend(): a failed startup migration is a warning, retried on first use",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const sql = scriptedSql(() => {
       throw new Error("db unreachable");

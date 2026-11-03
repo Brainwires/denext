@@ -462,8 +462,11 @@ function useTransitionHold(): () => void {
   return () => {
     release.current?.();
     const done = suspendViewTransitions();
-    release.current = done;
-    setTimeout(done, 5000); // in case the router never settles
+    const fallback = setTimeout(done, 5000); // in case the router never settles
+    release.current = () => {
+      clearTimeout(fallback);
+      done();
+    };
   };
 }
 

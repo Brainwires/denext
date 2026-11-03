@@ -13,12 +13,13 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import { encodeBase64, encodeBase64Url } from "@std/encoding";
 import { fromFileUrl, join } from "@std/path";
 import { assert } from "@std/assert";
-import { runDeno, startCliServer } from "./harness.ts";
+import { KEYLESS_FAPI, KEYLESS_PUBLISHABLE_KEY, KEYLESS_SECRET_KEY } from "./clerk-keys.ts";
+import { runDeno, startCliServer, withEnv } from "./harness.ts";
 
 const EXAMPLE = fromFileUrl(new URL("../../examples/clerk", import.meta.url));
 const CLI = fromFileUrl(new URL("../../cli.ts", import.meta.url));
 /** A made-up development instance (never contacted: the key is local). */
-const FAPI = "denext-keyless-e2e.clerk.accounts.dev";
+const FAPI = KEYLESS_FAPI;
 
 /** An RS256 key pair, and its public half as the PEM `CLERK_JWT_KEY` takes. */
 async function keyPair(): Promise<{ privateKey: CryptoKey; pem: string }> {
@@ -63,18 +64,24 @@ async function sessionToken(key: CryptoKey, claims: Record<string, unknown>): Pr
 
 Deno.test({
   name: "e2e: examples/clerk refuses missing, expired, tampered and foreign session tokens",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const { privateKey, pem } = await keyPair();
   const other = await keyPair();
   const env: Record<string, string> = {
-    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_" + btoa(`${FAPI}$`),
-    CLERK_SECRET_KEY: "sk_test_denext_keyless_e2e",
+    NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: KEYLESS_PUBLISHABLE_KEY,
+    CLERK_SECRET_KEY: KEYLESS_SECRET_KEY,
     CLERK_JWT_KEY: pem,
   };
-  const prior = Object.fromEntries(Object.keys(env).map((k) => [k, Deno.env.get(k)]));
-  for (const [k, v] of Object.entries(env)) Deno.env.set(k, v); // the CLI children inherit them
+  // The CLI children inherit them; restored however the test ends (a failed install included).
+  await withEnv(env, () => keylessFlows(t, privateKey, other.privateKey));
+});
+
+/** Install, build and serve the example, then run the token checks and the export. */
+async function keylessFlows(
+  t: Deno.TestContext,
+  privateKey: CryptoKey,
+  otherKey: CryptoKey,
+): Promise<void> {
   const installed = await runDeno(["install"], EXAMPLE, 600_000);
   assert(installed.ok, "deno install failed:\n" + installed.out);
   const built = await runDeno(
@@ -126,7 +133,7 @@ Deno.test({
       assertEquals((await me(`${h}.${forged}.${s}`)).status, 401);
     });
     await t.step("a token signed by another key: 401", async () => {
-      assertEquals((await me(await sessionToken(other.privateKey, {}))).status, 401);
+      assertEquals((await me(await sessionToken(otherKey, {}))).status, 401);
     });
     await t.step("not a JWT: 401", async () => {
       assertEquals((await me("definitely-not-a-jwt")).status, 401);
@@ -160,9 +167,5 @@ Deno.test({
     );
   } finally {
     if (!serverClosed) await server.close();
-    for (const [k, v] of Object.entries(prior)) {
-      if (v === undefined) Deno.env.delete(k);
-      else Deno.env.set(k, v);
-    }
   }
-});
+}

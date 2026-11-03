@@ -9,6 +9,7 @@
 import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { buildRegistry } from "../src/cli/register.ts";
 import type { CommandContext } from "../src/cli/command.ts";
+import { commandRuns, hostGate } from "./helpers/symlink.ts";
 
 function ctx(positionals: string[]): CommandContext {
   return {
@@ -112,19 +113,10 @@ Deno.test("completions rejects an unknown shell with a non-zero exit", () => {
   assertStringIncludes(errs.join("\n"), "unknown shell");
 });
 
-Deno.test("completions offer a verb's actions as the second word, in every shell", async () => {
-  const { actionsOf, makeCompletionsCommand } = await import("../src/cli/commands/completions.ts");
+/** The completion script of each shell, from the real registry. */
+async function completionScripts(): Promise<Record<string, string>> {
+  const { makeCompletionsCommand } = await import("../src/cli/commands/completions.ts");
   const reg = buildRegistry();
-  assertEquals(actionsOf(reg.get("migration")!).slice(0, 3), ["new", "list", "up"]);
-  assertEquals(
-    actionsOf({
-      name: "x",
-      summary: "",
-      run() {},
-      positionals: [{ name: "d", help: "Project directory" }],
-    }),
-    [],
-  );
   const scripts: Record<string, string> = {};
   const exit = Deno.exit;
   const log = console.log;
@@ -143,6 +135,23 @@ Deno.test("completions offer a verb's actions as the second word, in every shell
     (Deno as { exit: unknown }).exit = exit;
     console.log = log;
   }
+  return scripts;
+}
+
+Deno.test("completions offer a verb's actions as the second word, in every shell", async () => {
+  const { actionsOf } = await import("../src/cli/commands/completions.ts");
+  const reg = buildRegistry();
+  assertEquals(actionsOf(reg.get("migration")!).slice(0, 3), ["new", "list", "up"]);
+  assertEquals(
+    actionsOf({
+      name: "x",
+      summary: "",
+      run() {},
+      positionals: [{ name: "d", help: "Project directory" }],
+    }),
+    [],
+  );
+  const scripts = await completionScripts();
   assertStringIncludes(scripts.bash, 'db) COMPREPLY=( $(compgen -W "migrate rollback status');
   assertStringIncludes(scripts.bash, "stack) COMPREPLY=");
   assertStringIncludes(
@@ -153,7 +162,15 @@ Deno.test("completions offer a verb's actions as the second word, in every shell
     scripts.fish,
     "complete -c denext -n '__fish_seen_subcommand_from db' -a 'migrate",
   );
-  // The bash script parses.
+});
+
+const BASH = hostGate(await commandRuns("bash", ["--version"]), "no bash on this host");
+
+Deno.test({
+  name: BASH.name("completions: the bash script parses (bash -n)"),
+  ignore: BASH.ignore,
+}, async () => {
+  const scripts = await completionScripts();
   const path = await Deno.makeTempFile({ suffix: ".bash" });
   try {
     await Deno.writeTextFile(path, scripts.bash);

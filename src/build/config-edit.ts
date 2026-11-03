@@ -794,6 +794,67 @@ export async function readConfigModel(source: string): Promise<ConfigModel> {
   return { form: scope.form, keys };
 }
 
+/** Whether `callee`, in this module, is denext's own `defineConfig`, which returns its argument. */
+function isDenextDefineConfig(body: Node[], callee: Node): boolean {
+  if (callee.type !== "Identifier" || callee.value !== "defineConfig") return false;
+  return body.some((item) =>
+    item.type === "ImportDeclaration" &&
+    /^(?:denext|jsr:@denext\/denext)(?:[@/]|$)/.test(item.source?.value ?? "") &&
+    (item.specifiers ?? []).some((spec: Node) =>
+      spec.type === "ImportSpecifier" && spec.local?.value === "defineConfig" &&
+      (spec.imported?.value ?? "defineConfig") === "defineConfig"
+    )
+  );
+}
+
+/** Whether a located default export can yield keys its object literal doesn't name. */
+function defaultExportHidesKeys(body: Node[], item: Node, scope: Scope): boolean {
+  if ((scope.obj?.properties ?? []).some((prop: Node) => propName(prop) === null)) return true;
+  if (scope.form !== "defineConfig") return false;
+  const call = unwrap(item.expression);
+  return call.arguments.length !== 1 || Boolean(call.arguments[0].spread) ||
+    !isDenextDefineConfig(body, unwrap(call.callee));
+}
+
+/** Whether a non-default export statement can yield a key `export const <key> = …` wouldn't name. */
+function exportHidesKeys(item: Node): boolean {
+  if (item.type === "ExportAllDeclaration") return !item.typeOnly;
+  if (item.type === "TsExportAssignment") return true;
+  if (item.type === "ExportNamedDeclaration") {
+    return !item.typeOnly && (item.specifiers ?? []).length > 0;
+  }
+  if (item.type !== "ExportDeclaration") return false;
+  const decl = item.declaration;
+  if (decl?.type === "TsInterfaceDeclaration" || decl?.type === "TsTypeAliasDeclaration") {
+    return false;
+  }
+  return decl?.type !== "VariableDeclaration" || decl.declarations.length !== 1 ||
+    decl.declarations[0].id?.type !== "Identifier" || !decl.declarations[0].init;
+}
+
+/**
+ * Whether code in a config source can supply top-level keys {@linkcode readConfigModel} doesn't
+ * report: a spread or computed member, a default export that is a variable or goes through a
+ * function other than denext's `defineConfig`, a re-export, or named exports beside a default
+ * (the loader merges them over it). Unparsable source counts: nothing is known about it.
+ *
+ * @param source The `denext.config.ts` source.
+ * @returns True when the reported keys may not be all of them.
+ */
+export async function configMayHideKeys(source: string): Promise<boolean> {
+  const parsed = await parseModule(source);
+  if (!parsed) return true;
+  const { body } = parsed;
+  if (body.some(exportHidesKeys)) return true;
+  const defaults = body.filter((item: Node) =>
+    item.type === "ExportDefaultDeclaration" || item.type === "ExportDefaultExpression"
+  );
+  if (defaults.length === 0) return false;
+  if (namedExportSlots(parsed.ctx, body).size > 0) return true;
+  const scope = defaultExportObject(defaults[0]);
+  return scope === null || defaultExportHidesKeys(body, defaults[0], scope);
+}
+
 /**
  * One key's entry: its verbatim source text plus the value the editor may rewrite — the
  * literal itself, or the rows inside a `() => [ … ]` thunk (which is data wearing a wrapper:

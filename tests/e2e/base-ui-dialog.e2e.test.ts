@@ -128,8 +128,6 @@ async function stepCloseThenReopen(page: Page): Promise<void> {
 
 Deno.test({
   name: "e2e: Base UI dialog enter transition advances (popup becomes visible)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   const server = await buildAndServe(dir);

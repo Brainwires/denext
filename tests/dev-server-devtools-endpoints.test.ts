@@ -109,8 +109,6 @@ async function settled(file: string): Promise<void> {
 
 Deno.test({
   name: "dev-cache: reports the stat keys, and the counters move with an invalidation",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -149,8 +147,6 @@ Deno.test({
 
 Deno.test({
   name: "dev-routes: maps the matched page, layout chain, boundaries and API route",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -197,8 +193,6 @@ Deno.test({
 
 Deno.test({
   name: "dev-routes: an unmatched path is matched:false with a 200, never a 404",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -220,8 +214,6 @@ Deno.test({
 
 Deno.test({
   name: "dev-cache + dev-routes + dev-live(-views): a cross-origin Sec-Fetch-Site is refused (403)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -451,8 +443,6 @@ function fileButtons(pane: FakeElement): FakeElement[] {
 
 Deno.test({
   name: "dev-live-views + dev-live: what the hub holds, recorded only under the dev handler",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   resetLiveDevtools();
   // Before a dev handler exists nothing is recorded: production keeps no record.

@@ -3,7 +3,9 @@
 //
 //   config            `mobile.icon` in denext.config.* (read statically, never imported)
 //   assets            assets/icon.png (or resources/), the Capacitor convention
-//   expo              an Expo app config in the project or a sibling app of the same monorepo:
+//   expo              an Expo app config in the project or a sibling app of the same monorepo
+//                     (a member of the workspace the project is a member of, never an unrelated
+//                     folder beside it):
 //                     `icon` / `ios.icon` / `android.icon`, `android.adaptiveIcon`, `splash`
 //                     (app.json, or app.config.* read statically by ./expo-app-config.ts; a value
 //                     computed in code is reported and skipped, never executed)
@@ -17,11 +19,13 @@
 // `mobile.icon`), `denext mobile build` (which replaces Capacitor's placeholder icon) and
 // `denext mobile doctor --store` (which flags the placeholder).
 
-import { dirname, extname, join, resolve } from "@std/path";
+import { dirname, extname, join, relative, resolve, SEPARATOR } from "@std/path";
+import { globToRegExp } from "@std/path/posix";
 import { posixRelative } from "./mobile-paths.ts";
 import { CONFIG_FILES } from "./paths.ts";
 import { readConfigModel } from "./config-edit.ts";
 import { type ExpoIcons, readExpoAppConfig, readJsonFile } from "./expo-app-config.ts";
+import { readRegularTextFile } from "../utils/read-regular-file.ts";
 import { decodeImage, parseHexColor } from "./png-raster.ts";
 import { loadNativeDirs, nativeJoin } from "./capacitor-native-dirs.ts";
 
@@ -263,27 +267,202 @@ async function isWorkspaceRoot(dir: string): Promise<boolean> {
   return !!deno && Array.isArray(deno.workspace);
 }
 
-/** Whether `dir` sits inside a monorepo (a workspace root at most four levels above it). */
-async function inMonorepo(dir: string): Promise<boolean> {
+/** The monorepo root `dir` sits in (a workspace root at most four levels above it), or `null`. */
+async function monorepoRoot(dir: string): Promise<string | null> {
   let cur = dirname(dir);
   for (let i = 0; i < 4; i++) {
-    if (await isWorkspaceRoot(cur)) return true;
+    if (await isWorkspaceRoot(cur)) return cur;
     const up = dirname(cur);
     if (up === cur) break;
     cur = up;
   }
-  return false;
+  return null;
 }
 
-/** The project, then (in a monorepo) its sibling app folders, that hold an Expo app config. */
-async function expoDirs(root: string): Promise<string[]> {
-  const candidates = [root, ...(await inMonorepo(root) ? await siblingDirs(root) : [])];
+/** The strings of `value` when it is an array, else none. */
+function stringsOf(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+/** pnpm-workspace.yaml's `packages:` entries (the block list; enough for the file's usual shape). */
+function pnpmPackages(text: string): string[] {
+  const out: string[] = [];
+  let inPackages = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (/^packages\s*:/.test(line)) {
+      inPackages = true;
+      continue;
+    }
+    if (!inPackages) continue;
+    const item = /^\s+-\s*(["']?)(.+?)\1\s*(#.*)?$/.exec(line);
+    if (item) out.push(item[2]);
+    else if (/^\S/.test(line)) break;
+  }
+  return out;
+}
+
+/** package.json's `workspaces` (an array, or `{ packages }`), or `null` when it has none. */
+function packageJsonWorkspaces(pkg: Record<string, unknown> | null): string[] | null {
+  const ws = pkg?.workspaces;
+  if (Array.isArray(ws)) return stringsOf(ws);
+  if (ws && typeof ws === "object") return stringsOf((ws as { packages?: unknown }).packages);
+  return null;
+}
+
+/** rush.json's project folders, or `null` when it lists none. */
+function rushProjects(rush: Record<string, unknown> | null): string[] | null {
+  if (!rush || !Array.isArray(rush.projects)) return null;
+  return (rush.projects as unknown[]).map((p) => (p as { projectFolder?: unknown })?.projectFolder)
+    .filter((f): f is string => typeof f === "string");
+}
+
+/** An array key of a JSON file, or `null` when the file or the array is missing. */
+function arrayKey(json: Record<string, unknown> | null, key: string): string[] | null {
+  return json && Array.isArray(json[key]) ? stringsOf(json[key]) : null;
+}
+
+/**
+ * The member globs the workspace root `dir` lists (deno.json `workspace`, package.json
+ * `workspaces`, pnpm-workspace.yaml `packages`, lerna.json `packages`, rush.json's project
+ * folders; `!` excludes), or `null` when its markers list none (nx.json or turbo.json alone).
+ */
+async function workspaceMemberGlobs(dir: string): Promise<string[] | null> {
+  const pnpm = await readRegularTextFile(join(dir, "pnpm-workspace.yaml"));
+  const lists = [
+    arrayKey(await readJsonFile(join(dir, "deno.json")), "workspace"),
+    packageJsonWorkspaces(await readJsonFile(join(dir, "package.json"))),
+    pnpm === null ? null : pnpmPackages(pnpm),
+    arrayKey(await readJsonFile(join(dir, "lerna.json")), "packages"),
+    rushProjects(await readJsonFile(join(dir, "rush.json"))),
+  ].filter((list): list is string[] => list !== null);
+  return lists.length > 0 ? lists.flat() : null;
+}
+
+/** Member globs read from one workspace; past it the rest are ignored. */
+const MAX_WORKSPACE_GLOBS = 256;
+/** The longest member glob compiled. */
+const MAX_GLOB_LENGTH = 256;
+/** Wildcards (`*`, `?`) one segment of a member glob may hold. */
+const MAX_SEGMENT_WILDCARDS = 3;
+
+/** A member glob's path segments: `**` (any number of segments) or one segment's RegExp. */
+type MemberGlob = readonly ("**" | RegExp)[];
+
+/** A workspace's member globs, compiled once: what to include and what to exclude. */
+interface WorkspaceMembers {
+  readonly include: readonly MemberGlob[];
+  readonly exclude: readonly MemberGlob[];
+}
+
+/**
+ * One member glob compiled segment by segment, or why it is skipped. A clone's glob is untrusted
+ * and a whole-path `globToRegExp` backtracks across segments (polynomial in the path's length per
+ * wildcard, exponential for stacked `**` or nested extglobs). Here each segment is its own RegExp,
+ * matched against one path segment, `**` runs are collapsed, and {@link globMatches} walks the
+ * segments with memoization; a long glob, a segment with many wildcards, a nested extglob group
+ * and one the RegExp constructor rejects are refused.
+ */
+function compileMemberGlob(glob: string): MemberGlob | string {
+  if (glob.length > MAX_GLOB_LENGTH) return `is over ${MAX_GLOB_LENGTH} characters`;
+  const segments = glob.replace(/^\.\//, "").replace(/\/+$/, "").split("/")
+    .map((segment) => segment === "**" ? segment : segment.replace(/\*{2,}/g, "*"))
+    .filter((segment, i, all) => !(segment === "**" && all[i - 1] === "**"));
+  if (segments.join("/") === "") return "is empty";
+  const compiled: ("**" | RegExp)[] = [];
+  for (const segment of segments) {
+    if (segment === "**") {
+      compiled.push(segment);
+      continue;
+    }
+    if ((segment.match(/[*?]/g) ?? []).length > MAX_SEGMENT_WILDCARDS) {
+      return `has a segment with more than ${MAX_SEGMENT_WILDCARDS} wildcards`;
+    }
+    if (/[?*+@!]\([^)]*[?*+@!]\(/.test(segment)) return "nests one extglob group in another";
+    try {
+      compiled.push(globToRegExp(segment, { extended: true, globstar: true }));
+    } catch {
+      return "is not a valid glob";
+    }
+  }
+  return compiled;
+}
+
+/** Whether the path `parts` matches `glob` (each pair of positions tried once). */
+function globMatches(glob: MemberGlob, parts: readonly string[]): boolean {
+  const memo = new Map<number, boolean>();
+  const from = (i: number, j: number): boolean => {
+    const key = i * (parts.length + 1) + j;
+    const known = memo.get(key);
+    if (known !== undefined) return known;
+    const segment = glob[i];
+    const result = i === glob.length
+      ? j === parts.length
+      : segment === "**"
+      ? from(i + 1, j) || (j < parts.length && from(i, j + 1))
+      : j < parts.length && segment.test(parts[j]) && from(i + 1, j + 1);
+    memo.set(key, result);
+    return result;
+  };
+  return from(0, 0);
+}
+
+/** The member globs a workspace lists, compiled; a glob that cannot be is noted and skipped. */
+function workspaceMembers(globs: readonly string[], notes: string[]): WorkspaceMembers {
+  const include: MemberGlob[] = [], exclude: MemberGlob[] = [];
+  if (globs.length > MAX_WORKSPACE_GLOBS) {
+    notes.push(
+      `the workspace lists ${globs.length} member globs; only the first ` +
+        `${MAX_WORKSPACE_GLOBS} are read`,
+    );
+  }
+  for (const glob of globs.slice(0, MAX_WORKSPACE_GLOBS)) {
+    const negated = glob.startsWith("!");
+    const compiled = compileMemberGlob(negated ? glob.slice(1) : glob);
+    if (typeof compiled !== "string") (negated ? exclude : include).push(compiled);
+    else if (compiled !== "is empty") {
+      notes.push(`workspace member glob ${JSON.stringify(glob.slice(0, 80))} ${compiled}; skipped`);
+    }
+  }
+  return { include, exclude };
+}
+
+/** Whether `dir` (under the workspace root `root`) is one of the workspace's `members`. */
+function isWorkspaceMember(root: string, members: WorkspaceMembers, dir: string): boolean {
+  const parts = relative(root, dir).split(SEPARATOR);
+  return members.include.some((glob) => globMatches(glob, parts)) &&
+    !members.exclude.some((glob) => globMatches(glob, parts));
+}
+
+/**
+ * The project, then (when it is a member of a monorepo) the sibling app folders that are members
+ * of the same workspace, that hold an Expo app config. A folder beside the project that the
+ * workspace does not list is not one of its apps (the examples of a repo whose root is a workspace
+ * of other packages): its icon is never taken.
+ */
+async function expoDirs(root: string, notes: string[]): Promise<string[]> {
+  const candidates = [root, ...await workspaceSiblings(root, notes)];
   const dirs: string[] = [];
   for (const dir of candidates) if (await hasExpoConfig(dir)) dirs.push(dir);
   return dirs;
 }
 
-/** The other app folders beside `root` (sorted; no dot folders, no node_modules). */
+/**
+ * The other app folders beside `root` that belong to the same monorepo: every sibling when the
+ * workspace lists no members (nx, turbo), else the listed members, and none when `root` itself
+ * is not a member, or not in a monorepo.
+ */
+async function workspaceSiblings(root: string, notes: string[]): Promise<string[]> {
+  const workspace = await monorepoRoot(root);
+  if (workspace === null) return [];
+  const globs = await workspaceMemberGlobs(workspace);
+  const siblings = await siblingDirs(root);
+  if (globs === null) return siblings;
+  const members = workspaceMembers(globs, notes);
+  if (!isWorkspaceMember(workspace, members, root)) return [];
+  return siblings.filter((dir) => isWorkspaceMember(workspace, members, dir));
+}
+
+/** The other folders beside `root` (sorted; no dot folders, no node_modules). */
 async function siblingDirs(root: string): Promise<string[]> {
   const parent = dirname(root);
   const siblings: string[] = [];
@@ -404,7 +583,7 @@ async function expoSource(s: Search, dir: string): Promise<IconSource | null> {
 
 /** (b) The first Expo app config (the project's, then a sibling's) that names a usable icon. */
 async function fromExpo(s: Search): Promise<IconSource | null> {
-  for (const dir of await expoDirs(s.root)) {
+  for (const dir of await expoDirs(s.root, s.notes)) {
     const found = await expoSource(s, dir);
     if (found) return found;
     s.notes.push(

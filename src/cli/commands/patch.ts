@@ -12,8 +12,10 @@ import {
   editDenextFile,
   listPatches,
   npmPackageDir,
+  type PatchOptions,
   readPatch,
 } from "../../build/patches.ts";
+import { commandMeta } from "../command-meta.ts";
 
 type Action = "create" | "list" | "delete" | "apply" | "edit";
 
@@ -32,11 +34,23 @@ function fail(message: string): never {
   Deno.exit(1);
 }
 
-/** `denext patch create <name>`: record the package's (or denext's) current edits. */
-async function create(name: string, dir: string): Promise<void> {
+/**
+ * `denext patch create <name>`: record the package's (or denext's) current edits, and say what was
+ * written (and, for an npm patch, whether deno.json's `patchedDependencies` registers it).
+ *
+ * @param name A package name, or `denext`.
+ * @param dir The project.
+ * @param opts For an npm patch: where the pristine package and the runtime come from (default:
+ *   Deno's npm cache and the pinned toolchain; a test passes its own).
+ */
+export async function patchCreate(
+  name: string,
+  dir: string,
+  opts: PatchOptions = {},
+): Promise<void> {
   const created = name === DENEXT_PATCH_NAME
     ? await createDenextPatch(dir)
-    : await createNpmPatch(dir, name);
+    : await createNpmPatch(dir, name, opts);
   console.log(`  ✔ wrote ${relative(dir, created.file)} (${created.files.length} file(s)):`);
   for (const f of created.files) console.log(`      ${f}`);
   if (name === DENEXT_PATCH_NAME) {
@@ -45,6 +59,12 @@ async function create(name: string, dir: string): Promise<void> {
     );
   } else {
     console.log("    re-applied to node_modules at every dev/build/start (idempotent).");
+    if (created.registered) {
+      console.log(
+        `    registered as "${created.registered}" in deno.json "patchedDependencies" (patches/npm/):` +
+          " applied by the runtime on install too.",
+      );
+    }
   }
 }
 
@@ -91,31 +111,7 @@ async function edit(name: string, file: string | undefined, dir: string): Promis
 }
 
 export const patchCommand: CommandSpec = {
-  name: "patch",
-  summary: "Patch npm packages — or denext itself (patches/*.patch)",
-  usage: "  denext patch create <package|denext> [dir]\n" +
-    "  denext patch list [dir]\n" +
-    "  denext patch delete <name|index> [dir]\n" +
-    "  denext patch apply [dir]\n" +
-    "  denext patch edit <package|denext> <file> [dir]\n\n" +
-    "  create  diff the package's installed files (node_modules/<pkg>) — or denext's working\n" +
-    "          copies (patches/.work/denext/) — against pristine → patches/<name>+<version>.patch\n" +
-    "          (added and deleted files are recorded; a file over 2 MiB / 50k lines is skipped)\n" +
-    "  list    the patches, indexed\n" +
-    "  delete  remove a patch and undo it (npm files reverted, denext mapping dropped)\n" +
-    "  apply   apply every patch now (dev/build/start/export do this at boot)\n" +
-    "  edit    for denext: copy a framework file to patches/.work/denext/ to edit;\n" +
-    "          for a package: print the installed file's path\n\n" +
-    "  denext patch edit denext src/server/document.ts\n" +
-    "  denext patch create denext\n" +
-    "  denext patch create left-pad\n" +
-    "  denext patch delete 2",
-  positionals: [
-    { name: "action", help: "create | list | delete | apply | edit", required: true },
-    { name: "name", help: "Package name, `denext`, or (delete) a list index" },
-    { name: "file", help: "(edit) path inside the package" },
-    { name: "dir", help: "Project directory (default: .)" },
-  ],
+  ...commandMeta("patch"),
   run: async (ctx: CommandContext) => {
     const action = patchAction(ctx.positionals[0]);
     const { name, dir } = parseArgs(action, ctx);
@@ -145,7 +141,7 @@ async function dispatch(action: Action, name: string, dir: string, ctx: CommandC
     case "list":
       return await list(dir, ctx.global.json);
     case "create":
-      return await create(name, dir);
+      return await patchCreate(name, dir);
     case "edit":
       return await edit(name, ctx.positionals[2], dir);
     case "delete": {

@@ -246,8 +246,6 @@ function appFolders(): string[] {
 Deno.test({
   name: "packaged macOS app: a Node backend sidecar starts, is ready, proxied, and ends on quit",
   ignore: !ENABLED,
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: async () => {
     const root = await Deno.makeTempDir({ prefix: "denext-sidecar-packaged-" });
     let child: Deno.ChildProcess | undefined;

@@ -41,8 +41,6 @@ async function rootEntrySpa(): Promise<{ dir: string; config: string; original: 
 
 Deno.test({
   name: "SPA dev: the build's own deno.json writes do not bump the generation; an edit does",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const { dir, config, original } = await rootEntrySpa();
     const controller = new AbortController();

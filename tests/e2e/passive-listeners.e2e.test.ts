@@ -166,8 +166,6 @@ async function scenario(engine: Engine, browser: Browser, origin: string): Promi
 Deno.test({
   name:
     "e2e: touch / wheel handlers ride the root's passive listeners and never block scrolling (Chromium, WebKit)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const engines = ENGINES.filter(installed);
   if (engines.length < ENGINES.length) {

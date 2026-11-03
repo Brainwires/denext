@@ -510,3 +510,19 @@ Deno.test("cacheLife: named profiles validated as Next.js does; experimental.cac
     "denext: denext.config sets `experimental.cacheLife`, which is still honored for now but has moved — set top-level `cacheLife` instead.",
   ]);
 });
+
+Deno.test("desktop.app.bridgeOrigins: a wildcard entry is accepted with a warning, an exact one silently", () => {
+  const config = (bridgeOrigins: string[]) => ({
+    desktop: { app: { origin: "myapp://app", identifier: "com.example.app", bridgeOrigins } },
+  });
+  assertEquals(captureWarn(() => validateDenextConfig(config(["https://idp.example"]))), []);
+  const star = captureWarn(() => validateDenextConfig(config(["https://idp.example", "*"])));
+  assertEquals(star.length, 1);
+  assert(star[0].includes('bridgeOrigins[1] is "*"'), star[0]);
+  assert(star[0].includes("every document the window loads"), star[0]);
+  const scheme = captureWarn(() => validateDenextConfig(config(["https://*"])));
+  assertEquals(scheme.length, 1);
+  assert(scheme[0].includes("every https origin"), scheme[0]);
+  // Once per process: a config validated again says nothing new.
+  assertEquals(captureWarn(() => validateDenextConfig(config(["https://*"]))), []);
+});

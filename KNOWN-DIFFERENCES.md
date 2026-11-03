@@ -118,7 +118,9 @@ internal design choice with no observable difference lives in
   own contract each "throws … and terminates rendering of the route segment," so one
   thrown during a CLIENT render terminates that render (the control signal bubbles past
   `<ErrorBoundary>`) rather than swapping in the boundary — matching the documented
-  behavior, a deliberate difference from real Next's undocumented client-boundary catch.
+  behavior, a deliberate difference from real Next's undocumented client-boundary catch. One a
+  Server Action throws reaches the browser as the same signal and renders the matching file in
+  place, as in Next (the page level's nearest; KNOWN-LIMITATIONS.md).
 - **`defineAction` handler errors are redacted in production** (`error: "Internal
   Server Error"` + a `digest` that correlates with the server log), exactly like a
   render error handed to `error.tsx`; `ActionValidationError` messages and field

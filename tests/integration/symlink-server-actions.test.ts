@@ -99,8 +99,6 @@ async function clientText(outDir: string): Promise<string> {
 Deno.test({
   name: dirLinkTestName("symlinked project: a Server Action island builds with its action stubbed"),
   ignore: IGNORE_WITHOUT_DIR_LINKS,
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const made = await linkedApp(false);
   try {
@@ -118,8 +116,6 @@ Deno.test({
     "symlinked project: a server-only module an island imports still fails the build",
   ),
   ignore: IGNORE_WITHOUT_DIR_LINKS,
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const made = await linkedApp(true);
   try {

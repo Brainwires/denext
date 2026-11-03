@@ -8,6 +8,7 @@ import { foldBuildConstants } from "../feature-transform.ts";
 import { transformSpaIslands } from "../spa-islands.ts";
 import { momentumScrollSeed } from "../bundle.ts";
 import { parseModule } from "../swc-ast.ts";
+import { npmMetaKey } from "../npm-hook-meta.ts";
 import { generateServerStub } from "../client-imports.ts";
 import { findInlineServerActions, inlineServerActionError } from "../inline-server-action.ts";
 import { scanDirective } from "../directives.ts";
@@ -98,9 +99,12 @@ async function refreshFooterFor(
     const url = toFileUrl(abs).href;
     // Import-map aliases resolve as the rewrite resolves them, so a hook imported by `@/…` is named.
     const firstParty = await firstPartyResolver(st, abs, platform);
+    // A package's hooks are keyed `npm:<specifier>`: the npm dependency bundle registers them
+    // (not React Native mode's dependency bundle, which carries no hook records).
+    const packages = st.compat && !st.opts.reactNative;
     const resolveSpec = (spec: string) => {
       const hit = firstParty(spec);
-      return hit ? toFileUrl(hit).href : undefined;
+      return hit ? toFileUrl(hit).href : packages ? npmMetaKey(spec) : undefined;
     };
     const { names, metas } = parsed
       ? collectComponents(parsed, url, resolveSpec)

@@ -3,7 +3,7 @@
 // logging off the header stays on error responses only (Next sends none).
 
 import { assert, assertEquals } from "@std/assert";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import type { RequestLogInfo } from "../src/server/app-config.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";

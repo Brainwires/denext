@@ -18,10 +18,13 @@ import {
 } from "../src/build/dev-events.ts";
 import { fetchDevState, readDevInfo } from "../src/mcp/dev-client.ts";
 import { llmsFull, llmsIndex } from "../scripts/gen-llms-txt.ts";
-import { fromFileUrl, join } from "@std/path";
+import { join } from "@std/path";
 import { symlinkDir } from "./helpers/symlink.ts";
+import { copyExample } from "./helpers/example-copy.ts";
 
-const HELLO = fromFileUrl(new URL("../examples/hello", import.meta.url));
+// A private copy: rendering loads (and may write the `.denext/` of) the app, which other test
+// files build at the same time.
+const HELLO = await copyExample("hello");
 
 // ── Snippet checker ───────────────────────────────────────────────────────────
 

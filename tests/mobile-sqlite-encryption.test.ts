@@ -141,8 +141,6 @@ async function inShell(plugin: Record<string, unknown>, fn: () => Promise<void>)
 
 Deno.test({
   name: "sqlite encryption (web): PRAGMA key and encryptionKey are refused; nothing runs",
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const saved = g.Capacitor;
     delete g.Capacitor;

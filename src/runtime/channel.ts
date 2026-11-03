@@ -30,7 +30,11 @@
 // ends a key's (or one peer's) subscriptions immediately, cluster-wide. Payloads are validated
 // on the PUBLISHER side (a schema failure is a server bug thrown at the publisher, never sent)
 // and byte-capped. The channel id is an opaque hash assigned at export from a "use server"
-// module (like an action id); the browser only ever sees that id.
+// module (like an action id); the browser only ever sees that id. A payload read for a
+// particular subscriber (rows under their row-level security) is published with the `grant` it
+// was read under, and `authorize` admits a subscriber under a grant: the hub delivers a stamped
+// publish only where the two match, on whichever instance the subscriber is — so a subscription
+// re-admitted under other claims, there or elsewhere, never gets a frame read under the old ones.
 
 import {
   ActionValidationError,
@@ -76,8 +80,15 @@ export interface ChannelConfig<T> {
   schema?: StandardSchemaV1<T>;
   /** Accepted key shape (default `/^[A-Za-z0-9_:.\-]{1,128}$/`). */
   key?: RegExp | ((key: string) => boolean);
-  /** REQUIRED: may this subscriber receive `key`? Runs in the subscriber's session. */
-  authorize: (ctx: ChannelContext, key: string) => boolean | Promise<boolean>;
+  /**
+   * REQUIRED: may this subscriber receive `key`? Runs in the subscriber's session. `true` admits
+   * it, `false` refuses; `{ allow: true, grant }` admits it under a grant
+   * ({@linkcode ChannelAdmission}), so a publish stamped with another grant is not sent to it.
+   */
+  authorize: (
+    ctx: ChannelContext,
+    key: string,
+  ) => boolean | ChannelAdmission | Promise<boolean | ChannelAdmission>;
   /** Re-authorize a subscriber lazily after this many seconds (default: `live.limits.channelAuthTtlSeconds`). */
   authTtlSeconds?: number;
   /**
@@ -88,6 +99,15 @@ export interface ChannelConfig<T> {
    * (in memory, bounded) unless the transport brings a shared one (`redisChannelTransport`).
    */
   history?: number | { size: number; ttlSeconds?: number };
+  /**
+   * Deliver every publish, in order, instead of the latest one: two publishes to a key within the
+   * hub's coalescing window both go out, and while a subscriber's frames are held (a slow socket,
+   * a re-authorization in flight) up to 256 of them are kept in order
+   * rather than the last one only. Past that the oldest are dropped, so a payload that must not
+   * be lost silently should carry its own sequence number for the subscriber to check. For a
+   * stream of deltas (each publish a batch of changes), not a state value.
+   */
+  ordered?: boolean;
   /**
    * Called when `key` gets its first subscriber on THIS instance (after `authorize` allowed it
    * and the subscription was registered). Runs in the root context; a throw is logged.
@@ -137,14 +157,56 @@ export type ChannelPublisher<T> = (ctx: ChannelPublisherContext<T>) => unknown;
 /** Why a channel key lost its last local subscriber (see {@linkcode ChannelConfig.onIdle}). */
 export type ChannelIdleReason = "unsubscribe" | "disconnect";
 
+/**
+ * What {@linkcode ChannelConfig.authorize} answers to admit a subscriber under a grant: an
+ * opaque, short text for what it may read (a digest of its role and claims, say — never the
+ * claims themselves: it travels between instances). The Live hub then sends it a publish stamped
+ * with a grant ({@linkcode ChannelPublishOptions.grant}) only when the two are equal, and every
+ * unstamped publish as before. The grant is recorded again at each re-authorization, so a
+ * subscriber whose claims changed is matched against what it may read now.
+ */
+export interface ChannelAdmission {
+  /** Admitted. */
+  allow: true;
+  /** What it was admitted to read, as the publisher stamps it. */
+  grant: string;
+}
+
+/** Options of {@linkcode Channel.publish}. */
+export interface ChannelPublishOptions {
+  /**
+   * The grant the payload was read under (the same text `authorize` answers for a subscriber
+   * who may read it, {@linkcode ChannelAdmission.grant}). The hub sends the publish only to the
+   * subscribers admitted under this grant, on any instance; a subscriber admitted with a plain
+   * `true` has none and gets no stamped publish. Server-side only: the stamp rides the
+   * transport and the replay log, never a frame to the browser.
+   */
+  grant?: string;
+}
+
 /** A channel on the server. */
 export interface Channel<T> {
   /** The stable id (assigned at export, or the explicit `id`). */
   readonly denextChannelId: string;
-  /** Validate, encode once, and deliver to every authorized subscriber of `key` on every instance. */
-  publish(key: string, payload: T): Promise<void>;
+  /**
+   * Validate, encode once, and deliver to every authorized subscriber of `key` on every instance
+   * (stamped with `options.grant`: only to those admitted under that grant).
+   */
+  publish(key: string, payload: T, options?: ChannelPublishOptions): Promise<void>;
   /** End every subscription to `key` (or one peer's); the client sees `denied`. Cluster-wide. */
   revoke(key: string, opts?: { peerId?: string }): void;
+  /**
+   * Drop THIS instance's publishes of `key` that its Live hub has not yet sent to a subscriber:
+   * those inside the hub's coalescing window, or still in the transport. Later publishes are
+   * delivered as usual. Per instance: another instance's publishes of the key — in its hub's
+   * window, or on their way through a shared transport — are not reached, nor are frames already
+   * held for a connected subscriber. A key whose next subscriber must not get what was published
+   * for an earlier one (a subscription re-authorized under other claims, on any instance) is
+   * protected by stamping its publishes with a `grant` and having `authorize` answer one
+   * ({@linkcode ChannelPublishOptions.grant}); `discard` is the local complement, not that
+   * guarantee.
+   */
+  discard(key: string): void;
   /** Phantom — carries the payload type for `useChannel`. */
   readonly __channel?: { payload: T };
 }
@@ -181,6 +243,11 @@ export interface ChannelEvent {
   enc?: 1;
   /** The publish's replay-log cursor (`publish` on a channel with `history`). */
   cursor?: string;
+  /**
+   * The grant the payload was read under (`publish`, {@linkcode ChannelPublishOptions.grant}):
+   * a hub sends it only to a subscriber admitted under the same one. Never sent to a browser.
+   */
+  grant?: string;
   /** Per-instance, per-key monotonic sequence (`publish`; `0` otherwise). */
   seq: number;
   /** The publishing instance's id (frames from one instance are ordered by `seq`). */
@@ -240,11 +307,16 @@ export interface ChannelInternals {
   /** Is `key` an acceptable key for this channel? */
   keyOk(key: string): boolean;
   /** The subscriber gate (may be missing at runtime → the hub answers `no-policy`). */
-  authorize?: (ctx: ChannelContext, key: string) => boolean | Promise<boolean>;
+  authorize?: (
+    ctx: ChannelContext,
+    key: string,
+  ) => boolean | ChannelAdmission | Promise<boolean | ChannelAdmission>;
   /** Per-channel re-auth TTL override. */
   authTtlSeconds?: number;
   /** The replay-log retention (`history`), when the channel keeps one. */
   history?: ChannelHistory;
+  /** Every publish delivered in order, none coalesced ({@linkcode ChannelConfig.ordered}). */
+  ordered?: boolean;
   /** A key's first local subscriber arrived. */
   onActive?: (key: string) => void;
   /** A key's last local subscriber left. */
@@ -256,6 +328,9 @@ export interface ChannelInternals {
 // channel without loading this module's server-only state; `isChannel` is re-exported from here.
 export { isChannel } from "./channel-brand.ts";
 const DEFAULT_KEY = /^[A-Za-z0-9_:.\-]{1,128}$/;
+
+/** How many held frames an {@linkcode ChannelConfig.ordered} channel keeps per subscriber. */
+export const ORDERED_HOLD_LIMIT = 256;
 
 /**
  * The process's channel state, shared by every copy of this module (see process-shared.ts): the
@@ -277,9 +352,16 @@ const shared = /* @__PURE__ */ processShared("channels", () => ({
   memoryLog: null as ChannelLog | null,
   /** Warned that the replay log failed (once per process). */
   warnedLog: false,
+  /** Per (channel, key): this instance's publishes up to this `seq` are discarded. */
+  fences: new Map<string, number>() as Map<string, number> | undefined,
 }));
 /** Cap on remembered (channel, key) sequence counters (each is one short string + number). */
 const MAX_SEQ_KEYS = 10_000;
+
+/** The discard fences (`shared.fences`; set here when an older copy of this module made it). */
+function fences(): Map<string, number> {
+  return shared.fences ??= new Map();
+}
 
 /** Deliver one event to one subscriber; a throwing consumer is logged, never propagated. */
 function deliverTo(fn: (ev: ChannelEvent) => void, ev: ChannelEvent): void {
@@ -320,13 +402,15 @@ export function createChannel<T>(config: ChannelConfig<T>): Channel<T> {
     authorize: config.authorize,
     authTtlSeconds: config.authTtlSeconds,
     history: resolveHistory(config.history),
+    ordered: config.ordered === true,
     onActive: config.onActive,
     onIdle: config.onIdle,
   };
   const channel: Channel<T> = {
     denextChannelId: internals.id,
-    publish: (key, payload) => publish(internals, config.schema, key, payload),
+    publish: (key, payload, options) => publish(internals, config.schema, key, payload, options),
     revoke: (key, opts) => revoke(internals, key, opts?.peerId),
+    discard: (key) => discard(internals, key),
   };
   if (config.publisher) superviseKeys(internals, channel, config);
   Object.defineProperty(channel, CHANNEL_BRAND, { value: internals });
@@ -379,7 +463,7 @@ function browserStub<T>(id: string): Channel<T> {
   const notHere = (): never => {
     throw new Error("createChannel: publish/revoke run on the server only");
   };
-  return { denextChannelId: id, publish: notHere, revoke: notHere };
+  return { denextChannelId: id, publish: notHere, revoke: notHere, discard: notHere };
 }
 
 function keyMatcher(key: ChannelConfig<unknown>["key"]): (k: string) => boolean {
@@ -502,6 +586,7 @@ export function channelAuthTtlMs(id: string): number {
 export function resetChannels(): void {
   shared.channels.clear();
   shared.seqs.clear();
+  fences().clear();
   shared.warnedUnknown.clear();
   shared.payloadCap = 16 * 1024;
   shared.authTtlSeconds = 300;
@@ -510,11 +595,39 @@ export function resetChannels(): void {
   setChannelTransport(inMemoryChannelTransport());
 }
 
+/** The next `seq` of a (channel, key) on this instance, recorded. */
+function nextSeq(seqKey: string): number {
+  // Past a discard fence even when the key's counter was evicted meanwhile.
+  const seq = Math.max(shared.seqs.get(seqKey) ?? 0, fences().get(seqKey) ?? 0) + 1;
+  // Bounded: a hot key keeps its counter (re-inserted at the tail); the oldest cold key goes.
+  shared.seqs.delete(seqKey);
+  if (shared.seqs.size >= MAX_SEQ_KEYS) shared.seqs.delete(shared.seqs.keys().next().value!);
+  shared.seqs.set(seqKey, seq);
+  return seq;
+}
+
+/**
+ * What an `authorize` answer admits: `true` (or any other non-object truthy value) admits with no
+ * grant, `{ allow: true, grant }` admits under that grant, anything else refuses. The hub and
+ * the authorized tap read every answer through this, so an object with another shape (a user
+ * record returned as "truthy", say) refuses rather than admits.
+ *
+ * @param answer What `authorize` returned.
+ * @returns Whether to admit, and under which grant.
+ */
+export function admissionOf(answer: unknown): { allow: boolean; grant?: string } {
+  if (answer === null || typeof answer !== "object") return { allow: Boolean(answer) };
+  const { allow, grant } = answer as { allow?: unknown; grant?: unknown };
+  if (allow !== true) return { allow: false };
+  return typeof grant === "string" && grant !== "" ? { allow: true, grant } : { allow: true };
+}
+
 async function publish<T>(
   ch: ChannelInternals,
   schema: StandardSchemaV1<T> | undefined,
   key: string,
   payload: T,
+  options?: ChannelPublishOptions,
 ): Promise<void> {
   if (!ch.keyOk(key)) throw new TypeError(`channel.publish: invalid key ${JSON.stringify(key)}`);
   if (!ch.id) {
@@ -528,12 +641,7 @@ async function publish<T>(
   if (new TextEncoder().encode(encoded).byteLength > shared.payloadCap) {
     throw new RangeError(`channel.publish: payload exceeds ${shared.payloadCap} bytes`);
   }
-  const seqKey = `${ch.id}\0${key}`;
-  const seq = (shared.seqs.get(seqKey) ?? 0) + 1;
-  // Bounded: a hot key keeps its counter (re-inserted at the tail); the oldest cold key goes.
-  shared.seqs.delete(seqKey);
-  if (shared.seqs.size >= MAX_SEQ_KEYS) shared.seqs.delete(shared.seqs.keys().next().value!);
-  shared.seqs.set(seqKey, seq);
+  const seq = nextSeq(`${ch.id}\0${key}`);
   const ev: ChannelEvent = {
     kind: "publish",
     channelId: ch.id,
@@ -543,6 +651,8 @@ async function publish<T>(
     instance: shared.instance,
   };
   if (p.tagged) ev.enc = WIRE_ENC;
+  const grant = options?.grant;
+  if (typeof grant === "string" && grant !== "") ev.grant = grant;
   if (ch.history) await logPublish(ch.id, key, ev, ch.history);
   await currentTransport().publish(ev);
 }
@@ -558,7 +668,10 @@ async function logPublish(
   history: ChannelHistory,
 ): Promise<void> {
   try {
-    ev.cursor = await channelLog().append(id, key, { encoded: ev.encoded!, enc: ev.enc }, history);
+    const entry: { encoded: string; enc?: 1; grant?: string } = { encoded: ev.encoded! };
+    if (ev.enc) entry.enc = ev.enc;
+    if (ev.grant !== undefined) entry.grant = ev.grant;
+    ev.cursor = await channelLog().append(id, key, entry, history);
   } catch (err) {
     if (shared.warnedLog) return;
     shared.warnedLog = true;
@@ -575,6 +688,31 @@ async function validate<T>(schema: StandardSchemaV1<T>, payload: T): Promise<T> 
     throw new ActionValidationError("Invalid channel payload", fieldErrorsFrom(result.issues));
   }
   return result.value;
+}
+
+/** Fence `key` at this instance's latest publish ({@linkcode Channel.discard}). */
+function discard(ch: ChannelInternals, key: string): void {
+  if (!ch.id) return;
+  const seqKey = `${ch.id}\0${key}`;
+  const seq = shared.seqs.get(seqKey);
+  if (seq === undefined) return; // nothing published here (or long ago): nothing in flight
+  const all = fences();
+  all.delete(seqKey);
+  if (all.size >= MAX_SEQ_KEYS) all.delete(all.keys().next().value!);
+  all.set(seqKey, seq);
+}
+
+/**
+ * Whether `ev` is one of this instance's publishes a {@linkcode Channel.discard} dropped: the Live
+ * hub sends it to no one.
+ *
+ * @param ev The event.
+ * @returns `true` to drop it.
+ */
+export function channelEventDiscarded(ev: ChannelEvent): boolean {
+  if (ev.kind !== "publish" || ev.instance !== shared.instance) return false;
+  const fence = fences().get(`${ev.channelId}\0${ev.key}`);
+  return fence !== undefined && ev.seq <= fence;
 }
 
 function revoke(ch: ChannelInternals, key: string, peerId?: string): void {
@@ -634,9 +772,12 @@ export function inMemoryChannelTransport(): ChannelTransport {
  * name (Deno Deploy isolates, workers in one host) receives each event. Zero dependencies.
  *
  * @param name The BroadcastChannel name (default `"denext-channels"`).
- * @returns The transport.
+ * @returns The transport; its `close()` closes the BroadcastChannel (which otherwise keeps the
+ *   process's event loop alive for as long as it is open).
  */
-export function broadcastChannelTransport(name = "denext-channels"): ChannelTransport {
+export function broadcastChannelTransport(
+  name = "denext-channels",
+): ChannelTransport & { close(): void } {
   if (typeof BroadcastChannel === "undefined") {
     throw new Error("broadcastChannelTransport: BroadcastChannel is not available in this runtime");
   }
@@ -652,13 +793,17 @@ export function broadcastChannelTransport(name = "denext-channels"): ChannelTran
       local.publish(ev); // this instance
     },
     subscribe: (fn) => local.subscribe(fn),
+    close: () => bc.close(),
   };
 }
 
 /** What {@link tapChannel} reports. */
 export interface ChannelTapHandlers<T> {
-  /** A payload published to the key (decoded; `seq` orders publishes from one instance). */
-  onPayload: (payload: T, seq: number) => void;
+  /**
+   * A payload published to the key (decoded; `seq` orders publishes from one instance; `grant`
+   * is the one it was published under, {@linkcode ChannelPublishOptions.grant}, if any).
+   */
+  onPayload: (payload: T, seq: number, grant?: string) => void;
   /**
    * The key was revoked cluster-wide — or, when {@linkcode ChannelTapHandlers.peerId} is set, for
    * that peer. Any other peer-scoped revoke is not reported.
@@ -718,7 +863,7 @@ export function tapChannel<T>(
       // into the transport (which would starve later subscribers and reject the publisher).
       try {
         const parsed = JSON.parse(ev.encoded);
-        handlers.onPayload((ev.enc ? decodeWire(parsed) : parsed) as T, ev.seq);
+        handlers.onPayload((ev.enc ? decodeWire(parsed) : parsed) as T, ev.seq, ev.grant);
       } catch (err) {
         console.error(`denext channels: tap on ${id}/${key} failed`, err);
       }

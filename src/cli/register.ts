@@ -14,6 +14,7 @@ import { jobCommand } from "./commands/job.ts";
 import { routesCommand } from "./commands/routes.ts";
 import { checkCommand, fmtCommand, lintCommand, testCommand } from "./commands/toolchain.ts";
 import { doctorCommand, infoCommand } from "./commands/doctor.ts";
+import { crashReportCommand } from "./commands/crash-report.ts";
 import { addCommand, removeCommand, updateCommand } from "./commands/deps.ts";
 import { upgradeCommand } from "./commands/upgrade.ts";
 import { denoCommand, toolchainCommand } from "./commands/deno-toolchain.ts";
@@ -71,6 +72,7 @@ export function buildRegistry(): CommandRegistry {
   reg.register(auditCommand);
   reg.register(analyzeCommand);
   reg.register(profileCommand);
+  reg.register(crashReportCommand);
   // Migration + scaffolding.
   reg.register(migrateCommand);
   reg.register(codemodCommand);

@@ -13,6 +13,7 @@
 // derived from the Vite config/usage, and — with `--desktop` — a `desktop.ts` entry
 // and `spa.proxy` for a `deno desktop` build.
 
+import { carryPackageManagerPatches, type MigratePatchesReport } from "./migrate-patches.ts";
 import { dirname, join, relative, resolve, toFileUrl } from "@std/path";
 import { anyExists, exists, firstExisting } from "./migrate-fs.ts";
 import { resolveTsPaths, tsPathAliases } from "./tsconfig-paths.ts";
@@ -29,14 +30,14 @@ import {
   type ViteEmitterFinding,
 } from "./migrate-vite-plugins.ts";
 import type { SpaTanstackRouterConfig } from "../server/config.ts";
-import { evalNextConfigProgram, LOAD_NEXT_CONFIG } from "./next-config-eval.ts";
+import { evalNextConfigProgram, LOAD_NEXT_CONFIG, machineEnvIn } from "./next-config-eval.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import { readFrameworkJson } from "./bundle.ts";
 import { VERSION } from "../version.ts";
 import { appendGitignore } from "./gitignore.ts";
 import { ensureVscodeDeno, withDenextUnstable } from "./scaffold.ts";
 import { REACT_FAMILY_CLIENT, REACT_FAMILY_CORE } from "./react-specifiers.ts";
-import CATALOG from "../plugin/catalog.json" with { type: "json" };
+import { pluginCatalog } from "../plugin/catalog.ts";
 import { DESKTOP_ICON_FILE, detectIconSource } from "./desktop-icon.ts";
 import {
   formatIconSearch,
@@ -115,6 +116,12 @@ import {
   type PrismaWiring,
 } from "./prisma-migrate.ts";
 import { denoSqlHasColumns } from "../server/prisma-adapter/client.ts";
+import { TOOLCHAIN_ACTIVE_ENV } from "./deno-toolchain.ts";
+import {
+  compareDenoVersions,
+  FIRST_OWN_VERSION_RUNTIME,
+  isDenextReleaseVersion,
+} from "./deno-version.ts";
 import { type NextAuthMigrateInfo, nextAuthMigrateInfo } from "./next-auth-migrate.ts";
 
 /** react/next specifiers aliased to their denext JSR subpath (matches denext's
@@ -163,7 +170,7 @@ const DENEXT_OWNED = new Set([
  * minor line.
  */
 function catalogSpec(name: string): string {
-  const entry = CATALOG.plugins.find((p) => p.name === name);
+  const entry = pluginCatalog().plugins.find((p) => p.name === name);
   if (!entry) throw new Error(`the first-party plugin catalog has no entry for "${name}"`);
   return entry.spec;
 }
@@ -547,6 +554,12 @@ export interface MigrateResult {
    * `supplyChain.jailScripts.packages` entries written into deno.json (or left to the user).
    */
   jailScripts?: JailReport;
+  /**
+   * Present when package.json / pnpm-workspace.yaml declares pnpm or Bun npm patches
+   * (`patchedDependencies`): the ones carried into deno.json's `patchedDependencies` (copied to
+   * `patches/npm/`) and the ones left for review (src/build/migrate-patches.ts).
+   */
+  patches?: MigratePatchesReport;
 }
 
 /** How the app's `next.config.*` translated into `denext.config.ts`. */
@@ -571,10 +584,16 @@ function nextConfigReport(next: NextConfigTranslation | null): NextConfigReport 
     evaluated: !next.raw,
     ...(next.raw && next.rawReason ? { reason: next.rawReason } : {}),
     carried: [...Object.keys(next.fields), ...Object.keys(next.rules)],
-    dropped: next.dropped.map((key) => ({
-      key,
-      note: Object.hasOwn(NEXT_DROP_GUIDANCE, key) ? NEXT_DROP_GUIDANCE[key] : "",
-    })),
+    dropped: [
+      ...next.dropped.map((key) => ({
+        key,
+        note: Object.hasOwn(NEXT_DROP_GUIDANCE, key) ? NEXT_DROP_GUIDANCE[key] : "",
+      })),
+      ...Object.entries(next.machineEnv ?? {}).map(([key, vars]) => ({
+        key,
+        note: machineEnvNote(vars),
+      })),
+    ],
   };
 }
 
@@ -910,7 +929,7 @@ async function applyPrismaImports(
   R: DenextResolver,
   mode: MigrateOptions["prismaAdapter"] = "auto",
 ): Promise<PrismaWiring | null> {
-  const denoSql = mode === "deno-sql" || (mode === "auto" && await denoSqlHasColumns());
+  const denoSql = mode === "deno-sql" || (mode === "auto" && await appRuntimeReadsColumns());
   const wiring = await detectPrismaWiring(
     dir,
     deps,
@@ -921,6 +940,25 @@ async function applyPrismaImports(
   for (const key of wiring.importsToDelete) delete imports[key];
   Object.assign(imports, wiring.importsToAdd);
   return wiring;
+}
+
+/**
+ * Whether the Deno the migrated app runs on reports `Deno.SQL` result columns (what
+ * `denext/prisma-adapter` needs): this process's own, or — when this process lacks it — the
+ * toolchain denext hands its children (`DENEXT_TOOLCHAIN_ACTIVE`, a release of denext's Deno),
+ * which `denext dev`, `build` and `start` re-run on. Exported for testing.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`).
+ * @param probe This process's own check (default {@linkcode denoSqlHasColumns}).
+ */
+export async function appRuntimeReadsColumns(
+  env: (name: string) => string | undefined = (name) => Deno.env.get(name),
+  probe: () => Promise<boolean> = denoSqlHasColumns,
+): Promise<boolean> {
+  if (await probe()) return true;
+  const active = env(TOOLCHAIN_ACTIVE_ENV);
+  return active !== undefined && isDenextReleaseVersion(active) &&
+    compareDenoVersions(active, FIRST_OWN_VERSION_RUNTIME) >= 0;
 }
 
 /**
@@ -1062,6 +1100,11 @@ interface NextConfigTranslation {
   raw: boolean;
   /** Why the evaluation failed (when {@link raw}). */
   rawReason?: string;
+  /**
+   * Keys left out because their evaluated value interpolates a machine-path variable (`HOME`,
+   * `TMPDIR`, …), each with the variables: inlined, it would carry the migrating machine's path.
+   */
+  machineEnv?: Record<string, string[]>;
   /**
    * True when the next.config wires MDX plugins (`@next/mdx`/`createMDX` with
    * remark/rehype/recma lists). `createMDX` hides those options inside a webpack-loader
@@ -1231,10 +1274,52 @@ async function evalNextConfig(
     marker: NEXT_EVAL_MARKER,
   });
   if (!result.ok) return { ...base, raw: true, rawReason: result.reason };
+  const value = result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">;
+  return { ...base, ...withoutMachineEnv(value) };
+}
+
+/**
+ * The translation without the fields and rule lists whose values interpolate a machine-path
+ * variable (the evaluator hands the config placeholders for them), listed in `machineEnv` for a
+ * hand port instead of being inlined with this machine's path.
+ */
+function withoutMachineEnv(
+  value: Pick<NextConfigTranslation, "fields" | "rules" | "dropped">,
+): Pick<NextConfigTranslation, "fields" | "rules" | "dropped" | "machineEnv"> {
+  const machineEnv: Record<string, string[]> = {};
+  const keep = (group: Record<string, unknown>) =>
+    Object.fromEntries(
+      Object.entries(group ?? {}).filter(([key, v]) => {
+        const vars = machineEnvIn(v);
+        if (vars.length) machineEnv[key] = vars;
+        return vars.length === 0;
+      }),
+    );
+  const fields = keep(value.fields);
+  // A rule list keeps the rules that read no machine path; only the others are left out.
+  const lists: Record<string, unknown> = {};
+  for (const [key, list] of Object.entries(value.rules ?? {})) {
+    if (!Array.isArray(list)) {
+      lists[key] = list;
+      continue;
+    }
+    const vars = machineEnvIn(list);
+    if (vars.length) machineEnv[key] = vars;
+    lists[key] = list.filter((rule) => machineEnvIn(rule).length === 0);
+  }
+  const rules = keep(lists);
   return {
-    ...base,
-    ...(result.value as Pick<NextConfigTranslation, "fields" | "rules" | "dropped">),
+    fields,
+    rules,
+    dropped: value.dropped ?? [],
+    ...(Object.keys(machineEnv).length ? { machineEnv } : {}),
   };
+}
+
+/** The note for a key left out by {@linkcode withoutMachineEnv}. */
+function machineEnvNote(vars: string[]): string {
+  return `a rule or value reads ${vars.join(", ")} — this machine's path — and was not ` +
+    `inlined. Port it by hand (read process.env at run time).`;
 }
 
 /**
@@ -1477,8 +1562,15 @@ export async function migrateProject(
 /** {@link migrateProject} inside the project's write confinement. */
 async function migrateConfined(dir: string, options: MigrateOptions): Promise<MigrateResult> {
   const migrated = await migrateAnyProject(dir, options);
-  const jail = await applyJailExceptions(dir, { fs: mfs, edit: !migrated.denoJsonExists });
-  const r = jail.action === "none" ? migrated : { ...migrated, jailScripts: jail };
+  // Only the app is written: a workspace root's settings above it are left to the user.
+  const jail = await applyJailExceptions(dir, {
+    fs: mfs,
+    edit: !migrated.denoJsonExists,
+    confine: dir,
+  });
+  const withJail = jail.action === "none" ? migrated : { ...migrated, jailScripts: jail };
+  const patches = await carryPackageManagerPatches(dir, { edit: !migrated.denoJsonExists });
+  const r = patches ? { ...withJail, patches } : withJail;
   if (!options.capacitor || r.capacitor) return r;
   return { ...r, capacitorSkipped: capacitorSkipReason(r) };
 }
@@ -2867,6 +2959,9 @@ function nextConfigTranslationLines(next: NextConfigTranslation, bodyLines: stri
     for (const [fn, arr] of ruleEntries) bodyLines.push(`  ${fn}: () => (${JSON.stringify(arr)}),`);
   }
   if (next.dropped.length) notes.push(...droppedKeyNotes(next.dropped));
+  for (const [key, vars] of Object.entries(next.machineEnv ?? {})) {
+    notes.push(`  // ${commentSafe(key)}: ${machineEnvNote(vars)}`);
+  }
   return notes;
 }
 

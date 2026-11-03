@@ -218,8 +218,8 @@ Deno.test("onAppAction: menu, dock, tray and tray-menu clicks are parsed; malfor
     assertEquals(got, [
       { source: "menu", id: "prefs" },
       { source: "dock", id: "new-window" },
-      { source: "tray", tray: "main", event: "doubleClick" },
-      { source: "tray", tray: "main", event: "click" },
+      { source: "tray", tray: "main", event: "doubleClick", detail: null },
+      { source: "tray", tray: "main", event: "click", detail: null },
       { source: "trayMenu", tray: "main", id: "quit" },
     ]);
     stop();

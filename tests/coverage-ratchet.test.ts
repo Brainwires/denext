@@ -27,8 +27,14 @@ const cov = (
   functions: [number, number] = [1, 1],
 ): FileCoverage => ({ lines, branches, functions });
 
-Deno.test("ratchet scope: the CLI, the server, the compat layer and the packages' sources", () => {
-  assertEquals(RATCHETED, ["src/cli", "src/server", "src/compat", "packages"]);
+Deno.test("ratchet scope: the CLI, the server, the compat layer, the DevTools panes and the packages' sources", () => {
+  assertEquals(RATCHETED, [
+    "src/cli",
+    "src/server",
+    "src/compat",
+    "src/client/devtools-panel",
+    "packages",
+  ]);
   for (
     const f of [
       "src/cli/commands/plugin.ts",
@@ -36,6 +42,7 @@ Deno.test("ratchet scope: the CLI, the server, the compat layer and the packages
       "src/compat/next/link.tsx",
       "packages/openapi/mod.ts",
       "packages/backend/src/rest/query.ts",
+      "src/client/devtools-panel/live.ts",
     ]
   ) assert(ratcheted(f), f);
   for (
@@ -47,6 +54,8 @@ Deno.test("ratchet scope: the CLI, the server, the compat layer and the packages
       "packages/x/node_modules/y/index.ts",
       "src/server/types.d.ts",
       "src/clix/a.ts", // a prefix, not the directory
+      "src/client/devtools-panel.ts", // the panel's entry, beside the panes' directory
+      "src/client/reconciler.ts",
     ]
   ) assert(!ratcheted(f), f);
   const root = resolve("/p");
@@ -172,4 +181,42 @@ Deno.test("main: check, report a rise, --update, and the checked-in baseline par
     assertEquals(entry.length, 3, file);
     for (const n of entry) assert(Number.isInteger(n) && n >= 0 && n <= 100, file);
   }
+});
+
+Deno.test({
+  name: "main: a report mixing a symlinked checkout's two spellings loads every file",
+  // Creating a symlink on Windows needs a privilege CI's account may not hold.
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const parent = await Deno.realPath(await Deno.makeTempDir());
+    // The link is the shorter spelling, so the report's root would be taken from it.
+    const real = join(parent, "the-real-checkout");
+    const link = join(parent, "l");
+    const errs: string[] = [];
+    const prev = [console.error, console.log] as const;
+    console.error = (...a: unknown[]) => void errs.push(a.join(" "));
+    console.log = () => {};
+    try {
+      for (const f of ["src/cli/a.ts", "src/server/b.ts"]) {
+        await Deno.mkdir(join(real, f, ".."), { recursive: true });
+        await Deno.writeTextFile(join(real, f), "");
+      }
+      await Deno.mkdir(join(real, "scripts"), { recursive: true });
+      await Deno.writeTextFile(
+        join(real, BASELINE_FILE),
+        formatBaseline({ "src/cli/a.ts": [100, 0, 0], "src/server/b.ts": [100, 0, 0] }),
+      );
+      await Deno.symlink(real, link);
+      const lcov = join(parent, "lcov.info");
+      await Deno.writeTextFile(
+        lcov,
+        `SF:${join(link, "src/server/b.ts")}\nDA:1,1\nend_of_record\n` +
+          `SF:${join(real, "src/cli/a.ts")}\nDA:1,1\nend_of_record\n`,
+      );
+      assertEquals(await main([lcov], link), 0, errs.join("\n"));
+    } finally {
+      [console.error, console.log] = prev;
+      await Deno.remove(parent, { recursive: true });
+    }
+  },
 });

@@ -10,7 +10,7 @@ import type { DenextConfig } from "../../src/server/config.ts";
 const FIXTURE = fromFileUrl(new URL("../fixtures/deploy-app/", import.meta.url));
 
 /** The fixture's config (what `denext.config.ts` would export). */
-const DEPLOY_FIXTURE_CONFIG: DenextConfig = {
+export const DEPLOY_FIXTURE_CONFIG: DenextConfig = {
   scheduledJobs: { "0 0 * * 1": ["digest"], "0 3 * * *": "cleanup" },
   images: { remotePatterns: [{ hostname: "images.example.com" }], domains: ["cdn.example.com"] },
   compile: { permissions: { write: ["data"] } },

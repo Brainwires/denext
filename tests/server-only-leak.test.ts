@@ -139,8 +139,6 @@ export default function Page() {
 Deno.test({
   name:
     "build fails when a hydrating route's tree would ship node:sqlite + Deno.env to the browser",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext_leak_" });
     try {
@@ -183,8 +181,6 @@ export function Counter({ count }: { count: number }) {
 
 Deno.test({
   name: "build succeeds once the db module is server-only and the interactive part is an island",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext_leak_fixed_" });
     try {
@@ -226,8 +222,6 @@ export default function Page() {
 
 Deno.test({
   name: "a pure server helper imported only by a non-shipped export is tree-shaken, not a leak",
-  sanitizeOps: false,
-  sanitizeResources: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext_leak_shaken_" });
     try {

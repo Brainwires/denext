@@ -999,7 +999,9 @@ export interface DesktopCapabilitiesConfig {
    * denext's pinned runtime, for a page whose custom-scheme origin the webview's own WebAuthn cannot
    * use (the bridge behind `denext/desktop/clerk`). `{ rpIds }` pins the relying-party IDs the app
    * may request and is required; anything else answers `invalid_rp` without reaching the OS.
-   * `false` (or leaving it out) disables it.
+   * The list is also written to the packaged app's `laufey-launch.json` (`"passkeyRpIds"`), so the
+   * webview backend enforces it natively; from runtime 3.0.0-denext.1 (`"strictPolicy"`) a launch
+   * file without it refuses every ceremony. `false` (or leaving it out) disables it.
    */
   passkeys?: false | DesktopPasskeysConfig;
   /** The `echo` diagnostic capability (bridge connectivity check). */
@@ -1012,7 +1014,8 @@ export interface DesktopCapabilitiesConfig {
 export interface DesktopPasskeysConfig {
   /**
    * The relying-party IDs (`"example.com"`) the app may request. Required: an empty list allows
-   * none, and no default allows any.
+   * none (enforced natively and failing closed; `denext doctor` flags it), and no default allows
+   * any.
    */
   rpIds: string[];
 }
@@ -1094,7 +1097,9 @@ export interface DesktopConfig {
      * (`desktop.app.origin`, `app://localhost` when unset). Written, after the app origin, to the
      * packaged app's `laufey-launch.json` `"bridgeOrigins"`; a binding still answers such a
      * document only when its `bind(name, fn, { origins })` lists it too. Needs denext's pinned
-     * runtime.
+     * runtime. From runtime 3.0.0-denext.1 the launch file also sets `"strictPolicy": true`, under
+     * which a launch file without `bridgeOrigins` gives the bridge to no document (fails closed);
+     * denext's packaging always writes the key.
      */
     bridgeOrigins?: string[];
     /**
@@ -1109,7 +1114,47 @@ export interface DesktopConfig {
      * `app.json` with this key before then.
      */
     allowedNavigationOrigins?: string[];
+    /**
+     * Keep the app running when its last window closes (Electron's `window-all-closed` without a
+     * quit, Tauri's `prevent_exit`): the process stays up, reachable through {@link
+     * DesktopConfig.tray}, the macOS Dock (`onDockReopen` in `denext/desktop/app`) or a second
+     * launch. Default: on when {@link DesktopConfig.tray} is set, else off (closing the last window
+     * quits). Sets the runtime's `Deno.desktop.quitOnLastWindowClosed`; a page's `window.close()`
+     * then closes its window instead of quitting.
+     */
+    keepAlive?: boolean;
+    /**
+     * Show the app's icon in the macOS Dock (default `true`). `false` makes it an accessory app (a
+     * menu-bar / tray app or a desktop companion), so give it a {@link DesktopConfig.tray} or
+     * another way back in. From runtime `3.0.0-denext.6` it is the `"accessory"` activation policy
+     * from the first frame (`activationPolicy`); on an older runtime the backend hides the icon
+     * once it starts, so it shows briefly at launch. On Windows and Linux
+     * the app's windows are kept off the taskbar instead where the runtime can
+     * (`setSkipTaskbar`); a `focusable: false` window is always off it.
+     */
+    dock?: boolean;
+    /**
+     * The macOS activation policy the app starts in (runtime `3.0.0-denext.6` and later):
+     * `"accessory"` has no Dock icon and no menu bar from its first frame (a menu-bar / tray app
+     * or a desktop companion), `"regular"` is an ordinary app. Written to the packaged app's
+     * `laufey-launch.json` (`denext desktop run` / `dev`: `LAUFEY_ACTIVATION_POLICY`).
+     * `desktop.app.dock: false` implies `"accessory"`. Switch it while the app runs with
+     * `setActivationPolicy` (`denext/desktop/app`, or `DesktopRuntime.setActivationPolicy` in
+     * `desktop.ts`). On an older runtime `dock: false` still hides the icon, once the backend
+     * starts. Windows and Linux have no policy.
+     */
+    activationPolicy?: "regular" | "accessory";
   };
+  /**
+   * A tray icon (macOS menu bar extra, Windows notification area, Linux StatusNotifierItem /
+   * AppIndicator) the app's backend owns: created by `runDesktop` before any page loads, kept
+   * across page reloads, and reachable from every window (`getTray()` in `denext/desktop/app`) and
+   * from `desktop.ts` (`DesktopRuntime.tray`, with `runDesktop({ tray })` handlers). Setting it
+   * keeps the app alive with no window ({@link DesktopConfig.app}`.keepAlive`). Where the session
+   * has no tray host (stock GNOME without the AppIndicator extension) no icon is shown and the
+   * first window is shown instead.
+   */
+  tray?: DesktopTrayConfig;
   /** The capability allowlist (default deny). */
   capabilities?: DesktopCapabilitiesConfig;
   /**
@@ -1491,6 +1536,86 @@ export interface DesktopSize {
   height: number;
 }
 
+/**
+ * One entry of a {@link DesktopTrayConfig} menu: an action (`id` + `label`), a separator
+ * (`separator: true`), a standard item (`role`) or a submenu (`label` + `submenu`, one level).
+ */
+export interface DesktopTrayMenuItem {
+  /** The id the backend's and pages' menu handlers receive (an action). */
+  id?: string;
+  /** The item's or submenu's text. */
+  label?: string;
+  /** Greyed out. */
+  disabled?: boolean;
+  /** A checkmark next to it. */
+  checked?: boolean;
+  /** A separator line instead of an item. */
+  separator?: boolean;
+  /** A standard item the OS handles (`"quit"`). */
+  role?: "quit" | "about" | "hide" | "hideOthers" | "unhide";
+  /** A submenu's entries (actions and separators). */
+  submenu?: readonly DesktopTrayMenuEntry[];
+}
+
+/** One entry of a tray submenu ({@link DesktopTrayMenuItem.submenu}). */
+export interface DesktopTrayMenuEntry {
+  /** The id the menu handlers receive. */
+  id?: string;
+  /** The item's text. */
+  label?: string;
+  /** Greyed out. */
+  disabled?: boolean;
+  /** A checkmark next to it. */
+  checked?: boolean;
+  /** A separator line instead of an item. */
+  separator?: boolean;
+}
+
+/** The backend-owned tray icon ({@link DesktopConfig.tray}). */
+export interface DesktopTrayConfig {
+  /**
+   * The icon: a PNG in the export, as a path from its root (`"/tray.png"` for `public/tray.png`).
+   * On macOS a black-and-transparent image is drawn as a template image.
+   */
+  icon: string;
+  /** The icon in dark mode, where the OS tells them apart (a path in the export). */
+  iconDark?: string;
+  /** Shown on hover. */
+  tooltip?: string;
+  /** The menu (right click; on Linux usually any click). */
+  menu?: readonly DesktopTrayMenuItem[];
+  /**
+   * A panel at the tray icon: a frameless, non-activating window that a click on the icon toggles
+   * and that hides when it loses focus (the runtime's `Tray.attachPanel`). It is placed under the
+   * icon in a top menu bar and above it in a bottom taskbar, inside the display's work area; on
+   * Linux, where the tray has no position, it stays where it last was.
+   */
+  panel?: DesktopTrayPanelConfig;
+}
+
+/** The tray panel ({@link DesktopTrayConfig.panel}). */
+export interface DesktopTrayPanelConfig {
+  /** The page it shows: a path of the app (`"/panel"`). */
+  url: string;
+  /**
+   * Width in CSS pixels (default 360).
+   *
+   * @minimum 1
+   */
+  width?: number;
+  /**
+   * Height in CSS pixels (default 480).
+   *
+   * @minimum 1
+   */
+  height?: number;
+  /** Hide it when it loses focus (default `true`). */
+  hideOnBlur?: boolean;
+}
+
+/** How far above other windows an always-on-top window floats (Electron's level names). */
+export type DesktopWindowLevel = "floating" | "status" | "pop-up-menu" | "screen-saver";
+
 /** The initial window ({@link DesktopConfig.window}), applied when the runtime adopts it. */
 export interface DesktopWindowConfig {
   /**
@@ -1509,6 +1634,67 @@ export interface DesktopWindowConfig {
   title?: string;
   /** Whether the user can resize the window (default `true`). */
   resizable?: boolean;
+  /**
+   * Show the window when the app starts (default `true`). `false` starts the app with no visible
+   * window — a tray / menu-bar app — with no flash: the page still loads in the hidden window,
+   * which `showWindow()` (`denext/desktop/window`) reveals. Written to `.deno-desktop/app.json`
+   * (`initialWindow.showOnFirstLoad`).
+   */
+  show?: boolean;
+  /**
+   * No title bar or window chrome (a creation-time option, written to `.deno-desktop/app.json`
+   * `initialWindow`). Give the page a drag region (`makeWindowDraggable`).
+   */
+  frameless?: boolean;
+  /**
+   * A transparent window background: what the page leaves transparent (`html, body { background:
+   * transparent }`) shows the desktop. Creation-time. macOS and Linux with the system WebView;
+   * Windows and CEF paint an opaque background (`windowCapabilities().transparent`).
+   */
+  transparent?: boolean;
+  /**
+   * `false` makes a non-activating panel (Electron's and Tauri's `focusable: false`): showing it or
+   * clicking it never takes focus from the app the user is in; it floats above normal windows,
+   * joins every Space on macOS, and stays off the taskbar and Alt-Tab on Windows and Linux.
+   * Creation-time (the runtime's `noActivate`). Default `true`.
+   */
+  focusable?: boolean;
+  /**
+   * Keep the window above other windows: `true` (`"floating"`) or a level. A level above
+   * `"floating"` needs a runtime that reports `windowCapabilities().alwaysOnTopLevels`; elsewhere
+   * it floats at `"floating"`.
+   */
+  alwaysOnTop?: boolean | DesktopWindowLevel;
+  /**
+   * The whole window's opacity, `0`–`1` (default `1`), web content and chrome alike.
+   *
+   * @minimum 0
+   * @maximum 1
+   */
+  opacity?: number;
+  /**
+   * Keep the window off the taskbar (Windows, Linux). Needs a runtime with
+   * `BrowserWindow.setSkipTaskbar` (`windowCapabilities().skipTaskbar`); a `focusable: false`
+   * window is off it on every runtime.
+   */
+  skipTaskbar?: boolean;
+  /**
+   * Show the window on every Space / virtual desktop, over full-screen apps too. Needs a runtime
+   * with `BrowserWindow.setVisibleOnAllWorkspaces` (`windowCapabilities().visibleOnAllWorkspaces`);
+   * on macOS a `focusable: false` window already joins every Space.
+   */
+  visibleOnAllWorkspaces?: boolean;
+  /**
+   * Make the window a desktop overlay surface on Linux Wayland: where the compositor has
+   * wlr-layer-shell (KDE Plasma, wlroots compositors such as Sway and Hyprland, COSMIC; not GNOME)
+   * the window is a layer surface above every other window, on every workspace, with no taskbar
+   * entry, placeable, and with `focusable: false` never focused; that is the only way to get those
+   * on Wayland, where an ordinary window can't ask for them. An ordinary window elsewhere (every
+   * other OS, GNOME, X11, a missing `libgtk-layer-shell`; `windowCapabilities().layerShell` says).
+   * Creation-time (written to `.deno-desktop/app.json` `initialWindow.overlay`); needs denext's Deno
+   * Desktop runtime 3.0.0-denext.7 or later (ignored with a warning before). Default `false`.
+   */
+  overlay?: boolean;
 }
 
 /** The production server's settings (see {@link DenextConfig.start}). */
@@ -1526,6 +1712,81 @@ export interface StartConfig {
    * @default true
    */
   idleTrim?: boolean;
+  /**
+   * Process resource limits for the production server, enforced by denext's Deno from runtime
+   * 3.0.0-rc.2 (`--max-memory`, `--max-cpu-time`, `--max-time`). Applied where the production
+   * server starts: `denext start` (on the process it starts), baked into the `build --compile`
+   * executable, and written into the Docker image's command and the systemd unit's `ExecStart` —
+   * never for `dev`, tests or `denext job` (a compiled executable enforces them on whatever it
+   * runs, `./app job` included). Each limit ends the whole process with its own exit code, for
+   * a supervisor (Docker's restart policy, systemd's `Restart=`) to start it again. Best-effort
+   * guardrails, not a security boundary: subprocesses are not counted. See
+   * {@link https://denext.dev/docs/deployment-targets#resource-limits}.
+   */
+  limits?: StartLimits;
+  /**
+   * Serve HTTPS directly, without a proxy in front: the certificates and the host names each
+   * serves. The certificate and key files' paths come from the environment variables each entry
+   * names (`certFileEnv`, `keyFileEnv`), never from the config, and are read when the server
+   * starts. One certificate serves every name, on any Deno. Several pick one per connection by
+   * the name the client asks for (SNI), which needs denext's Deno from runtime 3.0.0-denext.3 and
+   * `"unstable": ["net"]` in `deno.json`; elsewhere the server refuses to start and says why.
+   * Applies to `denext start` and a `build --compile` server, never to `dev`. See
+   * {@link https://denext.dev/docs/deployment-targets#https-without-a-proxy}.
+   */
+  tls?: StartTls;
+}
+
+/** HTTPS for the production server (see {@link StartConfig.tls}). */
+export interface StartTls {
+  /**
+   * The certificates, each for the host names it serves. With one, it is served for every name;
+   * with several, each handshake gets the one whose `hostnames` match the name the client asked
+   * for (an exact name first, then a `*.` wildcard, then `"*"`), and a name none matches is
+   * refused.
+   */
+  certificates: StartTlsCertificate[];
+}
+
+/** One certificate of {@linkcode StartTls}. */
+export interface StartTlsCertificate {
+  /**
+   * The host names it serves: an exact name (`example.com`), a wildcard for one label
+   * (`*.example.com`: `www.example.com`, not `example.com` or `a.b.example.com`), or `"*"`
+   * (every name no other certificate matches, and a client that sends none, as one connecting
+   * to an IP address does).
+   */
+  hostnames: string[];
+  /** The environment variable that holds the path of the PEM certificate (chain) file. */
+  certFileEnv: string;
+  /** The environment variable that holds the path of the PEM private key file. */
+  keyFileEnv: string;
+}
+
+/** The production server's resource limits (see {@link StartConfig.limits}). */
+export interface StartLimits {
+  /**
+   * The main thread's JavaScript heap limit: a number of megabytes, or a size string with a
+   * binary `k` / `m` / `g` unit (`"512m"`, `"2g"`); at least 32 MB. Over it the process exits
+   * with code 137 (`Memory limit exceeded`). Workers have their own heaps, and memory outside the
+   * heap (`ArrayBuffer`s, native code) is not counted.
+   */
+  memory?: number | string;
+  /**
+   * The process's CPU time budget, user + system across every thread, in whole seconds (at least
+   * 1), counted from the server's start: once spent the process exits with code 152 (`CPU time
+   * limit exceeded`). A long-running server spends it over its whole life.
+   *
+   * @minimum 1
+   */
+  cpuSeconds?: number;
+  /**
+   * Wall-clock lifetime in whole seconds (at least 1), idle time included: the process exits with
+   * code 124 (`Time limit exceeded`) when it is reached — a scheduled restart under a supervisor.
+   *
+   * @minimum 1
+   */
+  deadlineSeconds?: number;
 }
 
 /** `denext build --compile` settings (see {@link DenextConfig.compile}). */
@@ -2240,7 +2501,7 @@ export interface DenextConfig {
   compile?: CompileConfig;
   /**
    * The production server (`denext start`, the `build --compile` executable, the generated Docker
-   * image and systemd unit): its idle memory trim. See
+   * image and systemd unit): its idle memory trim and its resource limits. See
    * {@link https://denext.dev/docs/deployment-targets#idle-memory-trim}.
    */
   start?: StartConfig;
@@ -2453,10 +2714,16 @@ export interface LiveLimits {
    * fetchers peg the concurrency gate and stall the whole live fleet. On timeout the
    * run is aborted (a cooperative `AbortSignal` reaches the fetcher's `fetch`/cache
    * reads) and its slot released; the client gets an error/refresh frame. On by default
-   * — there is no "disable" value (an invalid one falls back to 30s).
+   * — there is no "disable" value (an invalid one falls back to 30s). It also bounds how long
+   * one live-view mount (`defineLiveView`, `defineLustreView`) may hold its connection's mount
+   * queue; past it the mount is answered `failed` and the next one runs.
    */
   renderTimeoutSeconds?: number;
-  /** Max live views (`defineLiveView`) one connection may hold mounted (default 16). */
+  /**
+   * Max live views (`defineLiveView`) one connection may hold mounted (default 16). It also caps
+   * the connection's mount queue: at most `max(4, 2 × maxViewsPerConnection)` mounts waiting or
+   * running at once; a mount past that is refused with `limit` and never queued.
+   */
   maxViewsPerConnection?: number;
   /**
    * Max bytes of server-held state per connection across its live views (default 1048576): each
@@ -2471,6 +2738,13 @@ export interface LiveLimits {
   viewResumeSeconds?: number;
   /** Max live views waiting to be resumed across the server (default 1000; the oldest go first). */
   maxParkedViews?: number;
+  /**
+   * Seconds a live view's signed props token (rendered into the page) is accepted for a mount or
+   * a resume (default 86400, a day). An older one is refused as `gone`, and the browser re-renders
+   * the route once for a fresh token. A page cached longer than this (`force-static`, or ISR with a
+   * longer `revalidate`) needs a larger value.
+   */
+  viewTokenMaxAgeSeconds?: number;
 }
 
 /**

@@ -17,7 +17,10 @@
 # Environment:
 #   DENEXT_VERSION   the release tag to install (`v2.5.0`); default: the latest stable release
 #   DENEXT_INSTALL   where to install (the binary lands in its `bin/`); default: ~/.denext
-#   DENEXT_INSECURE  `1` installs even when no checksum can be fetched (never on a mismatch)
+#   DENEXT_INSECURE  `1` installs even when no checksum can be fetched, or when the release's
+#                    build attestation can't be verified (never on a checksum mismatch)
+#   DENEXT_REQUIRE_ATTESTATION  `1` refuses to install unless the archive's build attestation is
+#                    verified (needs the GitHub CLI, `gh`, signed in)
 #   DENEXT_NO_TOOLCHAIN  `1` skips `denext toolchain install` (and the link): the toolchain then
 #                    downloads on the first command that needs it
 #   DENEXT_NO_DENO_LINK  `1` skips `denext toolchain link` (no `deno` is put on your PATH)
@@ -161,6 +164,42 @@ published_digest() {
   fi
 }
 
+# The checksum proves the archive is the one the release lists, not that the release is
+# denext's: whoever can replace a release's files can replace SHA256SUMS too. Every archive also
+# carries a build-provenance attestation (Sigstore, signed by GitHub for publish.yml on this
+# repository), which the GitHub CLI verifies: with `gh` installed and signed in, the archive must
+# pass `gh attestation verify` or nothing is installed. Without it the install goes ahead on the
+# checksum and says so, unless DENEXT_REQUIRE_ATTESTATION=1. A local DENEXT_ARTIFACTS build has
+# no attestation and skips this.
+verify_attestation() {
+  if [ -n "${DENEXT_ARTIFACTS:-}" ]; then return 0; fi
+  if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
+    if [ "${DENEXT_REQUIRE_ATTESTATION:-}" = "1" ]; then
+      echo "denext: DENEXT_REQUIRE_ATTESTATION=1 needs the GitHub CLI (gh), signed in, to verify" >&2
+      echo "  the release's build attestation — not installing." >&2
+      exit 1
+    fi
+    echo "denext: build attestation not checked (install and sign in to the GitHub CLI, gh, to"
+    echo "  verify it; DENEXT_REQUIRE_ATTESTATION=1 makes it required)"
+    return 0
+  fi
+  if gh attestation verify "$1" --repo "$REPO" \
+    --signer-workflow "$REPO/.github/workflows/publish.yml" >/dev/null 2>&1; then
+    echo "denext: build attestation verified (built by $REPO's publish workflow)"
+    return 0
+  fi
+  if [ "${DENEXT_INSECURE:-}" = "1" ]; then
+    echo "denext: WARNING — the build attestation of $ASSET could not be verified; installing on" >&2
+    echo "  the checksum alone because DENEXT_INSECURE=1 is set." >&2
+    return 0
+  fi
+  echo "denext: build attestation verification FAILED for $ASSET — not installing." >&2
+  echo "  \`gh attestation verify $ASSET --repo $REPO\` found no attestation from $REPO's publish" >&2
+  echo "  workflow. denext 4.9.0 and earlier carry none: DENEXT_INSECURE=1 installs one on its" >&2
+  echo "  checksum alone." >&2
+  exit 1
+}
+
 # The latest stable release's tag (`v2.5.0`), or nothing. The API first — with a token when one
 # is set, its header fed through stdin so the token never shows in a process listing, and only
 # on this api.github.com call (never on a download, which redirects off GitHub). Then, for a
@@ -251,6 +290,7 @@ main() {
     fi
     echo "denext: checksum verified"
   fi
+  verify_attestation "$TMP/$ASSET"
 
   mkdir -p "$BIN_DIR"
   tar xzf "$TMP/$ASSET" -C "$TMP"

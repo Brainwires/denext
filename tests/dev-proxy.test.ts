@@ -130,8 +130,6 @@ function decodeRelayed(encoding: string | null, bytes: Uint8Array): string {
 
 Deno.test({
   name: "proxyToBackend: a relayed body is always described by its relayed headers",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const backend = await startEncodingBackend();
   const cfg = { prefixes: ["/"], target: `http://127.0.0.1:${backend.port}` };

@@ -345,7 +345,8 @@ function setupRealtime(
   const engine = new RealtimeEngine(
     options,
     () => db.service(),
-    (key, frame) => channel.publish(key, frame),
+    (key, frame, grant) => channel.publish(key, frame, grant),
+    (key) => channel.discard(key),
   );
   installRealtime(engine);
   ctx.addTeardown(() => engine.stop());

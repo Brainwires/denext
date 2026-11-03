@@ -288,10 +288,15 @@ class S3Client {
     const total = res.status === 206
       ? Number(res.headers.get("content-range")?.split("/")[1])
       : Number(res.headers.get("content-length"));
+    // The range the store actually answered (Content-Range), not the one asked for: a store
+    // that ignores `Range` answers `200` with the whole object, which the server slices.
+    const served = res.status === 206
+      ? /^bytes (\d+)-(\d+)\//.exec(res.headers.get("content-range") ?? "")
+      : null;
     return {
       ...this.#info(res, key, total),
       body: res.body ?? new Blob([]).stream(),
-      ...(range && res.status === 206 ? { range } : {}),
+      ...(range && served ? { range: { start: Number(served[1]), end: Number(served[2]) } } : {}),
     };
   }
 

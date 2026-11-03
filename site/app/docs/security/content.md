@@ -253,7 +253,37 @@ to a folder or a file, that leads out of the project, nor through a dangling
 one, and stop with an error naming it (`migrate` and `init` leave a `.vscode`
 linked elsewhere alone). A link that stays inside the project is followed.
 `denext upgrade` leaves a workspace member outside the project unpinned and
-names it, and `denext patch` refuses a package name that is not an npm name.
+names it, and `denext patch` refuses a package name that is not an npm name. A
+patch, which runs at every boot, writes only inside the package it names, by real
+path: a link inside the package that leads out of it (or dangles) is refused, and
+the package folder itself must resolve inside the project or its workspace root.
+
+### Untrusted repositories
+
+An installed `denext` (the compiled binary, or
+`deno install -g`, whose launcher names its own config) reads a project's files as data until a
+verb runs its code. These run none of it: `--help`, `completions`, `migrate` and `migrate --check`
+(a `next.config.*` is evaluated in the sandboxed child), `routes`, `info`, `generate`, `codemod`,
+`audit`, `upgrade --check` / `--dry-run`, `mobile doctor` / `inspect` / `fingerprint` / `privacy`,
+`desktop doctor`, `desktop add`, `<unknown verb> --help`, and the `denext_list_routes`, `denext_route_map`,
+`denext_generate`, `denext_codemod` and codebase MCP tools. These run it, with every permission the
+CLI holds: `dev`, `build`, `export`, `start`, `test`, `check`, `doctor` (it renders every route, as
+does `denext_doctor`), `commands`, `job` (`--list` too), `db`, `migration`, `gen`, `deploy`
+(`prepare --dry-run` too), `analyze`, `profile`, `denext_render`, `denext ui`'s Commands, Doctor and
+Tasks panels, and **a verb denext doesn't know, including a mistyped one, when the config might
+define it**: denext reads the config's text first, and imports it unless it can see there are no
+`commands` or `plugins`. A spread, a variable as the default export or a wrapper other than
+`defineConfig` hides the keys, so those import too, since a project's real verb must not silently
+stop working. That read decides when a typo is worth looking up. It is no protection: a hostile
+config only has to declare `commands: []` to run on `denext biuld`, so in a repository you haven't
+reviewed, type only the verbs listed above as running none of it. A compiled binary also offers an unknown
+verb to the denext the project pins before this read, so a verb only that newer denext has keeps
+working, and a repository can pin an older denext, which imports the config for any unknown verb. A
+verb named by the listing the last `denext commands` wrote on this machine counts as known, and its `--help` imports the config.
+`deno run jsr:@denext/denext/cli …` is different: Deno applies the working
+directory's `deno.json`, `package.json` and `.npmrc` to the CLI itself before any of its code runs,
+so on such a repository add `--no-config` to it. Its `imports` can replace a module of the CLI,
+under the permissions you granted.
 
 **Project code never runs in the UI's privileged process.** Doctor, tasks,
 `next.config` evaluation, `deno add`, **and discovering the project's own CLI
@@ -555,6 +585,11 @@ Partytown on any page of the origin. denext closes both:
   inert. An injection cannot know the nonce (it is
   fixed before it is minted), a guessed or copied one fails, and an injected boot tag with a
   different nonce makes the page refuse Partytown altogether.
+- **A SPA's nonce comes from its shell.** A SPA renders `<Script>` in the browser, so `denext
+  dev` and `denext start` stamp each shell response instead: a fresh nonce on the boot tag and
+  the shell's own scripts, and `'nonce-…'` in the `spa.csp` policy's `script-src`. The worker
+  scripts the app renders take the nonce the boot ran with, and the checks below are the same.
+  A static export has no response to stamp, so it runs worker scripts on the main thread.
 - **Held until checked.** From the first boot tag on, every `text/partytown` script is retyped
   inert the moment it enters the document and restored only once the check passes, so no
   sandbox can pick one up early. Scripts a client render adds later are checked the same way.

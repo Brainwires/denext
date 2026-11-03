@@ -31,7 +31,7 @@
     "denext/client": "../../src/client/mod.ts",
     "denext/live": "../../src/live.ts",
     "denext/desktop": "../../src/build/desktop.ts",
-    "@capacitor/cli": "npm:@capacitor/cli@^7"
+    "@capacitor/cli": "npm:@capacitor/cli@8.6.0"
   },
   "lint": {
     "plugins": ["../../src/lint/denext-plugin.ts"]

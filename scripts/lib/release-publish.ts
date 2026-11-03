@@ -33,10 +33,30 @@ export interface PublishDeps {
   now(): number;
   /** Progress output. */
   log(line: string): void;
+  /** The state of `publish.yml`'s `publish` job for the run a pushed tag started. */
+  publishRun(tag: string): Promise<PublishRun>;
   /** The repository root (the members' `deno.json` files). */
   root?: string;
   /** How long to wait for JSR to list the corpus (default {@linkcode JSR_WAIT_MS}). */
   jsrWaitMs?: number;
+}
+
+/** The package a root release publishes. */
+export const RELEASE_PACKAGE = "@denext/denext";
+
+/**
+ * What the tag's publish job did: `success`; `failed` (failed, cancelled or timed out);
+ * `pending` (queued or running); `none` (no run for the tag yet); `unknown` (GitHub could not
+ * be asked).
+ */
+export interface PublishRun {
+  state: "success" | "failed" | "pending" | "none" | "unknown";
+  /** The run's id, for `gh run rerun`. */
+  id?: string;
+  /** The run's page. */
+  url?: string;
+  /** Why `unknown`, or the job's conclusion. */
+  detail?: string;
 }
 
 /**
@@ -232,11 +252,72 @@ async function pushStep(target: ReleaseTarget, deps: PublishDeps): Promise<void>
   await gitOrAbort(deps, ["push", "origin", target.tag], "git push (tag) failed", resume);
 }
 
-/** The PR step: what is left to do by hand. */
-function prStep(target: ReleaseTarget, deps: PublishDeps): void {
+/** The message for a publish run that failed: what to do for a transient cause and a real one. */
+export function publishFailedMessage(target: ReleaseTarget, run: PublishRun): string {
+  const rerun = run.id ? `gh run rerun ${run.id} --failed` : "gh run rerun <run-id> --failed";
+  return `the publish run for ${target.tag} FAILED${run.url ? ` (${run.url})` : ""}` +
+    `${run.detail ? `: ${run.detail}` : ""}, so ${RELEASE_PACKAGE}@${target.version} is not ` +
+    "released.\n" +
+    `  Transient cause (network, runner, JSR outage): rerun the failed run — ${rerun} — then ` +
+    `resume:\n    ${resumeCommand(target, "pr")}\n` +
+    `  Real defect: ${target.version} is burned (a tag is never moved or reused). Fix it on the ` +
+    "branch, cut the next patch, and do NOT merge main.";
+}
+
+/** Throw when the tag's publish run failed or cannot be read; a run in any other state goes on. */
+function refuseBadRun(target: ReleaseTarget, run: PublishRun): void {
+  if (run.state === "failed") throw new ReleaseAbort(publishFailedMessage(target, run));
+  if (run.state !== "unknown") return;
+  throw new ReleaseAbort(
+    `could not read the publish run for ${target.tag} (${run.detail ?? "gh failed"}), so ` +
+      `${target.version} is not confirmed released. Check publish.yml's run for ${target.tag} ` +
+      `and that jsr.io lists ${RELEASE_PACKAGE}@${target.version}, then resume:\n  ` +
+      resumeCommand(target, "pr"),
+  );
+}
+
+/** Whether JSR lists the release; a JSR that cannot be asked counts as "not yet". */
+function releaseListed(target: ReleaseTarget, deps: PublishDeps): Promise<boolean> {
+  return jsrHasVersion(RELEASE_PACKAGE, target.version, deps.fetch).catch((err: Error) => {
+    deps.log(`   jsr.io could not be asked (${err.message}); retrying`);
+    return false;
+  });
+}
+
+/**
+ * Stop unless `@denext/denext` <version> is on JSR and the tag's publish job succeeded, waiting
+ * (as the corpus step does) while the run is still going or JSR has not listed it yet.
+ */
+async function verifyPublished(target: ReleaseTarget, deps: PublishDeps): Promise<void> {
+  const deadline = deps.now() + (deps.jsrWaitMs ?? JSR_WAIT_MS);
+  let delay = FIRST_POLL_MS;
+  for (;;) {
+    const run = await deps.publishRun(target.tag);
+    refuseBadRun(target, run);
+    const listed = await releaseListed(target, deps);
+    if (listed && run.state === "success") return;
+    const left = deadline - deps.now();
+    const seen = `publish run: ${run.state}; on jsr.io: ${listed ? "yes" : "no"}`;
+    if (left <= 0) {
+      throw new ReleaseAbort(
+        `${target.tag} is pushed but ${RELEASE_PACKAGE}@${target.version} is not confirmed ` +
+          `released (${seen}). Check publish.yml's run${run.url ? ` (${run.url})` : ""}, then ` +
+          `resume:\n  ${resumeCommand(target, "pr")}`,
+      );
+    }
+    const wait = Math.min(delay, left);
+    deps.log(`   waiting for the ${target.tag} publish (${seen}); next check in ${wait / 1000}s…`);
+    await deps.sleep(wait);
+    delay = Math.min(delay * 2, MAX_POLL_MS);
+  }
+}
+
+/** The PR step: confirm the release really published, then what is left to do by hand. */
+async function prStep(target: ReleaseTarget, deps: PublishDeps): Promise<void> {
+  await verifyPublished(target, deps);
   deps.log(
-    `\n✓ Released ${target.version}. The ${target.tag} tag fires the JSR publish workflow ` +
-      "(it re-runs the gate, then publishes).\n" +
+    `\n✓ Released ${target.version}: ${RELEASE_PACKAGE}@${target.version} is on JSR and the ` +
+      `${target.tag} publish run succeeded.\n` +
       "  REQUIRED next: open a PR so `main` catches up to this tag —\n" +
       `    gh pr create --base main --head ${target.branch}\n` +
       "  (every release tag gets a `development → main` PR; see AGENTS.md).\n" +
@@ -265,7 +346,7 @@ export async function publishFrom(
     if (step === "corpus") await corpusStep(target, deps);
     else if (step === "tag") await tagStep(target, deps);
     else if (step === "push") await pushStep(target, deps);
-    else prStep(target, deps);
+    else await prStep(target, deps);
   }
 }
 
@@ -281,7 +362,49 @@ export function realPublishDeps(cwd: string): PublishDeps {
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now(),
     log: (line) => console.log(line),
+    publishRun: (tag) => ghPublishRun(tag, cwd),
   };
+}
+
+/** Run `gh <args>` in `cwd`: stdout on success, else a thrown error with stderr. */
+async function gh(cwd: string, ...args: string[]): Promise<string> {
+  const r = await new Deno.Command("gh", {
+    args,
+    cwd,
+    stdout: "piped",
+    stderr: "piped",
+    stdin: "null",
+  }).output();
+  if (!r.success) {
+    throw new Error(new TextDecoder().decode(r.stderr).trim() || `gh exited ${r.code}`);
+  }
+  return new TextDecoder().decode(r.stdout);
+}
+
+/** `publish.yml`'s newest run for `tag` and its `publish` job's state. */
+async function ghPublishRun(tag: string, cwd: string): Promise<PublishRun> {
+  try {
+    const runs = JSON.parse(
+      await gh(
+        cwd,
+        ...["run", "list", "--workflow", "publish.yml", "--branch", tag, "--limit", "1"],
+        ...["--json", "databaseId,url"],
+      ),
+    ) as Array<{ databaseId: number; url: string }>;
+    if (runs.length === 0) return { state: "none" };
+    const { databaseId, url } = runs[0];
+    const id = String(databaseId);
+    const view = JSON.parse(await gh(cwd, "run", "view", id, "--json", "jobs")) as {
+      jobs: Array<{ name: string; status: string; conclusion: string }>;
+    };
+    const job = view.jobs.find((j) => j.name === "publish");
+    if (!job) return { state: "pending", id, url };
+    if (job.status !== "completed") return { state: "pending", id, url };
+    if (job.conclusion === "success") return { state: "success", id, url };
+    return { state: "failed", id, url, detail: `the publish job ${job.conclusion}` };
+  } catch (err) {
+    return { state: "unknown", detail: (err as Error).message };
+  }
 }
 
 /**

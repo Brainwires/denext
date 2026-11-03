@@ -11,6 +11,7 @@
 
 import { join } from "@std/path";
 import { acquireCacheLock } from "./project-locks.ts";
+import { lockTask } from "./file-lock.ts";
 import { denoCacheDir } from "./deno-cache-dir.ts";
 import { compareDenoVersions } from "./deno-version.ts";
 
@@ -199,7 +200,14 @@ export interface RemovalOutcome {
  * @param roots The cache roots (the locks live there).
  * @returns Each entry's outcome.
  */
-export async function removeToolchainEntries(
+export function removeToolchainEntries(
+  entries: readonly ToolchainCacheEntry[],
+  roots: ToolchainCacheRoots,
+): Promise<RemovalOutcome[]> {
+  return lockTask(() => removeToolchainEntriesInTask(entries, roots));
+}
+
+async function removeToolchainEntriesInTask(
   entries: readonly ToolchainCacheEntry[],
   roots: ToolchainCacheRoots,
 ): Promise<RemovalOutcome[]> {

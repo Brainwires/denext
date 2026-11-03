@@ -1,29 +1,24 @@
+import type { CalendarSource } from '../schemas/interfaces/calendar-source.d.ts';
 import type { CreateReminderOptions } from '../schemas/interfaces/create-reminder-options.d.ts';
 import type { CreateReminderResult } from '../schemas/interfaces/create-reminder-result.d.ts';
 import type { CreateRemindersListOptions } from '../schemas/interfaces/create-reminders-list-options.d.ts';
 import type { CreateRemindersListResult } from '../schemas/interfaces/create-reminders-list-result.d.ts';
 import type { DeleteReminderOptions } from '../schemas/interfaces/delete-reminder-options.d.ts';
 import type { DeleteReminderWithPromptOptions } from '../schemas/interfaces/delete-reminder-with-prompt-options.d.ts';
-import type { DeleteReminderWithPromptResult } from '../schemas/interfaces/delete-reminder-with-prompt-result.d.ts';
 import type { DeleteRemindersByIdOptions } from '../schemas/interfaces/delete-reminders-by-id-options.d.ts';
 import type { DeleteRemindersByIdResult } from '../schemas/interfaces/delete-reminders-by-id-result.d.ts';
 import type { DeleteRemindersListOptions } from '../schemas/interfaces/delete-reminders-list-options.d.ts';
-import type { FetchAllCalendarSourcesResult } from '../schemas/interfaces/fetch-all-calendar-sources-result.d.ts';
-import type { GetDefaultRemindersListResult } from '../schemas/interfaces/get-default-reminders-list-result.d.ts';
 import type { GetReminderByIdOptions } from '../schemas/interfaces/get-reminder-by-id-options.d.ts';
 import type { GetReminderByIdResult } from '../schemas/interfaces/get-reminder-by-id-result.d.ts';
 import type { GetRemindersFromListsOptions } from '../schemas/interfaces/get-reminders-from-lists-options.d.ts';
 import type { GetRemindersFromListsResult } from '../schemas/interfaces/get-reminders-from-lists-result.d.ts';
-import type { GetRemindersListsResult } from '../schemas/interfaces/get-reminders-lists-result.d.ts';
 import type { ModifyReminderOptions } from '../schemas/interfaces/modify-reminder-options.d.ts';
+import type { RemindersList } from '../schemas/interfaces/reminders-list.d.ts';
 import type { UpdateRemindersListOptions } from '../schemas/interfaces/update-reminders-list-options.d.ts';
 import type { UpdateRemindersListResult } from '../schemas/interfaces/update-reminders-list-result.d.ts';
 export interface RemindersOperations {
     /**
      * Creates a new reminders list.
-     *
-     * @throws {Error} `Title must be provided.` — when `title` is missing.
-     * @throws {Error} `Invalid color format.` — when `color` is present but invalid.
      *
      * @platform iOS
      * @since 8.1.0
@@ -31,8 +26,6 @@ export interface RemindersOperations {
     createRemindersList(options: CreateRemindersListOptions): Promise<CreateRemindersListResult>;
     /**
      * Deletes a reminders list.
-     *
-     * @throws {Error} `List not found.` — when no list exists for `id`.
      *
      * @platform iOS
      * @since 8.2.0
@@ -45,11 +38,11 @@ export interface RemindersOperations {
      * @platform iOS
      * @since 6.6.0
      */
-    fetchAllRemindersSources(): Promise<FetchAllCalendarSourcesResult>;
+    fetchAllRemindersSources(): Promise<{
+        result: CalendarSource[];
+    }>;
     /**
      * Opens the reminders app.
-     *
-     * @throws {Error} `Failed to launch reminders app.` — when the system cannot open Reminders.
      *
      * @platform iOS
      * @since 7.1.0
@@ -61,22 +54,20 @@ export interface RemindersOperations {
      * @platform iOS
      * @since 7.1.0
      */
-    getDefaultRemindersList(): Promise<GetDefaultRemindersListResult>;
+    getDefaultRemindersList(): Promise<{
+        result: RemindersList | null;
+    }>;
     /**
      * Retrieves all available reminders lists.
      *
      * @platform iOS
      * @since 7.1.0
      */
-    getRemindersLists(): Promise<GetRemindersListsResult>;
+    getRemindersLists(): Promise<{
+        result: RemindersList[];
+    }>;
     /**
      * Creates a reminder.
-     *
-     * @throws {Error} `Title must be provided.` — when `title` is missing.
-     * @throws {Error} `List not found.` — when `listId` is set and no list matches.
-     * @throws {Error} `Invalid frequency.` — when `recurrence.frequency` is present but invalid.
-     * @throws {Error} `Frequency must be provided.` — when recurrence is set without `frequency`.
-     * @throws {Error} `Interval must be provided.` — when recurrence is set without `interval`.
      *
      * @platform iOS
      * @since 0.5.0
@@ -95,8 +86,6 @@ export interface RemindersOperations {
     /**
      * Deletes a reminder.
      *
-     * @throws {Error} `Reminder not found.` — when no reminder exists for `id`.
-     *
      * @platform iOS
      * @since 7.1.0
      */
@@ -104,18 +93,12 @@ export interface RemindersOperations {
     /**
      * Modifies a reminder.
      *
-     * @throws {Error} `Reminder not found.` — when no reminder exists for `id`.
-     * @throws {Error} `List not found.` — when `listId` is set and no list matches.
-     * @throws {Error} `Invalid frequency.` — when `recurrence.frequency` is present but invalid.
-     * @throws {Error} `Frequency must be provided.` — when recurrence is set without `frequency`.
-     * @throws {Error} `Interval must be provided.` — when recurrence is set without `interval`.
-     *
      * @platform iOS
      * @since 6.7.0
      */
     modifyReminder(options: ModifyReminderOptions): Promise<void>;
     /**
-     * Retrieves a reminder by id.
+     * Retrieve a reminder by ID.
      *
      * @platform iOS
      * @since 7.1.0
@@ -124,8 +107,6 @@ export interface RemindersOperations {
     /**
      * Retrieves reminders from multiple lists.
      *
-     * @throws {Error} `List not found.` — when a requested list id does not exist.
-     *
      * @platform iOS
      * @since 5.3.0
      */
@@ -133,20 +114,14 @@ export interface RemindersOperations {
     /**
      * Opens a dialog to delete a reminder.
      *
-     * @throws {Error} `Reminder not found.` — when no reminder exists for `id`.
-     * @throws {Error} `Missing view controller.` — when the plugin cannot present the dialog.
-     *
      * @platform iOS
      * @since 7.2.0
      */
-    deleteReminderWithPrompt(options: DeleteReminderWithPromptOptions): Promise<DeleteReminderWithPromptResult>;
+    deleteReminderWithPrompt(options: DeleteReminderWithPromptOptions): Promise<{
+        deleted: boolean;
+    }>;
     /**
-     * Updates a reminders list.
-     *
-     * @throws {Error} `Event ID must be provided.` — when `id` is missing.
-     * @throws {Error} `List not found.` — when no list exists for `id`.
-     * @throws {Error} `List is not modifiable.` — when the list does not allow edits.
-     * @throws {Error} `Invalid color format.` — when `color` is present but invalid.
+     * Update a reminders list with options.
      *
      * @platform iOS
      * @since 8.2.0

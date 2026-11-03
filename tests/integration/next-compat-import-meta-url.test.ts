@@ -41,8 +41,6 @@ export async function GET() {
 
 Deno.test({
   name: "next-compat: import.meta.url in a bundled server module names its source file",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const root = await Deno.makeTempDir({ prefix: "denext_nc_meta_url_" });
   const controller = new AbortController();

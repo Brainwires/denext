@@ -11,12 +11,12 @@ import { build } from "../../src/build/build.ts";
 import { frameworkRoot } from "../../src/build/bundle.ts";
 import { nativeAnalyzeMeta } from "../../src/build/sourcemap-attribution.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
+import { copyExample } from "../helpers/example-copy.ts";
 import { dirLinkTestName, IGNORE_WITHOUT_DIR_LINKS, symlinkDir } from "../helpers/symlink.ts";
 
 const BUNDLE_URL = new URL("../../src/build/bundle.ts", import.meta.url).href;
 
 const EXAMPLE = fromFileUrl(new URL("../../examples/hello", import.meta.url));
-const FLIGHT_EXAMPLE = fromFileUrl(new URL("../../examples/islands", import.meta.url));
 
 /** File names directly in `dir`. */
 async function fileNames(dir: string): Promise<string[]> {
@@ -246,6 +246,10 @@ async function assertSharedRuntimeChunk(clientDir: string): Promise<void> {
  * `deno task budget` on a stock `deno` measures that). A chunk no page can load is no longer emitted. Each gate is asserted in
  * {@link assertGatedRuntimeAbsent} and {@link assertFlightStartupLean} (define path), and the
  * bundle-features fixture proves both still ship when used.
+ * Raised 64,500 → 64,600 B on 2026-10-28 (measured 64,577 B): the reconciler cancels the passive-
+ * effect flush macrotask a sooner flush made moot, and closes its time-slicing MessageChannel once
+ * slicing goes idle, so neither outlives the work (the leak fixes the op / resource sanitizers
+ * found; trimmed to 77 B over the old budget).
  */
 async function assertBundleBudgets(clientDir: string): Promise<void> {
   let sharedTotal = 0;
@@ -262,7 +266,7 @@ async function assertBundleBudgets(clientDir: string): Promise<void> {
 }
 
 /** The shared-chunk budget for examples/hello, in raw bytes (its history is in the comment above). */
-const SHARED_BUDGET = 64_500;
+const SHARED_BUDGET = 64_600;
 
 /** The over-budget message: how far over, how to reproduce it, and the two ways out. */
 function budgetMessage(total: number): string {
@@ -462,7 +466,8 @@ async function assertNoUnloadedChunks(clientDir: string): Promise<void> {
 }
 
 Deno.test("build smoke: examples/hello emits a client entry, a code-split island chunk, and a shared chunk", async () => {
-  const result = await build(EXAMPLE);
+  // A private copy: the build writes its `.denext/`, which other test files must not race.
+  const result = await build(await copyExample("hello"));
   const clientDir = join(result.outDir, "client");
 
   // BLD-M2: the client is built in a staging dir and atomically swapped in, so no
@@ -518,7 +523,9 @@ Deno.test("build smoke: a Flight app (examples/islands) ships the Flight soft-na
   // The native path's per-module attribution (`denext analyze --md`'s), for the hoist check.
   const prior = Deno.env.get("DENEXT_ANALYZE");
   Deno.env.set("DENEXT_ANALYZE", "1");
-  const result = await build(FLIGHT_EXAMPLE).finally(() => {
+  // A private copy: the build writes its `.denext/`, which other test files must not race.
+  const app = await copyExample("islands");
+  const result = await build(app).finally(() => {
     if (prior === undefined) Deno.env.delete("DENEXT_ANALYZE");
     else Deno.env.set("DENEXT_ANALYZE", prior);
   });
@@ -536,7 +543,7 @@ Deno.test("build smoke: a Flight app (examples/islands) ships the Flight soft-na
   );
   await assertFlightStartupLean(clientDir);
   await assertNoUnloadedChunks(clientDir);
-  await assertNoLazyModuleHoisted(clientDir);
+  await assertNoLazyModuleHoisted(clientDir, app);
 });
 
 /**
@@ -565,12 +572,12 @@ const LAZY_ONLY_MODULES: readonly string[] = [
   "src/mobile/momentum-scroll.ts", // the momentum-scroll-* chunk (iOS WebKit only)
 ];
 
-/** No {@link LAZY_ONLY_MODULES} code in examples/islands' startup graph. */
-async function assertNoLazyModuleHoisted(clientDir: string): Promise<void> {
+/** No {@link LAZY_ONLY_MODULES} code in examples/islands' startup graph (`app`: its build's copy). */
+async function assertNoLazyModuleHoisted(clientDir: string, app: string): Promise<void> {
   // Real paths: the attribution resolves each source map entry through symlinks (macOS `/var`).
   const meta = await nativeAnalyzeMeta(
     clientDir,
-    await Deno.realPath(FLIGHT_EXAMPLE),
+    await Deno.realPath(app),
     await Deno.realPath(frameworkRoot()),
   );
   assert(meta, "the build recorded no per-module attribution (DENEXT_ANALYZE=1)");

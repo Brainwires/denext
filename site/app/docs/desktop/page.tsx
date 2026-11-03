@@ -1010,7 +1010,11 @@ denext desktop package --target-os windows --format msi,zip`}
 import { openAuthSession, runtimePlatform } from "denext/mobile";
 
 export async function signIn() {
-  const state = crypto.randomUUID(); // and a PKCE verifier + code_challenge
+  const state = crypto.randomUUID();
+  const verifier = crypto.randomUUID() + crypto.randomUUID();
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
+  const challenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/, "");
   const desktop = runtimePlatform() === "desktop";
   const authorize = new URL("https://auth.example.com/authorize");
   authorize.searchParams.set(
@@ -1018,6 +1022,8 @@ export async function signIn() {
     desktop ? "http://127.0.0.1/auth/callback" : "myapp://auth/callback",
   );
   authorize.searchParams.set("state", state);
+  authorize.searchParams.set("code_challenge", challenge); // required: pkce_required otherwise
+  authorize.searchParams.set("code_challenge_method", "S256");
   // callbackScheme is required by the type, and ignored with a loopback redirect_uri.
   const { url } = await openAuthSession(authorize.href, { callbackScheme: "myapp" });
   const params = new URL(url).searchParams;
@@ -1040,13 +1046,22 @@ export async function signIn() {
         </li>
         <li>
           <strong>
-            PKCE and <code>state</code> are your job,
+            PKCE S256 and <code>state</code> are required,
           </strong>{" "}
-          here more than anywhere. Any process on the machine can connect to the loopback port, and
-          the first request to the callback path wins, so a local program that finds the port can
-          race a forged redirect in before the real browser. Generate <code>state</code>{" "}
-          and re-check it on the callback, and use PKCE so an intercepted <code>code</code>{" "}
-          is useless without your verifier.
+          here more than anywhere. Any process on the machine can connect to the loopback port, so a
+          local program that finds it can race a forged redirect in before the real browser (RFC
+          8252 §8.1). The runtime listens on <code>127.0.0.1</code> and <code>::1</code>{" "}
+          alike, on one port (IPv4 alone on a host without IPv6), so no other program can hold the
+          address a browser tries first. When the authorization URL carries a{" "}
+          <code>state</code>, only a callback with that exact <code>state</code>{" "}
+          completes the session; any other gets an error page and the session keeps waiting. The
+          authorization URL must carry a <code>code_challenge</code> and{" "}
+          <code>code_challenge_method=S256</code>, so an intercepted <code>code</code>{" "}
+          is useless without your verifier; without them the runtime refuses the session with{" "}
+          <code>pkce_required</code>, as on every other platform. A provider that binds the code to
+          the client another way takes <code>pkce: "not-applicable"</code> with a{" "}
+          <code>reason</code>, and then the URL must carry a <code>state</code>. Generate{" "}
+          <code>state</code> and re-check it on the callback too.
         </li>
         <li>
           <strong>The browser reports no cancel, so denext shows one.</strong>{" "}
@@ -1077,10 +1092,11 @@ export async function signIn() {
   loopbackPort: 1455,      // redirect_uri: http://localhost:1455/auth/callback
 });`}
           </Code>
-          The listener binds <code>127.0.0.1</code> (<code>::1</code> for a <code>[::1]</code>{" "}
-          redirect; browsers reach a <code>localhost</code>{" "}
-          redirect over IPv4 when nothing answers on IPv6). If another program holds the port, the
-          call rejects <code>port_in_use</code>{" "}
+          The listener binds both <code>127.0.0.1</code> and <code>::1</code> on that port, so a
+          {" "}
+          <code>localhost</code>{" "}
+          redirect reaches it whichever address the browser tries (RFC 8252 §7.3). If another
+          program holds the port on either address, the call rejects <code>port_in_use</code>{" "}
           before the browser opens: ask the user to quit the other program (often another sign-in
           tool for the same provider) and retry. RFC 8252 allows a fixed port, but a known port is
           easier for a local program to take first, so <code>state</code>{" "}
@@ -1322,8 +1338,21 @@ export default {
           is required and must name the relying party your passkeys belong to (the instance's
           application domain, which is not the Frontend API host the publishable key encodes, so
           denext does not guess it); <code>passkeys: true</code>{" "}
-          is a config error, and an empty list refuses every request. On macOS the app's signature
-          needs the <code>com.apple.developer.associated-domains</code> entitlement{" "}
+          is a config error, and an empty list refuses every request.{" "}
+          <code>denext desktop add passkeys --rp-id clerk.example.com</code> writes the list (repeat
+          {" "}
+          <code>--rp-id</code>{" "}
+          for more; each must be a registrable domain, with no scheme, port or path, and a later run
+          adds to the list); without it the capability is added with an empty list. The list is
+          enforced twice: by the capability, and natively by the window&apos;s backend, which reads
+          it from the packaged <code>laufey-launch.json</code>{" "}
+          (<code>"passkeyRpIds"</code>) and refuses any other RP ID before the OS sees it. From
+          runtime 3.0.0-denext.1 that file also carries{" "}
+          <code>"strictPolicy": true</code>, so a launch file without the list fails closed: every
+          ceremony is <code>invalid_rp</code>. <code>denext doctor</code> and{" "}
+          <code>denext desktop doctor</code> flag passkeys enabled with no{" "}
+          <code>rpIds</code>. On macOS the app's signature needs the{" "}
+          <code>com.apple.developer.associated-domains</code> entitlement{" "}
           (<code>webcredentials:&lt;rp-id&gt;</code>) with a provisioning profile, and the RP's{" "}
           <code>apple-app-site-association</code> must list{" "}
           <code>&lt;TeamID&gt;.&lt;bundle id&gt;</code>
@@ -1432,8 +1461,9 @@ try {
         </li>
         <li>
           <code>applyDesktopUpdate(version, config)</code>{" "}
-          re-verifies the staged files and flips the active pointer with an atomic rename. The page
-          that is running keeps running; the next launch serves the new UI.
+          re-verifies the staged files, the sequence and the expiry, flips the active pointer with
+          an atomic rename, and deletes any other staged version. The page that is running keeps
+          running; the next launch serves the new UI.
         </li>
         <li>
           <code>desktopUpdateStatus(config)</code> reports <code>current</code>,{" "}
@@ -1466,7 +1496,13 @@ try {
         is not strictly greater than the highest one accepted, or that has none after a sequenced
         release, is refused (<code>downgrade</code>), so every release needs a new sequence (the
         default Unix time does that). The bundled export's own manifest sequence is the floor before
-        any overlay was accepted, so an overlay older than the UI the app ships is refused.
+        any overlay was accepted, so an overlay older than the UI the app ships is refused. That is
+        why <code>denext desktop package</code> refuses an app with <code>desktop.update.ui</code>
+        {" "}
+        whose export has no <code>_denext/ota.json</code> with a{" "}
+        <code>sequence</code>: stamp a signed one with <code>spa.ota: true</code> and{" "}
+        <code>DENEXT_OTA_SIGNING_KEY</code>, or run{" "}
+        <code>denext ota manifest out --sign ota.key</code> after the export.
       </p>
       <p>
         <strong>Releases expire.</strong> <code>denext ota manifest --sign</code> stamps a signed
@@ -1489,11 +1525,42 @@ try {
         <code>{"createOtaHandler({ platforms })"}</code> feed serves each OS its own export.
       </p>
       <p>
+        <strong>The release is for this app.</strong> With <code>desktop.app.identifier</code>{" "}
+        set (which <code>desktop.update.ui</code> requires, and <code>runDesktop</code>{" "}
+        passes as the updater&apos;s <code>appId</code>), a manifest must name the app in its signed
+        {" "}
+        <code>appId</code> (its own{" "}
+        <code>appSignature</code>, payload v5): another app&apos;s release, or one that names no
+        app, is refused (<code>app_mismatch</code>), so a signing key shared by several apps cannot
+        move one app&apos;s UI onto another. A signed desktop <code>spa.ota</code> export stamps
+        {" "}
+        <code>desktop.app.identifier</code>; for a manifest written by{" "}
+        <code>denext ota manifest</code>, pass <code>--app-id &lt;identifier&gt; --sign</code>.
+      </p>
+      <p>
         <strong>Tied to the app it was installed over.</strong>{" "}
         The overlay folder records which bundled export the overlay belongs to (the export&apos;s
         stamped version, else its <code>index.html</code>{" "}
         hash). When the app itself is replaced (a full-app update, a reinstall), the next launch
         drops every overlay and staged version and serves the new app&apos;s own UI.
+      </p>
+      <p>
+        <strong>Verified on every launch and every read.</strong>{" "}
+        Each launch checks the active overlay again: its manifest&apos;s signature, every
+        file&apos;s SHA-256, and that the folder holds nothing else (an extra file or a symbolic
+        link fails). The window then reads each overlay file through the updater, which checks it
+        against the manifest when it is served: hashed the first time, and again whenever the
+        file&apos;s inode, size or change time moves. So a file another program adds or edits in the
+        overlay folder is never served, and the <code>desktop.preload</code>{" "}
+        comes only from a file the manifest lists. An overlay that fails is rolled back like one
+        that failed to boot (<code>rejected</code>, its folder deleted) and the bundled UI is
+        served; a read error (a permission, I/O) skips it for that launch only. The overlay folder,
+        a custom <code>dataDir</code> included, is out of reach of the page&apos;s <code>fs</code>,
+        {" "}
+        <code>shell</code> and <code>window</code>{" "}
+        capabilities. A server of your own takes the overlay from{" "}
+        <code>openDesktopUi(bundledOut, config)</code> and reads its files with{" "}
+        <code>overlay.read(path)</code>, not from its folder.
       </p>
       <p>
         <strong>Rollback.</strong> An applied version starts{" "}
@@ -2012,7 +2079,8 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
               (Touch ID / iCloud Keychain · Windows Hello · none on Linux; pinned runtime)
             </td>
             <td>
-              none (a runtime API; pin the RP IDs with <code>{"{ rpIds }"}</code>)
+              none (a runtime API; pin the RP IDs with <code>{"{ rpIds }"}</code>, or{" "}
+              <code>--rp-id &lt;domain&gt;</code>)
             </td>
             <td>none</td>
           </tr>
@@ -2034,10 +2102,26 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>picked</code>{" "}
         handle) grants that file only, so its partial and sidecar go in the app&apos;s cache
         directory instead (<code>denext-downloads/</code>, named by a hash of the destination):
-        nothing is created or removed beside the picked file. It sends the page&apos;s request
-        headers except those a browser&apos;s <code>fetch</code> refuses (<code>Cookie</code>,{" "}
-        <code>Host</code>, <code>Origin</code>, the hop-by-hop and <code>Sec-</code> /{" "}
-        <code>Proxy-</code> ones), and drops <code>Authorization</code>{" "}
+        nothing is created or removed beside the picked file. A download started with an{" "}
+        <code>id</code>{" "}
+        into an app folder is also recorded across restarts, as the mobile plugin records its
+        transfers: <code>fileTransfers()</code>{" "}
+        lists it after one (a download the app quit during as{" "}
+        <code>failed</code>, resumable from its partial file), <code>resumeFileTransfer</code>{" "}
+        continues it with the request headers it was started with, and a cancel drops its record
+        with its partial file; a done record is listed for 7 days unless forgotten first. The
+        record&apos;s file never holds a credential header (<code>Authorization</code>,{" "}
+        <code>Cookie</code>, an API key or token): those stay in memory for the launch, so after a
+        restart a download started with one is refused by{" "}
+        <code>resumeFileTransfer</code>; start it again with <code>downloadToFile</code>{" "}
+        and its headers (the same{" "}
+        <code>id</code>, URL and file) and it continues from its partial file. The file is readable
+        by the user only on macOS and Linux (mode{" "}
+        <code>0600</code>); Windows ignores the mode, and the file takes the user profile&apos;s
+        ACL. It sends the page&apos;s request headers except those a browser&apos;s{" "}
+        <code>fetch</code> refuses (<code>Cookie</code>, <code>Host</code>,{" "}
+        <code>Origin</code>, the hop-by-hop and <code>Sec-</code> / <code>Proxy-</code>{" "}
+        ones), and drops <code>Authorization</code>{" "}
         on a redirect to another origin. LAN addresses (<code>
           192.168.x.x
         </code>, <code>10.x.x.x</code>, …) stay allowed, so a download from a NAS works.{" "}
@@ -2046,8 +2130,9 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <code>.desktop</code>, an executable file, …), because the default app would run them.{" "}
         <code>fs</code>, <code>shell</code>{" "}
         and drag-out never reach the runtime's own folders in the data directory (the updater's{" "}
-        <code>ui-updates</code>, and the web engine's profile: <code>CEF</code>,{" "}
-        <code>WebKitGTK</code>,{" "}
+        <code>ui-updates</code>, the download records&apos; <code>denext-transfers</code>{" "}
+        (a live record holds its non-credential request headers), and the web engine's profile:{" "}
+        <code>CEF</code>, <code>WebKitGTK</code>,{" "}
         <code>WebView2</code>, in any letter case): no read, list, write, delete, open, reveal,
         trash or drag. SQLite connections cannot <code>ATTACH</code> another file, and a{" "}
         <code>query</code>{" "}
@@ -2093,7 +2178,16 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
       <Callout kind="note">
         <strong>The secure store on Linux.</strong> <code>secure-store</code>{" "}
         is the pinned runtime&apos;s own: the Secret Service through libsecret, which every desktop
-        ships (the <code>.deb</code> / <code>.rpm</code> depend on <code>libsecret-1-0</code> /{" "}
+        ships. From runtime 3.0.0-denext.1 each item is also keyed by the app id (<code>
+          laufey-app-id
+        </code>, from{" "}
+        <code>desktop.app.identifier</code>), so two apps using the same service and account no
+        longer share it; an item an older build wrote under the shared attributes moves into the
+        app&apos;s namespace when the app first looks it up during its first run of the updated
+        build, and only when that app had run here before (a newly installed app never takes another
+        app&apos;s item). An app without an identifier has no namespace: it neither moves nor sees
+        the shared items. (The <code>.deb</code> / <code>.rpm</code> depend on{" "}
+        <code>libsecret-1-0</code> /{" "}
         <code>libsecret</code>; the stock runtime has no Linux secure store). It needs a Secret
         Service provider: GNOME Keyring, or KWallet with its Secret Service enabled. When there is
         none, or its keyring is locked, every call rejects with <code>backend_unavailable</code>
@@ -2254,6 +2348,7 @@ if (folder) {
         {`import {
   getWindowState,
   makeWindowDraggable,
+  hideWindow,
   onCloseRequested,
   onWindowStateChange,
   setWindowBackdrop,
@@ -2272,8 +2367,15 @@ onWindowStateChange(async () => {
 makeWindowDraggable(document.querySelector("header")!);
 await setWindowBackdrop("vibrancy", { material: "sidebar" });
 
-// Ask before closing (the close button, Cmd+W / Alt+F4, or quitApp()).
-onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"));`}
+// Ask before closing (the close button, Cmd+W / Alt+F4, or the app quitting).
+onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"));
+
+// Close to the tray, but let the app quit (Electron's before-quit + close).
+onCloseRequested(({ reason }) => {
+  if (reason === "quit") return true;
+  void hideWindow();
+  return false;
+});`}
       </Code>
       <ul>
         <li>
@@ -2324,12 +2426,30 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
         <li>
           <strong>Closing</strong>: while an <code>onCloseRequested</code>{" "}
           handler is registered, the runtime holds every close and asks the page; the window closes
-          unless a handler returns{" "}
-          <code>false</code>. A page that never answers loses its hold: a close requested again 5
-          seconds later goes through. <code>closeWindow()</code> closes without asking;{" "}
-          <code>quitApp()</code> asks first (Electron&apos;s{" "}
-          <code>app.quit()</code>). Cmd+Q from the macOS app menu is never held. A reload drops the
-          hold.
+          unless a handler returns <code>false</code>. The handler gets an event whose{" "}
+          <code>reason</code> says why: <code>"close"</code> (the close button, Cmd+W / Alt+F4) or
+          {" "}
+          <code>"quit"</code> (the app is quitting: <code>quitApp()</code>,{" "}
+          <code>Deno.desktop.quit()</code>, the Quit item of a Windows tray menu), so a
+          close-to-tray window hides on a close and lets a quit through, as an Electron app checks
+          an <code>isQuitting</code> flag set in <code>before-quit</code>. A handler written as{" "}
+          <code>() =&gt; boolean</code>{" "}
+          keeps working. Once every guarded window lets a quit go, the app quits. A page that never
+          answers loses its hold: a close requested again 5 seconds later goes through.{" "}
+          <code>closeWindow()</code> closes without asking; <code>quitApp()</code>{" "}
+          asks first (Electron&apos;s{" "}
+          <code>app.quit()</code>). Cmd+Q from the macOS app menu and a macOS tray menu&apos;s quit
+          role end the app at once and are never held. A reload drops the hold.
+        </li>
+        <li>
+          <strong>Before quitting</strong>: <code>onBeforeQuit(handler)</code> is Electron&apos;s
+          {" "}
+          <code>before-quit</code>: it is asked when the app quits (never on a plain close) and
+          before the window&apos;s <code>onCloseRequested</code> handlers; a handler that returns
+          {" "}
+          <code>false</code>{" "}
+          keeps the app running, and no close handler is asked then. Use it to save state on the way
+          out.
         </li>
       </ul>
       <p>
@@ -2347,6 +2467,145 @@ onCloseRequested(() => !hasUnsavedChanges() || confirm("Discard your changes?"))
   },
 };`}
       </Code>
+      <h3 id="desktop-window-launch">How the app starts and ends</h3>
+      <p>
+        <code>desktop.window.show: false</code>{" "}
+        starts the app with no visible window and no flash: written to{" "}
+        <code>.deno-desktop/app.json</code>{" "}
+        (<code>initialWindow.showOnFirstLoad</code>), so the runtime never reveals the window it
+        starts with; its page still loads, and <code>showWindow()</code> reveals it.{" "}
+        <code>frameless</code>, <code>transparent</code> and <code>focusable: false</code>{" "}
+        are creation-time settings and go the same way. The app quits when its last window closes;
+        {" "}
+        <code>desktop.app.keepAlive: true</code>{" "}
+        keeps it running with none (on by default when it has a{" "}
+        <a href="#desktop-backend-tray">backend tray</a>), and a page&apos;s{" "}
+        <code>window.close()</code>{" "}
+        then closes its own window instead of quitting. On macOS a click on the Dock icon with no
+        window showing shows the main window again (<code>onDockReopen</code> in{" "}
+        <code>denext/desktop/app</code> hears it).
+      </p>
+      <h3 id="desktop-overlay-windows">Overlay windows</h3>
+      <p>
+        A desktop companion, a HUD or a floating palette is a window with no chrome that never takes
+        the focus from the app the user is typing in, stays on top and lets clicks through where it
+        draws nothing:
+      </p>
+      <Code lang="ts">
+        {`export default {
+  desktop: {
+    // No Dock icon from the first frame (macOS); give the app a tray to come back through.
+    app: { activationPolicy: "accessory" },
+    window: {
+      width: 260, height: 300,
+      frameless: true,              // no title bar or chrome
+      transparent: true,            // macOS, Linux (WebKitGTK), Windows (WebView2); not CEF
+      focusable: false,             // a non-activating panel: never steals the focus
+      alwaysOnTop: "status",        // true ("floating") | "status" | "pop-up-menu" | "screen-saver"
+      visibleOnAllWorkspaces: true, // every Space / virtual desktop
+      skipTaskbar: true,            // Windows, Linux
+      opacity: 1,
+      overlay: true,                // Linux Wayland: a layer-shell surface (runtime 3.0.0-denext.7)
+    },
+  },
+};`}
+      </Code>
+      <p>
+        At runtime the page has the same controls for its own window:{" "}
+        <code>setAlwaysOnTop(true, level)</code>, <code>setWindowOpacity</code>,{" "}
+        <code>setIgnoreMouseEvents(ignore, {"{ forward }"})</code>{" "}
+        (Electron&apos;s click-through; without <code>forward</code>{" "}
+        it is refused unless the app has a tray, since the window could never be clicked again),
+        {" "}
+        <code>setHitRegion(rects)</code>{" "}
+        (only these rectangles, in page pixels, catch clicks: pass your character&apos;s{" "}
+        <code>getBoundingClientRect()</code>), <code>setVisibleOnAllWorkspaces</code> and{" "}
+        <code>setSkipTaskbar</code>, and <code>onWindowFocus</code> /{" "}
+        <code>onWindowBlur</code>. Each is reported by <code>windowCapabilities()</code>{" "}
+        (<code>transparent</code>, <code>nonActivating</code>, <code>opacity</code>,{" "}
+        <code>clickThrough</code>, <code>clickThroughForward</code>, <code>hitRegion</code>,{" "}
+        <code>visibleOnAllWorkspaces</code>, <code>skipTaskbar</code>,{" "}
+        <code>alwaysOnTopLevels</code>, <code>focusEvents</code>, <code>visibleOnFullScreen</code>,
+        {" "}
+        <code>layerShell</code>,{" "}
+        <code>activationPolicy</code>). Click-through, hit regions, every-workspace visibility (with
+        {" "}
+        <code>visibleOnFullScreen</code>, over other apps&apos; full-screen windows on macOS at a
+        {" "}
+        <code>"status"</code> level or above), the taskbar setter and levels above{" "}
+        <code>"floating"</code>{" "}
+        need runtime 3.0.0-denext.6 or later, which denext pins; an older runtime reports them{" "}
+        <code>false</code> and rejects <code>unsupported</code>, with no change to the app (a{" "}
+        <code>focusable: false</code>{" "}
+        window already joins every Space on macOS and stays off the taskbar elsewhere).{" "}
+        <code>openWindow({"{ overlay: true }"})</code>{" "}
+        makes a desktop overlay surface on a Wayland compositor with wlr-layer-shell (wlroots
+        compositors, KDE Plasma, COSMIC): above every window, on every workspace, out of the task
+        list (<code>layerShell</code>); elsewhere it is an ordinary window. The Linux packages
+        recommend gtk-layer-shell for it. <a href="/docs/examples">examples/companion</a> is one.
+      </p>
+      <p>
+        On Wayland that is the only way a window stays on top, joins every workspace, keeps off the
+        taskbar or never takes the focus: the compositor ignores an ordinary window&apos;s requests
+        for them (KWin and Mutter focus a <code>focusable: false</code> window as it maps, so{" "}
+        <code>nonActivating</code> is reported only with <code>layerShell</code>).{" "}
+        <code>desktop.window.overlay: true</code>{" "}
+        makes the main window one from its first frame (written to{" "}
+        <code>.deno-desktop/app.json</code>; runtime 3.0.0-denext.7, left out with a warning on an
+        older one), and a tray panel is one wherever <code>layerShell</code>{" "}
+        is, opening at the click. GNOME has no layer-shell: there the window is an ordinary one the
+        compositor places.
+      </p>
+      <p>
+        A layer surface can be placed: <code>windowCapabilities().setPosition</code>{" "}
+        is true for an overlay window where <code>layerShell</code> is, and{" "}
+        <code>setWindowPosition(x, y)</code>{" "}
+        sets its offset from the top-left of the display&apos;s area outside the panels (the layer
+        surface&apos;s margins). GDK reports the whole display as the work area on Wayland, so keep
+        clear of the edges a taskbar may be on: a tray panel opened at a click keeps 64 px from each
+        edge of a display whose work area is the whole display.
+      </p>
+      <h3 id="desktop-multi-window">More windows</h3>
+      <p>
+        <code>openWindow</code> opens another window of the app on one of its pages (Electron&apos;s
+        {" "}
+        <code>new BrowserWindow()</code>, Tauri&apos;s{" "}
+        <code>WebviewWindow</code>): a settings window, a document, an overlay. The URL is a path of
+        the app, never another site. The new window&apos;s page has the app&apos;s desktop
+        capabilities (or the <code>capabilities</code> subset you give it), and its own{" "}
+        <code>denext/desktop/window</code>{" "}
+        calls act on itself. At most 8 are open at once besides the main window and the tray panel.
+      </p>
+      <p>
+        A <code>capabilities</code>{" "}
+        subset limits what the page&apos;s own calls are routed to. It is not a security boundary:
+        every window shares the app&apos;s origin, storage and launch token, so script in a window
+        opened with a subset can still reach every capability the app has (for example by calling
+        the bridge as the main window). Open only the app&apos;s own trusted pages in it, and keep
+        untrusted content out of the app&apos;s windows.
+      </p>
+      <Code lang="ts">
+        {`import { getWindows, openWindow, windowHandle } from "denext/desktop/window";
+
+const settings = await openWindow({
+  url: "/settings", title: "Settings", width: 520, height: 420,
+  capabilities: ["secureStore"], // optional: only these (plus its own window)
+});
+settings.onClosed(() => console.log("closed"));
+await settings.setBounds({ x: 100, y: 100 });
+
+await windowHandle("main").show(); // the window the app started with
+console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, …]`}
+      </Code>
+      <p>
+        From <code>desktop.ts</code>, <code>runDesktop()</code> resolves with{" "}
+        <code>windows.open(…)</code>, <code>windows.get(id)</code> and{" "}
+        <code>windows.list()</code>. Each window learns its id through a binding the runtime gives
+        only the app&apos;s own documents in that window; a page that cannot say (a runtime without
+        bindings) acts as the main window. A reload releases only what that window&apos;s page held
+        (its tray icons, its close guard, its drops); keep-awake holds and global shortcuts are
+        released when the main window&apos;s page reloads.
+      </p>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
       <p>
         <code>onFileDrop</code>{" "}
@@ -2629,12 +2888,14 @@ await bounce({ critical: true }); // until the app is focused`}
           adds a status icon (the macOS menu bar, the Windows notification area, Linux&apos;s
           AppIndicator area) with a tooltip, a menu and click events; <code>update</code>,{" "}
           <code>getBounds</code> and <code>destroy</code>{" "}
-          are on the handle. A page load removes the trays the previous page created (their handlers
-          went with it), so create them at startup. Where no icon can be shown (a Linux session with
-          no tray host, such as stock GNOME without the AppIndicator extension),{" "}
-          <code>appCapabilities()</code> reports <code>tray: false</code> with a{" "}
-          <code>trayReason</code>, and <code>createTray</code> rejects <code>unsupported</code>{" "}
-          with that reason in{" "}
+          are on the handle. In a tray menu on Windows the <code>quit</code>{" "}
+          role is a "Quit" item that quits the app, and the macOS-only roles are left out. A page
+          load removes the trays the previous page created (their handlers went with it), so create
+          them at startup. Where no icon can be shown (a Linux session with no tray host, such as
+          stock GNOME without the AppIndicator extension), <code>appCapabilities()</code> reports
+          {" "}
+          <code>tray: false</code> with a <code>trayReason</code>, and <code>createTray</code>{" "}
+          rejects <code>unsupported</code> with that reason in{" "}
           <code>error.data.reason</code>. A tray-only app (its window hidden) gets its window shown
           instead (<code>error.data.windowShown</code>), so it is never left unreachable.
         </li>
@@ -2655,7 +2916,116 @@ await bounce({ critical: true }); // until the app is focused`}
           home-screen quick actions set the Dock icon&apos;s menu on macOS (Windows and Linux have
           none, and the call does nothing there).
         </li>
+        <li>
+          <code>setDockVisible(false)</code>{" "}
+          hides the app&apos;s Dock icon (an accessory app: a menu-bar app or a companion), and{" "}
+          <code>desktop.app.dock: false</code>{" "}
+          does it at launch. On Windows and Linux there is no app-level icon (the call answers{" "}
+          <code>false</code>).
+        </li>
+        <li>
+          <code>setActivationPolicy("regular" | "accessory" | "prohibited")</code> and{" "}
+          <code>getActivationPolicy()</code> drive the macOS activation policy (Electron&apos;s{" "}
+          <code>app.setActivationPolicy</code>): a tray app can be <code>"accessory"</code>{" "}
+          (no Dock icon, no menu bar) and switch to <code>"regular"</code>{" "}
+          only while it has a full window open, which also brings it to the front. Windows and Linux
+          have no policy: there <code>"regular"</code>{" "}
+          shows the main window&apos;s taskbar entry and the others hide it, as{" "}
+          <code>"accessory"</code> hides it at launch. <code>desktop.app.activationPolicy</code> (or
+          {" "}
+          <code>dock: false</code>, which means{" "}
+          <code>"accessory"</code>) is the policy the app starts in: denext writes it to the
+          packaged app&apos;s <code>laufey-launch.json</code> (<code>LAUFEY_ACTIVATION_POLICY</code>
+          {" "}
+          for <code>denext desktop run</code> /{" "}
+          <code>dev</code>), so no Dock icon flashes at launch. Both need runtime 3.0.0-denext.6
+          (<code>activationPolicy</code> in{" "}
+          <code>appCapabilities()</code>); on an older runtime the policy falls back to showing or
+          hiding the Dock icon once the backend starts.
+        </li>
       </ul>
+      <h3 id="desktop-backend-tray">A tray owned by the backend, and its panel</h3>
+      <p>
+        A tray-first app (a menu-bar app) wants its icon before any page loads and never removed by
+        a reload. <code>desktop.tray</code> makes it in{" "}
+        <code>runDesktop</code>, with an icon from the export, a tooltip, a menu and, optionally, a
+        panel at the icon: the runtime&apos;s{" "}
+        <code>Tray.attachPanel</code>, a frameless window that never activates the app, toggled by a
+        click on the icon and hidden when it loses the focus. denext places it under a menu-bar icon
+        or above a bottom taskbar icon, inside the display&apos;s work area (Linux reports no icon
+        position, so it opens where it last was).
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    app: { dock: false },        // keepAlive is on with a tray
+    window: { show: false },     // no window at launch
+    tray: {
+      icon: "/tray.png",         // public/tray.png
+      tooltip: "Hangar",
+      menu: [{ id: "open", label: "Open Hangar" }, { separator: true }, { role: "quit" }],
+      panel: { url: "/panel", width: 360, height: 480 },
+    },
+  },
+};
+
+// desktop.ts: the backend hears the clicks first, and hears them with every window hidden
+const app = await runDesktop({
+  ...resolved,
+  tray: {
+    onMenuItem: (id) => id === "open" && app.windows.get("main")?.show(),
+    onDoubleClick: () => app.windows.open({ url: "/images" }).onClosed(() => syncDock()),
+  },
+});
+app.tray?.update({ tooltip: "2 VMs running" });
+app.tray?.on("mouseenter", () => void refreshTooltip()); // hover (macOS, Windows)
+
+// any page (while its window shows)
+import { getTray, toggleTrayPanel } from "denext/desktop/app";
+const tray = await getTray(); // the same tray in every window; null without one
+tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Control-click: the menu`}
+      </Code>
+      <p>
+        From runtime 3.0.0-denext.6 every tray event carries the runtime&apos;s detail (
+        <code>button</code>, <code>modifiers</code>, <code>x</code> / <code>y</code>,{" "}
+        <code>double</code>; <code>null</code> on an older runtime): <code>onClick</code>{" "}
+        hears the primary button, a right click is <code>contextmenu</code>, a middle click{" "}
+        <code>auxclick</code>, and hover is <code>mouseenter</code> / <code>mouseleave</code>{" "}
+        (macOS, Windows), through <code>tray.on(type, handler)</code> in a page or the handle&apos;s
+        {" "}
+        <code>on</code> (and <code>runDesktop({"{ tray: { onContextMenu } }"})</code>) in{" "}
+        <code>desktop.ts</code>. A right click opens the tray&apos;s menu by itself;{" "}
+        <code>popUpMenu()</code>{" "}
+        opens it from another gesture, a Control-click say (not on Linux, where the tray host opens
+        it). <code>appCapabilities()</code> says what this OS delivers (<code>trayRightClick</code>,
+        {" "}
+        <code>trayMiddleClick</code>, <code>trayHover</code>, <code>trayModifiers</code>,{" "}
+        <code>trayPosition</code>, <code>trayPopUpMenu</code>), from the runtime&apos;s{" "}
+        <code>Deno.Tray.capabilities()</code>. The panel toggles on a plain left click only. On
+        macOS a tray with a menu and no panel opens its menu on a plain left click as well, as an
+        Electron tray does; a click handler in <code>desktop.ts</code> (
+        <code>runDesktop({"{ tray: { onClick } }"})</code> or the handle&apos;s{" "}
+        <code>onClick</code>) takes the left click instead.
+      </p>
+      <p>
+        Its clicks reach the backend&apos;s handlers and every window&apos;s page;{" "}
+        <code>showTrayPanel</code>, <code>hideTrayPanel</code> and <code>toggleTrayPanel</code>{" "}
+        drive the panel. A page hears them only while it runs, though: a window that does not show
+        may have its page suspended until it shows again (WKWebView does that on macOS), so a menu
+        item handled by a hidden main window&apos;s page does nothing there. Answer the menu items
+        and the double click in{" "}
+        <code>desktop.ts</code>, in the app&apos;s process: the handle&apos;s{" "}
+        <code>onMenuItem</code> / <code>onDoubleClick</code>, with <code>app.windows</code>{" "}
+        to open and show windows (each ref has <code>visible</code>, <code>getBounds()</code> and
+        {" "}
+        <code>onClosed()</code>) and <code>app.setActivationPolicy</code>{" "}
+        for the Dock icon. denext warns once when a menu item is chosen with no window showing and
+        no <code>onMenuItem</code> in{" "}
+        <code>desktop.ts</code>. A page cannot destroy it. Where the session has no tray host the
+        app gets no icon, its main window is shown instead, and it is no longer kept alive by the
+        tray. <a href="/docs/examples">examples/hangar</a> is a tray-first app built this way.
+      </p>
       <h3 id="desktop-user-activity">Handoff and Spotlight</h3>
       <p>
         On macOS, under runtime 2.9.7-denext.20, <code>setUserActivity</code>{" "}
@@ -2916,7 +3286,16 @@ export default defineDesktopExtension({
         <li>
           <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}
           <code>PATH</code>, or a file of the project (<code>"./bin/server"</code>), which is
-          embedded and run from a copy in the app&apos;s cache folder. It gets the sidecar&apos;s
+          embedded and run from a copy in the app&apos;s cache folder (
+          <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
+          <code>--allow-run</code> and a broad{" "}
+          <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
+          machine. From Deno Desktop runtime 3.0.0-denext.8 (once denext pins it), an app with{" "}
+          <code>desktop.app.identifier</code> is baked{" "}
+          <code>--allow-run=$DENO_DESKTOP_CACHE/sidecars/&lt;name&gt;/&lt;file&gt;</code>{" "}
+          instead, and the matching <code>--allow-write</code>{" "}
+          (scoped to that folder when nothing else writes): the runtime expands the token at launch
+          to the app&apos;s cache folder, keyed by the identifier. It gets the sidecar&apos;s
           variables, and one JSON line on stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
           as the app runs, so a program that exits on end-of-file never outlives it.
@@ -2955,6 +3334,14 @@ desktop: {
         writes such an entry (with <code>permissions.ffi</code> when the <code>node_modules</code>
         {" "}
         holds a native addon); <code>--exec &lt;program&gt;</code> declares a program instead.
+      </p>
+      <p>
+        An <code>"auto"</code>{" "}
+        port is picked by binding a free loopback port and releasing it, so another process can take
+        it before the sidecar binds it. A start that ends before it is ready while another process
+        holds the port starts again at once on a fresh port (up to 3 times, outside{" "}
+        <code>restart</code>); the <code>spa.proxy</code> target, <code>sidecarInfo()</code>{" "}
+        and the status follow the new port.
       </p>
       <p>
         Inside a module sidecar, <code>process.argv.slice(2)</code> is its <code>args</code>,{" "}
@@ -3047,7 +3434,10 @@ spawn(command, args, { env: { ...process.env, ...env }, stdio });`}
           and in a packaged app on macOS, Windows and Linux; under <code>deno run desktop.ts</code>
           {" "}
           the child is <code>deno run</code>{" "}
-          with the permissions the app holds unscoped. An unmodified{" "}
+          with the app&apos;s own Deno flags (<code>process.execArgv</code>: scoped grants,{" "}
+          <code>--unstable-*</code>,{" "}
+          <code>--config</code>, …) on denext&apos;s Deno from 3.0.0-denext.8, or the permissions
+          the app holds unscoped on an older one. An unmodified{" "}
           <code>spawn(process.execPath, …)</code>{" "}
           without an IPC channel starts a second copy of the app instead: use{" "}
           <code>spawnSelf</code>.
@@ -3199,12 +3589,15 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
           <strong>Offline after the first download.</strong>{" "}
           A cached runtime is reused without the network (a size check against the marker;{" "}
           <code>--verify-runtime</code>{" "}
-          re-hashes every file). With no cache and no network the build stops and says so.
+          re-hashes every file, as does the first use a week after the last full check). With no
+          cache and no network the build stops and says so.
         </li>
         <li>
-          <strong>Provenance, optionally.</strong> <code>--attest-runtime</code> also runs{" "}
+          <strong>Provenance.</strong> A fresh download is also checked with{" "}
           <code>gh attestation verify</code>{" "}
-          on a fresh download (it needs the GitHub CLI; the SHA-256 pin is enforced either way).
+          whenever the GitHub CLI is signed in, and the build says so when it is not (the SHA-256
+          pin is enforced either way). <code>--attest-runtime</code> makes the check required;{" "}
+          <code>DENEXT_DESKTOP_RUNTIME_ATTEST=0</code> turns it off.
         </li>
         <li>
           <strong>Targets.</strong>{" "}
@@ -3292,8 +3685,24 @@ export default {
           handlers) serves the app origin only. To let another document call a binding, such as an
           identity provider page the window navigates to, list its origin in{" "}
           <code>desktop.app.bridgeOrigins</code> and in that binding&apos;s{" "}
-          <code>bind(name, fn, {"{ origins }"})</code>. <code>denext desktop run</code> and{" "}
-          <code>dev</code> write the same <code>app.json</code>.
+          <code>bind(name, fn, {"{ origins }"})</code>. Two wildcard forms exist:{" "}
+          <code>"&lt;scheme&gt;://*"</code> (every origin of that scheme, such as{" "}
+          <code>"https://*"</code>) and <code>"*"</code>{" "}
+          (every document the window loads). Each widens the bridge past the app, so config
+          validation warns about them; list exact origins unless you need one.{" "}
+          From runtime 3.0.0-denext.1 the file also sets{" "}
+          <code>"strictPolicy": true</code>: whatever policy it leaves out fails closed, so a launch
+          file without <code>bridgeOrigins</code>{" "}
+          (and without a custom scheme) gives the bridge to no document, and one without{" "}
+          <code>"passkeyRpIds"</code> (the <code>passkeys</code> capability&apos;s{" "}
+          <code>rpIds</code>) refuses every passkey ceremony. denext&apos;s packaging always writes
+          {" "}
+          <code>bridgeOrigins</code>, and <code>passkeyRpIds</code> whenever <code>passkeys</code>
+          {" "}
+          is on; <code>denext doctor</code> and <code>denext desktop doctor</code>{" "}
+          flag a project whose launch file would lack either (or whose package scripts don&apos;t
+          write it: <code>denext desktop package --regenerate-scripts</code>).{" "}
+          <code>denext desktop run</code> and <code>dev</code> write the same <code>app.json</code>.
         </li>
         <li>
           <strong>The window stays on the app origin</strong>{" "}

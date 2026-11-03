@@ -1,9 +1,10 @@
 // `denext mobile add <capability...>`: install the Capacitor plugins behind denext/mobile's
 // capability functions (haptic(), share(), secureStore, …) into an existing Capacitor project.
 // It finds the project (the folder holding capacitor.config.*), refuses when the installed
-// @capacitor/core major is not the one the pinned plugins target, adds the npm packages with
-// the project's own package manager, writes any Info.plist keys and Android permissions the
-// capability needs, and runs `npx cap sync`. A capability that takes options (deep-links:
+// @capacitor/core major is not the one the pinned plugins target, adds the npm packages (each
+// an exact version the project's minimum dependency age lets in) with the project's own package
+// manager, writes any Info.plist keys and Android permissions the capability needs, and runs
+// `npx --no cap sync` (the project's own Capacitor CLI). A capability that takes options (deep-links:
 // --scheme / --domain) or needs more than plist keys and permissions (push: entitlements and
 // AppDelegate forwarding) computes its edits in a `configure` hook. A capability with no npm
 // package (auth-session, system-bars, and the app extensions share-extension / widget /
@@ -55,6 +56,9 @@ import { NATIVE_VIEW_CAPABILITIES } from "./mobile-native-views-install.ts";
 import { FASTLANE_CAPABILITY } from "./mobile-fastlane.ts";
 import { EXPO_SDK_CAPABILITIES } from "./mobile-capabilities-expo.ts";
 import { YARN_NO_SCRIPTS_ENV } from "./capacitor-pins.ts";
+import { assertCapacitorCli, capCommand } from "./capacitor-cli.ts";
+import { assertPinsEligible, checkPinAges, type NpmPublishTimes } from "./npm-pin-age.ts";
+import { type DepAgeRule, readProjectRule } from "./dep-age.ts";
 import {
   loadNativeDirs,
   nativeJoin,
@@ -129,8 +133,9 @@ export interface MobileCapability {
   /** What `--list` shows in the package column without `npm` (default: denext native plugin). */
   readonly listing?: string;
   /**
-   * The version range added (`<npm>@<version>`), pinned to the plugin's Capacitor major. A
-   * project that pins its `@capacitor/*` packages exactly gets the range's minimum, exactly.
+   * The exact version added (`<npm>@<version>`, saved exactly), on the plugin's Capacitor
+   * major. Before installing, `denext mobile add` checks it against the project's minimum
+   * dependency age.
    */
   readonly version?: string;
   /**
@@ -639,62 +644,62 @@ const MICROPHONE_USAGE = "Record sound with your videos.";
 export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   haptics: {
     npm: "@capacitor/haptics",
-    version: "^8.0.2",
+    version: "8.0.2",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "haptic(kind)",
   },
   clipboard: {
     npm: "@capacitor/clipboard",
-    version: "^8.0.1",
+    version: "8.0.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "readClipboard() / writeClipboard(text)",
   },
   share: {
     npm: "@capacitor/share",
-    version: "^8.0.2",
+    version: "8.0.2",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "share({ title, text, url })",
   },
   device: {
     npm: "@capacitor/device",
-    version: "^8.0.3",
+    version: "8.0.3",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "deviceInfo()",
   },
   network: {
     npm: "@capacitor/network",
-    version: "^8.0.1",
+    version: "8.0.1",
     capacitorMajor: CAPACITOR_MAJOR,
     androidPermissions: ["android.permission.ACCESS_NETWORK_STATE"],
     notes: "networkStatus() / useNetworkStatus()",
   },
   "keep-awake": {
     npm: "@capacitor-community/keep-awake",
-    version: "^8.0.1",
+    version: "8.0.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "useKeepAwake(active)",
   },
   splash: {
     npm: "@capacitor/splash-screen",
-    version: "^8.0.2",
+    version: "8.0.2",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "hideSplash() (set SplashScreen.launchAutoHide: false in capacitor.config)",
   },
   "secure-store": {
     npm: "@aparajita/capacitor-secure-storage",
-    version: "^8.0.1",
+    version: "8.0.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "secureStore.get / set / delete (Keychain / Keystore)",
   },
   browser: {
     npm: "@capacitor/browser",
-    version: "^8.0.4",
+    version: "8.0.4",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "openExternal(url) in the in-app browser",
   },
   "deep-links": {
     npm: "@capacitor/app",
-    version: "^8.1.1",
+    version: "8.1.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "onDeepLink / useDeepLink (pass accept: { hosts } for https links)",
     options: ["schemes", "domains"],
@@ -709,7 +714,7 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   clerk: {
     npm: "@aparajita/capacitor-secure-storage",
-    version: "^8.0.1",
+    version: "8.0.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "installClerkMobileBridge({ scheme, nativeClerk: true }) from denext/mobile/clerk " +
       "(<ClerkProvider> signs in: Keychain / Keystore token cache, OAuth in the auth session)",
@@ -718,7 +723,7 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   push: {
     npm: "@capacitor/push-notifications",
-    version: "^8.1.2",
+    version: "8.1.2",
     capacitorMajor: CAPACITOR_MAJOR,
     androidPermissions: ["android.permission.POST_NOTIFICATIONS"],
     notes: "requestPushPermission / registerForPush / onPushReceived / onPushTapped / " +
@@ -727,14 +732,14 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   filesystem: {
     npm: "@capacitor/filesystem",
-    version: "^8.1.3",
+    version: "8.1.3",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "readFile / writeFile / deleteFile / listDir / downloadToFile (OPFS on the web; " +
       'Android\'s "documents" needs storage permission up to Android 10)',
   },
   camera: {
     npm: "@capacitor/camera",
-    version: "^8.2.4",
+    version: "8.2.4",
     capacitorMajor: CAPACITOR_MAJOR,
     iosPlist: {
       NSCameraUsageDescription: CAMERA_USAGE,
@@ -746,13 +751,13 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   "document-picker": {
     npm: "@capawesome/capacitor-file-picker",
-    version: "^8.1.0",
+    version: "8.1.0",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "pickDocument({ types })",
   },
   barcode: {
     npm: "@capacitor/barcode-scanner",
-    version: "^3.1.2",
+    version: "3.1.2",
     capacitorMajor: CAPACITOR_MAJOR,
     iosPlist: { NSCameraUsageDescription: CAMERA_USAGE },
     notes: "scanBarcode({ formats }) (BarcodeDetector on the web; Android minSdk 26)",
@@ -760,14 +765,14 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   "quick-actions": {
     npm: "@capawesome/capacitor-app-shortcuts",
-    version: "^8.0.2",
+    version: "8.0.2",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "setQuickActions([...]) / onQuickAction / useQuickAction",
     configure: configureQuickActions,
   },
   sqlite: {
     npm: "@capacitor-community/sqlite",
-    version: "^8.1.1",
+    version: "8.1.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "openSqlite(name) / deleteSqlite(name), and expo-sqlite's async API (the web " +
       "build uses the app's own @sqlite.org/sqlite-wasm)",
@@ -795,14 +800,14 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   keyboard: {
     npm: "@capacitor/keyboard",
-    version: "^8.0.5",
+    version: "8.0.5",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "useKeyboard() / onKeyboardChange / <KeyboardAvoidingView> / <KeyboardStickyView> / " +
       "hideKeyboard() / setKeyboardResizeMode(mode) (iOS)",
   },
   back: {
     npm: "@capacitor/app",
-    version: "^8.1.1",
+    version: "8.1.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "onBack / useBackHandler / onBackProgress / useBackProgress (Android back button and " +
       "predictive back; iOS has none)",
@@ -816,21 +821,21 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   dialog: {
     npm: "@capacitor/dialog",
-    version: "^8.0.1",
+    version: "8.0.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "React Native mode's Alert.alert / Alert.prompt as system dialogs (else an in-page " +
       "dialog)",
   },
   toast: {
     npm: "@capacitor/toast",
-    version: "^8.0.1",
+    version: "8.0.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "React Native mode's ToastAndroid.show as the system toast on Android (else an " +
       "in-page toast)",
   },
   "action-sheet": {
     npm: "@capacitor/action-sheet",
-    version: "^8.1.1",
+    version: "8.1.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "React Native mode's ActionSheetIOS.showActionSheetWithOptions as a native action " +
       "sheet (else a dialog or an in-page menu); denext's DenextContextMenu plugin closes it " +
@@ -845,7 +850,7 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   "local-notifications": {
     npm: "@capacitor/local-notifications",
-    version: "^8.3.1",
+    version: "8.3.1",
     capacitorMajor: CAPACITOR_MAJOR,
     androidPermissions: ["android.permission.POST_NOTIFICATIONS"],
     notes: "scheduleNotification / cancelNotification / pendingNotifications / " +
@@ -855,7 +860,7 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   biometrics: {
     npm: "@aparajita/capacitor-biometric-auth",
-    version: "^10.0.0",
+    version: "10.0.0",
     capacitorMajor: CAPACITOR_MAJOR,
     iosPlist: { NSFaceIDUsageDescription: "Unlock the app with Face ID." },
     androidPermissions: ["android.permission.USE_BIOMETRIC"],
@@ -865,7 +870,7 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   "social-login": {
     npm: "@capgo/capacitor-social-login",
-    version: "^8.5.11",
+    version: "8.5.11",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "signInWithApple() (iOS) / signInWithGoogle({ webClientId, iosClientId }) / " +
       "signInNative(session, provider) (--scheme <Google's reversed iOS client id>)",
@@ -874,7 +879,7 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   geolocation: {
     npm: "@capacitor/geolocation",
-    version: "^8.2.2",
+    version: "8.2.2",
     capacitorMajor: CAPACITOR_MAJOR,
     iosPlist: { NSLocationWhenInUseUsageDescription: "Show where you are in the app." },
     androidPermissions: [
@@ -887,7 +892,7 @@ export const MOBILE_CAPABILITIES: Readonly<Record<string, MobileCapability>> = {
   },
   purchases: {
     npm: "@revenuecat/purchases-capacitor",
-    version: "^13.6.1",
+    version: "13.6.1",
     capacitorMajor: CAPACITOR_MAJOR,
     notes: "configurePurchases / getOfferings / purchasePackage / restorePurchases / " +
       "getCustomerInfo / useEntitlement(id) (RevenueCat; no web fallback)",
@@ -954,6 +959,8 @@ export interface CapabilityPlan {
   readonly packageManager: PackageManager;
   readonly lockfile?: string;
   readonly packageManagerField?: string;
+  /** The npm packages added, each pinned exactly (`@capacitor/app@8.1.1`). */
+  readonly packages: readonly string[];
   /** The `@capacitor/core` major found, and where it was read. */
   readonly capacitorMajor: number;
   readonly capacitorSource: "installed" | "package.json";
@@ -1025,6 +1032,13 @@ export interface AddCapabilitiesOptions {
   readonly dryRun?: boolean;
   /** Runs the install and sync (required unless `dryRun`). */
   readonly run?: CommandRunner;
+  /**
+   * The npm publish times the pins are checked against the project's minimum dependency age
+   * with before the install (the CLI passes the npm registry's). Absent: no check.
+   */
+  readonly publishTimes?: NpmPublishTimes;
+  /** The dependency-age rule (default: the project's, from {@linkcode readProjectRule}). */
+  readonly ageRule?: DepAgeRule;
   /** The capability table (tests); defaults to {@linkcode MOBILE_CAPABILITIES}. */
   readonly table?: Readonly<Record<string, MobileCapability>>;
   /** `--scheme`: custom URL schemes (deep-links, auth-session, share-extension). */
@@ -1239,10 +1253,9 @@ function addCommand(
   manager: PackageManager,
   specs: string[],
   cwd: string,
-  exact: boolean,
 ): PlannedCommand {
   // `deno add` writes npm packages into package.json when there is one; the spec carries the
-  // version (pinned exactly when `exact`, see the caller), so there is no exact flag.
+  // exact version, so there is no exact flag.
   if (manager === "deno") {
     return {
       cmd: "deno",
@@ -1251,11 +1264,8 @@ function addCommand(
     };
   }
   const verb = manager === "npm" ? "install" : "add";
-  const flag = !exact
-    ? []
-    : manager === "npm" || manager === "pnpm"
-    ? ["--save-exact"]
-    : ["--exact"];
+  // Saved exactly too: a range in package.json would let a later install take a newer release.
+  const flag = manager === "npm" || manager === "pnpm" ? ["--save-exact"] : ["--exact"];
   // Yarn Berry rejects `--ignore-scripts`, so Yarn is told through its environment instead.
   if (manager === "yarn") {
     return { cmd: manager, args: [verb, ...flag, ...specs], cwd, env: YARN_NO_SCRIPTS_ENV };
@@ -1263,34 +1273,13 @@ function addCommand(
   return { cmd: manager, args: [verb, "--ignore-scripts", ...flag, ...specs], cwd };
 }
 
-/** A plain version (`8.5.2`, `8.0.0-rc.1`): what an exactly pinned dependency holds. */
-const EXACT_VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
-
 /**
- * Whether `root/package.json` pins its `@capacitor/*` packages exactly: it declares at least
- * one, and every one (dependencies and devDependencies) is a plain version, not a range.
+ * The spec added for `cap`: its exact version (`@capacitor/app@8.1.1`), the one the table was
+ * verified against. Never a range: a package manager would resolve a range to whatever was
+ * published last, past the project's dependency-age hold.
  */
-async function pinsCapacitorExactly(root: string): Promise<boolean> {
-  const pkg = JSON.parse(await Deno.readTextFile(join(root, "package.json"))) as Record<
-    string,
-    unknown
-  >;
-  const versions = [pkg.dependencies, pkg.devDependencies].flatMap((deps) =>
-    deps !== null && typeof deps === "object"
-      ? Object.entries(deps).filter(([name]) => name.startsWith("@capacitor/")).map(([, v]) => v)
-      : []
-  );
-  return versions.length > 0 &&
-    versions.every((v) => typeof v === "string" && EXACT_VERSION.test(v.trim()));
-}
-
-/**
- * The spec added for `cap`: its caret range, or with `exact` the range's minimum (`^8.1.2` →
- * `8.1.2`), the version the table was verified against. A range that is not a caret is kept.
- */
-function packageSpec(cap: MobileCapability, exact: boolean): string {
-  const version = exact ? cap.version!.replace(/^\^(?=\d)/, "") : cap.version!;
-  return `${cap.npm}@${version}`;
+function packageSpec(cap: MobileCapability): string {
+  return `${cap.npm}@${cap.version!.replace(/^\^(?=\d)/, "")}`;
 }
 
 /**
@@ -1538,20 +1527,20 @@ async function missingWebAssets(root: string): Promise<string | undefined> {
 }
 
 /**
- * The command after the install: `npx cap sync`, or `npx cap update` while the web export is
+ * The command after the install: `npx --no cap sync`, or `npx --no cap update` while the web export is
  * missing, with the warning that says what is left.
  */
 async function syncStep(
   root: string,
 ): Promise<{ sync: PlannedCommand; missing?: string; warning?: string }> {
   const missing = await missingWebAssets(root);
-  if (missing === undefined) return { sync: { cmd: "npx", args: ["cap", "sync"], cwd: root } };
+  if (missing === undefined) return { sync: capCommand(["sync"], root) };
   return {
-    sync: { cmd: "npx", args: ["cap", "update"], cwd: root },
+    sync: capCommand(["update"], root),
     missing,
     warning: `no web export at ${missing}/index.html (capacitor.config webDir) yet, so ` +
-      "`npx cap update` runs instead of `npx cap sync` (it installs the native plugins; sync " +
-      "would stop at the missing folder). Run `denext export`, then `npx cap sync`",
+      "`npx --no cap update` runs instead of `npx --no cap sync` (it installs the native " +
+      "plugins; sync would stop at the missing folder). Run `denext export`, then `npx cap sync`",
   };
 }
 
@@ -1589,9 +1578,8 @@ export async function planMobileCapabilities(
   }
   const { manager, lockfile, packageManagerField } = await detectPackageManager(root);
   const caps = names.map((n) => table[n]);
-  const exact = await pinsCapacitorExactly(root);
   const specs = uniquePackages(
-    caps.flatMap((c) => c.npm ? [packageSpec(c, exact), ...(c.peers ?? [])] : []),
+    caps.flatMap((c) => c.npm ? [packageSpec(c), ...(c.peers ?? [])] : []),
   );
   const target = await entitlementsTarget(root);
   const after = specs.length > 0 ? await syncStep(root) : undefined;
@@ -1605,7 +1593,8 @@ export async function planMobileCapabilities(
     packageManagerField,
     capacitorMajor: core.major,
     capacitorSource: core.source,
-    install: specs.length > 0 ? addCommand(manager, specs, root, exact) : undefined,
+    packages: specs,
+    install: specs.length > 0 ? addCommand(manager, specs, root) : undefined,
     sync: after?.sync,
     webAssetsMissing: after?.missing,
     plist: uniquePlistKeys(caps),
@@ -1818,6 +1807,14 @@ export async function addMobileCapabilities(
   if (opts.dryRun) return report;
   if (!opts.run) throw new Error("addMobileCapabilities: a command runner is required.");
   await assertMobileWriteRoots(plan.root);
+  // The project's own Capacitor CLI, or a clear error before any change (never a registry `cap`).
+  if (plan.sync) await assertCapacitorCli(plan.root);
+  if (plan.install && opts.publishTimes) {
+    // Only versions the project's dependency-age rule lets in are installed.
+    const rule = opts.ageRule ?? await readProjectRule(plan.root);
+    const ages = await checkPinAges(plan.packages, opts.publishTimes, rule);
+    report.skipped.push(...assertPinsEligible(ages));
+  }
   if (plan.install) await runChecked(opts.run, plan.install, report.ran);
   for (const step of plan.native.installs) {
     mergeInstall(report, await step.run({ dir: plan.root, force: opts.force }));

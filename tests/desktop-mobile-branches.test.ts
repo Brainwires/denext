@@ -48,6 +48,7 @@ import {
 import { resetLocalNotificationsForTesting } from "../src/mobile/local-notifications.ts";
 import { resetFileTransfersForTesting } from "../src/mobile/file-transfer.ts";
 import { resetDesktopBridgeForTesting } from "../src/desktop/bridge-client.ts";
+import { resetStorageFallbackWarningsForTesting } from "../src/desktop/native.ts";
 import { isDesktopBridgeError } from "../src/desktop/client.ts";
 import {
   createFakeDesktopRuntime,
@@ -67,6 +68,7 @@ async function inDesktop(
   } finally {
     resetDesktopBridgeForTesting();
     resetLocalNotificationsForTesting();
+    resetStorageFallbackWarningsForTesting();
     restore();
   }
 }
@@ -88,6 +90,31 @@ Deno.test("secureStore: desktop → the secureStore capability (get/set/delete)"
     await secureStore.delete("refresh");
     assertEquals(await secureStore.get("refresh"), null);
     assertEquals(calls(rt)[0], { at: "secureStore.set", args: { key: "refresh", value: "r1" } });
+  });
+});
+
+Deno.test("secureStore: accessibility is accepted on desktop and the capability call is unchanged", async () => {
+  const kv = new Map<string, string>();
+  await inDesktop({
+    secureStore: {
+      get: (a) => kv.get((a as { key: string }).key) ?? null,
+      set: (a) => void kv.set((a as { key: string }).key, (a as { value: string }).value),
+      delete: (a) => void kv.delete((a as { key: string }).key),
+    },
+  }, async (rt) => {
+    assertEquals(
+      await secureStore.set("refresh", "r1", { accessibility: "whenUnlockedThisDeviceOnly" }),
+      { stored: "keychain" },
+    );
+    assertEquals(await secureStore.get("refresh"), "r1");
+    assertEquals(calls(rt)[0], { at: "secureStore.set", args: { key: "refresh", value: "r1" } });
+    // Still validated here: an unknown class never reaches the OS store.
+    await assertRejects(
+      () => secureStore.set("refresh", "r2", { accessibility: "always" as never }),
+      TypeError,
+      "accessibility",
+    );
+    assertEquals(kv.get("refresh"), "r1");
   });
 });
 
@@ -565,8 +592,14 @@ Deno.test("notifications: desktop clicks reach onLocalNotificationTapped, the la
   const queued: unknown[] = [
     { id: 7, actionId: "tap", title: "Hi", data: { path: "/inbox" }, launch: true },
   ];
+  let takes = 0;
   await inDesktop({
-    notifications: { take: () => queued.splice(0, queued.length) },
+    notifications: {
+      take: () => {
+        takes++;
+        return queued.splice(0, queued.length);
+      },
+    },
   }, async (rt) => {
     const taps: Array<{ id: number; actionId: string; data: unknown }> = [];
     const stop = onLocalNotificationTapped(
@@ -581,19 +614,26 @@ Deno.test("notifications: desktop clicks reach onLocalNotificationTapped, the la
     rt.emit("notifications", "tap", null);
     await until(() => taps.length === 2);
     assertEquals(taps[1].actionId, "archive");
-    // A replayed signal takes an empty queue: no repeat.
+    // A replayed signal takes an empty queue: no repeat. Asserted once that take has answered
+    // (and its microtasks ran), not after a fixed wait a loaded machine may not have reached.
+    const before = takes;
     rt.emit("notifications", "tap", null);
-    await new Promise((r) => setTimeout(r, 30));
+    await until(() => takes > before);
+    await new Promise((r) => setTimeout(r, 0));
     assertEquals(taps.length, 2);
     stop();
   });
 });
 
 Deno.test("notifications: without the desktop capability a tap listener stays quiet", async () => {
-  await inDesktop({}, async () => {
+  await inDesktop({}, async (rt) => {
     const taps: unknown[] = [];
     const stop = onLocalNotificationTapped((tap) => taps.push(tap), { route: false });
-    await new Promise((r) => setTimeout(r, 30));
+    // The listener asks the runtime for queued clicks at once: wait until it has, and the refusal
+    // has been handled, rather than for a fixed time.
+    await until(() => rt.requests.some((r) => r.method === "POST"));
+    await new Promise((r) => setTimeout(r, 0));
+    assertEquals(rt.calls, [], "nothing is enabled to answer");
     assertEquals(taps, []);
     stop();
   });

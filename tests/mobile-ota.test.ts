@@ -623,9 +623,14 @@ Deno.test("onOtaRejected: hears the native otaRejected event; a no-op on the web
     // A malformed event (no version) is dropped; a missing reason reads as "".
     listeners[0].fn({ reason: "x" });
     listeners[0].fn({ version: SERVER });
+    // The iOS shell that could not guard /_capacitor_file_ says so; an unknown code reads as tampered.
+    listeners[0].fn({ version: SERVER, reason: "not served", code: "guard_unavailable" });
+    listeners[0].fn({ version: SERVER, reason: "x", code: "other" });
     assertEquals(heard, [
-      { version: SERVER, reason: "app.js does not match the signed manifest." },
-      { version: SERVER, reason: "" },
+      { version: SERVER, reason: "app.js does not match the signed manifest.", code: "tampered" },
+      { version: SERVER, reason: "", code: "tampered" },
+      { version: SERVER, reason: "not served", code: "guard_unavailable" },
+      { version: SERVER, reason: "x", code: "tampered" },
     ]);
     stop();
     await new Promise((resolve) => setTimeout(resolve, 0));

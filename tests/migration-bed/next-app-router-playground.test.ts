@@ -43,6 +43,4 @@ const PLAYGROUND: Bed = {
 
 Deno.test({
   name: "migration bed: vercel/next-app-router-playground migrates, builds, and renders",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, (t) => runBed(t, PLAYGROUND));

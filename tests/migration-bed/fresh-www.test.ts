@@ -123,6 +123,4 @@ const FRESH_WWW: Bed = {
 
 Deno.test({
   name: "migration bed: Fresh's www app (Fresh 2 + Vite) migrates, builds, renders and hydrates",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, (t) => runBed(t, FRESH_WWW));

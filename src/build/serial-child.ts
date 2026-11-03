@@ -18,7 +18,14 @@
 // A child still running after its deadline is killed ({@linkcode boundedOutput}) and started again
 // once, after one line on stderr naming its pid and arguments; a second stall fails with an error
 // naming both pids. `DENEXT_CHILD_DEADLINE_MS` replaces the deadlines (`0`: none), for a cold
-// cache on a slow link (a first Docker build).
+// cache on a slow link (a first Docker build). Under `DENEXT_CHILD_PROBE=1` a child spawned
+// through child-probe.ts `boundedSpawn` also runs with Deno's debug log on, and the stall line and
+// error carry its log's tail and two CPU samples.
+//
+// A child whose whole result is one JSON document on stdout (`deno info --json`, `deno doc --json`)
+// is not waited on past its output: once stdout parses as a complete JSON object or array and the
+// child has been silent on both pipes for a grace (`DENEXT_CHILD_EXIT_GRACE_MS`, 5 s), it is killed
+// and the output used, after one line on stderr naming its pid (child-probe.ts `boundedSpawn`).
 //
 // A LONG-LIVED child (the esbuild service, a server a test starts) is spawned through
 // {@linkcode spawnExclusive}: on Windows it takes the same turn, so it is never created while a
@@ -36,19 +43,29 @@ export class ChildStallError extends Error {
   /** What it wrote on stderr before it was killed. */
   readonly stderr: string;
   /**
+   * Where it was when it was killed, for a probed child (child-probe.ts): CPU samples, output
+   * progress and the debug log's tail. `undefined` for a child that was not probed.
+   */
+  readonly probe: string | undefined;
+  /**
    * @param label The command, e.g. `deno info`.
    * @param pid The killed child's pid.
    * @param deadlineMs The deadline it overran.
    * @param stderr What it wrote on stderr.
+   * @param probe A probed child's report.
    */
-  constructor(label: string, pid: number, deadlineMs: number, stderr: string) {
+  constructor(label: string, pid: number, deadlineMs: number, stderr: string, probe?: string) {
     super(
       `${label} (pid ${pid}) was still running after ${deadlineMs / 1000} s and was killed:\n` +
-        stderr,
+        stderr +
+        (probe === undefined
+          ? ""
+          : `${stderr === "" || stderr.endsWith("\n") ? "" : "\n"}${probe}`),
     );
     this.name = "ChildStallError";
     this.pid = pid;
     this.stderr = stderr;
+    this.probe = probe;
   }
 }
 
@@ -87,6 +104,14 @@ export async function boundedOutput(
   }
 }
 
+/**
+ * How long one `deno info` attempt may run, by default, before it is killed and retried once
+ * ({@linkcode retryOnStall}): well past a warm crawl, and a cold npm install's crawl that overruns
+ * it resumes from the cache it filled on the retry. Module-graph crawls and the esbuild loader's
+ * `deno info` children both use it.
+ */
+export const DENO_INFO_DEADLINE_MS = 120_000;
+
 /** The tail of this isolate's queue: settles when the last queued child's turn is over. */
 let tail: Promise<unknown> = Promise.resolve();
 
@@ -119,6 +144,34 @@ function readEnv(k: string): string | undefined {
  */
 export function childDeadlineMs(defaultMs: number, env: EnvGet = readEnv): number {
   const raw = env("DENEXT_CHILD_DEADLINE_MS")?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return defaultMs;
+  const ms = Number(raw);
+  return ms === 0 ? Infinity : ms;
+}
+
+/**
+ * How long a child whose whole result is one JSON document on stdout (`deno info --json`,
+ * `deno doc --json`) may stay alive, by default, once that document is complete and the child has
+ * written nothing more on either pipe, before it is killed and its output used (child-probe.ts
+ * {@linkcode boundedSpawn}'s `jsonStdout`): on Windows such a child has been seen to write its
+ * whole output and then spin at 100% CPU in its teardown instead of exiting.
+ */
+export const CHILD_EXIT_GRACE_MS = 5_000;
+
+/**
+ * The grace a finished JSON child gets to exit ({@linkcode CHILD_EXIT_GRACE_MS}):
+ * `DENEXT_CHILD_EXIT_GRACE_MS` when set (a positive number of milliseconds, or `0` to wait for the
+ * exit, up to the deadline), else `defaultMs`.
+ *
+ * @param defaultMs The default grace.
+ * @param env Env reader.
+ * @returns The grace in milliseconds (`Infinity`: wait for the exit).
+ */
+export function childExitGraceMs(
+  defaultMs: number = CHILD_EXIT_GRACE_MS,
+  env: EnvGet = readEnv,
+): number {
+  const raw = env("DENEXT_CHILD_EXIT_GRACE_MS")?.trim();
   if (!raw || !/^\d+$/.test(raw)) return defaultMs;
   const ms = Number(raw);
   return ms === 0 ? Infinity : ms;
@@ -312,17 +365,19 @@ export function retryOnStall<T>(
       onStall(
         `    warning: ${label} (pid ${err.pid}) was still running after ${deadlineMs / 1000} s ` +
           `and was killed; retrying once (DENEXT_CHILD_DEADLINE_MS raises the deadline): ` +
-          `${label} ${args.join(" ")}`,
+          `${label} ${args.join(" ")}` + (err.probe === undefined ? "" : `\n${err.probe}`),
       );
       try {
         return await attempt(deadlineMs);
       } catch (again) {
         if (!(again instanceof ChildStallError)) throw again;
+        const probes = [err.probe, again.probe].filter((p) => p !== undefined);
         throw new ChildStallError(
           `${label} (stalled twice; first pid ${err.pid})`,
           again.pid,
           deadlineMs,
           again.stderr,
+          probes.length ? probes.join("\n") : undefined,
         );
       }
     }

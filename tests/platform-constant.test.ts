@@ -296,8 +296,6 @@ const BRANCHES = `${IMPORT}export function pick() {\n` +
 for (const compat of [false, true]) {
   Deno.test({
     name: `SPA export (${compat ? "esbuild" : "deno bundle"} path): only the target's branch ships`,
-    sanitizeResources: false,
-    sanitizeOps: false,
   }, async () => {
     const dir = await scaffold({
       "denext.config.ts":

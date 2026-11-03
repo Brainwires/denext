@@ -1429,11 +1429,24 @@ Deno.test("native templates SECURITY (AU6-L3): booted() without a version confir
 Deno.test("native templates SECURITY (AU6-L4): a directory of a downloaded UI does not quarantine it", () => {
   assertStringIncludes(
     OTA_IOS_FILES["DenextOtaStore.swift"],
-    "return exists && !isDirectory.boolValue\n                    ? .tampered(",
+    "guard exists && !isDirectory.boolValue else { return .missing }",
   );
   assertStringIncludes(
     OTA_ANDROID_FILES["DenextOtaStore.java"],
-    "return target.exists() && !target.isDirectory() ? Verdict.TAMPERED : Verdict.MISSING;",
+    "if (!target.exists() || target.isDirectory()) {\n                    return Verdict.MISSING;",
+  );
+});
+
+Deno.test("native templates SECURITY: another case of a UI file's path is refused, never quarantined", () => {
+  const swift = OTA_IOS_FILES["DenextOtaStore.swift"];
+  assertStringIncludes(swift, "if let listed = folded[relative.lowercased()], listed != relative,");
+  assertStringIncludes(
+    swift,
+    "if !requested.hasSuffix(tail), requested.lowercased().hasSuffix(tail.lowercased()) { return false }",
+  );
+  assertStringIncludes(
+    OTA_ANDROID_FILES["DenextOtaStore.java"],
+    "if (listed != null && !listed.equals(relative) && isSameFile(target, new File(directory, listed))) {",
   );
 });
 

@@ -60,6 +60,7 @@ export const STEPS: readonly RegenStep[] = [
     script: ["scripts/gen-command-table.ts"],
     outputs: [
       "src/cli/command-table.generated.ts",
+      "src/cli/command-meta.packed.ts",
       "src/cli/lazy-modules.generated.ts",
       "src/cli/offline-modules.generated.ts",
     ],
@@ -68,13 +69,17 @@ export const STEPS: readonly RegenStep[] = [
   {
     name: "deno task gen:native-templates",
     script: ["scripts/gen-native-templates.ts"],
-    outputs: ["src/build/native-templates.packed.ts"],
+    outputs: ["src/build/native-templates.packed.ts", "packages/docs-corpus/native-templates.ts"],
     phase: 1,
   },
   {
     name: "deno task gen:config-schema",
     script: ["scripts/gen-config-schema.ts"],
-    outputs: ["src/server/config-keys.generated.ts", "denext.config.schema.json"],
+    outputs: [
+      "src/server/config-keys.generated.ts",
+      "denext.config.schema.json",
+      "src/ui/form/config-schema.packed.ts",
+    ],
     phase: 1,
   },
   {
@@ -86,7 +91,7 @@ export const STEPS: readonly RegenStep[] = [
   {
     name: "deno task gen:plugin-catalog",
     script: ["scripts/gen-plugin-catalog.ts"],
-    outputs: ["src/plugin/catalog.json"],
+    outputs: ["src/plugin/catalog.json", "src/plugin/catalog.packed.ts"],
     phase: 1,
   },
   {
@@ -114,10 +119,13 @@ export const STEPS: readonly RegenStep[] = [
     phase: 1,
   },
   {
+    // Reads the native-templates pack (the scaffold's package scripts live there), which
+    // gen:native-templates rewrites in phase 1: run in the same phase, the copy took the old pack
+    // and a second regen was needed.
     name: "the desktop scaffold's package scripts → examples/{native,rn-desktop}/scripts/",
     run: writePackageScripts,
     outputs: PACKAGE_SCRIPT_EXAMPLES.flatMap((e) => PACKAGE_SCRIPTS.map((s) => `${e}/${s}`)),
-    phase: 1,
+    phase: 2,
   },
   {
     // Reads the root deno.lock, which no step writes.

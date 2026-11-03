@@ -14,7 +14,12 @@
 // packaged app with DevTools off clears them. A remote debugging port is full control of the page
 // and its origin's storage, so the address must be loopback unless the caller opts in.
 
-import { isLoopbackHost } from "../utils/loopback.ts";
+import {
+  freeLoopbackPort,
+  isLoopbackHost,
+  loopbackPortTaken,
+  pickFreeLoopbackPort,
+} from "../utils/loopback.ts";
 import type { DesktopOs } from "./desktop-capabilities.ts";
 import type { DesktopRuntimeBackend } from "./desktop-runtime.ts";
 
@@ -94,30 +99,32 @@ function parsePort(text: string): number {
   return port;
 }
 
-/**
- * A free TCP port on loopback (bound, read and released).
- *
- * @returns The port.
- */
-export function freeLoopbackPort(): number {
-  const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
-  const port = (listener.addr as Deno.NetAddr).port;
-  listener.close();
-  return port;
-}
+export { freeLoopbackPort, loopbackPortTaken };
+
+/** How many picks a free port gets before the launch gives up. */
+const PICK_TRIES = 5;
 
 /**
- * The address with port 0 replaced by a free loopback port.
+ * The address with port 0 replaced by a free loopback port: a picked port another process holds
+ * by now is picked again, up to {@linkcode PICK_TRIES} times.
  *
  * @param addr The parsed address.
  * @param pick The port picker (tests pass a fixed one).
+ * @param taken Whether a port is held (tests).
  * @returns The address to use.
+ * @throws {Error} No free port within the tries.
  */
 function resolveInspectRendererAddr(
   addr: InspectRendererAddr,
   pick: () => number = freeLoopbackPort,
+  taken: (port: number) => boolean = loopbackPortTaken,
 ): InspectRendererAddr {
-  return addr.port === 0 ? { ...addr, port: pick() } : addr;
+  if (addr.port !== 0) return addr;
+  const port = pickFreeLoopbackPort(pick, taken, PICK_TRIES);
+  if (port === undefined) {
+    throw new Error(`--inspect-renderer: no free loopback port in ${PICK_TRIES} picks`);
+  }
+  return { ...addr, port };
 }
 
 /**
@@ -299,11 +306,15 @@ export interface InspectRendererLaunchInput {
   readonly inherited?: Readonly<Record<string, string | undefined>>;
   /** The free-port picker (tests pass a fixed one). */
   readonly pickPort?: () => number;
+  /** Whether another process holds a port (tests; default: try to bind it). */
+  readonly portTaken?: (port: number) => boolean;
 }
 
 /**
  * Everything `desktop dev --inspect-renderer` needs: the address (a free loopback port for a bare
- * flag), the env for the window's launch, and the lines to print before it opens.
+ * flag), the env for the window's launch, and the lines to print before it opens. Call it right
+ * before the launch: a picked port is free when this returns, and the window binds it moments
+ * later rather than after a build.
  *
  * @param input The flag and the window's backend / OS.
  * @returns The address, the plan, and the banner lines.
@@ -315,6 +326,7 @@ export function inspectRendererLaunch(
   const addr = resolveInspectRendererAddr(
     parseInspectRendererAddr(input.value, input.allowRemote),
     input.pickPort,
+    input.portTaken,
   );
   const plan = inspectRendererPlan(input.backend, input.os, addr, input.inherited);
   const lines = [

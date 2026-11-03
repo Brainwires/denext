@@ -5,8 +5,10 @@
 
 import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import {
+  CORPUS_DATA_MODULES,
   CORPUS_MODULE,
   CORPUS_PACKAGE,
+  CORPUS_PACKAGE_JSON,
   corpusConflictMessage,
   corpusReleaseState,
   corpusVersion,
@@ -129,6 +131,57 @@ Deno.test("docs-corpus version: it is denext's version, and denext imports exact
   assertEquals(root.imports[CORPUS_PACKAGE], `jsr:${CORPUS_PACKAGE}@${root.version}`);
 });
 
+/**
+ * Where src/ may name `@denext/docs-corpus`, and why. denext run from a checkout outside its
+ * workspace (an app linking it by path, CI running the checkout's CLI elsewhere) resolves the
+ * corpus from JSR, where the checkout's commit may have no release yet, or one younger than Deno's
+ * minimum dependency age: only a path that can do without it, or reads the checkout's own copy
+ * there, may import it, and only through `import()`.
+ */
+const CORPUS_IMPORTERS: Readonly<Record<string, string>> = {
+  "src/mcp/rag/corpus.ts": "the MCP docs tools, on their first search or read",
+  "src/build/native-templates.packed.ts":
+    "the native templates: a published denext only; a checkout reads packages/docs-corpus/ by path",
+};
+
+Deno.test("docs-corpus: denext imports it only where a checkout does not need a corpus release", async () => {
+  const src = new URL("../src/", import.meta.url);
+  const found: Record<string, string[]> = {};
+  const walk = async (dir: URL, rel: string): Promise<void> => {
+    for await (const entry of Deno.readDir(dir)) {
+      const path = `${rel}${entry.name}`;
+      if (entry.isDirectory) await walk(new URL(`${entry.name}/`, dir), `${path}/`);
+      else if (/\.(ts|tsx|js|mjs)$/.test(entry.name)) {
+        const text = await Deno.readTextFile(new URL(entry.name, dir));
+        const uses = [
+          ...text.matchAll(/(import\s*\(|\bfrom)\s*["']@denext\/docs-corpus[^"']*["']/g),
+        ]
+          .map((m) => m[0]);
+        if (uses.length) found[`src/${path}`] = uses;
+      }
+    }
+  };
+  await walk(src, "");
+  assertEquals(Object.keys(found).sort(), Object.keys(CORPUS_IMPORTERS).sort());
+  for (const [file, uses] of Object.entries(found)) {
+    for (const use of uses) {
+      assert(use.startsWith("import"), `${file} imports the corpus statically`);
+    }
+  }
+});
+
+Deno.test("docs-corpus: every module it publishes besides the corpus is a data module the release checks", async () => {
+  // A resumed release compares each data module with JSR's copy (corpusReleaseState); one left
+  // off CORPUS_DATA_MODULES could differ from what denext was tested against and still ship.
+  const manifest = JSON.parse(await Deno.readTextFile(CORPUS_PACKAGE_JSON));
+  const published = (manifest.publish.include as string[])
+    .filter((f) => f.endsWith(".ts") && f !== "mod.ts");
+  assertEquals([...published].sort(), [...CORPUS_DATA_MODULES].sort());
+  const exported = Object.values(manifest.exports as Record<string, string>)
+    .map((p) => p.replace(/^\.\//, ""));
+  for (const m of CORPUS_DATA_MODULES) assert(exported.includes(m), `${m} is exported`);
+});
+
 Deno.test("docs-corpus version: the module's source hash, and the manifest's version", async () => {
   const text = await Deno.readTextFile(CORPUS_MODULE);
   assertEquals(moduleSourceHash(text)?.length, 64);
@@ -155,7 +208,13 @@ Deno.test("docs-corpus version: the release publishes its own version, or refuse
   assertEquals(await corpusReleaseState(version, fakeJsr({})), { state: "missing", version });
   assertEquals(await publishedSourceHash(version, fakeJsr({})), null);
   // On JSR with the same content (a resumed release): nothing to publish.
-  const same = fakeJsr({ [CORPUS_PACKAGE]: [version] }, { [path]: served(local) });
+  const data: Record<string, string> = {};
+  for (const m of CORPUS_DATA_MODULES) {
+    data[`/${CORPUS_PACKAGE}/${version}/${m}`] = await Deno.readTextFile(
+      new URL(`../packages/docs-corpus/${m}`, import.meta.url),
+    );
+  }
+  const same = fakeJsr({ [CORPUS_PACKAGE]: [version] }, { [path]: served(local), ...data });
   assertEquals(await publishedSourceHash(version, same), local);
   assertEquals(await corpusReleaseState(version, same), { state: "published", version });
   // On JSR with other content: a conflict, never another version (a newer one JSR lacks too).
@@ -167,6 +226,22 @@ Deno.test("docs-corpus version: the release publishes its own version, or refuse
   const message = corpusConflictMessage(conflict);
   assertStringIncludes(message, `${CORPUS_PACKAGE}@${version} with another corpus`);
   assertStringIncludes(message, other);
+  // The same corpus but another copy of a data module (or none): a conflict naming the module.
+  const [module] = CORPUS_DATA_MODULES;
+  const modulePath = `/${CORPUS_PACKAGE}/${version}/${module}`;
+  for (const body of ["// another pack\n", undefined]) {
+    const files: Record<string, string> = { ...data, [path]: served(local) };
+    if (body === undefined) delete files[modulePath];
+    else files[modulePath] = body;
+    const moved = await corpusReleaseState(
+      version,
+      fakeJsr({ [CORPUS_PACKAGE]: [version] }, files),
+    );
+    if (moved.state !== "conflict") throw new Error(`expected a conflict, got ${moved.state}`);
+    assertEquals(moved.module, module);
+    assertEquals(moved.published === null, body === undefined);
+    assertStringIncludes(corpusConflictMessage(moved), `with another ${module}`);
+  }
   // A corpus that is not at the release's version is refused before JSR is asked.
   await assertRejects(
     () => corpusReleaseState(`${version}-other.1`, fakeJsr({})),

@@ -33,6 +33,8 @@ import {
   type UnbundledState,
 } from "./state.ts";
 import { transform } from "./transform.ts";
+import { metaEnabled } from "../devtools-meta.ts";
+import { npmHookMetaPlugin } from "../npm-hook-meta.ts";
 
 /** Bundle the native denext `@dep` set once (shared core hoisted into one chunk). */
 async function buildDeps(st: UnbundledState): Promise<void> {
@@ -381,6 +383,9 @@ async function npmBuild(
       runtimeExternalPlugin(st),
       catalogResolverPlugin(st.opts.projectDir, "all", BROWSER_CONDITIONS),
       nodeBuiltinStubPlugin(),
+      // Last: DevTools names for the packages' own custom hooks (an `onLoad` that answers only a
+      // package ES module with a hook to record).
+      ...(metaEnabled() ? [npmHookMetaPlugin(Object.values(entryPoints), st.opts.projectDir)] : []),
     ],
   });
 }

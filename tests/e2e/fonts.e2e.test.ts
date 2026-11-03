@@ -22,8 +22,6 @@ const EXAMPLE = fromFileUrl(new URL("../../examples/fonts", import.meta.url));
 
 Deno.test({
   name: "e2e: examples/fonts self-hosts next/font/google at build",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const server = await buildAndServe(EXAMPLE);
   try {

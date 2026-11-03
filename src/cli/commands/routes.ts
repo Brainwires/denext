@@ -5,15 +5,11 @@
 import type { CommandSpec } from "../command.ts";
 import { collectRoutes, formatRouteTable } from "../../build/route-list.ts";
 import { projectDir } from "../shared.ts";
+import { commandMeta } from "../command-meta.ts";
 
 /** `denext routes [dir]`. */
 export const routesCommand: CommandSpec = {
-  name: "routes",
-  summary: "List the app's pages and API routes (a table, or --json)",
-  usage: "Scans app/ (or src/app/) without importing any route module: each route's kind,\n" +
-    "path, HTTP methods (an API route's exported handlers, read from its source), dynamic\n" +
-    "params and file. --json prints { pages, api } for scripts.",
-  positionals: [{ name: "dir", help: "Project directory (default: .)" }],
+  ...commandMeta("routes"),
   run: async (ctx) => {
     const list = await collectRoutes(projectDir(ctx));
     if (ctx.global.json) {

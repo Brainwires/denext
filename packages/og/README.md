@@ -72,8 +72,9 @@ The publishable artifact is the committed `lib/og.bundle.js`. It is **generated,
 not hand-edited**. To reproduce or refresh it against newer upstreams:
 
 ```sh
-# 1. install the target versions into a scratch dir
-npm install @cf-wasm/og@0.5.0 esbuild@0.24
+# 1. install the target versions into a scratch dir (esbuild: the release denext vendors and
+#    its toolchain ships, src/build/deno-toolchain.ts)
+npm install @cf-wasm/og@0.5.0 esbuild@0.25.5
 
 # 2. bundle @cf-wasm/og's `node` entry (wasm + font inline) into one browser-target ESM.
 #    - platform=browser: resolve satori's deps' browser/module fields (they're not node CJS)

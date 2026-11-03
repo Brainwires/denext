@@ -1,7 +1,8 @@
 // A per-file coverage ratchet over an lcov report: every module under RATCHETED keeps at least the
 // line / branch / function coverage scripts/coverage-baseline.json records for it, so a file's
 // coverage can only go up. coverage-floor.ts holds a few surfaces to a fixed 85%; this holds the
-// rest of the CLI, the server, the compat layer and the plugin packages to where they are.
+// rest of the CLI, the server, the compat layer, the DevTools panel's panes and the plugin
+// packages to where they are.
 //
 //   deno run --allow-read scripts/coverage-ratchet.ts coverage/lcov.info            # check
 //   deno run --allow-read --allow-write scripts/coverage-ratchet.ts coverage/lcov.info --update
@@ -14,10 +15,16 @@
 // suite: `gh run download <run> -n coverage-lcov -D coverage`, then `deno task coverage:ratchet:update`.
 
 import { join, relative, resolve } from "@std/path";
-import { type FileCoverage, parseLcov, pct } from "./coverage-floor.ts";
+import { canonicalPath, type FileCoverage, parseLcov, pct } from "./coverage-floor.ts";
 
 /** The trees the ratchet covers (relative to the project root): `.ts` / `.tsx` modules in them. */
-export const RATCHETED: readonly string[] = ["src/cli", "src/server", "src/compat", "packages"];
+export const RATCHETED: readonly string[] = [
+  "src/cli",
+  "src/server",
+  "src/compat",
+  "src/client/devtools-panel",
+  "packages",
+];
 
 /** Paths under {@linkcode RATCHETED} that are not source: generated wasm-bindgen glue, npm trees. */
 const SKIPPED = /(^|\/)(lib|node_modules)\/|\.d\.ts$/;
@@ -167,18 +174,19 @@ export function updateBaseline(
 }
 
 /** The baseline as it is written: one file per line, so a raise is a one-line diff. */
-export function formatBaseline(baseline: Baseline): string {
+export function formatBaseline(baseline: Record<string, readonly number[]>): string {
   const rows = Object.entries(baseline).map(([f, e]) =>
     `  ${JSON.stringify(f)}: [${e.join(", ")}]`
   );
   return `{\n${rows.join(",\n")}\n}\n`;
 }
 
-async function readBaseline(path: string): Promise<Baseline> {
+/** The baseline JSON at `path` (none: empty); the sanitizer ratchet reads its own with it too. */
+export async function readBaseline<T = Baseline>(path: string): Promise<T> {
   try {
-    return JSON.parse(await Deno.readTextFile(path)) as Baseline;
+    return JSON.parse(await Deno.readTextFile(path)) as T;
   } catch (e) {
-    if (e instanceof Deno.errors.NotFound) return {};
+    if (e instanceof Deno.errors.NotFound) return {} as T;
     throw e;
   }
 }
@@ -207,8 +215,10 @@ export async function main(args: string[], root: string = resolve(".")): Promise
     return 2;
   }
   const baselinePath = at === -1 ? join(root, BASELINE_FILE) : resolve(root, args[at + 1]);
-  const lcov = parseLcov(await Deno.readTextFile(input));
-  const coverage = ratchetedCoverage(lcov, lcovRoot(lcov.keys()) ?? root);
+  // Paths resolved on both sides (see coverage-floor.ts's main): a report written under a
+  // symlinked checkout spells the same file two ways, and the root may be the other spelling.
+  const lcov = parseLcov(await Deno.readTextFile(input), canonicalPath);
+  const coverage = ratchetedCoverage(lcov, lcovRoot(lcov.keys()) ?? canonicalPath(root));
   const baseline = await readBaseline(baselinePath);
   const exists = existsIn(root);
   if (args.includes("--update")) {

@@ -34,6 +34,7 @@ import {
 } from "../src/build/mobile-capabilities.ts";
 import { createMobileCommand } from "../src/cli/commands/mobile.ts";
 import { mobileDoctorChecks, runMobileDoctor } from "../src/build/mobile-doctor.ts";
+import { oldPublishTimes } from "./_capacitor-cli.ts";
 
 const PBXPROJ_FIXTURE = await Deno.readTextFile(
   new URL("./fixtures/capacitor8/project.pbxproj", import.meta.url),
@@ -111,6 +112,7 @@ async function project(extra: Record<string, string> = {}): Promise<string> {
   const files: Record<string, string> = {
     "capacitor.config.ts": "export default { appId: 'dev.example', webDir: 'out' };\n",
     "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
+    "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
     [PBXPROJ]: PBXPROJ_FIXTURE,
     "ios/App/App/Base.lproj/Main.storyboard": STOCK_STORYBOARD,
     "ios/App/App/SceneDelegate.swift": STOCK_SCENE_DELEGATE,
@@ -619,7 +621,7 @@ Deno.test("denext mobile add auth-session --scheme t3code through the verb", asy
     const lines: string[] = [];
     console.log = (...a: unknown[]) => void lines.push(a.join(" "));
     try {
-      await createMobileCommand(run).run({
+      await createMobileCommand(run, oldPublishTimes).run({
         positionals: ["add", "auth-session"],
         flags: { dir, scheme: "t3code" },
         global: { json: false, verbose: false, quiet: false },

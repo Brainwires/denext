@@ -62,3 +62,28 @@ Deno.test("resolveDenoExecutable: a compiled binary never looks for another Deno
   assertStringIncludes(NO_DENO_MESSAGE, "stock Deno is no longer supported");
   assert(NO_DENO_MESSAGE.startsWith("denext:"), "printed by the CLI without a stack");
 });
+
+Deno.test("resolveDenoExecutable: a relative DENO_BIN is resolved when read; HOME is never read", () => {
+  // A child spawned in the project would resolve `./tc/deno` against the project instead.
+  assertEquals(
+    resolveDenoExecutable(seams({ vars: { DENO_BIN: "./tc/deno" }, cwd: () => "/work" })),
+    "/work/tc/deno",
+  );
+  assertEquals(
+    resolveDenoExecutable(
+      seams({ os: "windows", vars: { DENO_BIN: "tc\\deno.exe" }, cwd: () => "C:\\work" }),
+    ),
+    "C:\\work\\tc\\deno.exe",
+  );
+  // A bare name stays a PATH lookup.
+  assertEquals(
+    resolveDenoExecutable(seams({ vars: { DENO_BIN: "deno" }, cwd: () => "/work" })),
+    "deno",
+  );
+  // No home lookup at all (5.0): `HOME=repo` can't make `repo/.deno/bin/deno` the Deno to run.
+  assertThrows(
+    () => resolveDenoExecutable(seams({ vars: { HOME: "repo", PATH: "/usr/bin" } })),
+    Error,
+    NO_DENO_MESSAGE,
+  );
+});

@@ -16,10 +16,15 @@ import {
 import { dotStuff, encodeHeaderText, quotedPrintable } from "../src/server/auth/smtp-message.ts";
 import { type FakeSmtpServer, SMTP_TEST_CA, startFakeSmtp } from "./helpers/fake-smtp.ts";
 
-/** A mailer for `server`, trusting the test CA. */
+/**
+ * A mailer for `server`, trusting the test CA. On 127.0.0.1, where the fake listens (its
+ * certificate names it too), not `localhost`: on Windows `localhost` resolves to `::1` first, and
+ * a connect refused there takes ~2 s of SYN retries before the IPv4 address is tried, which a
+ * short `timeoutMs` reports as "connecting timed out" before the step under test is reached.
+ */
 function mailerFor(server: FakeSmtpServer, options: Partial<SmtpMailerOptions> = {}) {
   return smtpMailer({
-    host: "localhost",
+    host: "127.0.0.1",
     port: server.port,
     user: "user",
     pass: "secret",
@@ -176,6 +181,18 @@ Deno.test("smtp: a certificate that doesn't chain to a trusted CA is refused", a
   });
 });
 
+Deno.test("smtp: implicit TLS to an untrusted certificate is refused, its connection closed", async () => {
+  // The refused handshake's connection is closed, not leaked (the resource sanitizer, on in
+  // deno.json, fails this test otherwise); the STARTTLS case above checks the upgrade's.
+  await withServer({ tls: "implicit" }, async (server) => {
+    await assertRejects(
+      () => mailerFor(server, { secure: true, caCerts: undefined }).send(MESSAGE),
+      SmtpError,
+    );
+    assertEquals(server.mail.length, 0);
+  });
+});
+
 Deno.test("smtp: plaintext only with `insecure: true`, and only to loopback", async () => {
   await withServer({ tls: "none" }, async (server) => {
     await mailerFor(server, { insecure: true, host: "127.0.0.1" }).send(MESSAGE);
@@ -300,9 +317,7 @@ Deno.test("smtp: a server that never greets times out", async () => {
   await withServer({ silent: true }, async (server) => {
     const started = Date.now();
     await assertRejects(
-      // 127.0.0.1, not localhost: on Windows "localhost" tries ::1 first, and a refused
-      // loopback connect there takes ~2 s of SYN retries, longer than this timeout.
-      () => mailerFor(server, { host: "127.0.0.1", timeoutMs: 200 }).send(MESSAGE),
+      () => mailerFor(server, { timeoutMs: 200 }).send(MESSAGE),
       SmtpError,
       "the greeting timed out",
     );
@@ -312,8 +327,10 @@ Deno.test("smtp: a server that never greets times out", async () => {
 
 Deno.test("smtp: a server that never answers the end of DATA times out", async () => {
   await withServer({ stallData: true }, async (server) => {
+    // The timeout bounds every step, so each one before DATA must finish inside it: 1 s leaves
+    // room for a loaded machine's scheduling stall, which 300 ms did not.
     await assertRejects(
-      () => mailerFor(server, { timeoutMs: 300 }).send(MESSAGE),
+      () => mailerFor(server, { timeoutMs: 1_000 }).send(MESSAGE),
       SmtpError,
       "the message timed out",
     );

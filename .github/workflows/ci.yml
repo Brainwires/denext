@@ -83,6 +83,29 @@ jobs:
           key: ${{ runner.os }}-deno-${{ hashFiles('deno.lock') }}
           restore-keys: ${{ runner.os }}-deno-
 
+      - name: Read the Gleam pin
+        # The unit suites that compile real Gleam (tests/gleam.test.ts, tests/migrate-lustre.test.ts)
+        # run with denext's pinned Gleam, which `toolchain install --with gleam` below downloads into
+        # <DENO_DIR>/denext-deno/gleam/<version>/<target> and SHA-256-verifies
+        # (src/build/gleam-toolchain.ts). The cache below only saves that download (~10 MB); the CLI
+        # still verifies what it finds there before running it. The same step as e2e.yml's.
+        id: gleam-pin
+        shell: bash
+        run: |
+          pin=src/build/gleam-toolchain-pin.json
+          case "$RUNNER_ARCH" in X64) arch=x86_64 ;; ARM64) arch=aarch64 ;; *) arch="$RUNNER_ARCH" ;; esac
+          target="linux-$arch"
+          version=$(jq -r .version "$pin")
+          sha=$(jq -r --arg t "$target" '.targets[$t].sha256' "$pin")
+          echo "path=$HOME/.cache/deno/denext-deno/gleam/$version/$target" >> "$GITHUB_OUTPUT"
+          echo "key=gleam-$target-$version-$sha" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the pinned Gleam compiler
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ steps.gleam-pin.outputs.path }}
+          key: ${{ steps.gleam-pin.outputs.key }}
+
       - name: Format check
         run: deno fmt --check
 
@@ -98,10 +121,27 @@ jobs:
         # next/cookies.ts) and reports false private-type-ref errors.
         run: deno task doc-lint
 
+      - name: Publish dry-run of the stripped package
+        # What publish.yml does to @denext/denext once the tag exists, here where a failure can
+        # still be fixed: the same stock Deno, the comment strip and its size guard, then
+        # `deno publish --dry-run --allow-dirty`. In a clone, as the strip rewrites its files.
+        run: |
+          copy="$RUNNER_TEMP/publish-dry-run"
+          git clone --quiet --no-hardlinks . "$copy"
+          cd "$copy"
+          deno run -A scripts/publish-strip.ts --write
+          deno publish --dry-run --allow-dirty > /dev/null
+          cd - > /dev/null
+          rm -rf "$copy"
+
       - name: Put denext's Deno toolchain on PATH
         # The pinned build users run (scripts/ci/toolchain-on-path.ts; verified, cached in DENO_DIR):
         # every later step's `deno` is the toolchain. Steps above it keep the stock Deno.
         run: deno run -A scripts/ci/toolchain-on-path.ts
+
+      - name: Install the pinned Gleam compiler
+        # From the cache above when the pin is unchanged (verified, not downloaded again).
+        run: deno run -A cli.ts toolchain install --with gleam
 
       - name: Type check
         # The toolchain's checker: native TypeScript 7, as `denext check` and the dev overlay run it.
@@ -112,7 +152,11 @@ jobs:
         # Excludes tests/e2e/ (real headless Chromium; `deno task test:e2e`) and
         # tests/integration/ (heavy build/bundle tests; the `integration` job).
         # --unstable-kv enables the Deno KV cache-store tests.
+        # DENEXT_TEST_GLEAM: the pinned Gleam installed above, so the suites that compile real
+        # Gleam run (and fail, rather than skip, if that install is broken).
         run: deno task test:unit
+        env:
+          DENEXT_TEST_GLEAM: ${{ steps.gleam-pin.outputs.path }}/gleam
 
       - name: Test-count badge is current
         # Deterministic, source-derived count (like `deno fmt --check`): fails if
@@ -204,6 +248,12 @@ jobs:
 
       - name: cargo audit (packages/*/Cargo.lock)
         run: CARGO_AUDIT="$HOME/.cargo-audit-bin/cargo-audit" deno task audit:cargo
+
+      # The same gate for npm: `deno audit` over the root deno.lock and every example's deno.lock;
+      # a high or critical advisory fails unless security/npm-audit-allow.json holds it (a fix
+      # still under the age hold).
+      - name: deno audit (deno.lock + examples)
+        run: deno task audit:npm
 
   # Heavy build/bundle/type-check integration tests (real Deno subprocesses:
   # example-app builds, scaffold type-checking, Flight/static-export bundling).
@@ -498,9 +548,9 @@ jobs:
       DENEXT_TEST_S3_SECRET_KEY: dnxtest-secret
       DENEXT_TEST_REDIS_URL: redis://127.0.0.1:6379/0
       # denext's Deno toolchain (Deno.SQL): the Brainwires/deno fork's CLI release, verified.
-      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-rc.5
-      DENEXT_DENO_ZIP: deno-cli-3.0.0-rc.5-x86_64-unknown-linux-gnu.zip
-      DENEXT_DENO_SHA256: 6004a4ad0696cd12db8cec5921e22196b385ae507b79ababa993110fbb0ea01e
+      DENEXT_DENO_RELEASE: denext-runtime-v3.0.0-denext.7
+      DENEXT_DENO_ZIP: deno-cli-3.0.0-denext.7-x86_64-unknown-linux-gnu.zip
+      DENEXT_DENO_SHA256: bf79848a32c2667a7798dee961ddbe108e04f36e90b5cab1b40e4dbf83888718
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -665,6 +715,10 @@ jobs:
     runs-on: windows-latest
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     timeout-minutes: 150
+    # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
+    # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).
+    env:
+      DENEXT_CHILD_PROBE: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -770,6 +824,10 @@ jobs:
   windows-resolve:
     runs-on: windows-latest
     timeout-minutes: 15
+    # A build's `deno info` / `deno bundle` child that stalls here reports where it was: Deno's
+    # debug-log tail and two CPU samples (DENEXT_CHILD_PROBE, src/build/child-probe.ts).
+    env:
+      DENEXT_CHILD_PROBE: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
@@ -792,3 +850,6 @@ jobs:
 
       - name: The deno-loader resolves package.json dependencies on Windows
         run: deno test -A tests/deno-loader-plugins.test.ts
+
+      - name: The deno-loader's own deno info children are bounded on Windows
+        run: deno test -A tests/loader-deno-info.test.ts

@@ -25,8 +25,6 @@ async function allJs(dir: string): Promise<string> {
 
 Deno.test({
   name: "a migrated Fresh app builds: no secret in the bundle or page, partial requests answer",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.realPath(await Deno.makeTempDir({ prefix: "denext-fresh-parity-" }));
   try {

@@ -17,7 +17,7 @@ import { h as el } from "../src/jsx/jsx-runtime.ts";
 import type { RouteManifest } from "../src/router/manifest.ts";
 import { parsePattern } from "../src/router/segments.ts";
 import { isPostpone, type Postpone, withPrerender } from "../src/runtime/prerender.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import {
   inMemoryCacheStore,
   PageCache,

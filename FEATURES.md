@@ -154,7 +154,8 @@ security posture see [the CVE-defense guide](https://denext.dev/docs/security).
   window.
 - Class components (`Component`/`PureComponent`) on every path, through an on-demand
   runtime chunk (Part 2 §3.2).
-- React 19.2's `captureOwnerStack()` (the JSX-owner chain with call sites, in development) and
+- React 19.2's `captureOwnerStack()` (the JSX-owner chain with call sites, in development, in
+  client renders and server renders alike) and
   `cacheSignal()` (aborts when the server render ends).
 
 ## Data, caching & ISR
@@ -517,8 +518,9 @@ and [Coming from Supabase](https://denext.dev/docs/coming-from-supabase).
   overlay; a **searchable, collapsible component tree** (+ optional host nodes);
   per-node **props, hooks/state, and context** with **named hooks**
   (`count · useState`, custom hooks expanded as breadcrumbs — declared in the same
-  module or across a static relative import — **`useDebugValue`** labels, conditional
-  and package hooks aligned around, and kind labels only where no name is certain),
+  module, across a static import or from an npm package's ES modules — **`useDebugValue`**
+  labels, conditional and uninstrumented hooks aligned around, and kind labels only where no
+  name is certain),
   **live `useState` editing**, **ref-set / reducer-dispatch**, **live prop
   overrides**, and **deep lazy value inspection** (copy / `console.log` /
   store-as-`$d`); **capability badges** (memo/forwardRef/Suspense/…); **"why did
@@ -765,7 +767,9 @@ unit-tested); the iOS halves were run on an iPhone — per-item status in
   generated from `app/`, and the shell gets Expo web's root style. Unistyles 3
   works with no setup, Metro's `require.context` (literal arguments) is
   generated at build, and `react-reconciler` renderers (React Native Skia,
-  react-three-fiber, react-konva) load on denext's `react`. —
+  react-three-fiber, react-konva) load on denext's `react`, with contexts (bridged into a
+  react-three-fiber `<Canvas>` / react-konva `<Stage>`) and class components inside their
+  trees. —
   `src/build/react-native.ts`, `src/build/react-native-unistyles.ts`,
   `src/build/require-context.ts`.
 - **`denext/expo/*`** — 59 drop-in shims for `expo`, `expo-*` and `@expo/ui`

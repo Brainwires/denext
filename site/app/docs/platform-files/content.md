@@ -148,9 +148,10 @@ output at any depth (`out/`, `dist/`, `www/`, `coverage/`, `ios/`, `android/`).
 A platform export carries `_denext/platform.txt` (its target's name), so its OTA manifest names
 the target (`"platform": "ios"`). The manifest's version, and so its signature, covers that file;
 the `platform` field itself is not signed, so a shell checks the stamp against its own target too:
-dropping or changing the field never moves an export to another target. `checkForUiUpdate` and the
-desktop updater refuse a manifest built for another target (code `platform_mismatch`), and send
-their own target (`x-denext-ota-platform`) with the manifest request and every download, so one
+dropping or changing the field never moves an export to another target. `checkForUiUpdate`, the
+iOS / Android OTA plugin itself (`denext mobile add-ota` template generation 12) and the desktop
+updater refuse a manifest built for another target (code `platform_mismatch`).
+`checkForUiUpdate` and the desktop updater send their own target (`x-denext-ota-platform`) with the manifest request and every download, so one
 server can keep an export per target. The mobile shell sends it when its running UI is a platform
 export (or `checkForUiUpdate` is given `platform`); being a custom header, it makes a cross-origin
 manifest request preflighted, so the server must answer `OPTIONS` (`createOtaHandler`'s `cors`

@@ -62,12 +62,14 @@ Deno.test("mobile add sentry: @sentry/capacitor with its exact sibling SDK, and 
       "capacitor.config.json": JSON.stringify({ appId: "dev.example", webDir: "out" }),
       "package.json": JSON.stringify({ dependencies: { "@capacitor/core": "^8.0.0" } }),
       "node_modules/@capacitor/core/package.json": JSON.stringify({ version: "8.5.2" }),
+      "node_modules/@capacitor/cli/package.json": JSON.stringify({ version: "8.5.2" }),
       ".git/HEAD": "ref: refs/heads/main\n",
     });
     const plan = await planMobileCapabilities({ capabilities: ["sentry"], cwd: dir });
     assertEquals(plan.install?.args, [
       "install",
       "--ignore-scripts",
+      "--save-exact",
       "@sentry/capacitor@4.4.0",
       "@sentry/browser@10.69.0",
     ]);
@@ -242,8 +244,6 @@ const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;
 
 Deno.test({
   name: "denext export with hidden source maps: SPA export ships none, .denext/sourcemaps has them",
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext_hidden_maps_" });
     try {
@@ -300,8 +300,6 @@ Deno.test({
 
 Deno.test({
   name: "hidden source maps on the esbuild (compat) SPA path too",
-  sanitizeResources: false,
-  sanitizeOps: false,
   fn: async () => {
     const dir = await Deno.makeTempDir({ prefix: "denext_hidden_maps_compat_" });
     try {

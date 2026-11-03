@@ -96,8 +96,6 @@ const CLEAR = [0, 0, 0, 0];
 
 Deno.test({
   name: "e2e: React Native Skia draws through CanvasKit under a strict CSP",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const dir = await setup();
   if (!dir) return;

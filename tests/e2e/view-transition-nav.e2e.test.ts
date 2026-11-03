@@ -14,8 +14,6 @@ const FIXTURE = fromFileUrl(new URL("./fixtures/vt-nav", import.meta.url));
 
 Deno.test({
   name: "e2e: <ViewTransition> onUpdate on a soft navigation, and its ref",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const server = await buildAndServe(FIXTURE);
   const browser = await launchBrowser();

@@ -665,6 +665,63 @@ Deno.test("/config/next evaluates a real next.config in a subprocess (piped, not
   }
 });
 
+/**
+ * A home-directory and a temp-directory variable this machine sets (Windows sets no `HOME` and,
+ * outside a POSIX shell, no `TMPDIR`): a config reads them only when they are there.
+ */
+function machinePathVars(): { home: string; tmp: string } {
+  const set = (keys: string[]) => keys.find((k) => Deno.env.get(k) !== undefined) ?? keys[0];
+  return { home: set(["HOME", "USERPROFILE"]), tmp: set(["TMPDIR", "TEMP", "TMP"]) };
+}
+
+Deno.test("/config/next holds back a value or rule that reads a machine path (HOME, TMPDIR)", async () => {
+  const dir = await project();
+  const { home, tmp } = machinePathVars();
+  try {
+    await Deno.writeTextFile(join(dir, "package.json"), '{ "dependencies": { "next": "15.0.0" } }');
+    await Deno.writeTextFile(
+      join(dir, "next.config.mjs"),
+      "export default {\n" +
+        `  assetPrefix: (process.env.${home} ?? "") + "/cdn",\n` +
+        '  basePath: "/shop",\n' +
+        "  redirects: () => [\n" +
+        `    { source: "/cache", destination: "/f" + (process.env.${home} ?? "") + "/x", permanent: false },\n` +
+        '    { source: "/old", destination: "/new", permanent: true },\n' +
+        "  ],\n" +
+        `  headers: () => [{ source: "/(.*)", headers: [{ key: "x-tmp", value: String(Deno.env.get("${tmp}")) }] }],\n` +
+        "};\n",
+    );
+    const res = await call(dir, "/api/config/next");
+    const text = await res.text();
+    // Neither this machine's paths nor the evaluator's placeholders reach the payload.
+    for (const name of [home, tmp]) {
+      const value = Deno.env.get(name);
+      if (value && value.length > 1) {
+        assert(!text.includes(JSON.stringify(value).slice(1, -1)), text);
+      }
+    }
+    assert(!text.includes("__denext_machine_env_"), text);
+    const payload = JSON.parse(text);
+    assertEquals(payload.honored, { basePath: "/shop" });
+    assertEquals(payload.rules.redirects, [{
+      source: "/old",
+      destination: "/new",
+      permanent: true,
+    }]);
+    assertEquals(payload.rules.headers, undefined);
+    const held = Object.fromEntries(
+      payload.machinePaths.map((m: { key: string; vars: string[] }) => [m.key, m.vars]),
+    );
+    assertEquals(held, { assetPrefix: [home], redirects: [home], headers: [tmp] });
+    // The page says so, and offers no Translate button for them.
+    const page = await (await call(dir, "/config/next")).text();
+    assertStringIncludes(page, "Reads this machine&#39;s paths");
+    assert(!page.includes("__denext_machine_env_"), page);
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("/config/next reports a config it could not evaluate instead of guessing", async () => {
   const dir = await project();
   try {

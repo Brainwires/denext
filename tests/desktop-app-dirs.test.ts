@@ -5,7 +5,7 @@
 
 import { assertEquals, assertNotEquals } from "@std/assert";
 import { dirname, join } from "@std/path";
-import { desktopAppDirs, osDataDir } from "../src/desktop/app-dirs.ts";
+import { desktopAppDirs, env, osDataDir } from "../src/desktop/app-dirs.ts";
 
 const APP = "com.example.app";
 const ENV_KEYS = [
@@ -114,4 +114,39 @@ Deno.test("app-dirs: the cache root is a folder of its own, never the engine's c
       assertNotEquals(cache, engineFolder, os);
     }
   });
+});
+
+Deno.test("app-dirs: empty / whitespace-only env values count as unset", () => {
+  const home = "C:/Users/tester";
+  for (const blank of ["", "   "]) {
+    withEnv({ USERPROFILE: home, APPDATA: blank }, () => {
+      assertEquals(osDataDir(APP, "windows"), join(home, "AppData", "Roaming", APP));
+    });
+    withEnv({ USERPROFILE: home, APPDATA: blank, LOCALAPPDATA: blank }, () => {
+      assertEquals(
+        desktopAppDirs(APP, "windows").cache,
+        join(home, "AppData", "Local", APP, "Cache"),
+      );
+    });
+    withEnv({ HOME: "/home/t", XDG_DATA_HOME: blank }, () => {
+      assertEquals(osDataDir(APP, "linux"), join("/home/t", ".local", "share", APP));
+    });
+    // HOME blank falls through to USERPROFILE, not a relative path.
+    withEnv({ HOME: blank, USERPROFILE: home }, () => {
+      assertEquals(osDataDir(APP, "darwin"), join(home, "Library", "Application Support", APP));
+    });
+  }
+});
+
+Deno.test("app-dirs: macOS ignores XDG_DATA_HOME; env() has no lowercase fallback", () => {
+  withEnv({ HOME: "/Users/t", XDG_DATA_HOME: "/x" }, () => {
+    assertEquals(osDataDir(APP, "darwin"), join("/Users/t", "Library", "Application Support", APP));
+  });
+  const key = "DENEXT_TEST_CASE_ONLY";
+  Deno.env.set(key.toLowerCase(), "v");
+  try {
+    if (Deno.build.os !== "windows") assertEquals(env(key), undefined);
+  } finally {
+    Deno.env.delete(key.toLowerCase());
+  }
 });

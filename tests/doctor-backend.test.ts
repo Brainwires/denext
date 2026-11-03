@@ -82,8 +82,6 @@ Deno.test("doctor backend: keys and storage are reported; an unreachable databas
 Deno.test({
   name: "doctor backend: a reachable database, and pending migrations reported",
   ignore: !PG,
-  sanitizeResources: false,
-  sanitizeOps: false,
 }, async () => {
   const checks = await run({
     plugins: [backend({ postgres: { url: PG }, queues: {} })],

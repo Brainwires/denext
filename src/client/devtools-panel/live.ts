@@ -115,7 +115,14 @@ function pushRow(ctx: PanelCtx, p: Rec, now: number): HTMLElement {
     S.wfLi,
     pill(ctx, text(p.kind) || "publish", p.kind === "revoke" ? "#ff6b6b" : "#8aa2ff"),
     el(doc, "span", S.comp, `${text(p.channel)} / ${text(p.key)}`),
-    el(doc, "span", S.dim, `→ ${text(p.subscribers)}`),
+    el(
+      doc,
+      "span",
+      S.dim,
+      `→ ${text(p.subscribers)}${
+        typeof p.withheld === "number" && p.withheld > 0 ? ` (${p.withheld} other grant)` : ""
+      }`,
+    ),
     el(doc, "span", S.v, summarize(p.payload)),
     el(doc, "span", S.at, typeof p.at === "number" ? agoLabel(now - p.at) : ""),
   );

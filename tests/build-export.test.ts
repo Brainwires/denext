@@ -31,8 +31,6 @@ async function readIfPresent(path: string): Promise<string | null> {
 
 Deno.test({
   name: "staticExport: App Router example pre-renders every route to out/",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   const outName = `out-test-${crypto.randomUUID().slice(0, 8)}`;
   const outDir = join(HELLO, outName);
@@ -90,8 +88,6 @@ Deno.test({
 
 Deno.test({
   name: "staticExport: SPA-mode example emits a single shell + client bundle",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const outName = `out-test-${crypto.randomUUID().slice(0, 8)}`;
   const outDir = join(SPA, outName);
@@ -130,8 +126,6 @@ async function jsFiles(dir: string): Promise<string[]> {
 
 Deno.test({
   name: "staticExport: instrumentation-client is bundled into the exported client entries",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_export_instr_" });
   const abs = (rel: string) => new URL(`../${rel}`, import.meta.url).href;

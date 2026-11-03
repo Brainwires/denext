@@ -9,6 +9,8 @@ import {
   ERR_CLASS_DISABLED,
   ERR_FORM_ACTIONS_OFF,
   ERR_HOOK_BOUNDARIES_OFF,
+  ERR_HREF_PARAMS_OFF,
+  ERR_IMAGE_BLUR_OFF,
   ERR_MORE_HOOKS,
   ERR_UPDATE_DEPTH,
   type ErrorText,
@@ -42,6 +44,15 @@ const TEXTS: Record<number, ErrorText> = {
     `denext: <${name}> calls useErrorBoundary, but this build left the reconciler's hook-boundary ` +
     "support out: no source file of the app names `useErrorBoundary` or imports preact-iso. " +
     "Name it once in the app's own code (a library is not scanned).",
+  [ERR_HREF_PARAMS_OFF]: (name) =>
+    `denext: a route-pattern href (${name}) was rendered, but this build left the pattern ` +
+    "filling out: no source file of the app passes `params` with a `[segment]` pathname, so it " +
+    "would navigate to the literal pattern. Write one once in the app's own code (a library " +
+    "is not scanned), or pass a filled pathname.",
+  [ERR_IMAGE_BLUR_OFF]: () =>
+    'denext: the page has a blur placeholder (placeholder="blur"), but this build left its ' +
+    'clearing out: no source file of the app names `placeholder="blur"`, so the placeholder ' +
+    "would stay painted. Name it once in the app's own code (a library is not scanned).",
 };
 
 /** Install (or, with `false`, remove) the full texts of the client reconciler's errors. */

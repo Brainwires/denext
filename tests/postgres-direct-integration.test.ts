@@ -74,8 +74,6 @@ Deno.test({
       reason ? ` (skipped: ${reason})` : ""
     }`,
   ignore: reason !== undefined,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn() {
     const table = `dnx_direct_${crypto.randomUUID().replaceAll("-", "").slice(0, 10)}`;
     const admin = new SQL!(DIRECT!);

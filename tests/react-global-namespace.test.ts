@@ -68,7 +68,6 @@ async function project(): Promise<string> {
 
 Deno.test({
   name: "react-global.d.ts gives libraries typed through the global React namespace their props",
-  sanitizeResources: false,
   async fn() {
     const without = await project();
     const withGlobal = await project();

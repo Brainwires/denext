@@ -1,6 +1,6 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { h } from "../src/jsx/jsx-runtime.ts";
-import { createApp } from "../src/server/app.ts";
+import { createApp } from "./helpers/released-app.ts";
 import { type I18nConfig, resolveMessages } from "../src/server/i18n.ts";
 import { interpolate, makeTranslate } from "../src/runtime/i18n-messages.ts";
 import { useTranslations } from "../src/client/navigation.ts";
@@ -123,7 +123,7 @@ function TransProbe(): VNode {
   return h("i", null, t("hi", { n: "A" }));
 }
 
-Deno.test("useTranslations reads the embedded catalog on the client", () => {
+Deno.test("useTranslations reads the embedded catalog on the client", async () => {
   const g = globalThis as { document?: unknown };
   const prev = g.document;
   // Minimal global document exposing the hydration island readData() looks for.
@@ -140,6 +140,8 @@ Deno.test("useTranslations reads the embedded catalog on the client", () => {
     root.render(h(TransProbe, null));
     assertEquals(container.innerHTML, "<i>Salut A</i>");
     root.unmount();
+    // The unmount's passive cleanups run on their macrotask: let it, inside the test.
+    await new Promise((r) => setTimeout(r, 0));
   } finally {
     if (prev === undefined) delete (g as Record<string, unknown>).document;
     else g.document = prev;

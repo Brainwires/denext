@@ -6,6 +6,8 @@
 // (`maybeReexecToolchain` in src/cli/self-exec.ts). denext 5.0 never looks for another Deno (a
 // `~/.deno/bin/deno`, a `deno` on PATH): a compiled binary with no `DENO_BIN` refuses with the fix.
 
+import { isAbsoluteOn } from "./deno-cache-dir.ts";
+
 /** What {@linkcode resolveDenoExecutable} reads from the process (injectable for tests). */
 export interface DenoExecutableSeams {
   /** An environment variable. */
@@ -14,6 +16,10 @@ export interface DenoExecutableSeams {
   readonly execPath: () => string;
   /** Whether this process is a compiled binary. */
   readonly standalone: boolean;
+  /** The working directory a relative `DENO_BIN` is resolved against (default: none). */
+  readonly cwd?: () => string;
+  /** The OS the paths are for (default: this host's). */
+  readonly os?: typeof Deno.build.os;
 }
 
 /** The refusal a compiled binary gives when no Deno was handed to it. */
@@ -34,7 +40,14 @@ export const NO_DENO_MESSAGE =
  */
 export function resolveDenoExecutable(seams: DenoExecutableSeams): string {
   const fromEnv = seams.env("DENO_BIN");
-  if (fromEnv) return fromEnv;
+  if (fromEnv) {
+    // Resolved now, against this process's directory: a child spawned in the project would
+    // otherwise resolve a relative path against the project's.
+    const os = seams.os ?? Deno.build.os;
+    if (!seams.cwd || !/[\\/]/.test(fromEnv) || isAbsoluteOn(fromEnv, os)) return fromEnv;
+    const sep = os === "windows" ? "\\" : "/";
+    return [seams.cwd().replace(/[\\/]+$/, ""), fromEnv.replace(/^\.[\\/]+/, "")].join(sep);
+  }
   if (seams.standalone) throw new Error(NO_DENO_MESSAGE);
   return seams.execPath();
 }
@@ -51,6 +64,8 @@ function processDenoSeams(): DenoExecutableSeams {
     },
     execPath: () => Deno.execPath(),
     standalone: (Deno.build as { standalone?: boolean }).standalone === true,
+    cwd: () => Deno.cwd(),
+    os: Deno.build.os,
   };
 }
 

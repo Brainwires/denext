@@ -1,9 +1,14 @@
 // `denext ui`'s subprocess runner: a child that never prints a newline (a `\r` progress bar,
-// one huge blob) is streamed in bounded pieces instead of being held whole until it exits.
+// one huge blob) is streamed in bounded pieces instead of being held whole until it exits, and a
+// child whose pipes outlive it (a process it left running, or on Windows one spawned elsewhere at
+// the same moment, holds them) is read until it exits, not until they close.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
-import { join } from "@std/path";
-import { cliConfigArgs, cliInvocation, runDeno } from "../src/ui/proc.ts";
+import { assert, assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
+import { join, toFileUrl } from "@std/path";
+import { cliConfigArgs, cliInvocation, runDeno, taskkillPath } from "../src/ui/proc.ts";
+import { parseJsonDocument } from "../src/ui/child-json.ts";
+import { exited, spawnsOf } from "./helpers/spawns.ts";
+import { removeTempDir } from "./helpers/temp.ts";
 
 Deno.test("runDeno: output with no newline arrives in bounded pieces", async () => {
   const lines: string[] = [];
@@ -21,6 +26,75 @@ Deno.test("runDeno: output with no newline arrives in bounded pieces", async () 
   } finally {
     await Deno.remove(cwd, { recursive: true });
   }
+});
+
+/**
+ * A `deno eval` program that leaves a 60 s grandchild holding its stdout and stderr (written to
+ * `pidFile`, for cleanup), prints `out` and `err`, and exits 3. The grandchild is Deno itself, so
+ * this holds the pipes the same way on every OS.
+ */
+function heldPipesProgram(pidFile: string): string {
+  return `const g = new Deno.Command(Deno.execPath(), {
+  args: ["eval", "setTimeout(() => {}, 60000)"], stdin: "null", stdout: "inherit", stderr: "inherit",
+}).spawn();
+Deno.writeTextFileSync(${JSON.stringify(pidFile)}, String(g.pid));
+g.unref();
+console.log("out");
+console.error("err");
+Deno.exit(3);`;
+}
+
+/** Kill the grandchild whose pid {@linkcode heldPipesProgram} wrote. */
+async function killHolder(pidFile: string): Promise<void> {
+  try {
+    Deno.kill(Number((await Deno.readTextFile(pidFile)).trim()), "SIGKILL");
+  } catch { /* gone, or never started */ }
+}
+
+for (const streaming of [true, false]) {
+  Deno.test(
+    `runDeno: returns once the child exits while a process it left holds its pipes (${
+      streaming ? "streamed" : "collected"
+    })`,
+    async () => {
+      const cwd = await Deno.makeTempDir({ prefix: "denext-proc-held-" });
+      const pidFile = join(cwd, "pid");
+      const lines: string[] = [];
+      try {
+        const t0 = Date.now();
+        const result = await runDeno(["eval", heldPipesProgram(pidFile)], {
+          cwd,
+          onLine: streaming ? (line) => void lines.push(line.trimEnd()) : undefined,
+        });
+        const took = Date.now() - t0;
+        assert(took < 30_000, `took ${took} ms: read until the 60 s holder let go`);
+        assertEquals(result.code, 3);
+        assertEquals(result.stdout.trim(), "out");
+        assertEquals(result.stderr.trim(), "err");
+        if (streaming) assertEquals(lines.toSorted(), ["err", "out"]);
+      } finally {
+        await killHolder(pidFile);
+        await Deno.remove(cwd, { recursive: true });
+      }
+    },
+  );
+}
+
+Deno.test("runDeno: an onLine that throws rejects the run, as it did before", async () => {
+  // This process's own directory: the child may still be running when the run rejects, and on
+  // Windows a temp dir that is a running process's cwd cannot be removed.
+  let err: Error | null = null;
+  const children = await spawnsOf(async () => {
+    err = await runDeno(["eval", "console.log('a'); console.log('b')"], {
+      cwd: Deno.cwd(),
+      onLine: () => {
+        throw new Error("sink closed");
+      },
+    }).then(() => null, (e: Error) => e);
+  });
+  assertEquals((err as Error | null)?.message, "sink closed");
+  // The rejection is immediate; the child (and the other stream's read) end a moment later.
+  await exited(children);
 });
 
 // ── --offline and the grandchild gap ─────────────────────────────────────────
@@ -106,7 +180,271 @@ Deno.test("cliConfigArgs: a remote CLI child is told the project's config; a che
     assertEquals(cliConfigArgs(url, root), [], "no config, nothing to pass");
     assertEquals(cliConfigArgs(url, undefined), []);
     assertEquals(cliConfigArgs("file:///checkout/cli.ts", app), [], "a checkout finds its own");
+    // A published copy reached by path has no config of its own: the child would discover the
+    // one above the copy (a workspace root rather than the member), so it is told the project's.
+    const config = ["--config", join(app, "deno.json")];
+    const vendored = toFileUrl(join(root, "vendor/jsr.io/@denext/denext/4.0.0/cli.ts")).href;
+    const npm = toFileUrl(join(root, "node_modules/@jsr/denext__denext/cli.js")).href;
+    assertEquals(cliConfigArgs(vendored, app), config, "a vendored copy is told");
+    assertEquals(cliConfigArgs(npm, app), config, "an npm-compat copy is told");
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+// ── a `--json` child that prints its document and never exits ────────────────
+//
+// On Windows a child has been seen to write its complete JSON document, then spin at 100% CPU in
+// its teardown and never exit (`denext job --history --json` under the Cron panel ran into its
+// 300 s deadline that way). With `jsonDocument`, a complete document followed by silence is used;
+// a partial one never is.
+
+/** A pretty-printed document, as the `--json` verbs write it. */
+const DOC = { available: true, windowDays: 14, recent: [{ name: "cleanup", ok: true }] };
+
+/** A `deno eval` program: Deno-style chatter on stderr, `print` on stdout, then `then`. */
+function docProgram(print: string, then: string): string {
+  return `console.error("Check file:///app/denext.config.ts");
+Deno.stdout.writeSync(new TextEncoder().encode(${print}));
+${then}`;
+}
+
+/** The pretty-printed {@linkcode DOC}, as a JS expression. */
+const PRETTY = `JSON.stringify(${JSON.stringify(DOC)}, null, 2) + "\\n"`;
+
+/** Busy-loops forever: the spin seen after the output. */
+const SPIN = "for (;;) {}";
+
+/** Whether `pid` is gone (a kill of it fails). */
+function gone(pid: number): boolean {
+  try {
+    Deno.kill(pid, "SIGKILL");
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+Deno.test("runDeno jsonDocument: a child that prints its whole document and then spins is killed and its output used", async () => {
+  const notices: string[] = [];
+  const lines: string[] = [];
+  const started = performance.now();
+  const result = await runDeno(["eval", docProgram(PRETTY, SPIN)], {
+    cwd: Deno.cwd(),
+    onLine: (line) => void lines.push(line),
+    signal: AbortSignal.timeout(60_000),
+    jsonDocument: { graceMs: 500, onSettled: (line) => notices.push(line) },
+  });
+  const took = performance.now() - started;
+  assertEquals(result.code, 0, `settled, not killed at the deadline (took ${took} ms)`);
+  assert(took < 45_000, `took ${took} ms`);
+  assertEquals(parseJsonDocument(lines.join("\n")), DOC);
+  assertEquals(notices.length, 1, notices.join("\n"));
+  assertMatch(
+    notices[0],
+    /^warning: deno child \(pid \d+\): output complete; the process did not exit 0\.5 s after/,
+  );
+  const pid = Number(/\(pid (\d+)\)/.exec(notices[0])![1]);
+  assert(gone(pid), `pid ${pid} still running`);
+});
+
+Deno.test("runDeno jsonDocument: a spinning grandchild that wrote the document is killed with the child", async () => {
+  // The CLI re-execs itself, so the process that prints the document (and spins) may be a
+  // descendant of the one runDeno spawned, holding the same pipes.
+  const cwd = await Deno.makeTempDir({ prefix: "denext-proc-json-" });
+  const pidFile = join(cwd, "pid");
+  const notices: string[] = [];
+  try {
+    const grandchild = docProgram(PRETTY, SPIN);
+    const program = `const g = new Deno.Command(Deno.execPath(), {
+  args: ["eval", ${
+      JSON.stringify(grandchild)
+    }], stdin: "null", stdout: "inherit", stderr: "inherit",
+}).spawn();
+Deno.writeTextFileSync(${JSON.stringify(pidFile)}, String(g.pid));
+await g.status;`;
+    const result = await runDeno(["eval", program], {
+      cwd,
+      signal: AbortSignal.timeout(60_000),
+      jsonDocument: { graceMs: 500, onSettled: (line) => notices.push(line) },
+    });
+    assertEquals(result.code, 0, result.stderr);
+    assertEquals(result.json(), DOC);
+    assertEquals(notices.length, 1, notices.join("\n"));
+    const pid = Number((await Deno.readTextFile(pidFile)).trim());
+    // taskkill / the pgrep walk ended it; give the OS a moment to reap it.
+    for (let i = 0; i < 50 && !gone(pid); i++) await new Promise((r) => setTimeout(r, 100));
+    assert(gone(pid), `grandchild ${pid} still running`);
+  } finally {
+    await removeTempDir(cwd);
+  }
+});
+
+Deno.test("runDeno jsonDocument: a child that stops mid-document and spins is never settled", async () => {
+  const notices: string[] = [];
+  const started = performance.now();
+  const result = await runDeno(
+    ["eval", docProgram(`'{\\n  "available": true,\\n  "recent": [\\n'`, SPIN)],
+    {
+      cwd: Deno.cwd(),
+      signal: AbortSignal.timeout(2_000),
+      jsonDocument: { graceMs: 300, onSettled: (line) => notices.push(line) },
+    },
+  );
+  assert(performance.now() - started >= 2_000, "it ran to its deadline");
+  assert(result.code !== 0, "the deadline killed it");
+  assertEquals(notices, []);
+});
+
+Deno.test("runDeno jsonDocument: a bare value is not a document", async () => {
+  const notices: string[] = [];
+  const result = await runDeno(["eval", docProgram(`"12"`, SPIN)], {
+    cwd: Deno.cwd(),
+    signal: AbortSignal.timeout(1_500),
+    jsonDocument: { graceMs: 300, onSettled: (line) => notices.push(line) },
+  });
+  assert(result.code !== 0);
+  assertEquals(notices, []);
+});
+
+for (const code of [0, 3]) {
+  Deno.test(`runDeno jsonDocument: a child that exits ${code} after its document keeps its status`, async () => {
+    const notices: string[] = [];
+    const result = await runDeno(["eval", docProgram(PRETTY, `Deno.exit(${code});`)], {
+      cwd: Deno.cwd(),
+      jsonDocument: { graceMs: 60_000, onSettled: (line) => notices.push(line) },
+    });
+    assertEquals(result.code, code);
+    assertEquals(result.json(), DOC);
+    assertEquals(notices, []);
+  });
+}
+
+Deno.test("runDeno jsonDocument: a document followed by more output is not the answer", async () => {
+  // A JSON value printed early (a project's own log), then a progress line, then silent work:
+  // the silence is work, not a teardown hang.
+  const notices: string[] = [];
+  const started = performance.now();
+  const result = await runDeno(
+    ["eval", docProgram(`${PRETTY} + "migrating…\\n"`, SPIN)],
+    {
+      cwd: Deno.cwd(),
+      signal: AbortSignal.timeout(1_500),
+      jsonDocument: { graceMs: 300, onSettled: (line) => notices.push(line) },
+    },
+  );
+  assert(performance.now() - started >= 1_500, "it ran to its deadline");
+  assert(result.code !== 0, "the deadline killed it");
+  assertEquals(notices, []);
+});
+
+Deno.test("runDeno jsonDocument: only the verbs that print last and exit opt in", async () => {
+  // `denext db-admin` (statements and migrations write) and `denext doctor` (route probes) run
+  // project work after project code may have printed JSON: they wait for their exit.
+  const root = new URL("../src/ui/features/", import.meta.url);
+  const optIn: string[] = [];
+  for await (const entry of Deno.readDir(root)) {
+    if (!entry.isFile || !entry.name.endsWith(".ts")) continue;
+    const source = await Deno.readTextFile(new URL(entry.name, root));
+    if (/jsonDocument:\s*\{/.test(source)) optIn.push(entry.name);
+  }
+  assertEquals(optIn.sort(), ["commands.ts", "config-cron.ts"]);
+});
+
+// ── killing a settled child's tree ────────────────────────────────────────────
+
+Deno.test("taskkillPath: Windows' own taskkill.exe, never one found through PATH", () => {
+  const env = (root?: string) => (name: string) => name === "SystemRoot" ? root : undefined;
+  assertEquals(taskkillPath(env("C:\\Windows")), "C:\\Windows\\System32\\taskkill.exe");
+  assertEquals(taskkillPath(env("D:\\WINNT\\")), "D:\\WINNT\\System32\\taskkill.exe");
+  // Unset, or not an absolute drive path: the default install.
+  for (const root of [undefined, "", "Windows", ".\\evil", "\\\\server\\share"]) {
+    assertEquals(taskkillPath(env(root)), "C:\\Windows\\System32\\taskkill.exe", root);
+  }
+  assertMatch(taskkillPath(), /^[A-Za-z]:\\.+\\System32\\taskkill\.exe$/);
+});
+
+/** Whether `pid` is still running (signal 0 is not sendable from Deno, so ask `ps`). */
+async function running(pid: number): Promise<boolean> {
+  const out = await new Deno.Command("/bin/ps", {
+    args: ["-o", "stat=", "-p", String(pid)],
+    stdout: "piped",
+    stderr: "null",
+  }).output();
+  const stat = new TextDecoder().decode(out.stdout).trim();
+  return stat !== "" && !stat.startsWith("Z");
+}
+
+/** Wait up to 5 s for `pid` to be gone. */
+async function goneSoon(pid: number): Promise<boolean> {
+  for (let i = 0; i < 50; i++) {
+    if (!await running(pid)) return true;
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  return false;
+}
+
+/**
+ * A `deno eval` program that leaves an ORPHANED `sleep` behind (its `sh` parent exits at once, so
+ * `pgrep -P` of the child no longer finds it), records its pid, then runs `then`.
+ */
+function orphanProgram(pidFile: string, then: string): string {
+  return `const sh = new Deno.Command("/bin/sh", {
+  args: ["-c", "sleep 60 >/dev/null 2>&1 </dev/null & echo $!"], stdout: "piped",
+}).outputSync();
+Deno.writeTextFileSync(${JSON.stringify(pidFile)}, new TextDecoder().decode(sh.stdout).trim());
+${then}`;
+}
+
+Deno.test({
+  name: "runDeno jsonDocument: a settled child's orphaned descendant is killed with its group",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    const cwd = await Deno.makeTempDir({ prefix: "denext-proc-group-" });
+    const pidFile = join(cwd, "pid");
+    try {
+      const result = await runDeno(
+        ["eval", orphanProgram(pidFile, docProgram(PRETTY, SPIN))],
+        {
+          cwd,
+          signal: AbortSignal.timeout(60_000),
+          jsonDocument: { graceMs: 500, onSettled: () => {} },
+        },
+      );
+      assertEquals(result.json(), DOC);
+      const pid = Number((await Deno.readTextFile(pidFile)).trim());
+      assert(await goneSoon(pid), `orphan ${pid} still running`);
+    } finally {
+      await removeTempDir(cwd);
+    }
+  },
+});
+
+Deno.test({
+  name: "runDeno jsonDocument: an abort ends the child's whole group",
+  ignore: Deno.build.os === "windows",
+  fn: async () => {
+    // Out of the terminal's process group, a Ctrl-C no longer reaches the child's descendants.
+    const cwd = await Deno.makeTempDir({ prefix: "denext-proc-group-" });
+    const pidFile = join(cwd, "pid");
+    try {
+      const controller = new AbortController();
+      const run = runDeno(["eval", orphanProgram(pidFile, "setInterval(() => {}, 1000);")], {
+        cwd,
+        signal: controller.signal,
+        jsonDocument: { graceMs: 60_000, onSettled: () => {} },
+      });
+      for (let i = 0; i < 100; i++) {
+        if ((await Deno.stat(pidFile).catch(() => null))?.size) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const pid = Number((await Deno.readTextFile(pidFile)).trim());
+      assert(await running(pid), "the orphan started");
+      controller.abort();
+      await run.catch(() => {});
+      assert(await goneSoon(pid), `orphan ${pid} still running`);
+    } finally {
+      await removeTempDir(cwd);
+    }
+  },
 });

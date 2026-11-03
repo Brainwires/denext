@@ -12,7 +12,9 @@
 //                            module and the plugins it imports are never compiled into the app;
 //                            written only for an entry that imports it
 //   laufey-launch.json       the backend's launch settings (`appId`, `customSchemes`,
-//                            `singleInstance`, `inspectable`, `bridgeOrigins`, on Linux
+//                            `singleInstance`, `inspectable`, `bridgeOrigins`,
+//                            `passkeyRpIds`, `strictPolicy`, on macOS
+//                            `activationPolicy`, on Linux
 //                            `requireSandbox`, on Windows `proxy`), read at process
 //                            start from the packaged bundle:
 //                            `<App>.app/Contents/Resources/` on macOS, next to the executable on
@@ -20,7 +22,8 @@
 //
 // The scaffolded `scripts/package-*.ts` call {@linkcode syncDesktopAppConfig} before `deno desktop`
 // and {@linkcode writeLaufeyLaunchConfig} on its output (before signing on macOS; there it also
-// lists `desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes`). `denext desktop
+// lists `desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes` and sets
+// `LSUIElement` for an `"accessory"` app). `denext desktop
 // run` / `dev` sync `app.json` and pass the launch settings as `LAUFEY_*` env instead.
 
 import { dirname, fromFileUrl, join } from "@std/path";
@@ -36,7 +39,16 @@ import {
 import type { DesktopOs } from "./desktop-capabilities.ts";
 import { parsePlist, type PlistNode, renderPlist } from "./plist-value.ts";
 import { parseOtaPublicKey } from "./ota-signing.ts";
+import { isOtaManifest, OTA_MANIFEST_PATH } from "../mobile/ota-manifest.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
+import { desktopInitialWindow, resolveDesktopWindowSettings } from "../desktop/window-config.ts";
+import {
+  activationPolicyRuntime,
+  desktopPasskeyRpIds,
+  initialOverlayRuntime,
+  PASSKEY_RP_IDS_FIX,
+  strictLaunchRuntime,
+} from "./desktop-launch-policy.ts";
 
 /** Where the runtime looks for the embedded origin + identifier, relative to the project root. */
 export const DESKTOP_APP_CONFIG_FILE = ".deno-desktop/app.json";
@@ -71,6 +83,18 @@ export interface LaufeyLaunchConfig {
    */
   readonly bridgeOrigins?: string[];
   /**
+   * The relying parties the app's native passkey ceremonies may name (file only, no env var):
+   * `desktop.capabilities.passkeys.rpIds`, written whenever the passkeys capability is on. laufey
+   * refuses any other RP ID with `invalid_rp` before the OS sees it; an empty list refuses all.
+   */
+  readonly passkeyRpIds?: string[];
+  /**
+   * The strict launch policy (file only, runtime `3.0.0-denext.1`+): a policy key the file leaves
+   * out refuses instead of allowing (no `bridgeOrigins` / `customSchemes`: the bridge serves no
+   * document; no `passkeyRpIds`: every passkey ceremony is refused).
+   */
+  readonly strictPolicy?: boolean;
+  /**
    * Linux CEF: refuse to start (exit 78) where web content would run without Chromium's sandbox
    * (`desktop.linux.requireSandbox`). Written only for Linux, and only when `true`.
    */
@@ -80,6 +104,38 @@ export interface LaufeyLaunchConfig {
    * (`desktop.windows.proxy`, runtime 2.9.7-denext.20). Written only for Windows, when set.
    */
   readonly proxy?: "system" | "direct";
+  /**
+   * macOS: the activation policy the app starts in (runtime `3.0.0-denext.6`+):
+   * `"accessory"` shows no Dock icon from the first frame (`desktop.app.activationPolicy`, or
+   * `desktop.app.dock: false`). Written only for macOS, and only when set.
+   */
+  readonly activationPolicy?: DesktopActivationPolicy;
+}
+
+/** The macOS activation policy an app starts in: a Dock icon (`"regular"`) or none (`"accessory"`). */
+export type DesktopActivationPolicy = "regular" | "accessory";
+
+/**
+ * The activation policy the app starts in (`desktop.app.activationPolicy`), else `"accessory"`
+ * when `desktop.app.dock` is `false`, else `undefined` (the runtime's default, a Dock icon).
+ *
+ * @param config The project config.
+ * @returns The policy, or `undefined`.
+ */
+export function desktopActivationPolicy(config: unknown): DesktopActivationPolicy | undefined {
+  const app = appBlock(config);
+  const policy = app?.activationPolicy;
+  if (policy === "regular" || policy === "accessory") return policy;
+  return app?.dock === false ? "accessory" : undefined;
+}
+
+/** The activation policy for a macOS launch of a runtime that reads it, else `undefined`. */
+function macActivationPolicy(
+  config: unknown,
+  os: string,
+  policyKnown: boolean,
+): DesktopActivationPolicy | undefined {
+  return os === "darwin" && policyKnown ? desktopActivationPolicy(config) : undefined;
 }
 
 /** Where a window is launched from, for {@linkcode desktopInspectable}. */
@@ -155,6 +211,30 @@ export function withUserActivityTypes(text: string, types: readonly string[]): s
   };
   const entries = root.entries.filter(([k]) => k !== "NSUserActivityTypes");
   return renderPlist({ kind: "dict", entries: [...entries, ["NSUserActivityTypes", value]] });
+}
+
+/**
+ * `Info.plist` text with `LSUIElement` matching the activation policy the app starts in: `true` for
+ * `"accessory"`, absent otherwise. The policy in `laufey-launch.json` alone comes too late on macOS:
+ * LaunchServices shows a Dock tile for a launched bundle before the process sets its policy (live,
+ * macOS 26: ~600 ms at every launch), and only `LSUIElement` keeps a menu-bar app out of the Dock
+ * from the first frame. The runtime reads it as `"accessory"`, and `setActivationPolicy("regular")`
+ * still brings the Dock icon (and menu bar) back for a full window.
+ *
+ * @param text The bundle's `Contents/Info.plist` (XML).
+ * @param policy The policy the app starts in (`undefined`: the runtime's default, a Dock icon).
+ * @returns The new text.
+ * @throws When the file is not an XML plist dict.
+ */
+export function withActivationPolicy(
+  text: string,
+  policy: DesktopActivationPolicy | undefined,
+): string {
+  const root = parsePlist(text);
+  if (root.kind !== "dict") throw new Error("Info.plist is not a dict");
+  const entries = root.entries.filter(([k]) => k !== "LSUIElement");
+  if (policy === "accessory") entries.push(["LSUIElement", { kind: "bool", value: true }]);
+  return renderPlist({ kind: "dict", entries });
 }
 
 /** The `desktop.app` block of an untyped config value. */
@@ -283,32 +363,39 @@ export function laufeyLaunchEnv(launch: LaufeyLaunchConfig | null): Record<strin
   }
   if (launch?.inspectable !== undefined) env.LAUFEY_INSPECTABLE = launch.inspectable ? "1" : "0";
   if (launch?.proxy) env.LAUFEY_PROXY = launch.proxy;
+  if (launch?.activationPolicy) env.LAUFEY_ACTIVATION_POLICY = launch.activationPolicy;
   return env;
 }
 
 /**
  * The `LAUFEY_*` env of an unpackaged window (`denext desktop run` / `dev`): the app id, the
- * origin's custom scheme, whether DevTools open ({@linkcode desktopInspectable}) and, on Windows,
- * the proxy setting. Single instance is left out on purpose: a dev window must never hand itself
+ * origin's custom scheme, whether DevTools open ({@linkcode desktopInspectable}), on Windows the
+ * proxy setting and on macOS the activation policy ({@linkcode desktopActivationPolicy}, when the
+ * runtime reads it). Single instance is left out on purpose: a dev window must never hand itself
  * to an installed copy.
  *
  * @param config The project config.
  * @param mode `"dev"` or `"run"`.
  * @param os The OS the window runs on (default this one).
+ * @param policyKnown Whether the runtime reads `LAUFEY_ACTIVATION_POLICY` (default
+ *   `activationPolicyRuntime()`).
  * @returns The env vars.
  */
 export function unpackagedLaunchEnv(
   config: unknown,
   mode: Exclude<DesktopLaunchMode, "package">,
   os: string = Deno.build.os,
+  policyKnown: boolean = activationPolicyRuntime(),
 ): Record<string, string> {
   const launch = desktopLaunchConfig(config);
   const proxy = os === "windows" ? desktopWindowsProxy(config) : undefined;
+  const activationPolicy = macActivationPolicy(config, os, policyKnown);
   return laufeyLaunchEnv({
     ...(launch?.appId ? { appId: launch.appId } : {}),
     ...(launch?.customSchemes ? { customSchemes: launch.customSchemes } : {}),
     inspectable: desktopInspectable(config, mode),
     ...(proxy ? { proxy } : {}),
+    ...(activationPolicy ? { activationPolicy } : {}),
   });
 }
 
@@ -327,41 +414,106 @@ export function laufeyLaunchPath(os: DesktopOs, bundle: string): string {
 }
 
 /**
- * Write the packaged app's `laufey-launch.json` from `desktop.app`, `desktop.inspectable`, (on
- * Linux) `desktop.linux.requireSandbox` and (on Windows) `desktop.windows.proxy` in the project's
- * `denext.config.ts` (the bridge pinned to the app origin, {@linkcode desktopBridgeOrigins})
- * (resolved beside `entryUrl`'s directory, like `desktopPackageFlags`). On macOS it also lists
- * `desktop.macos.userActivityTypes` as the bundle's `NSUserActivityTypes`. On macOS call it BEFORE
- * code-signing: both files live inside the sealed bundle.
+ * The packaged app's `laufey-launch.json` settings from `desktop.app`, `desktop.inspectable`,
+ * `desktop.capabilities.passkeys` (`passkeyRpIds`), (on Linux) `desktop.linux.requireSandbox` and
+ * (on Windows) `desktop.windows.proxy`: the bridge always pinned ({@linkcode desktopBridgeOrigins}),
+ * and on a strict runtime `"strictPolicy": true`, so whatever the file leaves out fails closed.
+ *
+ * @param config The project config.
+ * @param os The target OS.
+ * @param strict Whether the runtime reads `"strictPolicy"` (`strictLaunchRuntime`).
+ * @param policyKnown Whether the runtime reads `"activationPolicy"` (`activationPolicyRuntime`).
+ * @returns The settings.
+ */
+function packagedLaunchConfig(
+  config: unknown,
+  os: DesktopOs,
+  strict: boolean,
+  policyKnown: boolean,
+): LaufeyLaunchConfig {
+  const proxy = os === "windows" ? desktopWindowsProxy(config) : undefined;
+  const activationPolicy = macActivationPolicy(config, os, policyKnown);
+  const passkeyRpIds = desktopPasskeyRpIds(config);
+  // DevTools are off in a packaged app unless `desktop.inspectable: true`, so the file is always
+  // written: without it the runtime would leave them on.
+  return {
+    ...desktopLaunchConfig(config),
+    inspectable: desktopInspectable(config, "package"),
+    bridgeOrigins: desktopBridgeOrigins(config),
+    ...(passkeyRpIds ? { passkeyRpIds } : {}),
+    ...(os === "linux" && desktopRequireSandbox(config) ? { requireSandbox: true } : {}),
+    ...(proxy ? { proxy } : {}),
+    ...(activationPolicy ? { activationPolicy } : {}),
+    ...(strict ? { strictPolicy: true } : {}),
+  };
+}
+
+/** Options for {@linkcode writeLaufeyLaunchConfig}. */
+export interface LaufeyLaunchWriteOptions {
+  /**
+   * Whether the runtime reads `"strictPolicy"` (default `strictLaunchRuntime()`: denext's pinned
+   * runtime from `3.0.0-denext.1`, not `DENEXT_DESKTOP_RUNTIME=stock` or a local runtime build).
+   */
+  readonly strict?: boolean;
+  /**
+   * Whether the runtime reads `"activationPolicy"` (default `activationPolicyRuntime()`: denext's
+   * pinned runtime from `3.0.0-denext.6`).
+   */
+  readonly activationPolicy?: boolean;
+}
+
+/**
+ * Write the packaged app's `laufey-launch.json` ({@linkcode packagedLaunchConfig}) from the
+ * project's `denext.config.ts` (resolved beside `entryUrl`'s directory, like
+ * `desktopPackageFlags`). On macOS it also lists `desktop.macos.userActivityTypes` as the bundle's
+ * `NSUserActivityTypes`, and marks an `"accessory"` app `LSUIElement` (no Dock tile at launch;
+ * {@linkcode withActivationPolicy}). On macOS call it BEFORE code-signing: both files live inside the sealed
+ * bundle. A passkeys capability with no RP ID is warned about: every ceremony is then refused.
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param os The target OS.
  * @param bundle The `.app` (macOS) or bundle directory (Windows / Linux) `deno desktop` wrote.
+ * @param options Whether the runtime is strict (default: from the pin and the env).
  * @returns The path written (always written: it carries `inspectable`).
  */
 export async function writeLaufeyLaunchConfig(
   entryUrl: string,
   os: DesktopOs,
   bundle: string,
+  options: LaufeyLaunchWriteOptions = {},
 ): Promise<string | null> {
   const config = await loadConfigBeside(entryUrl);
-  const proxy = os === "windows" ? desktopWindowsProxy(config) : undefined;
-  // DevTools are off in a packaged app unless `desktop.inspectable: true`, so the file is always
-  // written: without it the runtime would leave them on.
-  const launch: LaufeyLaunchConfig = {
-    ...desktopLaunchConfig(config),
-    inspectable: desktopInspectable(config, "package"),
-    bridgeOrigins: desktopBridgeOrigins(config),
-    ...(os === "linux" && desktopRequireSandbox(config) ? { requireSandbox: true } : {}),
-    ...(proxy ? { proxy } : {}),
-  };
+  const launch = packagedLaunchConfig(
+    config,
+    os,
+    options.strict ?? strictLaunchRuntime(),
+    options.activationPolicy ?? activationPolicyRuntime(),
+  );
+  if (launch.passkeyRpIds?.length === 0) {
+    console.warn(
+      "  denext: desktop.capabilities.passkeys lists no relying party, so the packaged app " +
+        `refuses every passkey ceremony (invalid_rp): ${PASSKEY_RP_IDS_FIX}.`,
+    );
+  }
   const path = laufeyLaunchPath(os, bundle);
   await Deno.mkdir(dirname(path), { recursive: true });
   await Deno.writeTextFile(path, JSON.stringify(launch, null, 2) + "\n");
-  const types = os === "darwin" ? desktopUserActivityTypes(config) : [];
-  if (types.length > 0) {
+  if (os === "darwin") {
+    const types = desktopUserActivityTypes(config);
     const plist = join(bundle, "Contents", "Info.plist");
-    await Deno.writeTextFile(plist, withUserActivityTypes(await Deno.readTextFile(plist), types));
+    if (types.length > 0) {
+      await Deno.writeTextFile(plist, withUserActivityTypes(await Deno.readTextFile(plist), types));
+    }
+    // Only for a runtime that reads the policy: on one without activation policies an LSUIElement
+    // app could never show its Dock icon again (`setActivationPolicy` is missing there).
+    if (launch.activationPolicy === "accessory") {
+      // A bundle with no Info.plist (never one `deno desktop` writes) has nothing to mark.
+      const text = await Deno.readTextFile(plist).catch((e) => {
+        if (e instanceof Deno.errors.NotFound) return null;
+        throw e;
+      });
+      if (text !== null) await Deno.writeTextFile(plist, withActivationPolicy(text, "accessory"));
+    }
   }
   return path;
 }
@@ -456,33 +608,51 @@ async function writeJsonEdit(
  * the origin + identifier (when an origin is set), the deep-link schemes (the runtime's list for
  * launch arguments, `openurl` and scheme registration), `singleInstance` (the intent; the lock
  * itself is `laufey-launch.json`'s) and `allowedNavigationOrigins` (the navigation guard's extra
- * origins, only when configured: a runtime before 2.9.7-denext.18 refuses the key). The
- * identifier rides along whenever it is valid, since the runtime needs it to register schemes on
- * Linux and next to `singleInstance`.
+ * origins, only when configured: a runtime before 2.9.7-denext.18 refuses the key) and
+ * `initialWindow` (the window the runtime starts with, only when `desktop.window` hides it at
+ * launch or makes it frameless, transparent, non-activating or, on a runtime that reads it, a
+ * layer-shell overlay). The identifier rides along whenever it is valid, since the runtime needs
+ * it to register schemes on Linux and next to `singleInstance`; `name` (`desktop.app.name`, the
+ * title of an untitled window) rides along on a runtime that reads it (`3.0.0-denext.7`+), which
+ * otherwise titles it with the bundle's file name (`MyApp-arm64`).
  */
 function appJsonBody(
   config: unknown,
   updatePublicKey?: string,
+  overlayKnown: boolean = initialOverlayRuntime(),
 ): Record<string, unknown> | null {
   const identity = desktopAppIdentity(config);
   const app = appBlock(config);
+  const settings = resolveDesktopWindowSettings(
+    (config as { desktop?: unknown } | undefined)?.desktop,
+  );
+  if (settings.overlay === true && !overlayKnown) {
+    console.warn(
+      "  desktop.window.overlay needs denext's Deno Desktop runtime 3.0.0-denext.7 or later: " +
+        "the window opens as an ordinary one.",
+    );
+  }
   const wanted = definedEntries({
     origin: identity?.origin,
     deepLinks: nonEmpty(normalizeDesktopDeepLinks(app?.deepLinks)),
     singleInstance: typeof app?.singleInstance === "boolean" ? app.singleInstance : undefined,
     update: updatePublicKey ? { publicKey: updatePublicKey } : undefined,
     allowedNavigationOrigins: nonEmpty(desktopNavigationOrigins(config)),
+    initialWindow: desktopInitialWindow(settings, overlayKnown),
   });
   if (Object.keys(wanted).length === 0) return null;
   const identifier = validAppIdentifier(identity?.identifier ?? app?.identifier);
+  const name = overlayKnown ? configIdentity(config).name : undefined;
   // `singleInstance` only with an identifier: the runtime keys the lock on it.
   return definedEntries({
+    name,
     origin: wanted.origin,
     identifier,
     deepLinks: wanted.deepLinks,
     singleInstance: identifier ? wanted.singleInstance : undefined,
     update: wanted.update,
     allowedNavigationOrigins: wanted.allowedNavigationOrigins,
+    initialWindow: wanted.initialWindow,
   });
 }
 
@@ -663,13 +833,16 @@ function configIdentity(config: unknown): Record<string, string> {
  *
  * @param root The project root.
  * @param config The project config.
+ * @param overlayKnown Whether the runtime reads app.json's `initialWindow.overlay` and `name`
+ *   (default `initialOverlayRuntime()`: denext's pinned runtime from `3.0.0-denext.7`).
  * @returns What changed (`deepLinks` only when schemes are configured).
  */
 export async function syncDesktopAppConfigAt(
   root: string,
   config: unknown,
+  overlayKnown: boolean = initialOverlayRuntime(),
 ): Promise<DesktopAppSyncReport> {
-  const body = appJsonBody(config, await desktopUpdatePublicKey(config));
+  const body = appJsonBody(config, await desktopUpdatePublicKey(config), overlayKnown);
   const appJson = await syncAppJson(root, body);
   const runtimeConfig = await syncRuntimeConfig(root, config);
   const include = await syncInclude(root, body !== null);
@@ -695,13 +868,56 @@ export async function syncDesktopAppConfigAt(
 }
 
 /**
+ * Why the export in `<root>/out` cannot ship with `desktop.update.ui`, or `null` when it can (or the
+ * UI updater is off). The bundled export's OTA manifest `sequence` is the downgrade floor before any
+ * overlay is accepted: without one, an older signed UI update (one a feed still serves, or an
+ * attacker replays) would be taken over the newer UI the app ships with.
+ *
+ * @param root The project root.
+ * @param config The project config.
+ * @returns The problem and its fix, or `null`.
+ */
+export async function desktopUiUpdateFloorProblem(
+  root: string,
+  config: unknown,
+): Promise<string | null> {
+  const ui = (config as { desktop?: { update?: { ui?: unknown } } } | null | undefined)?.desktop
+    ?.update?.ui;
+  if (ui === undefined) return null;
+  const path = join(root, "out", ...OTA_MANIFEST_PATH.split("/"));
+  let manifest: unknown;
+  try {
+    manifest = JSON.parse(await Deno.readTextFile(path));
+  } catch {
+    manifest = undefined;
+  }
+  if (isOtaManifest(manifest) && manifest.sequence !== undefined) return null;
+  const found = manifest === undefined
+    ? `has no OTA manifest (out/${OTA_MANIFEST_PATH})`
+    : isOtaManifest(manifest)
+    ? `has an OTA manifest (out/${OTA_MANIFEST_PATH}) without a sequence`
+    : `has an invalid OTA manifest (out/${OTA_MANIFEST_PATH})`;
+  return `desktop.update.ui is set, but the export the app ships ${found}. Its sequence is the ` +
+    "floor that keeps an older signed UI update from replacing the UI the app ships with. Stamp " +
+    "a signed one: set spa.ota: true and DENEXT_OTA_SIGNING_KEY for the export, or run " +
+    "`denext ota manifest out --sign ota.key` after it (the sequence defaults to the Unix time).";
+}
+
+/**
  * {@linkcode syncDesktopAppConfigAt} for the project that owns `entryUrl` (a script in its
- * `scripts/` folder): what the scaffolded `scripts/package-*.ts` call before `deno desktop`.
+ * `scripts/` folder): what the scaffolded `scripts/package-*.ts` call before `deno desktop`. With
+ * `desktop.update.ui` set it first requires the export to carry a sequenced OTA manifest
+ * ({@linkcode desktopUiUpdateFloorProblem}), so no app ships its UI updater without a downgrade
+ * floor.
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @returns What changed.
+ * @throws When `desktop.update.ui` is set and the export carries no sequenced OTA manifest.
  */
 export async function syncDesktopAppConfig(entryUrl: string): Promise<DesktopAppSyncReport> {
   const root = fromFileUrl(new URL("..", entryUrl));
-  return await syncDesktopAppConfigAt(root, await loadConfigBeside(entryUrl));
+  const config = await loadConfigBeside(entryUrl);
+  const floor = await desktopUiUpdateFloorProblem(root, config);
+  if (floor) throw new Error(floor);
+  return await syncDesktopAppConfigAt(root, config);
 }

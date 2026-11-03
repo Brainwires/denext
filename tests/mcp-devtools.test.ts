@@ -120,8 +120,6 @@ Deno.test("dev-inspect: the endpoint's path is spelled the same on both sides", 
 
 Deno.test({
   name: "dev-inspect: a posted snapshot round-trips through the GET read with an age",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -158,8 +156,6 @@ Deno.test({
 
 Deno.test({
   name: "dev-inspect: cross-origin POST and GET are both refused (403)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -196,8 +192,6 @@ Deno.test({
 
 Deno.test({
   name: "dev-inspect: wrong method (405), wrong type (415) and an oversized body (413)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -250,8 +244,6 @@ Deno.test({
 
 Deno.test({
   name: "dev-inspect: a malformed or mis-shaped body is dropped silently (204, nothing stored)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -276,8 +268,6 @@ Deno.test({
 
 Deno.test({
   name: "dev-inspect: the per-URL store is an LRU that evicts the oldest page",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -476,8 +466,6 @@ Deno.test("the three bridge tools are registered, grouped, and say what they nee
 
 Deno.test({
   name: "with no dev server running, the bridge reports exactly that",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -673,8 +661,6 @@ Deno.test("buildSnapshot: the byte budget counts UTF-8 bytes, not code units", (
 
 Deno.test({
   name: "installInspectSink: unarmed, a commit walks NOTHING and re-probes at most every 10s",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const { api, commit, calls } = fakeApi(inspectTree(3));
   const net = stubFetch(false); // the dev server says nobody is reading
@@ -697,8 +683,6 @@ Deno.test({
 
 Deno.test({
   name: "installInspectSink: armed, it posts at once, then coalesces a burst of commits",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const { api, commit, calls } = fakeApi(inspectTree());
   const net = stubFetch(true); // an MCP read has happened
@@ -734,8 +718,6 @@ Deno.test({
 
 Deno.test({
   name: "installInspectSink: a >64 KiB snapshot is posted WITHOUT keepalive (PROD-7)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   // A browser rejects a keepalive fetch whose body exceeds 64 KiB, and rejects it
   // unobservably — so with `keepalive: true` on the throttled post, EVERY page with more
@@ -782,8 +764,6 @@ function readAsPage(
 
 Deno.test({
   name: "dev-inspect: `?probe=1` answers { armed }, and the first real read arms it",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -826,8 +806,6 @@ Deno.test("dev-inspect: DENEXT_DEV_INSPECT=1 arms the dev server from the start"
 
 Deno.test({
   name: "dev-inspect: a read FROM A PAGE sees only that page's own snapshot",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -867,8 +845,6 @@ Deno.test({
 
 Deno.test({
   name: "dev-inspect: a snapshot past the TTL is gone (and evicted)",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -888,8 +864,6 @@ Deno.test({
 
 Deno.test({
   name: "dev-inspect: the content-type guard is an EXACT media-type match",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -936,8 +910,6 @@ function forgedBody(): string {
 
 Deno.test({
   name: "dev-inspect: a forged snapshot is stored as CLAMPED, rebuilt fields",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -1045,8 +1017,6 @@ function fakePage(st: DevState, onFrame: (data: string) => void): () => void {
 Deno.test({
   name:
     "dev-inspect pull: a read sends the open pages `inspect` and answers with the tree they post",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {
@@ -1076,8 +1046,6 @@ Deno.test({
 
 Deno.test({
   name: "dev-inspect pull: with no page open the read answers at once, saying so",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async () => {
   const dir = await tempApp();
   try {

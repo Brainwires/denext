@@ -3,7 +3,7 @@
 // a SPA to its own server; a compiled app (src/standalone/mod.ts) imports it directly, so the
 // binary's module graph holds the server and none of the SPA server's build tooling.
 
-import { uninstallLiveHub } from "../../server/live.ts";
+import { liveViewStoreSettled, uninstallLiveHub } from "../../server/live.ts";
 import { envGet } from "../../runtime/env-safe.ts";
 import { join } from "@std/path";
 import { applyPlugins, runPluginTeardown } from "../../plugin/mod.ts";
@@ -20,6 +20,7 @@ import {
   serveWithPortFallback,
 } from "../../server/serve-utils.ts";
 import { type Instrumentation, runShutdownHook } from "../../server/instrumentation.ts";
+import { serveTlsOptions } from "../../server/tls-certificates.ts";
 import { dirExists, type ProjectPaths, resolveProject } from "../paths.ts";
 import { createProdApp, prodLoader } from "./app.ts";
 import { assetResolvers } from "./assets.ts";
@@ -177,6 +178,9 @@ export async function startAppProdServer(
   // plugin holds open while it stops), then the app's own `onShutdown` (a pool a plugin was
   // given stays open until the plugin is done with it).
   const shutdown = async () => {
+    // A view parked as its socket closed may still be writing its snapshot to the view store
+    // (a plugin's shared store among them): let it land before anything is torn down.
+    await liveViewStoreSettled();
     await stopServices();
     await runPluginTeardown();
     releaseDefaultCacheStore();
@@ -185,6 +189,8 @@ export async function startAppProdServer(
   try {
     const handler = await buildHandler(paths, clientDir, info, load, loaded, compile);
     const shutdownDrainMs = resolveShutdownDrainMs(options.shutdownDrainMs);
+    // `start.tls`: HTTPS without a proxy (its files are read here, so a missing one fails the boot).
+    const tls = serveTlsOptions(paths.config?.start?.tls);
     const server = serveWithPortFallback(
       {
         port: options.port ?? 3000,
@@ -192,9 +198,12 @@ export async function startAppProdServer(
         signal: options.signal,
         strict: options.strictPort,
         shutdownDrainMs,
+        tls,
         onListen: options.onListen ??
           (({ hostname, port }) =>
-            console.log(`denext start ▸ http://${displayHost(hostname)}:${port}`)),
+            console.log(
+              `denext start ▸ ${tls ? "https" : "http"}://${displayHost(hostname)}:${port}`,
+            )),
       },
       handler,
     );

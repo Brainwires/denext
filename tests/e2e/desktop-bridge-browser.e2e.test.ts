@@ -94,8 +94,6 @@ const foreignScript = (bridge: string, token: string) => `
 
 Deno.test({
   name: "e2e: desktop bridge in Chromium — the app page calls the bridge, a foreign page cannot",
-  sanitizeOps: false,
-  sanitizeResources: false,
 }, async (t) => {
   let hits = 0;
   const probe: DesktopCapability = {

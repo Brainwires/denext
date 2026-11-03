@@ -314,15 +314,51 @@ Deno.test("openAuthSession (web): a popup closed without a callback is cancelled
   });
 });
 
+/**
+ * `setTimeout` / `setInterval` that fire only when the test says, so an ordering of timers (a poll,
+ * then a grace period) is the test's, not a loaded machine's.
+ */
+function manualTimers() {
+  const timers = new Map<number, { fn: () => void; repeat: boolean }>();
+  let next = 1;
+  const add = (repeat: boolean) => (fn: () => void) => {
+    timers.set(next, { fn, repeat });
+    return next++;
+  };
+  const clear = (id?: number) => void (id !== undefined && timers.delete(id));
+  const of = (repeat: boolean) => [...timers].filter(([, t]) => t.repeat === repeat);
+  return {
+    globals: {
+      setTimeout: add(false),
+      setInterval: add(true),
+      clearTimeout: clear,
+      clearInterval: clear,
+    },
+    /** Fire every pending interval (`true`) or timeout (`false`) once; a timeout is then gone. */
+    fire(repeat: boolean) {
+      for (const [id, t] of of(repeat)) {
+        if (!repeat) timers.delete(id);
+        t.fn();
+      }
+    },
+    /** How many intervals (`true`) or timeouts (`false`) are pending. */
+    count: (repeat: boolean) => of(repeat).length,
+  };
+}
+
 Deno.test("openAuthSession (web): a message landing just after the close still wins", async () => {
   const page = fakePage();
-  await withGlobals(page.globals, async () => {
+  const clock = manualTimers();
+  await withGlobals({ ...page.globals, ...clock.globals }, async () => {
     const session = openAuthSession(AUTHORIZE, { callbackScheme: "myapp" });
+    for (let i = 0; i < 100 && clock.count(true) === 0; i++) await Promise.resolve();
+    assertEquals(clock.count(true), 1, "the popup's close poll runs");
     page.popup.close();
-    // Past the next poll, inside the grace period.
-    await new Promise((r) => setTimeout(r, 600));
-    page.post({ type: "denext:auth-callback", url: CALLBACK });
+    clock.fire(true); // the next poll sees the popup closed…
+    assertEquals(clock.count(false), 1, "…and starts the grace period instead of cancelling");
+    page.post({ type: "denext:auth-callback", url: CALLBACK }); // inside the grace period
     assertEquals((await session).url, CALLBACK);
+    assertEquals(clock.count(true) + clock.count(false), 0, "the poll and the grace timer cleared");
   });
 });
 

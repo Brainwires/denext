@@ -21,8 +21,6 @@ Deno.test({
     enabled ? "" : " (skipped: set DENEXT_TEST_SUPABASE_JS=1)"
   }`,
   ignore: !enabled,
-  sanitizeResources: false,
-  sanitizeOps: false,
   async fn(t) {
     await runFlows(t, () => inMemoryAuthAdapter());
   },

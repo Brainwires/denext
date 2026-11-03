@@ -8,7 +8,12 @@
 //     [paths...] [-- args]
 //
 // Paths and `--ignore` entries are relative to the repo root (where `deno task` runs); with no
-// path, every test under the root. A flag's value may be its own argument (`--filter foo`), and
+// path, every test under the root. `deno test --ignore` replaces `deno.json`'s own test excludes
+// (`.deno/`, where the toolchain's type-check writes an `npm-compat` copy of packages, their
+// `_test.ts` files included), so a pass with an `--ignore` carries those excludes in it too.
+// Both sanitizers are on for every `Deno.test` pass (`test.sanitizeOps` /
+// `test.sanitizeResources` in `deno.json`); the Vitest pass runs without them (the toolchain's Vitest layer turns them off
+// for every test, as Vitest has none). A flag's value may be its own argument (`--filter foo`), and
 // what follows `--` goes to the tests. Every pass runs; the exit code is non-zero when any fails.
 // `--vitest-allow-env=A,B` grants the Vitest pass (which runs least-privilege) reads of those
 // environment variables, for a `--preload` that reads them (`deno task test:stress`'s jitter).
@@ -33,6 +38,14 @@
 // union of their lines. The `Deno.test` files then run in one pass without `--parallel`, the
 // serial ones included (a coverage run stays deterministic).
 //
+// After the passes of a coverage run, every `src/` and `packages/` module the profiles name is
+// re-emitted under this checkout's `deno.json` (`deno cache` of one entry importing them all).
+// `deno coverage` reads a module's transpiled source from `DENO_DIR`'s emit cache, one entry per
+// module, which any process transpiling that module under another config overwrites — a test
+// app's build bundling denext's client modules with the app's own (or no) `deno.json`. A module
+// whose last emit was such a one is skipped by the report ("Missing transpiled source code"), and
+// the coverage ratchet then reads it as never loaded by a test.
+//
 // Every pass runs with `TMPDIR` / `TMP` / `TEMP` pointing at one temp root of this run's own, which
 // is removed when the run ends: the temp dirs tests (and the builds, CLIs and browsers they start)
 // make and never remove — scaffolds, build output, profiles — go with it instead of piling up
@@ -45,6 +58,7 @@
 // instead of a hung test holding the CI job until its timeout.
 
 import { walk } from "@std/fs/walk";
+import { parse as parseJsonc } from "@std/jsonc";
 import { fromFileUrl, join, relative } from "@std/path";
 import { SERIAL_TESTS, serialTestsFor } from "../tests/serial-tests.ts";
 import { resolveDenoToolchain } from "../src/build/deno-toolchain.ts";
@@ -63,6 +77,16 @@ function covers(entry: string, file: string): boolean {
   const e = entry.replace(/^\.\//, "").replace(/\/$/, "");
   return e === "" || e === "." || file === e || file.startsWith(`${e}/`);
 }
+
+/**
+ * Directories tools write into the checkout that test discovery must never walk: `.deno/` (the
+ * toolchain's native type-check generates its project there, an `npm-compat` copy of the `@jsr/*`
+ * packages with their own `_test.ts` files included), `.denext/` (build output) and `coverage/`.
+ * Every `Deno.test` pass names them in its `--ignore`: a `--ignore` on the command line
+ * replaces `deno.json`'s `exclude` / `test.exclude` instead of adding to it, so the config's own `.deno/`
+ * entry no longer applies once this script passes one.
+ */
+export const TOOL_CACHE_DIRS: readonly string[] = [".deno/", ".denext/", "coverage/"];
 
 /** The `deno test` flags whose value may be the next argument (`--filter foo`). */
 const VALUE_FLAGS = TEST_VALUE_FLAGS;
@@ -152,12 +176,15 @@ export interface TestPasses {
  * @param serial The serial test files.
  * @param vitest The Vitest test files (`tests/**\/*.vitest.ts`, repo-relative).
  * @param typeCheckVitest Type-check the Vitest files (CI); else the pass runs with `--no-check`.
+ * @param configExcludes The config's own test excludes ({@linkcode configTestExcludes}): a
+ *   `--ignore` replaces them, so the parallel pass's `--ignore` carries them too.
  */
 export function testPasses(
   args: readonly string[],
   serial: readonly string[] = SERIAL_TESTS,
   vitest: readonly string[] = [],
   typeCheckVitest = true,
+  configExcludes: readonly string[] = [],
 ): TestPasses {
   const split = splitArgs(args);
   const { ignores, paths, rest, vitestEnv } = split;
@@ -170,9 +197,18 @@ export function testPasses(
   const vitestFiles = inScope(vitest, paths, ignores);
   // A `.vitest.ts` path named on its own is the Vitest pass's alone: the `Deno.test` passes run an
   // explicitly named file whatever its name.
-  const stockPaths = paths.filter((p) => !p.endsWith(VITEST_SUFFIX));
+  // Likewise a serial file named on its own: `--ignore` only prunes discovery, so an explicit
+  // path would also run in the parallel pass, its env changes leaking into the other files.
+  const stockPaths = paths.filter((p) =>
+    !p.endsWith(VITEST_SUFFIX) && !serialFiles.some((f) => f === p.replace(/^\.\//, ""))
+  );
   const base = ["test", "-A", "--unstable-kv", ...flags];
-  const ignore = [...ignores, ...serialFiles];
+  const own = [...ignores, ...serialFiles];
+  const listed = [...configExcludes.filter((e) => !own.includes(e)), ...own];
+  // A pass's own --ignore replaces the config's exclude: it carries those, and the tool caches
+  // the config may not name. With none, the config's excludes apply as they are.
+  const cache = TOOL_CACHE_DIRS.filter((d) => !listed.some((i) => covers(i, d)));
+  const ignore = own.length > 0 ? [...listed, ...cache] : [];
   return {
     parallel: paths.length > 0 && stockPaths.length === 0 ? null : [
       ...base,
@@ -198,6 +234,29 @@ export function testPasses(
 }
 
 const ROOT = fromFileUrl(new URL("../", import.meta.url));
+
+/**
+ * The test excludes `deno.json` declares (its top-level `exclude` and `test.exclude`). `deno test
+ * --ignore=…` REPLACES them rather than adding to them, so every pass that passes `--ignore` adds
+ * them back: otherwise the parallel pass walks `.deno/` (the toolchain's type-check writes an
+ * `npm-compat` copy of npm and `@jsr/*` packages there, their `_test.ts` files included) and
+ * type-checks and runs what the config keeps out. A config that can't be read adds nothing.
+ *
+ * @param root The project root.
+ * @returns The entries, as written.
+ */
+export async function configTestExcludes(root: string = ROOT): Promise<string[]> {
+  let doc: unknown;
+  try {
+    doc = parseJsonc(await Deno.readTextFile(join(root, "deno.json")));
+  } catch {
+    return [];
+  }
+  const strings = (v: unknown) =>
+    Array.isArray(v) ? v.filter((e): e is string => typeof e === "string") : [];
+  const config = (doc ?? {}) as { exclude?: unknown; test?: { exclude?: unknown } };
+  return [...new Set([...strings(config.exclude), ...strings(config.test?.exclude)])];
+}
 
 /** The module every `Deno.test` pass preloads: the per-test stall watchdog. */
 export const WATCHDOG_PRELOAD = fromFileUrl(
@@ -309,6 +368,122 @@ export async function removeTempRoot(root: string): Promise<void> {
   }
 }
 
+/**
+ * The profile directory `flags` collect into: `--coverage=<dir>`, or Deno's `coverage` for a bare
+ * `--coverage`; null without coverage.
+ *
+ * @param flags The `deno test` flags.
+ * @returns The directory, as given.
+ */
+export function coverageDir(flags: readonly string[]): string | null {
+  for (const f of flags) {
+    if (f === "--coverage") return "coverage";
+    if (f.startsWith("--coverage=")) return f.slice("--coverage=".length);
+  }
+  return null;
+}
+
+/** How much of a raw profile is read for its `url` (the second key of its pretty-printed JSON). */
+const PROFILE_HEAD_BYTES = 4096;
+
+/** A module that needs an emit (TypeScript or JSX; not a declaration file). */
+const EMITTED = /(?<!\.d)\.(?:[mc]?tsx?|jsx)$/;
+
+/** The `url` a raw profile's first bytes name, if any. */
+function profileUrl(head: string): string | null {
+  const m = /"url"\s*:\s*("(?:[^"\\]|\\.)*")/.exec(head);
+  if (!m) return null;
+  try {
+    return JSON.parse(m[1]) as string;
+  } catch {
+    return null;
+  }
+}
+
+/** The first `n` bytes of `path`, decoded. */
+async function readHead(path: string, n: number): Promise<string> {
+  using file = await Deno.open(path);
+  const buf = new Uint8Array(n);
+  const read = await file.read(buf);
+  return new TextDecoder().decode(buf.subarray(0, read ?? 0));
+}
+
+/**
+ * The modules the raw profiles in `dir` name that lie under one of `roots` (directory file URLs
+ * ending in `/`), need an emit and still exist — sorted, each once.
+ *
+ * @param dir The profile directory.
+ * @param roots The directories whose modules count.
+ * @returns Their `file:` URLs.
+ */
+export async function profiledModules(dir: string, roots: readonly string[]): Promise<string[]> {
+  const found = new Set<string>();
+  for await (const entry of Deno.readDir(dir)) {
+    if (!entry.isFile || !entry.name.endsWith(".json")) continue;
+    const url = profileUrl(await readHead(join(dir, entry.name), PROFILE_HEAD_BYTES));
+    if (!url || found.has(url) || !EMITTED.test(url) || url.includes("/node_modules/")) continue;
+    if (!roots.some((r) => url.startsWith(r))) continue;
+    try {
+      if ((await Deno.stat(new URL(url))).isFile) found.add(url);
+    } catch {
+      // Gone since the run (a test's own scratch module): nothing to report on.
+    }
+  }
+  return [...found].sort();
+}
+
+/**
+ * The source of an entry module importing each of `urls`: `deno cache` of it emits every one under
+ * the config it runs with.
+ *
+ * @param urls The modules.
+ * @returns The module source.
+ */
+export function emitEntrySource(urls: readonly string[]): string {
+  return urls.map((u) => `import ${JSON.stringify(u)};\n`).join("");
+}
+
+/** The directories whose modules the coverage tasks report on (see deno.json's `coverage*`). */
+const COVERED_ROOTS: readonly string[] = ["src/", "packages/"].map((d) =>
+  new URL(`../${d}`, import.meta.url).href
+);
+
+/** Where {@linkcode reEmitCovered} looks and what it runs with. */
+export interface ReEmitOptions {
+  /** The Deno the passes ran on. */
+  bin: string;
+  /** The `deno.json` the passes ran under (default: this checkout's). */
+  config?: string;
+  /** The directories whose modules count (default: `src/` and `packages/`). */
+  roots?: readonly string[];
+  /** Where the entry module is written (default: the run's temp root, else a new temp dir). */
+  tempDir?: string;
+}
+
+/**
+ * Re-emit the covered modules the profiles in `dir` name under the passes' `deno.json` (see the
+ * module header). A failure is reported, never fatal: the report then skips what it can't read,
+ * and the ratchet names it.
+ *
+ * @param dir The profile directory.
+ * @param options The Deno, config, roots and temp dir.
+ * @returns How many modules were re-emitted (0 when none, or when `deno cache` failed).
+ */
+export async function reEmitCovered(dir: string, options: ReEmitOptions): Promise<number> {
+  const urls = await profiledModules(dir, options.roots ?? COVERED_ROOTS);
+  if (urls.length === 0) return 0;
+  const tempDir = options.tempDir ?? runTempRoot ?? await Deno.makeTempDir();
+  const entry = join(tempDir, "coverage-emit.ts");
+  await Deno.writeTextFile(entry, emitEntrySource(urls));
+  const config = options.config ?? join(ROOT, "deno.json");
+  if (await deno(["cache", "--config", config, entry], options.bin)) return urls.length;
+  console.error(
+    `test-run: re-emitting the ${urls.length} covered modules failed; \`deno coverage\` may ` +
+      "skip some (Missing transpiled source code).",
+  );
+  return 0;
+}
+
 /** The run's temp root, set once by the main block (unset when imported by a test). */
 let runTempRoot: string | undefined;
 
@@ -341,13 +516,21 @@ async function toolchainFor(): Promise<string | null> {
 async function runPasses(): Promise<boolean> {
   const ci = (Deno.env.get("CI") ?? "") !== "";
   // On Windows the files that build in the test process run serially too (tests/serial-tests.ts).
-  const passes = testPasses(Deno.args, serialTestsFor(Deno.build.os), await findVitestFiles(), ci);
+  const passes = testPasses(
+    Deno.args,
+    serialTestsFor(Deno.build.os),
+    await findVitestFiles(),
+    ci,
+    await configTestExcludes(),
+  );
   // Every pass runs on the toolchain (with coverage, its `deno coverage` merges their profiles).
   const toolchain = await toolchainFor();
   if (toolchain === null) return false;
   const parallel = await runPass(withWatchdog(passes.parallel), toolchain);
   const serial = await runPass(withWatchdog(passes.serial), toolchain);
   const vitest = await runPass(passes.vitest, toolchain); // every pass runs, whatever failed
+  const dir = coverageDir(splitArgs(Deno.args).flags);
+  if (dir !== null) await reEmitCovered(dir, { bin: toolchain });
   return parallel && serial && vitest;
 }
 
@@ -356,11 +539,35 @@ async function runPass(args: string[] | null, bin: string): Promise<boolean> {
   return args ? await deno(args, bin) : true;
 }
 
+/**
+ * Whether the run's temp root is still there at the end. This run removes nothing but its own
+ * root; a root that vanished was removed by something else on the machine (another tool's
+ * temp-dir cleanup glob, Windows Storage Sense's temporary-files cleanup on low disk space), which
+ * fails every later test with NotFound, so the run says so instead of leaving a wall of
+ * unexplained failures.
+ *
+ * @param root The run's temp root.
+ * @returns True when it still exists.
+ */
+export async function tempRootSurvived(root: string): Promise<boolean> {
+  try {
+    await Deno.stat(root);
+    return true;
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+    console.error(
+      `test-run: the run's temp root ${root} was removed by another process while the tests ` +
+        "ran (a cleanup of the machine's temp dir?); the NotFound failures above follow from it.",
+    );
+    return false;
+  }
+}
 if (import.meta.main) {
   runTempRoot = await Deno.makeTempDir({ prefix: "dnx-tr-" });
   let ok = false;
   try {
     ok = await runPasses();
+    ok = await tempRootSurvived(runTempRoot) && ok;
   } finally {
     await removeTempRoot(runTempRoot);
   }

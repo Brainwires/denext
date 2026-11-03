@@ -10,7 +10,9 @@
 //
 //   1. reuses `<DENO_DIR>/denext-desktop-runtime/<version>/<target>-<backend>/` when its marker
 //      matches the pin and every recorded file is present at its recorded size (no network);
-//      `verify` re-hashes every file instead;
+//      `verify` re-hashes every file instead, and so does the first use after
+//      {@linkcode REHASH_INTERVAL_MS} since the last full check (`.denext-verified-at`), so a
+//      same-size change by another local process is caught within a week even without it;
 //   2. else streams the archive into a private temp dir under the version dir, refusing it the
 //      moment it exceeds the pinned size, then checks size AND SHA-256 before anything else
 //      touches it; nothing is extracted from an unverified archive;
@@ -27,6 +29,7 @@
 
 import { denoCacheDir } from "./deno-cache-dir.ts";
 import { acquireCacheLock } from "./project-locks.ts";
+import { lockTask } from "./file-lock.ts";
 import { basename, dirname, fromFileUrl, join } from "@std/path";
 import { extractArchive, type ExtractedFile } from "./safe-extract.ts";
 import {
@@ -34,13 +37,13 @@ import {
   cacheDirChain,
   DownloadIdleError,
   downloadProgress,
-  downloadTimeoutMs,
   fetchWithConnectDeadline,
-  IDLE_TIMEOUT_MS,
   readJsonFile,
+  responseBody,
   sha256File,
   streamHashed,
   sweepLeftovers,
+  withDownloadRetries,
 } from "./verified-download.ts";
 import { readJson } from "./json-edit.ts";
 import { runToExit } from "./exited-output.ts";
@@ -53,6 +56,23 @@ import {
   RUNTIME_REQUIRED_FIX,
 } from "./deno-version.ts";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
+import toolchainPinJson from "./deno-toolchain-pin.json" with { type: "json" };
+import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
+import { ghPath, type IsFile, systemToolPath } from "../utils/system-programs.ts";
+import {
+  decideRevocation,
+  findRevocation,
+  type LoadRevocationsOptions,
+  loadRuntimeRevocations,
+  REVOCATION_NOTICED_ENV,
+  revocationNotice,
+  revokedShipRefusal,
+  type RuntimeRevocation,
+  type RuntimeRevocationList,
+} from "./runtime-revocations.ts";
+
+/** The toolchain marker a command sets on the processes it starts (deno-toolchain.ts). */
+const TOOLCHAIN_ACTIVE_ENV = "DENEXT_TOOLCHAIN_ACTIVE";
 
 /** A runtime backend (`deno desktop --backend`). */
 export type DesktopRuntimeBackend = "webview" | "cef";
@@ -85,6 +105,25 @@ export interface DesktopRuntimePin {
       & Partial<Record<DesktopRuntimeBackend, DesktopRuntimeArtifact>>
     >
   >;
+  /**
+   * The previous pin, used instead of this one when the signed revoked-runtimes list revokes this
+   * one for the target (src/build/runtime-revocations.ts), always together with the Deno toolchain
+   * pin's `rollback` of the same release. Never nests another `rollback`.
+   */
+  readonly rollback?: DesktopRuntimeRollback;
+}
+
+/** A desktop runtime pin's `rollback`: the previous pinned release, as the pin named it. */
+export type DesktopRuntimeRollback = Omit<DesktopRuntimePin, "schema" | "rollback">;
+
+/**
+ * The pin's `rollback` as a pin of its own, or `null` when it names none.
+ *
+ * @param pin The pin.
+ * @returns The previous release's pin.
+ */
+export function rollbackDesktopPin(pin: DesktopRuntimePin): DesktopRuntimePin | null {
+  return pin.rollback ? { schema: 1, ...pin.rollback } : null;
 }
 
 /** The runtime denext pins (generated; see the header). */
@@ -96,11 +135,66 @@ const RUNTIME_ENV = "DENEXT_DESKTOP_RUNTIME";
 const RUNTIME_DIR_ENV = "DENEXT_DESKTOP_RUNTIME_DIR";
 /** `1` → re-hash every cached file before use. */
 export const DESKTOP_RUNTIME_VERIFY_ENV = "DENEXT_DESKTOP_RUNTIME_VERIFY";
-/** `1` → `gh attestation verify` a freshly downloaded archive. */
+/**
+ * `1` → `gh attestation verify` every freshly downloaded archive (a missing or signed-out `gh`
+ * fails); `0` → never; unset → whenever `gh` is signed in ({@linkcode desktopRuntimeAttestMode}).
+ */
 export const DESKTOP_RUNTIME_ATTEST_ENV = "DENEXT_DESKTOP_RUNTIME_ATTEST";
+
+/**
+ * Whether a fresh runtime download is checked for its build provenance: `true` (required),
+ * `false` (off), or `"auto"` — checked when the GitHub CLI is signed in, and said so when it is
+ * not (the SHA-256 pin is enforced either way).
+ */
+export type DesktopRuntimeAttestMode = boolean | "auto";
+
+/**
+ * The provenance mode {@linkcode DESKTOP_RUNTIME_ATTEST_ENV} selects: `1` / `true` required,
+ * `0` / `false` off, anything else (unset included) `"auto"`.
+ *
+ * @param value The variable's value.
+ * @returns The mode.
+ */
+export function desktopRuntimeAttestMode(value: string | undefined): DesktopRuntimeAttestMode {
+  const v = value?.trim().toLowerCase();
+  if (v === "1" || v === "true") return true;
+  if (v === "0" || v === "false") return false;
+  return "auto";
+}
 
 /** The marker a verified cache entry carries (at its root, beside the runtime lib). */
 export const RUNTIME_MARKER = ".denext-runtime.json";
+
+/** When a cached runtime last re-hashed clean (epoch ms), beside its marker. */
+export const RUNTIME_VERIFIED_AT = ".denext-verified-at";
+
+/** How long a cached runtime is trusted on its file sizes alone before it is re-hashed. */
+const REHASH_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Whether the cached runtime at `dir` is due a full re-hash: it has never had one recorded, the
+ * record is unreadable, or the last one is {@linkcode REHASH_INTERVAL_MS} old (or from the future).
+ *
+ * @param dir The cache directory.
+ * @param now The clock (test seam).
+ * @returns Whether to re-hash every file this time.
+ */
+export async function runtimeRehashDue(dir: string, now: number = Date.now()): Promise<boolean> {
+  const text = await Deno.readTextFile(join(dir, RUNTIME_VERIFIED_AT)).catch(() => null);
+  const at = text === null ? NaN : Number(text.trim());
+  return !Number.isFinite(at) || at > now || now - at >= REHASH_INTERVAL_MS;
+}
+
+/** Record a clean full re-hash of `dir` (best effort: a failure only means re-hashing sooner). */
+async function recordRehash(dir: string, now: number = Date.now()): Promise<void> {
+  const tmp = join(dir, `${RUNTIME_VERIFIED_AT}.${crypto.randomUUID()}.tmp`);
+  try {
+    await Deno.writeTextFile(tmp, `${now}\n`);
+    await Deno.rename(tmp, join(dir, RUNTIME_VERIFIED_AT));
+  } catch {
+    await Deno.remove(tmp).catch(() => {});
+  }
+}
 
 /** The refusal of `DENEXT_DESKTOP_RUNTIME=stock` (denext 5.0 dropped the stock runtime). */
 const STOCK_RUNTIME_REFUSAL = `denext: ${RUNTIME_ENV}=stock is no longer supported: denext 5.0 ` +
@@ -253,23 +347,24 @@ const errText = (err: unknown) => err instanceof Error ? err.message : String(er
 async function openDownload(
   artifact: DesktopRuntimeArtifact,
   fetchImpl: typeof fetch,
+  connectMs: number,
 ): Promise<ReadableStream<Uint8Array>> {
   let res: Response;
   try {
     // No response headers within the connect deadline: given up on, never a hung build.
-    res = await fetchWithConnectDeadline(fetchImpl, artifact.url);
+    res = await fetchWithConnectDeadline(fetchImpl, artifact.url, undefined, connectMs);
   } catch (err) {
     throw new DesktopRuntimeDownloadError(
       `denext: could not download the Deno Desktop runtime (${artifact.file}) from ` +
         `${artifact.url}: ${errText(err)}.\n  Are you offline?${DOWNLOAD_HINT}`,
+      { cause: err },
     );
   }
-  if (res.ok && res.body) return res.body;
-  await res.body?.cancel();
-  throw new DesktopRuntimeDownloadError(
-    `denext: downloading the Deno Desktop runtime failed: GET ${artifact.url} → ` +
-      `${res.status} ${res.statusText}${DOWNLOAD_HINT}`,
-  );
+  return await responseBody(res, artifact.url, (status) =>
+    new DesktopRuntimeDownloadError(
+      `denext: downloading the Deno Desktop runtime failed: ${status.message}${DOWNLOAD_HINT}`,
+      { cause: status },
+    ));
 }
 
 /**
@@ -281,6 +376,7 @@ function streamToFile(
   dest: string,
   maxSize: number,
   what: string,
+  idleMs: number,
 ): Promise<{ size: number; sha256: string }> {
   // A progress line on a terminal (bytes and percent); nothing in a log or CI.
   const progress = downloadProgress(`Deno Desktop runtime ${what}`, maxSize);
@@ -302,24 +398,43 @@ function streamToFile(
                 ? " (DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS raises the deadline)"
                 : ""
             }${DOWNLOAD_HINT}`,
+          { cause: err },
         ),
     },
     (bytes) => progress.update(bytes),
-    downloadTimeoutMs(
-      "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS",
-      IDLE_TIMEOUT_MS,
-    ),
+    idleMs,
   ).finally(() => progress.done());
 }
 
-/** Download `artifact` to `dest`, refusing anything but exactly its pinned size and SHA-256. */
+/**
+ * Download `artifact` to `dest`, refusing anything but exactly its pinned size and SHA-256. A
+ * stalled or broken connection is retried on a new one, the partial file deleted first.
+ */
 async function downloadVerified(
   artifact: DesktopRuntimeArtifact,
   dest: string,
   fetchImpl: typeof fetch,
+  log?: (line: string) => void,
 ): Promise<void> {
-  const body = await openDownload(artifact, fetchImpl);
-  const got = await streamToFile(body, dest, artifact.size, artifact.file);
+  const got = await withDownloadRetries(
+    `the Deno Desktop runtime ${artifact.file}`,
+    async ({ fetch: fetchOnce, deadlines }) => {
+      try {
+        const body = await openDownload(artifact, fetchOnce, deadlines.connectMs);
+        return await streamToFile(body, dest, artifact.size, artifact.file, deadlines.idleMs);
+      } catch (err) {
+        await Deno.remove(dest).catch(() => {});
+        throw err;
+      }
+    },
+    fetchImpl,
+    (report) =>
+      new DesktopRuntimeDownloadError(
+        `denext: could not download the Deno Desktop runtime (${artifact.file}) from ` +
+          `${artifact.url}${report}\n  Are you offline?${DOWNLOAD_HINT}`,
+      ),
+    { log },
+  );
   if (got.size !== artifact.size) {
     throw new DesktopRuntimeDownloadError(
       `denext: refusing the Deno Desktop runtime ${artifact.file}: got ${got.size} bytes, pinned ` +
@@ -339,8 +454,38 @@ async function downloadVerified(
 /** Run a program to completion with inherited output; resolves its exit code. */
 export type RuntimeCommandRunner = (cmd: string, args: string[]) => Promise<number>;
 
+/** The macOS tools the runtime's bundle harmonizing runs, from the OS's own /usr/bin only. */
+const MACOS_SYSTEM_TOOLS = new Set(["plutil", "codesign"]);
+
+/**
+ * The program a default runner starts for `cmd`: the GitHub CLI from where its installers put it
+ * ({@link ghPath}) and, on macOS, `plutil` / `codesign` from the OS's own tool folders
+ * ({@link systemToolPath}), never one of those found through PATH; a missing one is `NotFound`, as
+ * a missing program on PATH is. Any other `cmd` (an absolute path) is returned as it is.
+ *
+ * @param cmd The program a runner was asked to start.
+ * @param os The OS (default: this one).
+ * @param isFile Checks a path (default: `Deno.statSync`).
+ * @returns The path to start.
+ */
+export function runtimeProgram(cmd: string, os: string = Deno.build.os, isFile?: IsFile): string {
+  if (cmd === "gh") {
+    const gh = ghPath(os, isFile);
+    if (gh === null) throw new Deno.errors.NotFound("gh: the GitHub CLI is not installed");
+    return gh;
+  }
+  if (os !== "darwin" || !MACOS_SYSTEM_TOOLS.has(cmd)) return cmd;
+  const tool = systemToolPath(cmd, os, isFile);
+  if (tool === null) {
+    throw new Deno.errors.NotFound(`${cmd}: not found in the system's tool folders`);
+  }
+  return tool;
+}
+
 const defaultRunner: RuntimeCommandRunner = async (cmd, args) =>
-  (await new Deno.Command(cmd, { args, stdout: "inherit", stderr: "inherit" }).output()).code;
+  (await new Deno.Command(runtimeProgram(cmd), { args, stdout: "inherit", stderr: "inherit" })
+    .output())
+    .code;
 
 /**
  * The workflow (in the runtime's repository) that builds and attests every pinned runtime
@@ -375,7 +520,38 @@ export function runtimeAttestationArgs(archive: string, repository: string, tag:
   ];
 }
 
-/** `gh attestation verify` the archive (opt-in provenance check), pinned to the release's build. */
+/**
+ * Whether the GitHub CLI is installed and signed in to github.com (`gh auth status`, output
+ * captured): what an `"auto"` provenance check needs. A missing `gh` is `false`.
+ *
+ * @param run Runs `gh` (default: captured, quiet).
+ * @returns Whether `gh attestation verify` can run.
+ */
+export async function ghSignedIn(run: CaptureRunner = capture): Promise<boolean> {
+  try {
+    return (await run("gh", ["auth", "status", "--hostname", "github.com"])).code === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether this fresh download is attested: always under `true`, never under `false`, and under
+ * `"auto"` when `gh` is signed in — else one line says the provenance was not checked.
+ */
+async function shouldAttest(plan: InstallPlan): Promise<boolean> {
+  const mode = plan.opts.attest ?? false;
+  if (mode !== "auto") return mode;
+  if (await ghSignedIn(plan.opts.capture ?? capture)) return true;
+  plan.log(
+    "  denext: the runtime's build provenance was not checked (the GitHub CLI is not installed or " +
+      "not signed in; the SHA-256 pin was). `gh auth login` checks it on the next download; " +
+      `${DESKTOP_RUNTIME_ATTEST_ENV}=0 silences this.`,
+  );
+  return false;
+}
+
+/** `gh attestation verify` the archive (the provenance check), pinned to the release's build. */
 async function attest(
   archive: string,
   pin: { readonly repository: string; readonly tag: string },
@@ -402,7 +578,7 @@ export type CaptureRunner = (
 ) => Promise<{ code: number; text: string }>;
 
 const capture: CaptureRunner = async (cmd, args) => {
-  const out = await runToExit(cmd, { args });
+  const out = await runToExit(runtimeProgram(cmd), { args });
   const d = new TextDecoder();
   return { code: out.code, text: d.decode(out.stdout) + d.decode(out.stderr) };
 };
@@ -569,8 +745,12 @@ export interface EnsureDesktopRuntimeOptions {
   readonly cacheRoot?: string;
   /** Re-hash every cached file instead of the cheap size check. */
   readonly verify?: boolean;
-  /** `gh attestation verify` a downloaded archive (a cached one not attested is re-fetched). */
-  readonly attest?: boolean;
+  /**
+   * `gh attestation verify` a downloaded archive: `true` requires it (a cached one not attested is
+   * re-fetched), `"auto"` runs it when `gh` is signed in (a cached tree is kept as it is), `false`
+   * (the default) never.
+   */
+  readonly attest?: DesktopRuntimeAttestMode;
   /** Progress output (default `console.error`). */
   readonly log?: (line: string) => void;
   /** Test seams. */
@@ -580,6 +760,10 @@ export interface EnsureDesktopRuntimeOptions {
   readonly capture?: CaptureRunner;
   /** Whether to apply the macOS laufey re-sign (default: a macOS host and a darwin target). */
   readonly harmonize?: boolean;
+  /** Test seam: the host OS and C library the Linux check sees ({@linkcode assertLinuxLibc}). */
+  readonly host?: { readonly os?: string; readonly libc?: LinuxLibc };
+  /** The clock, in epoch ms, for the re-hash schedule (test seam). */
+  readonly now?: () => number;
 }
 
 /** Everything one install needs, resolved from {@linkcode EnsureDesktopRuntimeOptions}. */
@@ -595,7 +779,12 @@ interface InstallPlan {
 }
 
 /** Extract the verified archive into `staged`, check its layout, re-sign on macOS, and mark it. */
-async function stageRuntime(plan: InstallPlan, archive: string, staged: string): Promise<void> {
+async function stageRuntime(
+  plan: InstallPlan,
+  archive: string,
+  staged: string,
+  attested: boolean,
+): Promise<void> {
   const { artifact, runtimeLib, pin, opts } = plan;
   const result = await extractArchive(archive, artifact.format, staged);
   await Deno.remove(archive);
@@ -619,7 +808,7 @@ async function stageRuntime(plan: InstallPlan, archive: string, staged: string):
     target: opts.target,
     backend: opts.backend,
     archive: { file: artifact.file, sha256: artifact.sha256, size: artifact.size },
-    attested: opts.attest === true,
+    attested,
     files,
     symlinks: result.symlinks,
   };
@@ -629,6 +818,15 @@ async function stageRuntime(plan: InstallPlan, archive: string, staged: string):
 /** Download, verify, stage and atomically install the runtime at `plan.dir`. */
 async function installRuntime(plan: InstallPlan): Promise<void> {
   const { artifact, pin, opts, dir } = plan;
+  // A Linux runtime on a host that can't run it (musl, an older glibc): say so before the
+  // download. A cross-target runtime (packaging Linux from a Mac) is not checked.
+  if (opts.target.includes("-linux-")) {
+    await assertLinuxLibc(
+      `the Deno Desktop runtime ${pin.version}`,
+      minGlibcFor(pin),
+      opts.host,
+    );
+  }
   const versionDir = dirname(dir);
   await Deno.mkdir(versionDir, { recursive: true });
   await sweepLeftovers(versionDir);
@@ -639,10 +837,11 @@ async function installRuntime(plan: InstallPlan): Promise<void> {
       `  denext: downloading the Deno Desktop runtime ${pin.version} (${opts.target}, ` +
         `${opts.backend}, ${(artifact.size / 1024 / 1024).toFixed(1)} MB)…`,
     );
-    await downloadVerified(artifact, archive, opts.fetch ?? fetch);
-    if (opts.attest) await attest(archive, pin, opts.run ?? defaultRunner);
+    await downloadVerified(artifact, archive, opts.fetch ?? fetch, plan.log);
+    const attested = await shouldAttest(plan);
+    if (attested) await attest(archive, pin, opts.run ?? defaultRunner);
     const staged = join(tmp, "runtime");
-    await stageRuntime(plan, archive, staged);
+    await stageRuntime(plan, archive, staged, attested);
     await installAtomically(staged, dir, versionDir, plan.acceptable);
     if (!await verifiedRuntime(dir, pin, artifact)) {
       throw new Error(`denext: the Deno Desktop runtime at ${dir} did not verify after install`);
@@ -659,13 +858,21 @@ async function installRuntime(plan: InstallPlan): Promise<void> {
  * @param options What to fetch and how.
  * @returns The runtime's paths.
  */
-export async function ensureDesktopRuntime(
+export function ensureDesktopRuntime(
+  options: EnsureDesktopRuntimeOptions,
+): Promise<ResolvedDesktopRuntime> {
+  return lockTask(() => ensureDesktopRuntimeInTask(options));
+}
+
+async function ensureDesktopRuntimeInTask(
   options: EnsureDesktopRuntimeOptions,
 ): Promise<ResolvedDesktopRuntime> {
   const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
   const artifact = pinnedArtifact(pin, options.target, options.backend);
   const cacheRoot = options.cacheRoot ?? cacheRootFor();
   const dir = desktopRuntimeDir(cacheRoot, pin, options.target, options.backend);
+  // Re-hashed under `verify`, and on the schedule (REHASH_INTERVAL_MS) without it.
+  const full = options.verify === true || await runtimeRehashDue(dir, options.now?.());
   const plan: InstallPlan = {
     opts: options,
     pin,
@@ -673,18 +880,17 @@ export async function ensureDesktopRuntime(
     runtimeLib: pin.targets[options.target].runtimeLib,
     dir,
     log: options.log ?? ((l: string) => console.error(l)),
-    // Verified (re-hashed under `verify`) and, when provenance is asked for, attested.
+    // Verified (re-hashed when `full`) and, when provenance is asked for, attested.
     acceptable: async () => {
-      const m = await verifiedRuntime(dir, pin, artifact, options.verify === true);
-      return m !== null && (!options.attest || m.attested);
+      const m = await verifiedRuntime(dir, pin, artifact, full);
+      return m !== null && (options.attest !== true || m.attested);
     },
   };
-  const resolved = (cached: boolean) => ({
-    dir,
-    runtimeLib: join(dir, plan.runtimeLib),
-    laufeyDir: join(dir, "laufey"),
-    cached,
-  });
+  const resolved = async (cached: boolean) => {
+    // A clean full check (or a fresh install, hashed as it was staged) restarts the schedule.
+    if (full || !cached) await recordRehash(dir, options.now?.());
+    return { dir, runtimeLib: join(dir, plan.runtimeLib), laufeyDir: join(dir, "laufey"), cached };
+  };
   // Cargo's cache locks: reading a cached tree is Shared; adding a missing one is
   // DownloadExclusive (readers of other versions carry on); replacing an existing (bad) tree is
   // MutateExclusive. Each re-checks after it is granted — the process it waited on may have
@@ -706,7 +912,7 @@ export async function ensureDesktopRuntime(
   if (await readMarker(dir)) {
     plan.log(
       `  denext: the cached Deno Desktop runtime at ${dir} failed verification` +
-        `${options.attest ? " (or has no provenance check)" : ""}; re-downloading.`,
+        `${options.attest === true ? " (or has no provenance check)" : ""}; re-downloading.`,
     );
   }
   await installRuntime(plan);
@@ -868,10 +1074,34 @@ export interface DesktopRuntimeEnvOptions {
   readonly cacheRoot?: string;
   readonly fetch?: typeof fetch;
   readonly run?: RuntimeCommandRunner;
+  /** Runs `gh auth status` for the default provenance check (and the macOS re-sign's tools). */
+  readonly capture?: CaptureRunner;
   /** What `deno --version` says (a bare version: one with no `denext … (Brainwires)` line). */
   readonly denoVersion?: (deno: string) => Promise<string | DenoIdentity>;
   readonly log?: (line: string) => void;
   readonly hostOs?: string;
+  /**
+   * Whether this build ships the runtime to others (`desktop build` / `package`, the default): a
+   * runtime the revoked-runtimes list revokes for the target is then refused unless
+   * `DENEXT_ALLOW_REVOKED_RUNTIME` names it. `false` (`desktop run` / `dev`) warns instead.
+   */
+  readonly ship?: boolean;
+  /**
+   * How the revoked-runtimes list is consulted (test seams). Absent: the built-in pin is checked;
+   * a `pin` given without it is not.
+   */
+  readonly revocations?: Omit<LoadRevocationsOptions, "env">;
+  /**
+   * The Deno toolchain pin the `deno desktop` CLI comes from, as far as rolling back goes
+   * (default `deno-toolchain-pin.json`; tests pass a fixture's).
+   */
+  readonly toolchainPin?: ToolchainPinVersions;
+}
+
+/** The versions of a Deno toolchain pin and its rollback (all a desktop rollback needs of it). */
+export interface ToolchainPinVersions {
+  readonly version: string | null;
+  readonly rollback?: { readonly version: string };
 }
 
 /** The env for `deno desktop`, plus which runtime it selects. */
@@ -1107,7 +1337,16 @@ async function mirrorBackendDir(
  * {@linkcode crossHostBackendRename}). Built once per runtime archive and reused; installed with
  * the same atomic rename as the runtime itself.
  */
-async function crossHostLaufeyDir(
+function crossHostLaufeyDir(
+  rt: ResolvedDesktopRuntime,
+  rename: CrossHostRename,
+  log: (line: string) => void,
+  full: boolean,
+): Promise<string> {
+  return lockTask(() => crossHostLaufeyDirInTask(rt, rename, log, full));
+}
+
+async function crossHostLaufeyDirInTask(
   rt: ResolvedDesktopRuntime,
   rename: CrossHostRename,
   log: (line: string) => void,
@@ -1140,11 +1379,98 @@ async function crossHostLaufeyDir(
 }
 
 /**
+ * The runtime pin a `deno desktop` build uses: the pin in force, or its `rollback` when the Deno
+ * toolchain this process runs on is the toolchain pin's rollback (the command that started it
+ * rolled both back: libdenort must match the CLI) AND the revoked-runtimes list, read here, still
+ * moves both back for `target` — the toolchain marker alone (it can leak from a parent shell)
+ * never makes a package ship the older runtime. Otherwise a pin the list revokes for `target` is
+ * refused when the build ships it ({@linkcode revokedShipRefusal}), or used with one warning
+ * (`desktop run` / `dev`).
+ */
+async function selectDesktopPin(
+  options: DesktopRuntimeEnvOptions,
+  env: EnvGet,
+  target: string,
+  log: (line: string) => void,
+): Promise<DesktopRuntimePin> {
+  const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
+  const rollback = rollbackDesktopPin(pin);
+  const marked = rollback?.version !== undefined && env(TOOLCHAIN_ACTIVE_ENV) === rollback.version;
+  if (!marked && !checksPin(options)) return pin;
+  const { list } = await loadRuntimeRevocations({ ...options.revocations, env });
+  if (marked && rollsBackTogether(list, pin, target, options.toolchainPin)) return rollback!;
+  const hit = findRevocation(list, "desktop", pin.version, target);
+  const ship = options.ship !== false;
+  if (hit) revokedDesktopPin(hit, { list, rollback, ship, target, env, log });
+  return pin;
+}
+
+/** Whether the list is consulted for the pin: the built-in one, or a given one with `revocations`. */
+function checksPin(options: DesktopRuntimeEnvOptions): boolean {
+  return options.pin === undefined || options.revocations !== undefined;
+}
+
+/**
+ * Whether `list` moves the Deno toolchain and the Deno Desktop runtime back together for `target`
+ * (src/build/runtime-revocations.ts `decideRevocation`): one of them is revoked there, and both
+ * pins name the same rollback release, which is not revoked itself.
+ */
+function rollsBackTogether(
+  list: RuntimeRevocationList | null,
+  pin: DesktopRuntimePin,
+  target: string,
+  toolchain: ToolchainPinVersions = toolchainPinJson,
+): boolean {
+  const rollback = pin.rollback?.version ?? null;
+  if (toolchain.version === null || toolchain.rollback?.version !== rollback) return false;
+  const decision = decideRevocation(list, [
+    { component: "cli", version: toolchain.version, rollback, triple: target },
+    { component: "desktop", version: pin.version, rollback, triple: target },
+  ]);
+  return decision.hit !== null && decision.useRollback;
+}
+
+/**
+ * What a revoked desktop runtime pin means for this build: one warning (`desktop run` / `dev`),
+ * or a refusal to package on it unless `DENEXT_ALLOW_REVOKED_RUNTIME` names it — pointing at the
+ * pin's rollback when that one is not revoked too.
+ */
+function revokedDesktopPin(
+  hit: RuntimeRevocation,
+  o: {
+    list: RuntimeRevocationList | null;
+    rollback: DesktopRuntimePin | null;
+    ship: boolean;
+    target: string;
+    env: EnvGet;
+    log: (line: string) => void;
+  },
+): void {
+  const { target } = o;
+  if (!o.ship) {
+    if (o.env(REVOCATION_NOTICED_ENV) !== "1") o.log(revocationNotice(hit, target, null));
+    return;
+  }
+  const refusal = revokedShipRefusal(hit, target, "package on", o.env);
+  if (refusal === null) return;
+  const usable = o.rollback !== null &&
+    findRevocation(o.list, "desktop", o.rollback.version, target) === null;
+  throw new Error(refusal + (usable ? fallbackHint(o.rollback!.version) : ""));
+}
+
+/** Where a packaging refusal points when the pin's rollback could build instead. */
+function fallbackHint(version: string): string {
+  return "\n  `denext desktop build` / `denext desktop package` build on the pinned fallback " +
+    `${version} instead.`;
+}
+
+/**
  * Resolve the env one `deno desktop` invocation needs to run on denext's pinned runtime (and
  * download / verify it on first use). Honors `DENEXT_DESKTOP_RUNTIME_DIR` (a local build,
- * unverified, a warning), `DENEXT_DESKTOP_RUNTIME_VERIFY=1` and `DENEXT_DESKTOP_RUNTIME_ATTEST=1`;
- * refuses `DENEXT_DESKTOP_RUNTIME=stock`. Fails when `deno` is not denext's Deno runtime built
- * from the runtime's exact Deno release. A target whose backend binary the host's `deno desktop` would look up under
+ * unverified, a warning), `DENEXT_DESKTOP_RUNTIME_VERIFY=1` and `DENEXT_DESKTOP_RUNTIME_ATTEST`
+ * (unset: a fresh download is attested when `gh` is signed in); refuses
+ * `DENEXT_DESKTOP_RUNTIME=stock`. Fails when `deno` is not denext's Deno runtime built from the
+ * runtime's exact Deno release. A target whose backend binary the host's `deno desktop` would look up under
  * another executable suffix (Windows from macOS / Linux, Linux from Windows) gets a cross-host
  * `LAUFEY_DEV_DIR` (see {@linkcode crossHostBackendRename}).
  *
@@ -1156,19 +1482,20 @@ export async function resolveDesktopRuntimeEnv(
 ): Promise<DesktopRuntimeEnv> {
   const env = options.env ?? processEnv;
   const log = options.log ?? ((l: string) => console.error(l));
-  const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
   const target = options.target ?? desktopRuntimeTarget();
   const refusal = runtimeModeRefusal(env);
   if (refusal) throw new Error(refusal);
   const localDir = env(RUNTIME_DIR_ENV);
   if (localDir) {
-    const local = await localRuntimeEnv(localDir, runtimeLibFor(pin, target), target);
+    const lib = runtimeLibFor(options.pin ?? DESKTOP_RUNTIME_PIN, target);
+    const local = await localRuntimeEnv(localDir, lib, target);
     log(
       `  denext: using the LOCAL Deno Desktop runtime at ${localDir} (${RUNTIME_DIR_ENV}); it is ` +
         "not downloaded, pinned or verified.",
     );
     return { mode: "local", env: local };
   }
+  const pin = await selectDesktopPin(options, env, target, log);
   const deno = options.deno ?? "deno";
   const found = asIdentity(await (options.denoVersion ?? denoCliVersion)(deno));
   if (!desktopBuildDeno(found, pin)) throw new Error(denoVersionMismatchMessage(found, pin, deno));
@@ -1179,9 +1506,10 @@ export async function resolveDesktopRuntimeEnv(
     pin,
     cacheRoot: options.cacheRoot,
     verify: env(DESKTOP_RUNTIME_VERIFY_ENV) === "1",
-    attest: env(DESKTOP_RUNTIME_ATTEST_ENV) === "1",
+    attest: desktopRuntimeAttestMode(env(DESKTOP_RUNTIME_ATTEST_ENV)),
     fetch: options.fetch,
     run: options.run,
+    ...(options.capture ? { capture: options.capture } : {}),
     log,
   });
   const rename = crossHostBackendRename(options.hostOs ?? Deno.build.os, target, backend);

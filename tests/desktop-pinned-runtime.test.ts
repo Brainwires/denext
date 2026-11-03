@@ -6,6 +6,7 @@
 import {
   assert,
   assertEquals,
+  assertFalse,
   assertRejects,
   assertStringIncludes,
   assertThrows,
@@ -15,15 +16,20 @@ import {
   crossHostBackendRename,
   denoCacheDir,
   denoVersionMismatchMessage,
+  desktopRuntimeAttestMode,
   desktopRuntimeDir,
   DesktopRuntimeDownloadError,
   type DesktopRuntimePin,
   desktopRuntimeTarget,
   ensureDesktopRuntime,
+  ghSignedIn,
   projectDesktopBackend,
   renameRetrying,
   resolveDesktopRuntimeEnv,
   RUNTIME_MARKER,
+  RUNTIME_VERIFIED_AT,
+  runtimeProgram,
+  runtimeRehashDue,
   verifiedRuntime,
 } from "../src/build/desktop-runtime.ts";
 import {
@@ -55,6 +61,8 @@ const pinRuntimeMain = (args: string[], out: string, toolchainOut = `${out}.tool
 import { desktopRuntimeCheck } from "../src/cli/commands/doctor.ts";
 import { canSymlink, sha256Hex, tarGz, zip } from "./_archive-fixtures.ts";
 import { ESBUILD_VERSION } from "../src/build/esbuild/version.ts";
+import { minGlibcFor } from "../src/build/linux-libc.ts";
+import { acquireCacheLock, withProjectLocks } from "../src/build/project-locks.ts";
 
 /** What denext's toolchain says about itself: the only Deno that builds on the runtime (5.0). */
 const TOOLCHAIN_DENO = { deno: "3.0.0-rc.5", denext: "3.0.0-rc.5" };
@@ -246,7 +254,10 @@ Deno.test("ensureDesktopRuntime gives up on a stalled download: no headers, or n
     );
     assertStringIncludes(connect.message, "DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS");
     assertDownloadHint(connect.message);
-    // Headers and a first chunk, then nothing.
+    // Headers and a first chunk, then nothing. Only the idle deadline may end these attempts: the
+    // headers come at once, so the connect deadline is out of the way (5 s, not 200 ms, which a
+    // loaded machine's scheduling stall before the answer could pass).
+    Deno.env.set("DENEXT_DOWNLOAD_CONNECT_TIMEOUT_MS", "5000");
     f.setBody(() =>
       new Response(
         new ReadableStream({
@@ -257,7 +268,8 @@ Deno.test("ensureDesktopRuntime gives up on a stalled download: no headers, or n
       )
     );
     const idle = await assertRejects(() => ensure(f), DesktopRuntimeDownloadError);
-    assertStringIncludes(idle.message, "interrupted");
+    // Every attempt (each on a new connection) stalled the same way: the report lists them.
+    assertStringIncludes(idle.message, "attempt 4: no data for 0.2 s");
     assertStringIncludes(idle.message, "DENEXT_DOWNLOAD_IDLE_TIMEOUT_MS");
     assertDownloadHint(idle.message);
     assertEquals(await tree(join(f.cacheRoot, f.pin.version)), []);
@@ -298,8 +310,10 @@ Deno.test("ensureDesktopRuntime refuses an oversized and a truncated download", 
         }),
       )
     );
+    // A broken connection is retried on a new one; every attempt broke, so each is reported.
     const cut = (await assertRejects(() => ensure(f), DesktopRuntimeDownloadError)).message;
-    assertStringIncludes(cut, "interrupted");
+    assertStringIncludes(cut, "(4 attempts, each on a new connection):");
+    assertStringIncludes(cut, "\n    attempt 4: ");
     assertDownloadHint(cut);
     f.setBody(() => new Response("nope", { status: 404 }));
     const http = (await assertRejects(() => ensure(f), DesktopRuntimeDownloadError)).message;
@@ -331,6 +345,71 @@ Deno.test("ensureDesktopRuntime: two concurrent installs end with one verified t
   }
 });
 
+Deno.test("ensureDesktopRuntime: an install started while another downloads waits for it", async () => {
+  const f = await fixture(await fixtureArchive());
+  try {
+    // The first install holds the cache's download lock while its fetch is held open.
+    let downloading!: () => void;
+    const started = new Promise<void>((r) => downloading = r);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => release = r);
+    const held: typeof fetch = async (input, init) => {
+      downloading();
+      await gate;
+      return await fetch(input, init);
+    };
+    const first = ensure(f, { fetch: held });
+    await started;
+    // A second one in this process reads the cache (a shared lock, rank 3) meanwhile: it waits
+    // for the first, then finds its tree, instead of failing the lock order.
+    const second = ensure(f);
+    await new Promise((r) => setTimeout(r, 50));
+    release();
+    const [a, b] = await Promise.all([first, second]);
+    assertEquals([a.cached, b.cached], [false, true]);
+    assertEquals(a.dir, b.dir);
+    assertEquals(f.hits(), 1);
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test("ensureDesktopRuntime: an unrelated task takes lower-rank locks while it downloads", async () => {
+  const f = await fixture(await fixtureArchive());
+  const other = await Deno.makeTempDir();
+  try {
+    // The install holds the runtime cache's download lock (rank 4) while its fetch is held open.
+    let downloading!: () => void;
+    const started = new Promise<void>((r) => downloading = r);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => release = r);
+    const held: typeof fetch = async (input, init) => {
+      downloading();
+      await gate;
+      return await fetch(input, init);
+    };
+    const install = ensure(f, { fetch: held });
+    await started;
+    // Meanwhile another task of this process reads a different cache (rank 3) and locks a
+    // project's build directory (rank 1). Neither holds anything the install waits for, so
+    // neither is a lock order violation (the check used to be process-wide and threw).
+    try {
+      (await acquireCacheLock(join(other, "cache"), "shared", "other cache")).release();
+      const built = await withProjectLocks(
+        { projectDir: other, buildDir: "exclusive" },
+        () => Promise.resolve("built"),
+      );
+      assertEquals(built, "built");
+    } finally {
+      release();
+    }
+    assertEquals((await install).cached, false);
+  } finally {
+    await Deno.remove(other, { recursive: true });
+    await f.close();
+  }
+});
+
 Deno.test("ensureDesktopRuntime re-downloads a damaged cache (cheap size check, full --verify)", async () => {
   const f = await fixture(await fixtureArchive());
   try {
@@ -350,6 +429,34 @@ Deno.test("ensureDesktopRuntime re-downloads a damaged cache (cheap size check, 
     await Deno.writeTextFile(join(rt.dir, RUNTIME_MARKER), JSON.stringify(marker));
     assertEquals((await ensure(f)).cached, false);
     assertEquals(f.hits(), 4);
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test("ensureDesktopRuntime re-hashes a cached runtime once a week without --verify", async () => {
+  const f = await fixture(await fixtureArchive());
+  try {
+    const day = 24 * 60 * 60 * 1000;
+    const t0 = Date.UTC(2026, 9, 1);
+    const rt = await ensure(f, { now: () => t0 });
+    assertEquals(await runtimeRehashDue(rt.dir, t0 + day), false);
+    // Same size, different bytes: within the week the size check is all that runs…
+    await Deno.writeTextFile(rt.runtimeLib, "RUNTIME");
+    assertEquals((await ensure(f, { now: () => t0 + day })).cached, true);
+    // …and past it the scheduled re-hash catches the change and re-downloads.
+    assert(await runtimeRehashDue(rt.dir, t0 + 8 * day));
+    const fixed = await ensure(f, { now: () => t0 + 8 * day });
+    assertEquals(fixed.cached, false);
+    assertEquals(await Deno.readTextFile(rt.runtimeLib), "runtime");
+    // A clean scheduled re-hash restarts the clock; a missing or garbled record is due at once.
+    assertEquals((await ensure(f, { now: () => t0 + 16 * day })).cached, true);
+    assertEquals(await runtimeRehashDue(rt.dir, t0 + 17 * day), false);
+    await Deno.writeTextFile(join(rt.dir, RUNTIME_VERIFIED_AT), "soon");
+    assert(await runtimeRehashDue(rt.dir, t0 + 17 * day));
+    await Deno.remove(join(rt.dir, RUNTIME_VERIFIED_AT));
+    assert(await runtimeRehashDue(rt.dir, t0 + 17 * day));
+    assertEquals(f.hits(), 2);
   } finally {
     await f.close();
   }
@@ -412,6 +519,119 @@ Deno.test("ensureDesktopRuntime attest: runs gh on the archive; a cached unattes
     } finally {
       await failing.close();
     }
+  } finally {
+    await f.close();
+  }
+});
+
+Deno.test("desktopRuntimeAttestMode: unset is auto, 1 / 0 force it on / off", () => {
+  assertEquals(desktopRuntimeAttestMode(undefined), "auto");
+  assertEquals(desktopRuntimeAttestMode(""), "auto");
+  assertEquals(desktopRuntimeAttestMode("1"), true);
+  assertEquals(desktopRuntimeAttestMode(" TRUE "), true);
+  assertEquals(desktopRuntimeAttestMode("0"), false);
+  assertEquals(desktopRuntimeAttestMode("false"), false);
+});
+
+Deno.test("ghSignedIn: gh auth status's exit code; a missing gh is signed out", async () => {
+  const seen: string[][] = [];
+  const ok = await ghSignedIn((
+    cmd,
+    args,
+  ) => (seen.push([cmd, ...args]), Promise.resolve({ code: 0, text: "" })));
+  assert(ok);
+  assertEquals(seen, [["gh", "auth", "status", "--hostname", "github.com"]]);
+  assertEquals(await ghSignedIn(() => Promise.resolve({ code: 1, text: "not logged in" })), false);
+  assertEquals(await ghSignedIn(() => Promise.reject(new Deno.errors.NotFound("gh"))), false);
+});
+
+Deno.test("runtimeProgram: macOS plutil / codesign come from the OS's tool folders, never PATH", () => {
+  const only = (...paths: string[]) => (path: string) => paths.includes(path);
+  const mac = only("/usr/bin/plutil", "/usr/bin/codesign", "/opt/homebrew/bin/gh");
+  assertEquals(runtimeProgram("plutil", "darwin", mac), "/usr/bin/plutil");
+  assertEquals(runtimeProgram("codesign", "darwin", mac), "/usr/bin/codesign");
+  assertEquals(runtimeProgram("gh", "darwin", mac), "/opt/homebrew/bin/gh");
+  // A missing tool is NotFound, as a program missing from PATH is; nothing falls back to PATH.
+  assertThrows(() => runtimeProgram("codesign", "darwin", only()), Deno.errors.NotFound);
+  assertThrows(() => runtimeProgram("gh", "linux", only()), Deno.errors.NotFound);
+  // Elsewhere, and for any other program (the runtime's own absolute path), nothing changes.
+  assertEquals(runtimeProgram("plutil", "linux", only()), "plutil");
+  assertEquals(runtimeProgram("/x/deno", "darwin", only()), "/x/deno");
+});
+
+/** A `gh auth status` stub: signed in or not; any other capture is a test error. */
+function ghAuth(signedIn: boolean, calls: string[][] = []) {
+  return (cmd: string, args: string[]) => {
+    calls.push([cmd, ...args]);
+    if (cmd !== "gh" || args[0] !== "auth") throw new Error(`unexpected ${cmd} ${args.join(" ")}`);
+    return Promise.resolve({ code: signedIn ? 0 : 1, text: "" });
+  };
+}
+
+Deno.test("resolveDesktopRuntimeEnv: with DENEXT_DESKTOP_RUNTIME_ATTEST unset, a signed-in gh attests the download", async () => {
+  const f = await fixture(await fixtureArchive());
+  const project = await Deno.makeTempDir();
+  try {
+    const runs: string[][] = [];
+    const r = await resolveDesktopRuntimeEnv({
+      projectDir: project,
+      target: TARGET,
+      hostOs: "linux",
+      pin: f.pin,
+      cacheRoot: f.cacheRoot,
+      env: (k) => ({} as Record<string, string>)[k],
+      denoVersion: () => Promise.resolve(TOOLCHAIN_DENO),
+      capture: ghAuth(true),
+      run: (cmd, args) => (runs.push([cmd, ...args]), Promise.resolve(0)),
+      log: quiet,
+    });
+    assertEquals(r.mode, "pinned");
+    assertEquals(runs.length, 1);
+    assertEquals(runs[0].slice(0, 3), ["gh", "attestation", "verify"]);
+    const dir = desktopRuntimeDir(f.cacheRoot, f.pin, TARGET, "webview");
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, RUNTIME_MARKER))).attested, true);
+  } finally {
+    await f.close();
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+Deno.test("ensureDesktopRuntime attest auto: a failed check refuses; a signed-out gh is reported, not fatal", async () => {
+  const failing = await fixture(await fixtureArchive());
+  try {
+    const err = await assertRejects(
+      () =>
+        ensure(failing, { attest: "auto", capture: ghAuth(true), run: () => Promise.resolve(1) }),
+      Error,
+    );
+    assertStringIncludes(err.message, "provenance check failed");
+    assertEquals(await tree(join(failing.cacheRoot, failing.pin.version)), []);
+  } finally {
+    await failing.close();
+  }
+  const f = await fixture(await fixtureArchive());
+  try {
+    const lines: string[] = [];
+    const calls: string[][] = [];
+    const rt = await ensure(f, {
+      attest: "auto",
+      capture: ghAuth(false, calls),
+      run: () => Promise.reject(new Error("gh attestation must not run")),
+      log: (l) => lines.push(l),
+    });
+    assertEquals(rt.cached, false);
+    assertEquals(calls.length, 1);
+    assert(lines.some((l) => l.includes("build provenance was not checked")), lines.join("\n"));
+    const marker = JSON.parse(await Deno.readTextFile(join(rt.dir, RUNTIME_MARKER)));
+    assertEquals(marker.attested, false);
+    // A cached, unattested tree is kept under auto (no re-download, no gh), unlike under `true`.
+    const again = await ensure(f, {
+      attest: "auto",
+      fetch: offline,
+      capture: () => Promise.reject(new Error("no probe for a cached tree")),
+    });
+    assertEquals(again.cached, true);
+    assertEquals(f.hits(), 1);
   } finally {
     await f.close();
   }
@@ -625,8 +845,10 @@ Deno.test({
 // ---------------------------------------------------------------------------------------------
 // resolveDesktopRuntimeEnv: the version gate and the overrides.
 
+/** The env reader, with no provenance check: the fixture archives carry no attestation. */
 function envOf(vars: Record<string, string>) {
-  return (k: string) => vars[k];
+  const all: Record<string, string> = { DENEXT_DESKTOP_RUNTIME_ATTEST: "0", ...vars };
+  return (k: string) => all[k];
 }
 
 Deno.test("resolveDesktopRuntimeEnv: the pinned runtime's env for a matching deno", async () => {
@@ -1128,6 +1350,28 @@ Deno.test("denoCacheDir / desktopRuntimeTarget follow Deno's own defaults", () =
   assertEquals(desktopRuntimeTarget("windows", "x86_64"), "x86_64-pc-windows-msvc");
 });
 
+Deno.test("denoCacheDir: never the working directory — no home, or a relative one, is refused", () => {
+  for (const os of ["linux", "darwin", "windows"]) {
+    const envs: Record<string, string>[] = [{}, { HOME: "." }, { HOME: "repo", USERPROFILE: "" }];
+    for (const env of envs) {
+      assertThrows(() => denoCacheDir(envOf(env), os), Error, "set DENO_DIR");
+    }
+  }
+  // A relative XDG_CACHE_HOME / LOCALAPPDATA is ignored (the XDG spec says so), not used.
+  assertEquals(
+    denoCacheDir(envOf({ HOME: "/h", XDG_CACHE_HOME: "cache" }), "linux"),
+    join("/h", ".cache", "deno"),
+  );
+  assertThrows(() => denoCacheDir(envOf({ XDG_CACHE_HOME: "cache" }), "linux"));
+  assertThrows(() => denoCacheDir(envOf({ LOCALAPPDATA: "AppData" }), "windows"));
+  // USERPROFILE is the fallback for a missing HOME; an explicit DENO_DIR always wins.
+  assertEquals(
+    denoCacheDir(envOf({ USERPROFILE: "/u" }), "linux"),
+    join("/u", ".cache", "deno"),
+  );
+  assertEquals(denoCacheDir(envOf({ DENO_DIR: "/d" }), "windows"), "/d");
+});
+
 // ---------------------------------------------------------------------------------------------
 // `denext doctor`.
 
@@ -1572,6 +1816,47 @@ Deno.test("pin generator: a 3.0.0-rc.3+ release must record the CLI's identity m
   assertEquals(toolchainPinFromRelease(old.tag, old.manifest, old.sums)!.version, "3.0.0-rc.2");
 });
 
+Deno.test("pin generator: a 3.0.0-denext.N release pins, built from the manifest's Deno", () => {
+  // After 3.0.0-rc.6 the fork releases 3.0.0-denext.N: its own version, not the old
+  // `<stock>-denext.N` scheme, so it goes with any stock `deno` and must carry the marker.
+  const r = ownVersionRelease("3.0.0-denext.1");
+  const runtime = pinFromRelease(r.tag, r.manifest, r.sums);
+  assertEquals([runtime.version, runtime.deno], ["3.0.0-denext.1", "2.9.7"]);
+  assertThrows(() => toolchainPinFromRelease(r.tag, r.manifest, r.sums), Error, "cli.identity");
+  r.manifest.cli.identity = {
+    buildDenext: "3.0.0-denext.1",
+    versionLine: denextVersionLine("3.0.0-denext.1"),
+  };
+  const toolchain = toolchainPinFromRelease(r.tag, r.manifest, r.sums)!;
+  assertEquals([toolchain.version, toolchain.deno], ["3.0.0-denext.1", "2.9.7"]);
+  assert(compareDenoVersions(runtime.version, "3.0.0-rc.6") > 0);
+});
+
+Deno.test("toolchainPinFromRelease: pins the manifest's cli.glibc as minGlibc when the release records it", () => {
+  const plain = ownVersionRelease("3.0.0-rc.2");
+  const r0 = ownVersionRelease("3.0.0-rc.2");
+  // A release from before the ceiling was recorded: no field, so denext checks only for musl.
+  assertFalse("minGlibc" in toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!);
+  plain.manifest.cli.glibc = null;
+  assertFalse("minGlibc" in toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!);
+  plain.manifest.cli.glibc = "2.27";
+  const pin = toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums)!;
+  assertEquals(pin.minGlibc, "2.27");
+  // Recorded as `minGlibc`, the field the host check reads (2.35 without it).
+  assertEquals(minGlibcFor(pin), "2.27");
+  assertEquals(minGlibcFor(toolchainPinFromRelease(r0.tag, r0.manifest, r0.sums)), "2.35");
+  // Written before the targets, so the pin file reads top-down.
+  assertEquals(Object.keys(pin).indexOf("minGlibc"), Object.keys(pin).indexOf("deno") + 1);
+  for (const bad of ["2", "2.27.1", "GLIBC_2.27", 2.27, ""]) {
+    plain.manifest.cli.glibc = bad;
+    assertThrows(
+      () => toolchainPinFromRelease(plain.tag, plain.manifest, plain.sums),
+      Error,
+      "cli.glibc",
+    );
+  }
+});
+
 Deno.test("toolchainPinFromRelease refuses any inconsistency", () => {
   // deno-lint-ignore no-explicit-any
   type R = { manifest: any; sums: string };
@@ -1926,7 +2211,9 @@ Deno.test("the checked-in pin passes pinFromRelease's own checks, for every targ
   const sums = Object.values(pinned).flatMap((t) =>
     (["webview", "cef"] as const).flatMap((b) => t[b] ? [`${t[b]!.sha256}  ${t[b]!.file}`] : [])
   ).join("\n");
-  assertEquals(pinFromRelease(pin.tag, manifest, sums), pin as unknown as PinFile);
+  // The `rollback` is the previous pin, which the release itself does not name.
+  const { rollback: _rollback, ...released } = pin;
+  assertEquals(pinFromRelease(pin.tag, manifest, sums), released as unknown as PinFile);
 });
 
 Deno.test("toolchainPinFromRelease pins each CLI zip's esbuild (denext.17 on), and only denext's version", () => {

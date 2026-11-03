@@ -1,6 +1,12 @@
 import type { Metadata, PageProps } from "denext/server";
 import { Code, DocsShell } from "../../../../../components/ui.tsx";
-import { DenextOnlyCallout, DocText, SymbolBadges } from "../../../../../components/api.tsx";
+import {
+  ApiMembers,
+  ApiParents,
+  DenextOnlyCallout,
+  DocText,
+  SymbolBadges,
+} from "../../../../../components/api.tsx";
 import { type ApiSymbol, groupForSlug, GROUPS, moduleSlug } from "../../../../../lib/api.ts";
 
 /** Pre-render one static page per (module, symbol) during `denext export`. */
@@ -49,6 +55,12 @@ export default function ApiSymbolPage(props: PageProps) {
 
   const toc = [{ id: "signature", text: "Signature", level: 2 as const }];
   if (symbol.docFull) toc.push({ id: "description", text: "Description", level: 2 as const });
+  const hasMembers = Boolean(
+    symbol.members?.length || symbol.extends?.length || symbol.implements?.length,
+  );
+  if (hasMembers) {
+    toc.push({ id: "members", text: "Members", level: 2 as const });
+  }
   if (symbol.params.length) toc.push({ id: "parameters", text: "Parameters", level: 2 as const });
   if (symbol.returns) toc.push({ id: "returns", text: "Returns", level: 2 as const });
   if (symbol.examples.length) toc.push({ id: "examples", text: "Examples", level: 2 as const });
@@ -87,6 +99,17 @@ export default function ApiSymbolPage(props: PageProps) {
           <>
             <h2 id="description">Description</h2>
             <DocText text={symbol.docFull} />
+          </>
+        )
+        : null}
+
+      {hasMembers
+        ? (
+          <>
+            <h2 id="members">Members</h2>
+            <ApiParents parents={symbol.extends ?? []} />
+            <ApiParents parents={symbol.implements ?? []} label="Implements" />
+            <ApiMembers members={symbol.members ?? []} />
           </>
         )
         : null}

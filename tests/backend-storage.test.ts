@@ -28,6 +28,7 @@ import type { DenextConfig } from "../src/server/config.ts";
 import type { ModuleLoader } from "../src/server/types.ts";
 import { samplePng } from "./fixtures/sample-image.ts";
 import { runtime } from "../packages/backend/src/runtime.ts";
+import { SYMLINK_GATE } from "./helpers/symlink.ts";
 
 const allow = () => true;
 const docs = { mime: ["text/plain", "image/png"], maxBytes: 64, authorize: allow };
@@ -447,7 +448,35 @@ Deno.test("fs storage: upload refusals store nothing (type, size, sniffing, sign
   }
 });
 
-Deno.test("fs storage: keys cannot escape the bucket (encoded traversal, NUL, symlinks)", async () => {
+Deno.test({
+  name: SYMLINK_GATE.name("fs storage: a symlink planted inside the bucket is never followed"),
+  ignore: SYMLINK_GATE.ignore,
+}, async () => {
+  const app = await backendApp({ buckets: { docs, pub: { public: true } } });
+  try {
+    await Deno.writeTextFile(join(app.root, "outside.txt"), "TOP SECRET");
+    await Deno.mkdir(join(app.root, ".storage", "pub"), { recursive: true });
+    await Deno.symlink(
+      join(app.root, "outside.txt"),
+      join(app.root, ".storage", "pub", "link.txt"),
+    );
+    const link = await app.call("/_denext/storage/o/pub/link.txt");
+    assertEquals(link.status, 404);
+    await link.body?.cancel();
+    assertEquals(await storage.bucket("pub", { service: true }).head("link.txt"), null);
+    assertEquals(await storage.bucket("pub", { service: true }).download("link.txt"), null);
+    await storage.bucket("pub", { service: true }).remove("link.txt");
+    assert(
+      (await Deno.lstat(join(app.root, ".storage", "pub", "link.txt"))).isSymlink,
+      "remove left the link alone",
+    );
+    assertEquals(await Deno.readTextFile(join(app.root, "outside.txt")), "TOP SECRET");
+  } finally {
+    await app.close();
+  }
+});
+
+Deno.test("fs storage: keys cannot escape the bucket (encoded traversal, NUL)", async () => {
   const app = await backendApp({ buckets: { docs, pub: { public: true } } });
   try {
     await Deno.writeTextFile(join(app.root, "outside.txt"), "TOP SECRET");
@@ -480,23 +509,6 @@ Deno.test("fs storage: keys cannot escape the bucket (encoded traversal, NUL, sy
       assertEquals(res.status, 404, path);
       await res.body?.cancel();
     }
-    // A symlink planted inside the bucket that points outside is never followed.
-    await Deno.mkdir(join(app.root, ".storage", "pub"), { recursive: true });
-    await Deno.symlink(
-      join(app.root, "outside.txt"),
-      join(app.root, ".storage", "pub", "link.txt"),
-    );
-    const link = await app.call("/_denext/storage/o/pub/link.txt");
-    assertEquals(link.status, 404);
-    await link.body?.cancel();
-    assertEquals(await storage.bucket("pub", { service: true }).head("link.txt"), null);
-    assertEquals(await storage.bucket("pub", { service: true }).download("link.txt"), null);
-    await storage.bucket("pub", { service: true }).remove("link.txt");
-    assert(
-      (await Deno.lstat(join(app.root, ".storage", "pub", "link.txt"))).isSymlink,
-      "remove left the link alone",
-    );
-    assertEquals(await Deno.readTextFile(join(app.root, "outside.txt")), "TOP SECRET");
     // Keys the filesystem cannot hold portably, and a key/prefix collision.
     await assertRejects(
       () => storage.bucket("pub", { service: true }).upload("a:b.txt", "x"),
