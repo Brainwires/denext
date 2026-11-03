@@ -8,10 +8,21 @@
 // icon) and the tray come from `desktop.*` in denext.config.ts through `.deno-desktop/config.json`,
 // the runtime part of the config every export and `denext desktop` command rewrites, so the config
 // module is never compiled into the app.
+//
+// Loopy's voice (voice/): the `loopyVoice` capability mints Realtime sessions with the OpenAI key
+// kept in the OS keychain. The keychain is the `secureStore` capability (`denext desktop add
+// secure-store`), but it is taken OUT of the page's bridge and handed to the voice backend alone,
+// so the page can set or clear the key and never read it back.
 import config from "./.deno-desktop/config.json" with { type: "json" };
-import { resolveDesktopCapabilities, runDesktop } from "denext/desktop";
+import {
+  type DesktopCapability,
+  DesktopCapError,
+  resolveDesktopCapabilities,
+  runDesktop,
+} from "denext/desktop";
 import { inboxFilePath } from "./inbox/paths.ts";
 import { DEFAULT_PORT, type Inbox, REPLY_PATH, replyResponse, startInbox } from "./inbox/server.ts";
+import { voiceCapabilities } from "./voice/extension.ts";
 
 const resolved = await resolveDesktopCapabilities(config, { base: import.meta.url });
 let inbox: Inbox | undefined;
@@ -19,6 +30,7 @@ let inbox: Inbox | undefined;
 const app = await runDesktop({
   importMetaUrl: import.meta.url,
   ...resolved,
+  capabilities: voiceCapabilities(resolved.capabilities, DesktopCapError) as DesktopCapability[],
   onRequest: (request, url) =>
     url.pathname === REPLY_PATH ? replyResponse(request, inbox?.replies) : null,
 });

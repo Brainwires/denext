@@ -121,6 +121,72 @@ path at launch. The inbox refuses a request that names a non-loopback host (403)
 `Origin` header — every browser cross-origin POST does, so no web page can reach it (403) — or lacks
 the token (401); a body over 16 KiB is a 413.
 
+## Voice
+
+Loopy is also a voice assistant: you talk, it answers out loud, on OpenAI's
+[Realtime API](https://developers.openai.com/api/docs/guides/realtime) (`gpt-realtime-2.1`, voice
+`marin`) over WebRTC. It needs your own OpenAI API key.
+
+**The key.** Open **⚙ Settings** and paste it into the key field. In the desktop app it goes into
+the OS keychain (`denext desktop add secure-store`: the macOS Keychain, the Secret Service on Linux,
+PasswordVault on Windows) under the app's identifier. The field is write-only: you can save, replace
+or clear the key, but nothing ever shows it or sends it back to the page. In a browser
+(`denext task dev`) the key comes from the dev server's environment instead:
+
+```sh
+OPENAI_API_KEY=… denext task dev
+```
+
+**Talking.** Each way can be turned on or off in Settings:
+
+| How                              | Default | Notes                                                                              |
+| -------------------------------- | ------- | ---------------------------------------------------------------------------------- |
+| Hold **Space**                   | on      | while Loopy's page has the focus; release to send                                  |
+| Click Loopy                      | on      | click again to send (while it is on, a click talks instead of poking)              |
+| **CommandOrControl+Shift+Space** | off     | from any app (desktop app, `global-shortcuts`): press to talk, press again to send |
+| "Hey Loopy"                      | —       | coming soon                                                                        |
+
+The microphone is on only during a turn: the session has no voice-activity detection, the track is
+disabled between turns, and a turn shorter than 250 ms is dropped.
+
+**What you see.** While you talk Loopy listens (its head swells and glows with the microphone's
+level) and your words appear in the bubble as they are transcribed. Then it thinks, then speaks: its
+mouth opens and closes with the level of its own voice (lip-sync), and the reply's transcript
+follows in the bubble. The model sets Loopy's mood as it talks through a `set_mood` tool whose
+values are the 13 moods above, so a happy answer hops and a puzzled one wobbles a `?`. The
+transcript fades a few seconds after the reply.
+
+**Size.** Settings has a size slider (75–250 %, 125 % by default; `?scale=150` or `?scale=1.5` in
+the URL overrides it in dev). Loopy and its bubble scale together, and the desktop window grows or
+shrinks to fit about its bottom-right corner, the click-through region following.
+
+### How the voice works
+
+- `voice/` runs in Deno only: in the desktop app as the `loopyVoice` capability
+  (`voice/extension.ts`, called through the runtime's bridge), in the browser as `POST /api/voice`
+  (`app/api/voice/route.ts`; loopback host, same origin and JSON only). `voice/service.ts` answers
+  five calls — `status` (is a key set; never the key), `setKey`, `clearKey`, `session` and `tool` —
+  each rate-limited.
+- `session` mints an ephemeral client secret (`POST /v1/realtime/client_secrets`, valid for 60 s,
+  `voice/realtime.ts`) with Loopy's session: its persona, push-to-talk turns
+  (`turn_detection: null`), input transcription (`gpt-4o-mini-transcribe`) and the tools. The page
+  gets the secret and its expiry only; OpenAI's error bodies are never passed on.
+- `desktop.ts` takes the `secureStore` capability out of the page's bridge and gives it to the voice
+  backend alone (`voiceCapabilities`), so the page can't read the key through it.
+- `lib/realtime-client.ts` opens the microphone, posts the SDP offer to `/v1/realtime/calls` with
+  the secret, plays the model's track and exchanges events on the `oai-events` data channel.
+  `lib/voice-machine.ts` turns them into Loopy's state; `lib/lip-sync.ts` turns audio levels into
+  mouth and pulse steps; `lib/use-voice.ts` runs the turns.
+- Tools: the model's function calls arrive in `response.done`; `lib/tool-relay.ts` relays each to
+  the backend's registry (`voice/tools.ts`), sends the output back as a `function_call_output` and
+  asks for the rest of the reply. `set_mood` is the only tool so far; new ones register in
+  `voice/tools.ts` and run in Deno.
+
+**Not yet in the desktop app.** The desktop window can't capture audio yet (the Deno Desktop runtime
+has no microphone permission handling), so in the app Loopy says it can't hear you and points at the
+browser; everything else (the key, the settings, the size) works there. The window also never takes
+the keyboard focus, so in the app use the click or the global shortcut rather than Space.
+
 ## Where it works
 
 On denext's pinned Deno Desktop runtime (3.0.0-denext.7): the transparent, frameless overlay on
@@ -159,4 +225,7 @@ deno test -A tests/integration/example-companion.test.ts    # exports a copy of 
 The unit tests cover the state machine and the message queue, the message validation, the bubble and
 the character (rendered with `denext/testing`), the corner placement, the inbox handler (token,
 browser and host rejections, size and type limits, waits), the inbox file and the CLI's argument and
-hook parsing.
+hook parsing; and the voice: the client-secret request (against a fake fetch) and its refusals, the
+key store and that no call returns the key, the dev route's checks, the tool registry and relay, the
+voice state machine, the WebRTC exchange (with fake peers), the microphone messages, lip-sync levels
+and mouth shapes, the settings and the size math and anchoring.

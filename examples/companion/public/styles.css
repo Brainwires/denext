@@ -865,3 +865,172 @@ button {
     transform: scale(0.45, 0.5);
   }
 }
+
+/* ---------------------------------------------------------------- size */
+
+/* Loopy's size setting (lib/voice-settings.ts): --loopy-scale on .companion. In the desktop window
+   the whole page is laid out at the base 260 × 300 and scaled to fill the window, which the page
+   resizes to match (lib/window-setup.ts); a transform keeps getBoundingClientRect, and so the
+   click-through hit region, in window pixels on every engine. In a browser Loopy and its bubble
+   are zoomed in the page's flow. */
+.companion {
+  --loopy-scale: 1.25;
+}
+
+.companion.is-desktop {
+  width: calc(100vw / var(--loopy-scale));
+  height: calc(100vh / var(--loopy-scale));
+  max-width: none;
+  margin: 0;
+  transform: scale(var(--loopy-scale));
+  transform-origin: 0 0;
+}
+
+.companion:not(.is-desktop) .bubble-slot,
+.companion:not(.is-desktop) .stage {
+  zoom: var(--loopy-scale);
+}
+
+/* ---------------------------------------------------------------- voice */
+
+/* Listening: the head swells gently with the microphone's level (--loopy-listen, 0–1) and glows. */
+.loopy[data-voice="listening"] .loopy-head {
+  transform-box: view-box;
+  transform-origin: 80px 76px;
+  transform: scale(calc(1 + var(--loopy-listen, 0) * 0.07));
+  transition: transform 90ms ease-out;
+}
+
+.loopy[data-voice="listening"] .loopy-bead {
+  filter: drop-shadow(0 0 calc(2px + var(--loopy-listen, 0) * 6px) var(--accent));
+}
+
+/* Speaking: the mouth is the lip-sync shape; the wow mood's own mouth move stays off. */
+.loopy[data-voice="speaking"] .loopy-mouth,
+.loopy[data-voice="speaking"] .loopy-tongue {
+  animation: none;
+}
+
+.loopy[data-voice="speaking"] .loopy-tongue {
+  display: none;
+}
+
+.voice-bubble .bubble-user {
+  margin: 0 0 6px;
+  max-height: 48px;
+  overflow-y: auto;
+  color: #6f6a60;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.voice-bubble .bubble-status {
+  color: #6f6a60;
+}
+
+.bubble-error,
+.settings-problem {
+  margin: 4px 0 0;
+  color: #b3412e;
+  font-size: 12px;
+}
+
+/* ---------------------------------------------------------------- settings */
+
+.settings {
+  position: absolute;
+  inset: 6px;
+  z-index: 2;
+  overflow-y: auto;
+  padding: 8px 10px;
+  background: var(--bubble);
+  border: 1.5px solid var(--bubble-edge);
+  border-radius: 14px;
+  box-shadow: 0 3px 12px rgb(0 0 0 / 0.14);
+  font-size: 12px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.settings header {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.settings h2 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.settings fieldset {
+  margin: 8px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings legend {
+  padding: 0;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.settings-note {
+  margin: 0 0 4px;
+  color: #6f6a60;
+}
+
+.settings-key form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.settings-key input {
+  flex: 1 1 120px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1.5px solid var(--bubble-edge);
+  border-radius: 8px;
+  font: inherit;
+}
+
+.settings button:not(.bubble-close) {
+  padding: 2px 9px;
+  border: 1.5px solid var(--wire-edge);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--wire-edge);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.setting {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 6px;
+  margin: 3px 0;
+}
+
+.setting small {
+  grid-column: 2;
+  color: #8a8478;
+}
+
+.setting.is-disabled {
+  color: #9a948a;
+}
+
+.setting-range {
+  grid-template-columns: 1fr auto;
+}
+
+.setting-range input {
+  width: 100%;
+}

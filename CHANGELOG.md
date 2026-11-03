@@ -8,6 +8,25 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **examples/companion: Loopy talks back.** Loopy is now a voice assistant on OpenAI's Realtime API
+  (`gpt-realtime-2.1` over WebRTC), with Loopy as the avatar: hold Space, click Loopy, or press
+  `CommandOrControl+Shift+Space` from any app (`global-shortcuts`, off until turned on) to talk,
+  and the live transcripts of both sides show in the speech bubble. Loopy pulses with the
+  microphone while listening, thinks while the reply is on its way, moves its mouth with the
+  level of its own voice while speaking, and takes the mood the model picks through a `set_mood`
+  tool (one of its 13). The OpenAI key lives in the OS keychain (`secure-store`): the settings
+  panel can set, replace or clear it, and the desktop entry keeps the secure store off the page's
+  bridge, so the page never reads it back; a `loopyVoice` capability mints a 60-second ephemeral
+  client secret per session, rate-limited and refused without a key. In the browser
+  (`denext task dev`) the key is the dev server's `OPENAI_API_KEY`, behind a loopback,
+  same-origin `POST /api/voice`. Tool calls are relayed from the page to a registry in Deno, ready
+  for the tools to come. A size setting (75–250 %, 125 % by default, or `?scale=` in dev) scales
+  Loopy and its bubble and resizes the window about its bottom-right corner, with the
+  click-through region following. The desktop window can't use the microphone yet; Loopy says so
+  and points at the browser.
+
 ## [4.11.13] - 2026-11-02
 
 ### Added

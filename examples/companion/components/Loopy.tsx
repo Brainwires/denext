@@ -8,6 +8,7 @@
 //
 // Pure: no hooks, no timers — app/companion.tsx owns the state machine and the squash on poke.
 import type { LoopyMood, LoopyState } from "../lib/loopy-machine.ts";
+import { LEVEL_STEPS, mouthShape } from "../lib/lip-sync.ts";
 
 /**
  * The wire's bend points, in order along the wire: a cut end near the waist, the left wing's inner
@@ -277,6 +278,19 @@ export interface LoopyProps {
   readonly label?: string;
   /** The mood of the message on screen, which tints the wire (none: bare steel). */
   readonly mood?: LoopyMood;
+  /** What Loopy is doing in a voice turn (`data-voice`): listening, thinking or speaking. */
+  readonly voice?: "listening" | "thinking" | "speaking";
+  /**
+   * The audio level step, 0 to `LEVEL_STEPS`: while speaking how open the mouth is (lip-sync),
+   * while listening the microphone's (the pulse).
+   */
+  readonly level?: number;
+}
+
+/** The mouth to draw: the lip-sync shape while speaking, else the mood's. */
+function mouthFor(face: Face, voice: LoopyProps["voice"], step: number) {
+  if (voice === "speaking") return mouthShape(step);
+  return { d: face.mouth, open: face.mouthOpen === true };
 }
 
 /** One stroke of vinyl-coated wire: a dark edge, the colour, and a highlight. */
@@ -291,14 +305,20 @@ function Wire({ d }: { d: string }) {
 }
 
 /** Loopy, the paper clip. */
-export function Loopy({ state, label = "Loopy", mood }: LoopyProps) {
+export function Loopy(
+  { state, label = "Loopy", mood, voice, level = 0 }: LoopyProps,
+) {
   const current = mood ?? "neutral";
   const face = FACES[current];
+  const mouth = mouthFor(face, voice, level);
+  const listen = voice === "listening" ? Math.min(1, level / LEVEL_STEPS) : 0;
   return (
     <svg
       class="loopy"
       data-state={state}
       data-mood={current}
+      data-voice={voice}
+      style={{ "--loopy-listen": listen }}
       viewBox="0 0 160 200"
       width="160"
       height="200"
@@ -331,7 +351,7 @@ export function Loopy({ state, label = "Loopy", mood }: LoopyProps) {
             )}
             <Pupils face={face} />
           </g>
-          <path class={face.mouthOpen ? "loopy-mouth is-open" : "loopy-mouth"} d={face.mouth} />
+          <path class={mouth.open ? "loopy-mouth is-open" : "loopy-mouth"} d={mouth.d} />
           <Extras mood={current} />
         </g>
         <g class="loopy-thought" aria-hidden="true">

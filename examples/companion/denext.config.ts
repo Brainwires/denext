@@ -52,9 +52,13 @@ export default {
       ],
     },
     // The inbox file (token + port) goes in the app's data folder; desktop.ts writes it, so the
-    // packaged app needs write access there. Listening on loopback is in the baseline.
-    extraPermissions: { write: ["$APPDATA"] },
+    // packaged app needs write access there. Listening on loopback is in the baseline. The voice
+    // backend (voice/) mints Realtime sessions at api.openai.com.
+    extraPermissions: { write: ["$APPDATA"], net: ["api.openai.com"] },
     // Just the app bundle: no installers for an example.
     installers: { macos: [], linux: [], windows: [] },
+    // The OpenAI key lives in the OS keychain (desktop.ts hands the secure store to the voice
+    // backend only, never to the page); the push-to-talk shortcut works from any app.
+    capabilities: { secureStore: true, globalShortcuts: true },
   },
 } satisfies DenextConfig;
