@@ -664,7 +664,15 @@ the app's version (an app on Effect 4 against a checkout's `effect@^3`, say, bre
 the app's entry and reports the clash — the package, the app's specifier and the checkout's — and
 `denext doctor` flags an import-map entry that maps a package the checkout needs at another major
 (`local denext imports`). Do not copy the checkout's whole `imports` into an app: its root import
-map also serves denext's workspace packages and tests.
+map also serves denext's workspace packages and tests. `denext migrate --check` previews the
+clashes as review findings.
+
+The same rule holds for the configs `denext dev` and `denext build` resolve through: denext's
+`jsr:` / `npm:` entries are never layered under the app's for a package the app has in its
+package.json or `node_modules` (that resolves to the app's version), and from a checkout only the
+ones denext's own modules import are layered at all. Independently of where denext comes from,
+`denext doctor`'s `import-map versions` check flags an `npm:` import-map entry whose major differs
+from the app's own copy of the package (installed, else its package.json range).
 
 ## Supply-chain hold
 

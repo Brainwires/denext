@@ -49,7 +49,7 @@ const IMPORT_SPECIFIERS = [
 /** The export subpaths that are the CLI's, not the app's: never a root of the app's graph. */
 const CLI_EXPORTS = new Set(["./cli"]);
 
-/** The bare specifiers each checkout's app-reachable modules import, cached per checkout. */
+/** The bare specifiers each checkout's reachable modules import, cached per checkout and scope. */
 const reachableSpecifiers = new Map<string, Promise<Set<string>>>();
 
 /** Parse a config's JSONC text, or null. */
@@ -91,19 +91,25 @@ export function importsOf(config: Record<string, unknown> | null): Record<string
   );
 }
 
-/** Every bare specifier the modules reachable from the checkout's non-CLI exports import. */
-function appReachableSpecifiers(
+/**
+ * Every bare specifier the modules reachable from the checkout's exports import: the non-CLI
+ * ones (what an app's graph can load), or every export with `cli` (what a process running
+ * denext's CLI under a merged config loads too).
+ */
+function reachableFrom(
   checkout: string,
   exportsMap: Record<string, string>,
+  cli = false,
 ): Promise<Set<string>> {
-  let found = reachableSpecifiers.get(checkout);
+  const cacheKey = `${cli ? "cli" : "app"}:${checkout}`;
+  let found = reachableSpecifiers.get(cacheKey);
   if (!found) {
     found = walkGraph(
       Object.entries(exportsMap)
-        .filter(([key]) => !CLI_EXPORTS.has(key))
+        .filter(([key]) => cli || !CLI_EXPORTS.has(key))
         .map(([, rel]) => resolve(checkout, rel)),
     );
-    reachableSpecifiers.set(checkout, found);
+    reachableSpecifiers.set(cacheKey, found);
   }
   return found;
 }
@@ -151,7 +157,7 @@ export async function frameworkRuntimeDeps(
   const abs = resolve(checkout);
   const cfg = config ?? await readDenoConfig(abs);
   const exportsMap = (cfg?.exports ?? {}) as Record<string, string>;
-  const used = await appReachableSpecifiers(abs, exportsMap);
+  const used = await reachableFrom(abs, exportsMap);
   const out: Record<string, string> = {};
   for (const [key, value] of Object.entries(importsOf(cfg))) {
     if ((value.startsWith("jsr:") || value.startsWith("npm:")) && keyCovers(used, key)) {
@@ -293,4 +299,180 @@ export async function localCheckoutOf(
     if ((await readDenoConfig(at))?.name === "@denext/denext") return at;
   }
   return null;
+}
+
+/** The package.json fields that declare dependencies. */
+const DEP_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"];
+
+/** The package an import-map key names: `@std/path/posix` → `@std/path`, `ws/` → `ws`. */
+function packageOfKey(key: string): string {
+  const parts = key.replace(/\/$/, "").split("/");
+  return parts[0].startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+}
+
+/** Whether `dir` or a directory above it has `node_modules/<name>` (a pnpm link counts). */
+async function inNodeModules(dir: string, name: string): Promise<boolean> {
+  let at = resolve(dir);
+  while (true) {
+    if (await Deno.lstat(join(at, "node_modules", name)).then(() => true, () => false)) return true;
+    const parent = dirname(at);
+    if (parent === at) return false;
+    at = parent;
+  }
+}
+
+/**
+ * The packages an app owns: its package.json dependencies (`dependencies`, `devDependencies`,
+ * `peerDependencies`, `optionalDependencies`) and, among `candidates`, the ones installed in a
+ * `node_modules` at or above `dir`.
+ *
+ * @param dir The app's directory.
+ * @param candidates The package names worth a `node_modules` look.
+ * @returns The owned package names.
+ */
+async function appOwnedPackages(
+  dir: string,
+  candidates: Iterable<string>,
+): Promise<Set<string>> {
+  const owned = new Set<string>();
+  const text = await Deno.readTextFile(join(dir, "package.json")).catch(() => null);
+  const pkg = parseConfig(text);
+  for (const field of DEP_FIELDS) {
+    const deps = pkg?.[field];
+    if (deps && typeof deps === "object") Object.keys(deps).forEach((name) => owned.add(name));
+  }
+  for (const name of new Set(candidates)) {
+    if (!owned.has(name) && await inNodeModules(dir, name)) owned.add(name);
+  }
+  return owned;
+}
+
+/** Options for {@linkcode layeredFrameworkImports}. */
+export interface LayeredFrameworkImportsOptions {
+  /** The framework root URL (`file://` for a checkout; a remote one is not walked). */
+  readonly root: string;
+  /** The app's directory: a package it owns is left to the app (omit for a framework-only graph). */
+  readonly appDir?: string;
+  /** Whether a process under this config runs denext's CLI too (its deps are then needed). */
+  readonly cli?: boolean;
+}
+
+/**
+ * denext's import map as a merged config layers it under an app's: its own entries (`denext/*`,
+ * paths) always; a `jsr:` / `npm:` entry only when denext's graph imports it (a checkout's
+ * modules, walked from its exports; a remote framework is not walked) and never for a package
+ * the app owns (its package.json, its `node_modules`), which resolves to the app's version. The
+ * root import map also serves denext's workspace packages and tests (`effect`, `jsqr`): layered
+ * whole, its `effect@^3` shadowed an app's own Effect 4 that the app leaves unmapped.
+ *
+ * @param framework The framework's absolutized import map ({@linkcode frameworkImports}).
+ * @param options Where the framework lives, the app, and whether the CLI runs under it.
+ * @returns The entries to layer.
+ */
+export async function layeredFrameworkImports(
+  framework: Record<string, string>,
+  options: LayeredFrameworkImportsOptions,
+): Promise<Record<string, string>> {
+  const registry = (v: string) => v.startsWith("jsr:") || v.startsWith("npm:");
+  let used: Set<string> | null = null;
+  if (options.root.startsWith("file:")) {
+    const checkout = fromFileUrl(options.root);
+    const cfg = await readDenoConfig(checkout);
+    used = await reachableFrom(
+      checkout,
+      (cfg?.exports ?? {}) as Record<string, string>,
+      options.cli,
+    );
+  }
+  const candidates = Object.entries(framework).filter(([, v]) => registry(v))
+    .map(([k]) => packageOfKey(k));
+  const owned = options.appDir
+    ? await appOwnedPackages(options.appDir, candidates)
+    : new Set<string>();
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(framework)) {
+    if (registry(value)) {
+      if (used && !keyCovers(used, key)) continue;
+      if (owned.has(packageOfKey(key))) continue;
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+/** An app import-map entry whose major differs from the app's own copy of the package. */
+export interface OwnVersionMismatch {
+  /** The import-map key. */
+  readonly key: string;
+  /** Its `npm:` specifier. */
+  readonly spec: string;
+  /** The app's own version: the installed one, else the package.json range. */
+  readonly own: string;
+  /** Where `own` came from. */
+  readonly source: "node_modules" | "package.json";
+}
+
+/** The installed version of `name` in a `node_modules` at or above `dir`, or null. */
+async function installedVersion(dir: string, name: string): Promise<string | null> {
+  let at = resolve(dir);
+  while (true) {
+    const text = await Deno.readTextFile(join(at, "node_modules", name, "package.json"))
+      .catch(() => null);
+    const version = parseConfig(text)?.version;
+    if (typeof version === "string") return version;
+    const parent = dirname(at);
+    if (parent === at) return null;
+    at = parent;
+  }
+}
+
+/**
+ * The app's `npm:` import-map entries whose major differs from the app's own copy of the package
+ * (the version installed in its `node_modules`, else its package.json range): the import map
+ * then loads one major and the app's other tooling (a bundle through `node_modules`, the editor)
+ * another — a map copied from somewhere else, say.
+ *
+ * @param dir The app's directory.
+ * @param imports The app's import map.
+ * @returns The mismatches, in import-map order.
+ */
+export async function ownVersionMismatches(
+  dir: string,
+  imports: Record<string, string>,
+): Promise<OwnVersionMismatch[]> {
+  const ranges = await packageJsonRanges(dir);
+  const out: OwnVersionMismatch[] = [];
+  for (const [key, spec] of Object.entries(imports)) {
+    const mismatch = await ownVersionMismatch(dir, key, spec, ranges);
+    if (mismatch) out.push(mismatch);
+  }
+  return out;
+}
+
+/** Every dependency range the app's package.json declares, by package name. */
+async function packageJsonRanges(dir: string): Promise<Record<string, string>> {
+  const pkg = parseConfig(await Deno.readTextFile(join(dir, "package.json")).catch(() => null));
+  const ranges: Record<string, string> = {};
+  for (const field of DEP_FIELDS) {
+    const deps = pkg?.[field];
+    if (deps && typeof deps === "object") Object.assign(ranges, deps);
+  }
+  return ranges;
+}
+
+/** One entry's mismatch with the app's own copy, or null (agrees, or nothing to compare). */
+async function ownVersionMismatch(
+  dir: string,
+  key: string,
+  spec: string,
+  ranges: Record<string, string>,
+): Promise<OwnVersionMismatch | null> {
+  const parts = spec.startsWith("npm:") ? registryParts(spec) : null;
+  const major = parts ? rangeMajor(parts.range) : null;
+  if (!parts || major === null) return null;
+  const installed = await installedVersion(dir, parts.name);
+  const declared = typeof ranges[parts.name] === "string" ? ranges[parts.name] : null;
+  const own = installed ?? declared;
+  if (own === null || [null, major].includes(rangeMajor(own))) return null;
+  return { key, spec, own, source: installed ? "node_modules" : "package.json" };
 }

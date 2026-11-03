@@ -49,6 +49,7 @@ import {
   importsOf,
   localCheckoutOf,
   majorClashes,
+  ownVersionMismatches,
   readDenoConfig,
 } from "../../build/local-checkout-imports.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
@@ -452,6 +453,41 @@ export async function localCheckoutImportsCheck(dir: string): Promise<Check | nu
       `${clashes.map(describeClash).join("; ")}. denext's modules load the app's version. ` +
       "Map the checkout's version if the app does not need its own, or check denext works " +
       "with the app's: https://denext.dev/docs/toolchain#a-local-denext-checkout",
+    critical: false,
+  };
+}
+
+/**
+ * The own-version check: an `npm:` import-map entry whose major differs from the app's own copy
+ * of the package (installed in `node_modules`, else its package.json range) loads one major
+ * through the import map and another everywhere `node_modules` is read (`"effect":
+ * "npm:effect@^3.22.0"` beside an installed Effect 4). A failure naming each (not critical); a
+ * pass when there were entries to compare and they agree; null when there were none.
+ *
+ * @param dir The project directory.
+ */
+export async function importVersionsCheck(dir: string): Promise<Check | null> {
+  const imports = importsOf(await readDenoConfig(dir));
+  const npm = Object.values(imports).filter((v) => v.startsWith("npm:"));
+  if (!npm.length) return null;
+  const found = await ownVersionMismatches(dir, imports);
+  if (!found.length) {
+    return {
+      name: "import-map versions",
+      ok: true,
+      detail: `${npm.length} npm: import-map entr${
+        npm.length === 1 ? "y agrees" : "ies agree"
+      } in major with the app's own copies (or have none to compare)`,
+      critical: false,
+    };
+  }
+  const listed = found.map((m) => `${m.key} → ${m.spec}, but ${m.source} has ${m.own}`);
+  return {
+    name: "import-map versions",
+    ok: false,
+    detail: `the import map loads another major than the app's own copy: ${listed.join("; ")}. ` +
+      "Point the entry at the version the app installs (or drop it, so the package resolves " +
+      "from node_modules), or install the version the import map names",
     critical: false,
   };
 }
@@ -1098,6 +1134,8 @@ export async function collectDoctorReport(
   if (depAge) checks.push(depAge);
   const localImports = await localCheckoutImportsCheck(paths.projectDir);
   if (localImports) checks.push(localImports);
+  const importVersions = await importVersionsCheck(paths.projectDir);
+  if (importVersions) checks.push(importVersions);
   const jail = await jailScriptsCheck(paths.projectDir, options);
   if (jail) checks.push(jail);
   checks.push(...await backendChecks(paths.projectDir, paths.config), ...authChecks(paths.config));

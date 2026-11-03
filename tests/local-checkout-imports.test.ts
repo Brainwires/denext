@@ -6,12 +6,18 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 import { dirname, join, toFileUrl } from "@std/path";
 import {
   frameworkRuntimeDeps,
+  layeredFrameworkImports,
   localCheckoutOf,
   majorClashes,
+  ownVersionMismatches,
   planFrameworkDeps,
 } from "../src/build/local-checkout-imports.ts";
+import { checkMigration } from "../src/build/migrate-check.ts";
+import { ensureMergedConfig } from "../src/build/dev-unbundled/resolve.ts";
+import { createUnbundledState } from "../src/build/dev-unbundled/state.ts";
+import { buildAppCss } from "../src/build/css.ts";
 import { migrateProject } from "../src/build/migrate.ts";
-import { localCheckoutImportsCheck } from "../src/cli/commands/doctor.ts";
+import { importVersionsCheck, localCheckoutImportsCheck } from "../src/cli/commands/doctor.ts";
 import { createMigrateCommand } from "../src/cli/commands/migrate.ts";
 import { capture, makeCtx } from "./_cli-coverage-helpers.ts";
 
@@ -223,5 +229,147 @@ Deno.test("migrate CLI --denext-local-path: prints each clash with the app's and
       printed,
       "ws: the app has ws@^7.5.0 (package.json), denext's checkout maps npm:ws@^8",
     );
+  });
+});
+
+// ── the merged configs a build / dev process runs under ───────────────────────
+
+Deno.test("dev merged config: denext's test-only `effect` never shadows the app's own", async () => {
+  // The app depends on Effect 4 and leaves `effect` unmapped (it resolves from node_modules), as a
+  // pnpm workspace does; denext's root import map lists `effect@^3` for its @denext/effect tests.
+  await withTree({
+    "package.json": { name: "app", dependencies: { effect: "4.0.0-beta.1" } },
+    "deno.json": { imports: {} },
+  }, async (dir) => {
+    const st = createUnbundledState({
+      projectDir: dir,
+      appDir: join(dir, "app"),
+      configPath: join(dir, "deno.json"),
+      outDir: join(dir, ".denext"),
+    });
+    const merged = JSON.parse(await Deno.readTextFile(await ensureMergedConfig(st))).imports;
+    assertEquals(merged.effect, undefined, "the app's node_modules effect resolves, not denext's");
+    assertEquals(merged.jsqr, undefined, "a dep only denext's tests import");
+    assertStringIncludes(merged["@std/path"], "jsr:@std/path", "one denext's modules import");
+    assert(merged["denext"], "denext's own entries stay");
+  });
+});
+
+Deno.test("CSS config: a package the app has in node_modules stays the app's", async () => {
+  await withTree({
+    "package.json": { name: "app" },
+    "node_modules/effect/package.json": { name: "effect", version: "4.0.0" },
+    "deno.json": { imports: {} },
+    "app/layout.tsx": `import "./globals.css";\nexport default () => null;\n`,
+    "app/globals.css": "body { margin: 0; }\n",
+  }, async (dir) => {
+    const css = await buildAppCss({
+      projectDir: dir,
+      configPath: join(dir, "deno.json"),
+      outDir: join(dir, ".denext"),
+    });
+    assert(css, "the app's stylesheet was found");
+    const imports = JSON.parse(await Deno.readTextFile(css.configPath)).imports;
+    assertEquals(imports.effect, undefined);
+    assertStringIncludes(imports["@std/path"], "jsr:@std/path");
+  });
+});
+
+Deno.test("layeredFrameworkImports: denext's graph decides, the app's packages are the app's", async () => {
+  await withTree(
+    { ...checkout(), "app/package.json": { dependencies: { ws: "^7" } } },
+    async (root) => {
+      const framework = {
+        "denext": toFileUrl(join(root, "denext", "mod.ts")).href,
+        "@std/path": "jsr:@std/path@^1.0.0",
+        "ws": "npm:ws@^8",
+        "effect": "npm:effect@^3.22.0",
+        "jsqr": "npm:jsqr@1.4.0",
+      };
+      const fileRoot = toFileUrl(join(root, "denext") + "/").href;
+      assertEquals(Object.keys(await layeredFrameworkImports(framework, { root: fileRoot })), [
+        "denext",
+        "@std/path",
+        "ws",
+      ]);
+      // A process running the CLI needs the CLI's deps (the fake checkout's cli.ts imports effect).
+      assertEquals(
+        Object.keys(await layeredFrameworkImports(framework, { root: fileRoot, cli: true })),
+        ["denext", "@std/path", "ws", "effect"],
+      );
+      // The app owns ws: left to the app.
+      assertEquals(
+        Object.keys(
+          await layeredFrameworkImports(framework, { root: fileRoot, appDir: join(root, "app") }),
+        ),
+        ["denext", "@std/path"],
+      );
+      // A remote framework is not walked; only the app's packages are taken out.
+      assertEquals(
+        Object.keys(
+          await layeredFrameworkImports(framework, {
+            root: "https://jsr.io/@denext/denext/9.9.9/",
+            appDir: join(root, "app"),
+          }),
+        ),
+        ["denext", "@std/path", "effect", "jsqr"],
+      );
+    },
+  );
+});
+
+Deno.test("migrate --check --denext-local-path: previews each import clash", async () => {
+  await withTree({ ...checkout(), ...viteApp({ ws: "^7.5.0" }) }, async (root) => {
+    const dir = join(root, "apps/web");
+    const report = await checkMigration(dir, { denextLocalPath: join(root, "denext") });
+    assertEquals(report.importClashes, [
+      { name: "ws", app: "ws@^7.5.0 (package.json)", denext: "npm:ws@^8" },
+    ]);
+    const finding = report.review.find((f) => f.item === "local denext import: ws");
+    assert(finding, JSON.stringify(report.review));
+    assertStringIncludes(finding.reason, "denext's checkout maps npm:ws@^8");
+    assertEquals(report.verdict, "review");
+    await Deno.stat(join(dir, "deno.json")).then(
+      () => assert(false, "--check writes nothing"),
+      () => {},
+    );
+  });
+});
+
+Deno.test("denext doctor: an npm: import-map entry at another major than the app's own copy", async () => {
+  await withTree({
+    "package.json": { dependencies: { effect: "catalog:", zod: "^3.23.0", ws: "^8.0.0" } },
+    "node_modules/effect/package.json": { name: "effect", version: "4.0.0-beta.1" },
+    "deno.json": {
+      imports: {
+        effect: "npm:effect@^3.22.0", // installed 4.x: flagged
+        zod: "npm:zod@^4.0.0", // not installed, package.json ^3: flagged
+        ws: "npm:ws@^8.18.0", // agrees
+        left: "npm:left-pad@^1.0.0", // the app has no copy: nothing to compare
+      },
+    },
+  }, async (dir) => {
+    assertEquals(
+      (await ownVersionMismatches(dir, {
+        effect: "npm:effect@^3.22.0",
+        zod: "npm:zod@^4.0.0",
+        ws: "npm:ws@^8.18.0",
+        left: "npm:left-pad@^1.0.0",
+      })).map((m) => [m.key, m.own, m.source]),
+      [["effect", "4.0.0-beta.1", "node_modules"], ["zod", "^3.23.0", "package.json"]],
+    );
+    const check = await importVersionsCheck(dir);
+    assert(check && !check.ok && !check.critical, JSON.stringify(check));
+    assertStringIncludes(
+      check.detail,
+      "effect → npm:effect@^3.22.0, but node_modules has 4.0.0-beta.1",
+    );
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ imports: { effect: "npm:effect@^4.0.0-beta.1" } }),
+    );
+    assert((await importVersionsCheck(dir))?.ok);
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify({ imports: {} }));
+    assertEquals(await importVersionsCheck(dir), null);
   });
 });

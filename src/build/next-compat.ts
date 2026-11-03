@@ -91,6 +91,7 @@ import {
   readFrameworkJson,
   readLocalAliases,
 } from "./bundle.ts";
+import { layeredFrameworkImports } from "./local-checkout-imports.ts";
 import { resolveOnBehalf } from "./esbuild-resolve.ts";
 import { parse as parseJsonc } from "@std/jsonc";
 import {
@@ -472,7 +473,10 @@ export async function prebuildDenextRuntime(options: PrebuildOptions): Promise<s
   // their imports resolve in either mode — the deno loader fetches remote framework sources.
   const rootUrl = options.frameworkRoot ?? frameworkRootUrl();
   const outDir = resolve(options.outDir);
-  const imports = await frameworkImports();
+  // Only what denext's graph imports (the root map's test-only `effect`, `jsqr`, … left out). The
+  // app's packages don't enter this framework-only graph, so there is nothing of the app's to
+  // shadow here.
+  const imports = await layeredFrameworkImports(await frameworkImports(), { root: rootUrl });
   const depAge = minDepAgeConfig(undefined);
   const patch = options.projectDir ? await loadDenextPatchSet(options.projectDir) : null;
   const classComponents = !!options.classComponents;

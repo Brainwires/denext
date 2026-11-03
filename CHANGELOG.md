@@ -20,6 +20,12 @@ and this project adheres to
   `denext` entry is a path or `file:` URL into a denext checkout, the `local denext imports` check
   flags an entry that maps a package the checkout's modules import at another major (or to another
   package), naming the app's specifier and the checkout's.
+- **`denext doctor` checks an import map against the app's own package versions.** The
+  `import-map versions` check flags an `npm:` entry whose major differs from the app's own copy
+  of the package (installed in `node_modules`, else its package.json range), such as
+  `"effect": "npm:effect@^3.22.0"` beside an installed Effect 4.
+- **`denext migrate --check --denext-local-path` previews the import clashes** the migration would
+  report, as review findings and as `importClashes` in the report.
 
 ### Fixed
 
@@ -31,6 +37,14 @@ and this project adheres to
   modules reachable from the checkout's public entry points, not from every file under `src/`: a
   dependency only denext's CLI imports (its profiler's headless-browser client) no longer lands in
   the app's import map, and neither does one of the checkout's workspace packages or tests.
+- **denext's own import map no longer shadows an app's package in dev and build configs.** The
+  merged configs the unbundled dev loop, the stylesheet build and the runtime prebuild resolve
+  through layered denext's whole root import map under the app's, so a package the app leaves
+  unmapped and resolves from its own `node_modules` (an app on Effect 4) got denext's test-only
+  `effect@^3` instead. They now carry denext's `jsr:` / `npm:` entries only where denext's own
+  module graph imports them, and never for a package the app has in package.json or
+  `node_modules` (the runtime prebuild, which bundles none of the app's modules, applies only the
+  first rule).
 
 ## [4.11.13] - 2026-11-02
 
