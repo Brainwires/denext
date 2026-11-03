@@ -312,7 +312,7 @@ const runtimeChecks: Check[] = [
   ["runtime: denext's pinned Deno Desktop runtime", ({ setup }) => {
     assert(
       setup.pinnedRuntime,
-      "Deno.desktop is missing: the stock runtime is running",
+      "Deno.desktop is missing: this is not denext's Deno Desktop runtime",
     );
     return setup.target;
   }],
@@ -335,8 +335,7 @@ const runtimeChecks: Check[] = [
     }
     return "pong received";
   }],
-  ["websocket: the page dials the runtime's relay with the app origin", async ({ setup }) => {
-    if (!setup.pinnedRuntime) throw new Skip("the stock runtime serves the page on loopback");
+  ["websocket: the page dials the runtime's relay with the app origin", async () => {
     const relay = desktopWsUrl();
     assert(relay, "__denext.wsUrl is missing");
     assert(/\/\.deno-desktop-relay\/[0-9a-f]{64}$/.test(relay), "the relay URL has no token");
@@ -784,9 +783,6 @@ const nativeChecks: Check[] = [
     return "@node-rs/crc32";
   }],
   ["runOnMainThread: an extension's native call runs on the UI thread", async ({ setup }) => {
-    if (!setup.pinnedRuntime) {
-      throw new Skip("Deno.desktop.runOnMainThread needs the pinned runtime");
-    }
     const out = await kitchen.mainThread({}) as { fn: string; js: string; ui: string; pid: number };
     assert(out.ui !== out.js, `${out.fn} answered ${out.ui} on both threads`);
     if (setup.os === "darwin") {
@@ -1017,7 +1013,6 @@ const securityChecks: Check[] = [
     return probes.map((p) => `${p.name} → ${p.status.replace(/^HTTP\/1\.1 /, "")}`).join("; ");
   }],
   ["auth session: the OS's own session where it has one, else not_supported", async ({ setup }) => {
-    if (!setup.pinnedRuntime) throw new Skip("Deno.desktop.authSession needs the pinned runtime");
     const page = await raw("authSession").capabilities({}) as { osSession: boolean };
     const out = await kitchen.osAuthSession({}, { timeoutMs: 60_000 }) as {
       available: boolean;
@@ -1496,7 +1491,7 @@ const appChecks: Check[] = [
     "app: the session probe reports the CEF sandbox, the file chooser and the cookie store",
     async ({ setup }) => {
       const caps = await appCapabilities();
-      if (!setup.pinnedRuntime || caps.sandbox === "unknown") {
+      if (caps.sandbox === "unknown") {
         throw new Skip(
           "this runtime predates the sandbox and file chooser facts (2.9.7-denext.12)",
         );
@@ -1682,8 +1677,7 @@ const appChecks: Check[] = [
   }],
   [
     "notifications: the web Notification API (denext's shim), a click reaches onclick",
-    async ({ setup }) => {
-      if (!setup.pinnedRuntime) throw new Skip("the shim needs the pinned runtime");
+    async () => {
       // deno-lint-ignore no-explicit-any
       const Web = (globalThis as any).Notification;
       assert(
@@ -1817,9 +1811,6 @@ async function saveThroughDialog(
   name: string,
   start: () => void,
 ): Promise<string> {
-  if (!setup.pinnedRuntime) {
-    throw new Skip("page downloads open a save dialog only under denext's pinned runtime");
-  }
   if (!setup.downloads.dialogs) {
     throw new Skip(`no one to answer the save dialog: ${setup.downloads.dialogSkip ?? "unknown"}`);
   }

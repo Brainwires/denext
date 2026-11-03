@@ -4,8 +4,9 @@
 #   0. The desktop test suites (`deno task test:desktop`: `tests/desktop-*`, `tests/safe-extract*`,
 #      the desktop CLI verbs, the notification trigger math, the Cargo-style project locks over real
 #      OS locks (`flock` / `LockFileEx`), install.sh, React Native's desktop additions and the
-#      per-file coverage floor script) on all three OSes, with Deno 2.9.8 exactly — the version
-#      denext's pinned Deno Desktop runtime is built against. On Linux the same run is measured and
+#      per-file coverage floor script) on all three OSes, with setup-deno's Deno 2.9.8 exactly — the
+#      upstream release denext's pinned `3.0.0-denext.N` runtime is built from. On Linux the same
+#      run is measured and
 #      held to the per-file 85% floor (`deno task coverage:desktop` → `scripts/coverage-floor.ts`),
 #      so every push to `development` checks the floor before a release is cut from it.
 #

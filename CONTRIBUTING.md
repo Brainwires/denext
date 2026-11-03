@@ -19,8 +19,9 @@ deno task budget          # CI's bundle-budget job: the shared-chunk budget of e
 deno task release-check   # check + doc-lint + deno publish --dry-run (run before tagging)
 ```
 
-- **`regen`** runs every generator a CI drift test checks, in dependency order: the command
-  table, packed native templates, config schema, serial-test list, plugin catalog, the
+- **`regen`** runs every generator a CI drift test checks, in dependency order: first `deno fmt`
+  over the docs corpus's inputs (the corpus fingerprints their bytes, so one regen is final even
+  when the commit hook's fmt would reformat a page), then the command table, packed native templates, config schema, serial-test list, plugin catalog, the
   react-native tables, the served `install.sh` / `install.ps1`, the desktop examples' package
   scripts, the MCP / CLI / examples / fixed pages, then the docs corpus and `llms*.txt`.
   `regen --check` lists what is stale and leaves the tree as it was. Stale generated files were
@@ -71,7 +72,7 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   below, or `fakeTimers()` in `tests/helpers/mobile-fakes.ts`); a longer sleep only hides the
   race.
 - **Vitest files (`tests/**/*.vitest.ts`) are for what `Deno.test` can't do.** denext's Deno
-  toolchain (the `2.9.7-denext.N` fork that `denext test` runs on) has Vitest's API built into
+  toolchain (the `3.0.0-denext.N` build of the fork that `denext test` runs on) has Vitest's API built into
   `deno test`: `import { describe, expect, it, vi } from "vitest"` gives fake timers and a fake
   `Date` (`vi.useFakeTimers()`, `vi.advanceTimersByTimeAsync()`, `vi.setSystemTime()`), module
   mocks (`vi.mock()` — replace a module that shells out or reads the keychain), fresh module
