@@ -4,8 +4,8 @@
 #   0. The desktop test suites (`deno task test:desktop`: `tests/desktop-*`, `tests/safe-extract*`,
 #      the desktop CLI verbs, the notification trigger math, the Cargo-style project locks over real
 #      OS locks (`flock` / `LockFileEx`), install.sh, React Native's desktop additions and the
-#      per-file coverage floor script) on all three OSes, with setup-deno's Deno 2.9.8 exactly — the
-#      upstream release denext's pinned `3.0.0-denext.N` runtime is built from. On Linux the same
+#      per-file coverage floor script) on all three OSes, on denext's Deno toolchain (setup-deno's
+#      Deno 2.9.8 only bootstraps it). On Linux the same
 #      run is measured and
 #      held to the per-file 85% floor (`deno task coverage:desktop` → `scripts/coverage-floor.ts`),
 #      so every push to `development` checks the floor before a release is cut from it.
@@ -187,9 +187,10 @@ jobs:
       - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
           deno-version: "2.9.8" # exactly: the pinned Deno Desktop runtime's Deno
-      - name: Deno is 2.9.8
-        shell: bash
-        run: deno --version | head -1 | grep -q '^deno 2\.9\.8 ' || { deno --version; exit 1; }
+      - name: Put denext's Deno toolchain on PATH
+        # The pinned build users run (scripts/ci/toolchain-on-path.ts; verified, cached in DENO_DIR):
+        # every later step's `deno` is the toolchain, the one the suites run on under 5.0.
+        run: deno run -A scripts/ci/toolchain-on-path.ts
       # The test list lives in deno.json (`test:desktop`); deno task expands its globs the same way
       # on every OS.
       - name: Desktop test suites

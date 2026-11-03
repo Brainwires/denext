@@ -1,6 +1,7 @@
 // Rewrite `SERIAL_TESTS` in tests/serial-tests.ts from the scan (scripts/lib/serial-scan.ts): a
 // test file that started changing process-wide state is added in path order, one that stopped is
-// dropped with the comment above it, and every kept entry keeps its comment. Run by
+// dropped with the comment above it, and every kept entry keeps its comment. A
+// `SERIAL_SOURCE_EXEMPT` entry whose module is gone is dropped too. Run by
 // `deno task regen`; tests/serial-tests.test.ts is the backstop.
 //
 //   deno run -A scripts/gen-serial-tests.ts
@@ -49,9 +50,50 @@ export function rewriteSerialList(text: string, wanted: readonly string[]): stri
   return text.slice(0, bodyStart) + body + text.slice(bodyEnd);
 }
 
+const EXEMPT_OPEN = "export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {\n";
+
+/**
+ * `text` (tests/serial-tests.ts) without the `SERIAL_SOURCE_EXEMPT` entries whose module no longer
+ * exists (`exists` says so), each removed with its reason and the comment lines directly above it.
+ * Everything else is untouched.
+ */
+export function dropStaleExemptions(text: string, exists: (path: string) => boolean): string {
+  const start = text.indexOf(EXEMPT_OPEN);
+  if (start < 0) throw new Error("tests/serial-tests.ts: SERIAL_SOURCE_EXEMPT not found");
+  const bodyStart = start + EXEMPT_OPEN.length;
+  const bodyEnd = text.indexOf("};\n", bodyStart);
+  const lines = text.slice(bodyStart, bodyEnd).split("\n").filter((l, i, a) =>
+    i < a.length - 1 || l !== ""
+  );
+  // Group each entry (its key line and the continuation lines) with the comments above it.
+  const groups: { path: string; lines: string[] }[] = [];
+  let pending: string[] = [];
+  for (const line of lines) {
+    const key = line.match(/^ {2}"([^"]+)":/);
+    if (key) {
+      groups.push({ path: key[1], lines: [...pending, line] });
+      pending = [];
+    } else if (/^ {2}\/\//.test(line)) pending.push(line);
+    else groups[groups.length - 1].lines.push(line);
+  }
+  const body = [...groups.filter((g) => exists(g.path)).flatMap((g) => g.lines), ...pending]
+    .map((l) => `${l}\n`).join("");
+  return text.slice(0, bodyStart) + body + text.slice(bodyEnd);
+}
+
 if (import.meta.main) {
-  const text = await Deno.readTextFile(SERIAL_LIST);
+  const root = fromFileUrl(new URL("..", import.meta.url));
+  const original = await Deno.readTextFile(SERIAL_LIST);
+  const text = dropStaleExemptions(original, (path) => {
+    try {
+      return Deno.statSync(`${root}${path}`).isFile;
+    } catch {
+      return false;
+    }
+  });
   const next = rewriteSerialList(text, await mutatingTestFiles());
-  if (next !== text) await Deno.writeTextFile(SERIAL_LIST, next);
-  console.log(next === text ? "tests/serial-tests.ts is current" : "rewrote tests/serial-tests.ts");
+  if (next !== original) await Deno.writeTextFile(SERIAL_LIST, next);
+  console.log(
+    next === original ? "tests/serial-tests.ts is current" : "rewrote tests/serial-tests.ts",
+  );
 }

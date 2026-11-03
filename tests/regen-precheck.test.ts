@@ -5,7 +5,7 @@
 import { assert, assertEquals, assertFalse } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { allOutputs, formatInputsStep, regen, type RegenStep, STEPS } from "../scripts/regen.ts";
-import { rewriteSerialList } from "../scripts/gen-serial-tests.ts";
+import { dropStaleExemptions, rewriteSerialList } from "../scripts/gen-serial-tests.ts";
 import {
   AFFECTED_TESTS_CAP,
   budgetArgs,
@@ -365,4 +365,33 @@ Deno.test("gen-serial-tests: adds in path order, drops an entry with its comment
     rewriteSerialList(text, ["tests/a.test.ts", "tests/c.test.ts", "tests/e.test.ts"]),
     text,
   );
+});
+
+Deno.test("gen-serial-tests: an exemption whose module is gone is dropped with its reason", () => {
+  const text = [
+    "// head",
+    "export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {",
+    '  "src/a.ts": "kept",',
+    "  // Why b was exempt.",
+    '  "src/b.ts":',
+    '    "a long reason " +',
+    '    "on two lines",',
+    '  "src/c.ts": "also kept",',
+    "};",
+    "export const OTHER = [];",
+    "",
+  ].join("\n");
+  assertEquals(
+    dropStaleExemptions(text, (p) => p !== "src/b.ts"),
+    [
+      "// head",
+      "export const SERIAL_SOURCE_EXEMPT: Readonly<Record<string, string>> = {",
+      '  "src/a.ts": "kept",',
+      '  "src/c.ts": "also kept",',
+      "};",
+      "export const OTHER = [];",
+      "",
+    ].join("\n"),
+  );
+  assertEquals(dropStaleExemptions(text, () => true), text);
 });
