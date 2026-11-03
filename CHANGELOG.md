@@ -33,14 +33,25 @@ and this project adheres to
   `--max-time`; `./app` and `./app start` keep them. On an older runtime, which has no such
   function, those verbs run under the limits and print the notice as before.
 - **`desktop.permissions: "strict"`: a packaged desktop app's read and environment grants scoped**
-  (opt-in; takes effect with Deno Desktop runtime 3.0.0-denext.8, once denext pins it, in an app
-  with `desktop.app.identifier`; the default is unchanged, and an older runtime bakes it with a
-  notice). `--allow-read` covers the app's data and cache folders, the capabilities' folders and
-  `desktop.extraPermissions.read` (unscoped again for a picked path: `dialogs`, `$DOCUMENTS`);
-  `--allow-env` covers the variables denext's desktop runtime reads plus
-  `desktop.permissions.env` (`{ mode: "strict", env: [...] }`) and `desktop.extraPermissions.env`.
-  A program sidecar (`run.exec`) or `loginShellEnv` hands its child the whole environment, so the
-  config validator and the package scripts refuse strict mode with either.
+  (opt-in; needs Deno Desktop runtime 3.0.0-denext.8 and `desktop.app.identifier`; the default is
+  unchanged). `--allow-read` covers the app's data and cache folders, the capabilities' folders and
+  `desktop.extraPermissions.read`; `--allow-env` covers the variables denext's desktop runtime
+  reads plus `desktop.permissions.env` (`{ mode: "strict", env: [...] }`) and
+  `desktop.extraPermissions.env`. The packaging tools' signing and credential variables
+  (`DENEXT_WINDOWS_CERT*`, `DENEXT_OTA_SIGNING_KEY`, `DENEXT_NOTARY_*`, `DENEXT_CODESIGN_IDENTITY`,
+  `DENEXT_SIGN_TIMESTAMP_URL`, and any `*_TOKEN` / `*_SECRET` / `*_PASSWORD` / `*_KEY` name such
+  as `SESSION_SECRET`) are never in that list, though the `denext/desktop` module graph reads them:
+  an app's dependency can't read a signing key from the environment of a developer or CI runner
+  testing the app (an app that reads one of them itself declares it). Strict mode never falls back
+  to the unscoped grants. Packaging fails, naming the reason and the fix, when the runtime can't
+  scope them (older than 3.0.0-denext.8, `DENEXT_DESKTOP_RUNTIME=stock`, a
+  `DENEXT_DESKTOP_RUNTIME_DIR` build) or `desktop.app.identifier` is missing (the package scripts
+  check it too, not only the config validator), and when a read can't be scoped (a picked path
+  under `dialogs`, `$DOCUMENTS`, a relative path, `"*"`) or an env entry is `"*"`, naming the entry.
+  `denext desktop run` / `dev` print a warning and bake the default for the first two, so a local
+  runtime build can still be tried. A program sidecar (`run.exec`) or `loginShellEnv` hands its
+  child the whole environment, so the config validator and the package scripts refuse strict mode
+  with either.
 
 ### Changed
 
@@ -141,7 +152,13 @@ and this project adheres to
   `desktop.app.identifier` gets no manifest (the updater needs an identifier anyway).
   `denext desktop publish-update` refuses a Windows bundle changed after its manifest was written
   or whose manifest is for another app or version, and warns about one without a manifest; an
-  installed app that has none still accepts its first update without one.
+  installed app that has none still accepts its first update without one. The current
+  `scripts/package-windows.ts` writes the manifest as its last change to the bundle, after the
+  app-local VC++ runtime's DLLs are copied in (`buildDesktopBundle(…, { treeManifest: false })`,
+  then `stampDesktopWindowsBundle`), so an unsigned build (`--no-sign`, no `DENEXT_WINDOWS_CERT`)
+  also lists them and `publish-update` takes it; regenerate the scripts
+  (`denext desktop package --regenerate-scripts`) to pick it up. An older script still gets the
+  manifest from `buildDesktopBundle`, listing the VC++ DLLs only once the bundle is signed.
 - **The package run says when a sidecar's scoped `--allow-run` is not containment** (the runtime
   denext.8 audit, F4). A project-file program sidecar in a packaged app is baked as
   `--allow-run=$DENO_DESKTOP_CACHE/sidecars/<name>/<file>` with a `--allow-write` on that folder,
@@ -151,7 +168,15 @@ and this project adheres to
   prints one line per such program (`sidecarRunWriteWarnings` from `denext/desktop`: a scoped run
   grant that a baked write grant covers, exact, by a folder above it, or unscoped); it does not
   refuse the combination, which every project-file program sidecar is, and which a capability that
-  writes (`fs`, the updater's UI overlay) makes of every sidecar.
+  writes (`fs`, the updater's UI overlay) makes of every sidecar. The write grant it compares is
+  the one the build bakes: on a runtime that scopes the app's folder writes it names that scoped
+  grant, not an unscoped one, and a program outside the app's folders is not reported.
+- **The GitHub CLI denext runs to verify a Deno Desktop runtime download's attestation is looked
+  for only where its admin-installed packages put it** on Windows (`%ProgramFiles%\GitHub
+  CLI\gh.exe`, an absolute drive path only), no longer in the per-user
+  `%LOCALAPPDATA%\Programs\GitHub CLI`, which any program the user runs can write. Install the
+  GitHub CLI machine-wide (the MSI or `winget install --scope machine GitHub.cli`) where it was
+  installed per user.
 
 ### Fixed
 

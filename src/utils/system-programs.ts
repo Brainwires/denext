@@ -78,8 +78,9 @@ export function systemToolPath(
 
 /**
  * The GitHub CLI where its installers put it: on Windows `%ProgramFiles%\GitHub CLI\gh.exe` (the
- * MSI and winget) or the per-user install under `%LOCALAPPDATA%\Programs`; elsewhere Homebrew,
- * /usr/local/bin, the distro package, Linuxbrew or snap.
+ * MSI and winget, an admin-only folder; never the per-user install under `%LOCALAPPDATA%\Programs`,
+ * which any program the user runs can write); elsewhere Homebrew, /usr/local/bin, the distro
+ * package, Linuxbrew or snap.
  *
  * @param os The OS (default: this one).
  * @param isFile Checks a path (default: `Deno.statSync`).
@@ -93,14 +94,7 @@ export function ghPath(
 ): string | null {
   if (os === "windows") {
     const programFiles = windowsDir(env, "ProgramFiles", "C:\\Program Files");
-    const local = windowsDir(env, "LOCALAPPDATA", "");
-    return firstFile(
-      [
-        `${programFiles}\\GitHub CLI\\gh.exe`,
-        ...(local ? [`${local}\\Programs\\GitHub CLI\\gh.exe`] : []),
-      ],
-      isFile,
-    );
+    return firstFile([`${programFiles}\\GitHub CLI\\gh.exe`], isFile);
   }
   return firstFile(POSIX_GH_DIRS.map((dir) => `${dir}/gh`), isFile);
 }

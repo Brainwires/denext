@@ -1223,14 +1223,18 @@ export interface DesktopConfig {
   /**
    * How narrow the packaged binary's baked read and environment grants are. `"default"` (or unset):
    * `--allow-read` and `--allow-env` unscoped, as before. `"strict"` (needs Deno Desktop runtime
-   * 3.0.0-denext.8 and `desktop.app.identifier`; an older runtime keeps the default):
-   * `--allow-read` scoped to the app's data and cache folders (`$DENO_DESKTOP_DATA`,
-   * `$DENO_DESKTOP_CACHE`; the embedded files are always readable) plus
-   * {@link DesktopExtraPermissions.read} and what the capabilities read, and `--allow-env` scoped to
-   * the variables denext's desktop runtime reads plus {@link DesktopPermissionsConfig.env} and
-   * {@link DesktopExtraPermissions.env}. A capability that reads a path picked at run time
-   * (`dialogs`) keeps `--allow-read` unscoped. Refused with a program sidecar (`run.exec`) or
-   * `loginShellEnv`, which hand the child the whole environment.
+   * 3.0.0-denext.8 and `desktop.app.identifier`): `--allow-read` scoped to the app's data and cache
+   * folders (`$DENO_DESKTOP_DATA`, `$DENO_DESKTOP_CACHE`; the embedded files are always readable)
+   * plus {@link DesktopExtraPermissions.read} and what the capabilities read, and `--allow-env`
+   * scoped to the variables denext's desktop runtime reads (never a signing or credential variable
+   * of the packaging tools) plus {@link DesktopPermissionsConfig.env} and
+   * {@link DesktopExtraPermissions.env}. Strict mode never falls back to the unscoped grants:
+   * packaging fails, naming the reason and the fix, when the runtime is older (or
+   * `DENEXT_DESKTOP_RUNTIME=stock` / `DENEXT_DESKTOP_RUNTIME_DIR` is set) or the identifier is
+   * missing, and when a read has no folder token or absolute path (a capability that reads a path
+   * picked at run time, `dialogs`; `$DOCUMENTS`; a relative path; `"*"`) or an env entry is `"*"`.
+   * `denext desktop run` / `dev` warn and bake the default instead for the first two. Refused with
+   * a program sidecar (`run.exec`) or `loginShellEnv`, which hand the child the whole environment.
    */
   permissions?: "default" | "strict" | DesktopPermissionsConfig;
   /**

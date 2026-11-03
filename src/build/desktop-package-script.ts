@@ -522,6 +522,13 @@ export interface DesktopBundleOptions {
    * `denext.config.ts` nor deno.json sets `desktop.app.icons.<os>` (see {@linkcode desktopIconArgs}).
    */
   readonly icons: readonly string[];
+  /**
+   * Windows: write the tree manifest into the bundle's `.exe` as the bundle's last file (default
+   * `true`, for package scripts from before {@linkcode stampDesktopWindowsBundle}). The current
+   * `package-windows.ts` passes `false` and calls {@linkcode stampDesktopWindowsBundle} after the
+   * VC++ runtime's DLLs land, so the manifest lists them even when the bundle is not signed.
+   */
+  readonly treeManifest?: boolean;
 }
 
 /**
@@ -620,18 +627,44 @@ export async function buildDesktopBundle(
     : undefined;
   if (meta) await desktopWindowsCefLayout(o.out, meta);
   await writeLaufeyLaunchConfig(entryUrl, os, o.out);
-  // The last file written (after laufey-launch.json): see stampWindowsBundleTree.
-  if (meta) await stampWindowsBundleTree(o.out, meta);
+  // The last file written (after laufey-launch.json): see stampWindowsBundleTree. The current
+  // package-windows.ts stamps after the VC++ runtime instead (stampDesktopWindowsBundle).
+  if (meta) await stampWindowsBundleTreeUnlessDeferred(o, meta);
   return o.out;
+}
+
+/** {@linkcode stampWindowsBundleTree}, unless the script stamps it itself (`treeManifest: false`). */
+async function stampWindowsBundleTreeUnlessDeferred(
+  o: DesktopBundleOptions,
+  meta: DesktopPackageMeta,
+): Promise<void> {
+  if (o.treeManifest !== false) await stampWindowsBundleTree(o.out, meta);
+}
+
+/**
+ * Write the tree manifest of a finished Windows bundle into its `.exe`
+ * ({@linkcode stampDesktopTreeManifest}, for the app's identifier and version): the package
+ * script's last write to the bundle before it signs it, after the VC++ runtime's DLLs are copied
+ * in, so an unsigned bundle (`--no-sign`, no `DENEXT_WINDOWS_CERT`) carries a manifest that lists
+ * every file it ships and `denext desktop publish-update` takes it. {@linkcode desktopSignWindows}
+ * writes it again with the signed DLLs' bytes before it signs the `.exe`. Without
+ * `desktop.app.identifier` no manifest is written (the full-app updater needs one).
+ *
+ * @param entryUrl `import.meta.url` of the script.
+ * @param dir The bundle directory ({@linkcode buildDesktopBundle} with `treeManifest: false`).
+ */
+export async function stampDesktopWindowsBundle(entryUrl: string, dir: string): Promise<void> {
+  const meta = await desktopPackageMeta(entryUrl, await desktopAppName(entryUrl));
+  await stampWindowsBundleTree(dir, meta);
 }
 
 /**
  * The tree manifest of the app's identifier and version and every file but the .exe goes into the
  * .exe before the package script signs it, so the .exe's Authenticode signature covers
  * laufey-launch.json, CEF's resources, sidecar JS and the DLLs as shipped, and the runtime refuses
- * an update whose files differ from it. PE images added after (the VC++ runtime's DLLs) and the
- * DLLs' own signatures are taken in by the stamp `desktopSignWindows` writes again before it signs
- * the .exe. Without an identifier the updater is off for the app (it needs one), and no manifest
+ * an update whose files differ from it. The current package script writes it after the VC++
+ * runtime's DLLs ({@linkcode stampDesktopWindowsBundle}); the DLLs' own signatures are taken in by
+ * the stamp `desktopSignWindows` writes again before it signs the .exe. Without an identifier the updater is off for the app (it needs one), and no manifest
  * is written.
  *
  * @param out The Windows bundle directory.

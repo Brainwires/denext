@@ -157,6 +157,38 @@ export function desktopDataTokenRuntime(
 }
 
 /**
+ * Why a package script or `denext desktop run` / `dev` in this process does not build on a runtime
+ * that expands `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` ({@linkcode desktopDataTokenRuntime}),
+ * with the fix, else `null`: `DENEXT_DESKTOP_RUNTIME=stock`, a local `DENEXT_DESKTOP_RUNTIME_DIR`
+ * build of unknown version, or a pinned runtime older than `FIRST_DESKTOP_DATA_TOKEN_RUNTIME`
+ * (`3.0.0-denext.8`).
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @returns The reason and its fix, or `null` when the runtime expands the tokens.
+ */
+export function desktopDataTokenRuntimeProblem(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+): string | null {
+  const mode = (env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase();
+  if (mode === "stock") {
+    return "DENEXT_DESKTOP_RUNTIME=stock selects the stock Deno Desktop runtime, which does not " +
+      "expand $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE. Unset DENEXT_DESKTOP_RUNTIME";
+  }
+  if (env("DENEXT_DESKTOP_RUNTIME_DIR")) {
+    return "DENEXT_DESKTOP_RUNTIME_DIR points at a local Deno Desktop runtime build of unknown " +
+      "version, which may not expand $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE. Unset " +
+      "DENEXT_DESKTOP_RUNTIME_DIR to build on the pinned runtime";
+  }
+  if (!supportsDesktopDataToken(version)) {
+    return `the pinned Deno Desktop runtime is ${version}, and expanding $DENO_DESKTOP_DATA / ` +
+      "$DENO_DESKTOP_CACHE needs 3.0.0-denext.8 or later. Upgrade denext (`denext upgrade`)";
+  }
+  return null;
+}
+
+/**
  * The relying parties the packaged app's native passkeys may name
  * (`desktop.capabilities.passkeys.rpIds`, lowercased, de-duplicated), or `null` when the passkeys
  * capability is off. An enabled capability without a list (a bare `true`, which config validation

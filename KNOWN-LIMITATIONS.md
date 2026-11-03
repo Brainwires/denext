@@ -737,8 +737,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Installers need their OS's tools:** `.dmg` / `.pkg` on macOS (sign the `.pkg`), `.msi` needs
   WiX 5 on Windows, `.rpm` `rpmbuild`, AppImage `appimagetool`. No MSIX, Flatpak, Snap or Mac App
   Store build (each sandbox breaks per-app storage and deep-link registration).
-- **Permissions:** a packaged app keeps `--allow-read` / `--allow-env` unscoped, and a picked path
-  needs unscoped read/write (permissions bake at build time); FFI, Node-API addons and spawned OS
+- **Permissions:** by default a packaged app keeps `--allow-read` / `--allow-env` unscoped, and a
+  picked path needs unscoped read/write (permissions bake at build time). `desktop.permissions:
+  "strict"` (runtime 3.0.0-denext.8, `desktop.app.identifier`) scopes both, but refuses to package
+  an app that reads a picked path (`dialogs`), `$DOCUMENTS` or `"*"`, and its `--allow-env=<names>`
+  also lets app code set those names (`PATH`, `DENO_DIR`, … included), as the default does; FFI, Node-API addons and spawned OS
   tools are full trust; the bridge token is readable by any script in the page, so keep the
   strict CSP and enable only the capabilities you use. A program sidecar shipped in the app
   (`run: { exec: "./bin/…" }`) is baked an unscoped `--allow-run` and a broad `--allow-write`

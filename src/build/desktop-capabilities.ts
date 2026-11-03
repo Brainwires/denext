@@ -18,13 +18,17 @@ import { readConfigModel, setConfigValue } from "./config-edit.ts";
 import { createUnifiedDiff } from "./patch-diff.ts";
 import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
 import { desktopNetSplitFor } from "./desktop-runtime.ts";
-import { desktopCacheTokenRuntime, desktopDataTokenRuntime } from "./desktop-launch-policy.ts";
+import {
+  desktopCacheTokenRuntime,
+  desktopDataTokenRuntime,
+  desktopDataTokenRuntimeProblem,
+} from "./desktop-launch-policy.ts";
 import { netSplitFlags } from "./net-permissions.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
 import { permissionListError } from "../desktop/permission-entries.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
-import { DESKTOP_RUNTIME_ENV } from "./desktop-runtime-env.ts";
+import { DESKTOP_STRICT_RUNTIME_ENV } from "./desktop-runtime-env.ts";
 import {
   desktopPermissionsMode,
   desktopPermissionsProblem,
@@ -491,6 +495,15 @@ export interface DesktopBuildFlagOptions {
    * `desktopDataTokenRuntime()`.
    */
   readonly dataScope?: boolean;
+  /**
+   * What `desktop.permissions: "strict"` does when it cannot be honoured (the runtime does not
+   * expand the folder tokens, or `desktop.app.identifier` is unset; see
+   * {@linkcode strictPermissionsProblem}): `false` (the default, every packaging build) throws,
+   * naming the reason and the fix; `true` bakes the default unscoped `--allow-read` /
+   * `--allow-env` instead, for `denext desktop run` / `dev`, which build a local test copy and
+   * print a warning. Never set it for a build that ships.
+   */
+  readonly strictFallback?: boolean;
 }
 
 /** The relevant slice of `denext.config.ts` for flag derivation. */
@@ -857,7 +870,7 @@ function programNeeds(
  *
  * @param config The project config (`denext.config.ts` default export).
  * @param os The target OS (the sidecars' login shells depend on it; they are never reported).
- * @param options `cacheScope`: see {@linkcode desktopBuildFlags}.
+ * @param options `cacheScope` / `dataScope`: see {@linkcode desktopBuildFlags}.
  * @returns The warnings, one per covered program.
  */
 export function sidecarRunWriteWarnings(
@@ -874,7 +887,8 @@ export function sidecarRunWriteWarnings(
     sidecarPermissionSet(sidecars, os, cacheScope),
   );
   const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
-  const [writeFlag] = writeFlags(capFlags, extra, cfg);
+  // The write grant the build bakes: scoped to the app's folders where desktopBuildFlags scopes it.
+  const [writeFlag] = writeFlags(capFlags, extra, cfg, folderScope(cfg, options));
   if (!writeFlag) return [];
   const writes = valuesOfFlag(writeFlag);
   const out: string[] = [];
@@ -970,38 +984,72 @@ function strictRequested(cfg: DesktopFlagConfig): boolean {
   return true;
 }
 
+/** The fix every strict-mode refusal of an unscopable grant names. */
+const STRICT_UNSCOPABLE_FIX = 'or use desktop.permissions: "default"';
+
 /**
  * Strict mode's `--allow-read`: the app's data and cache folders (the embedded files are granted
- * by the runtime), what the capabilities and the `fs` folders read, and `extraPermissions.read`;
- * unscoped when one of them has no token (a picked path under `dialogs`, `$DOCUMENTS`).
+ * by the runtime), what the capabilities and the `fs` folders read, and `extraPermissions.read`.
+ * A value with no folder token or absolute path (a picked path under `dialogs`, `$DOCUMENTS`, a
+ * relative path, `*`) would widen the grant back to an unscoped `--allow-read`, so it fails the
+ * build, naming the entry and where it came from.
  */
 function strictReadFlag(
   capFlags: readonly string[],
   extra: DesktopPermissionSet,
   cfg: DesktopFlagConfig,
+  os: DesktopOs,
 ): string {
+  const sources: Array<[string, readonly string[]]> = [
+    ...enabledCapabilityKeys(cfg.desktop?.capabilities).map((key): [string, string[]] => [
+      `desktop.capabilities.${key}`,
+      desktopPermissionFlags([key], os).filter((f) => kindOfFlag(f) === "--allow-read").flatMap(
+        valuesOfFlag,
+      ),
+    ]),
+    ["desktop.capabilities.fs.read", fsConfigFolders(cfg, "read")],
+    ["desktop.extraPermissions.read (or a sidecar's permissions.read)", extra.read ?? []],
+  ];
+  for (const [source, values] of sources) {
+    const bad = values.find((v) => desktopScopedPath(v) === undefined);
+    if (bad === undefined) continue;
+    throw new Error(
+      `denext: desktop.permissions "strict" cannot scope --allow-read: ${source} reads ` +
+        `${JSON.stringify(bad)}, which has no folder token ($APPDATA, $CACHE) and is not an ` +
+        'absolute path (a path picked at run time, $DOCUMENTS, a relative path or "*" needs an ' +
+        `unscoped --allow-read). Remove it, give an absolute path, ${STRICT_UNSCOPABLE_FIX}.`,
+    );
+  }
   const scoped = scopedValues([
     DESKTOP_DATA_TOKEN,
     DESKTOP_CACHE_TOKEN,
     ...capFlags.filter((f) => kindOfFlag(f) === "--allow-read").flatMap(valuesOfFlag),
     ...fsConfigFolders(cfg, "read"),
     ...(extra.read ?? []),
-  ]);
-  return scoped ? `--allow-read=${scoped.join(",")}` : "--allow-read";
+  ])!;
+  return `--allow-read=${scoped.join(",")}`;
 }
 
 /**
- * Strict mode's `--allow-env`: the variables denext's desktop runtime reads
- * ({@linkcode DESKTOP_RUNTIME_ENV}), `desktop.permissions.env` and `extraPermissions.env` (a
- * sidecar's included); unscoped when one of them is `"*"`.
+ * Strict mode's `--allow-env`: the variables denext's desktop runtime reads, less the credential-
+ * and signing-shaped ones ({@linkcode DESKTOP_STRICT_RUNTIME_ENV}), `desktop.permissions.env` and
+ * `extraPermissions.env` (a sidecar's included). A `"*"` entry would widen the grant back to an
+ * unscoped `--allow-env`, so it fails the build, naming where it came from.
  */
 function strictEnvFlag(extra: DesktopPermissionSet, cfg: DesktopFlagConfig): string {
+  if ((extra.env ?? []).includes("*")) {
+    throw new Error(
+      'denext: desktop.permissions "strict" cannot scope --allow-env: desktop.extraPermissions.env ' +
+        '(or a sidecar\'s permissions.env) has "*", the whole environment. List the variables by ' +
+        `name, ${STRICT_UNSCOPABLE_FIX}.`,
+    );
+  }
   const names = new Set([
-    ...DESKTOP_RUNTIME_ENV,
+    ...DESKTOP_STRICT_RUNTIME_ENV,
     ...desktopPermissionsMode(cfg.desktop?.permissions).env,
     ...(extra.env ?? []),
   ]);
-  return names.has("*") ? "--allow-env" : `--allow-env=${[...names].sort().join(",")}`;
+  return `--allow-env=${[...names].sort().join(",")}`;
 }
 
 /**
@@ -1032,7 +1080,10 @@ function strictEnvFlag(extra: DesktopPermissionSet, cfg: DesktopFlagConfig): str
  *   in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.
  * - with `desktop.permissions: "strict"` on such a runtime (and `desktop.app.identifier`),
  *   `--allow-read` scoped to the app's folders and the declared reads, and `--allow-env` to
- *   {@linkcode DESKTOP_RUNTIME_ENV} and the declared variables.
+ *   {@linkcode DESKTOP_STRICT_RUNTIME_ENV} and the declared variables. Strict mode never falls back
+ *   to the unscoped grants: when it cannot be honoured ({@linkcode strictPermissionsProblem}) this
+ *   throws (unless `options.strictFallback`), and a read or variable entry it cannot scope always
+ *   throws.
  * A capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`
  * (only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`
  * grant, never `*` baked in.
@@ -1040,8 +1091,10 @@ function strictEnvFlag(extra: DesktopPermissionSet, cfg: DesktopFlagConfig): str
  * @param config The project config (`denext.config.ts` default export), or `undefined` — baseline only.
  * @param os The target OS.
  * @param options `netSplit`: bake the network grant by direction; `cacheScope` / `dataScope`: the
- *   runtime expands the folder tokens (default: the pinned runtime's).
+ *   runtime expands the folder tokens (default: the pinned runtime's); `strictFallback`: see
+ *   {@linkcode DesktopBuildFlagOptions.strictFallback}.
  * @returns The flags, ready to splice into the `deno desktop` argv (never `-A`).
+ * @throws When `desktop.permissions` is invalid, or `"strict"` cannot be honoured or scoped.
  */
 export function desktopBuildFlags(
   config: unknown,
@@ -1073,7 +1126,7 @@ export function desktopBuildFlags(
   ]);
 
   const { run, ffi, sys } = bakeableSets(capFlags, extra);
-  const strict = strictRequested(cfg) && folderScope(cfg, options);
+  const strict = strictMode(cfg, options);
   // Deep links: the pinned runtime lets the app claim a declared scheme back from another handler
   // (`registerScheme({ force: true })`, `claimDeepLinkScheme` on a user action) only with an
   // unscoped --allow-sys.
@@ -1095,7 +1148,7 @@ export function desktopBuildFlags(
     ...(options.netSplit
       ? netSplitFlags([...connect], [...listen])
       : listFlag("net", new Set([...connect, ...listen]))),
-    strict ? strictReadFlag(capFlags, extra, cfg) : "--allow-read",
+    strict ? strictReadFlag(capFlags, extra, cfg, os) : "--allow-read",
     strict ? strictEnvFlag(extra, cfg) : "--allow-env",
     ...writeFlags(capFlags, extra, cfg, folderScope(cfg, options)),
     ...listFlag("sys", sys),
@@ -1127,29 +1180,58 @@ export async function desktopPackageFlags(
 ): Promise<string[]> {
   // No config (or one that exports none) → the baseline; a config that fails to load fails.
   const config = await loadConfigBeside(entryUrl);
-  const flags = desktopBuildFlags(config, os, { netSplit: netSplit ?? await desktopNetSplitFor() });
-  const notice = strictPermissionsNotice(config);
-  if (notice) console.warn(notice);
-  return flags;
+  // Strict mode that cannot be honoured throws here: a packaged build never falls back.
+  return desktopBuildFlags(config, os, { netSplit: netSplit ?? await desktopNetSplitFor() });
 }
 
 /**
- * The line a package script prints when `desktop.permissions: "strict"` cannot be baked (the
- * runtime does not expand the folder tokens, or `desktop.app.identifier` is unset), so the
- * default grants are, else `null`.
+ * Whether `desktop.permissions: "strict"` is baked: requested and honourable. Requested but not
+ * honourable throws (naming the reason and the fix), unless `options.strictFallback`.
+ */
+function strictMode(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): boolean {
+  if (!strictRequested(cfg)) return false;
+  const problem = strictProblem(cfg, options);
+  if (problem === null) return true;
+  if (options.strictFallback) return false;
+  throw new Error(`denext: ${problem}.`);
+}
+
+/** Why requested strict mode cannot be honoured, with the fix, else `null`. */
+function strictProblem(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): string | null {
+  const lead = 'desktop.permissions "strict" cannot be honoured: ';
+  if (!hasIdentifier(cfg)) {
+    return lead + "desktop.app.identifier is not set, and the runtime names the app's data and " +
+      "cache folders after it. Set desktop.app.identifier (reverse DNS, com.example.app), or use " +
+      'desktop.permissions: "default"';
+  }
+  const runtime = options.dataScope === undefined
+    ? desktopDataTokenRuntimeProblem()
+    : options.dataScope
+    ? null
+    : "the Deno Desktop runtime this build uses does not expand $DENO_DESKTOP_DATA / " +
+      "$DENO_DESKTOP_CACHE (3.0.0-denext.8 or later). Build on denext's pinned runtime";
+  return runtime === null ? null : `${lead}${runtime}, or use desktop.permissions: "default"`;
+}
+
+/**
+ * Why `desktop.permissions: "strict"` cannot be honoured in this build, with the fix, else `null`
+ * (strict not requested, or honourable): `desktop.app.identifier` is unset, or the runtime does
+ * not expand `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` (a runtime older than 3.0.0-denext.8,
+ * `DENEXT_DESKTOP_RUNTIME=stock`, a `DENEXT_DESKTOP_RUNTIME_DIR` build). A packaging build throws
+ * this ({@linkcode desktopBuildFlags}); `denext desktop run` / `dev` print it as a warning and bake
+ * the default grants.
  *
  * @param config The project config.
  * @param options The runtime's abilities (default: the pinned runtime's).
- * @returns The notice, or `null`.
+ * @returns The problem, or `null`.
+ * @throws When `desktop.permissions` is invalid, or strict meets a sidecar it refuses.
  */
-export function strictPermissionsNotice(
+export function strictPermissionsProblem(
   config: unknown,
   options: DesktopBuildFlagOptions = {},
 ): string | null {
   const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
-  if (!strictRequested(cfg) || folderScope(cfg, options)) return null;
-  return 'denext: desktop.permissions "strict" needs Deno Desktop runtime 3.0.0-denext.8 or ' +
-    "later and desktop.app.identifier; baking the default (unscoped) --allow-read and --allow-env.";
+  return strictRequested(cfg) ? strictProblem(cfg, options) : null;
 }
 
 /** The `desktop.capabilities.extensions` module paths from a config object (each a project-relative

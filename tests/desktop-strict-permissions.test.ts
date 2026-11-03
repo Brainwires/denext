@@ -1,16 +1,31 @@
 // `desktop.permissions: "strict"` (src/desktop/permissions-mode.ts, src/build/desktop-capabilities.ts):
 // on a runtime that expands $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE, an app with
 // desktop.app.identifier is baked --allow-read scoped to its folders and declared reads, and
-// --allow-env scoped to the variables denext's desktop runtime reads plus the declared ones.
+// --allow-env scoped to the variables denext's desktop runtime reads (never a credential or signing
+// name) plus the declared ones. Strict mode never falls back to the unscoped grants: a packaging
+// build that cannot honour it, or a read / env entry it cannot scope, fails.
 
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+  assertThrows,
+} from "@std/assert";
+import { join, toFileUrl } from "@std/path";
 import {
   DESKTOP_CACHE_TOKEN,
   DESKTOP_DATA_TOKEN,
   desktopBuildFlags,
-  strictPermissionsNotice,
+  desktopPackageFlags,
+  strictPermissionsProblem,
 } from "../src/build/desktop-capabilities.ts";
-import { DESKTOP_RUNTIME_ENV } from "../src/build/desktop-runtime-env.ts";
+import { desktopDataTokenRuntimeProblem } from "../src/build/desktop-launch-policy.ts";
+import {
+  DESKTOP_RUNTIME_ENV,
+  DESKTOP_STRICT_RUNTIME_ENV,
+  isCredentialEnvName,
+} from "../src/build/desktop-runtime-env.ts";
 import {
   desktopPermissionsMode,
   desktopPermissionsProblem,
@@ -45,7 +60,7 @@ Deno.test("strict: --allow-read is the app's folders and --allow-env the runtime
   assertEquals(flagOf(flags, "read"), [
     `--allow-read=${DESKTOP_CACHE_TOKEN},${DESKTOP_DATA_TOKEN}`,
   ]);
-  assertEquals(flagOf(flags, "env"), [`--allow-env=${DESKTOP_RUNTIME_ENV.join(",")}`]);
+  assertEquals(flagOf(flags, "env"), [`--allow-env=${DESKTOP_STRICT_RUNTIME_ENV.join(",")}`]);
   // The rest is what the default mode bakes.
   const plain = desktopBuildFlags(app(undefined), "darwin", SCOPE);
   assertEquals(
@@ -76,41 +91,145 @@ Deno.test("strict: the app's declared reads and variables join the lists", () =>
   assertEquals(env, [...new Set(env)].sort());
 });
 
-Deno.test('strict: a read with no token, or an env entry of "*", keeps that grant unscoped', () => {
-  for (
-    const more of [
-      { capabilities: { dialogs: true } },
-      { capabilities: { fs: { read: ["$APPDATA", "$DOCUMENTS"], write: ["$APPDATA"] } } },
-      { extraPermissions: { read: ["*"] } },
-    ]
-  ) {
-    assertEquals(flagOf(desktopBuildFlags(app("strict", more), "linux", SCOPE), "read"), [
-      "--allow-read",
-    ]);
-  }
-  const env = desktopBuildFlags(
-    app("strict", { extraPermissions: { env: ["*"] } }),
-    "linux",
-    SCOPE,
+/** The credential and signing variables the packaging helpers read and a packaged app never does. */
+const CREDENTIALS = [
+  "DENEXT_WINDOWS_CERT",
+  "DENEXT_WINDOWS_CERT_PASSWORD",
+  "DENEXT_WINDOWS_CERT_THUMBPRINT",
+  "DENEXT_OTA_SIGNING_KEY",
+  "DENEXT_NOTARY_KEY",
+  "DENEXT_NOTARY_KEY_ID",
+  "DENEXT_NOTARY_ISSUER",
+  "DENEXT_NOTARY_PROFILE",
+  "DENEXT_CODESIGN_IDENTITY",
+  "DENEXT_SIGN_TIMESTAMP_URL",
+];
+
+Deno.test("strict: --allow-env never names a credential or signing variable denext reads", () => {
+  const env = flagOf(desktopBuildFlags(app("strict"), "windows", SCOPE), "env")[0]
+    .slice("--allow-env=".length).split(",");
+  for (const name of CREDENTIALS) assert(!env.includes(name), name);
+  const shaped = env.filter((n) =>
+    /_(TOKEN|SECRET|PASSWORD|KEY|KEY_ID|CERT)$|CERT_|NOTARY/.test(n)
   );
-  assertEquals(flagOf(env, "env"), ["--allow-env"]);
+  // The runtime's own per-launch worker token is the one credential-shaped name it must read.
+  assertEquals(shaped, ["DENO_DESKTOP_WORKER_TOKEN"]);
+  // The inventory still lists them (the packaging helpers read them); only strict drops them.
+  for (const name of CREDENTIALS) assert(DESKTOP_RUNTIME_ENV.includes(name), name);
+  for (const name of ["HOME", "PATH", "APPDATA", "DENO_DESKTOP_WS_URL"]) {
+    assert(env.includes(name), name);
+  }
+  assert(isCredentialEnvName("SESSION_SECRET") && isCredentialEnvName("GITHUB_TOKEN"));
+  assert(isCredentialEnvName("api_key") && !isCredentialEnvName("DENO_DESKTOP_WORKER_TOKEN"));
+  assert(!isCredentialEnvName("DENEXT_REVOCATION_KEYS_FILE") && !isCredentialEnvName("HOME"));
+  // A credential the app declares itself is the app's choice, and is kept.
+  const declared = flagOf(
+    desktopBuildFlags(app({ mode: "strict", env: ["SESSION_SECRET"] }), "linux", SCOPE),
+    "env",
+  )[0];
+  assertStringIncludes(declared, "SESSION_SECRET");
 });
 
-Deno.test("strict: an older runtime or no identifier bakes the default, with a notice", () => {
+Deno.test('strict: a read with no token, or an env entry of "*", fails the build, naming it', () => {
+  const cases: Array<[Record<string, unknown>, string]> = [
+    [{ capabilities: { dialogs: true } }, "desktop.capabilities.dialogs"],
+    [
+      { capabilities: { fs: { read: ["$APPDATA", "$DOCUMENTS"], write: ["$APPDATA"] } } },
+      '"$DOCUMENTS"',
+    ],
+    [{ extraPermissions: { read: ["*"] } }, "desktop.extraPermissions.read"],
+    [{ extraPermissions: { read: ["data/models"] } }, '"data/models"'],
+    [{ extraPermissions: { read: ["/opt/x/../etc"] } }, '"/opt/x/../etc"'],
+  ];
+  for (const [more, named] of cases) {
+    assertThrows(
+      () => desktopBuildFlags(app("strict", more), "linux", SCOPE),
+      Error,
+      named,
+    );
+    // The default mode takes them.
+    desktopBuildFlags(app("default", more), "linux", SCOPE);
+  }
+  assertThrows(
+    () => desktopBuildFlags(app("strict", { extraPermissions: { env: ["*"] } }), "linux", SCOPE),
+    Error,
+    'desktop.extraPermissions.env (or a sidecar\'s permissions.env) has "*"',
+  );
+  const sidecar = { name: "api", run: { module: "./api.ts" }, permissions: { env: ["*"] } };
+  assertThrows(
+    () => desktopBuildFlags(app("strict", { sidecars: [sidecar] }), "linux", SCOPE),
+    Error,
+    "--allow-env",
+  );
+});
+
+Deno.test("strict: an older runtime or no identifier fails the build, naming the reason and the fix", () => {
+  assertThrows(
+    () => desktopBuildFlags(app("strict"), "linux", { dataScope: false }),
+    Error,
+    "3.0.0-denext.8",
+  );
+  assertThrows(
+    () => desktopBuildFlags(app("strict", {}, null), "linux", SCOPE),
+    Error,
+    "Set desktop.app.identifier",
+  );
   for (
-    const [config, options] of [
-      [app("strict"), { dataScope: false }],
-      [app("strict", {}, null), SCOPE],
+    const [config, options, why] of [
+      [app("strict"), { dataScope: false }, "3.0.0-denext.8"],
+      [app("strict", {}, null), SCOPE, "desktop.app.identifier is not set"],
     ] as const
   ) {
-    const flags = desktopBuildFlags(config, "linux", options);
+    assertStringIncludes(strictPermissionsProblem(config, options) ?? "", why);
+    assertStringIncludes(strictPermissionsProblem(config, options) ?? "", 'permissions: "default"');
+    // `denext desktop run` / `dev` only: the default grants (and a warning from the caller).
+    const flags = desktopBuildFlags(config, "linux", { ...options, strictFallback: true });
     assertEquals(flagOf(flags, "read"), ["--allow-read"]);
     assertEquals(flagOf(flags, "env"), ["--allow-env"]);
-    assertStringIncludes(strictPermissionsNotice(config, options) ?? "", "3.0.0-denext.8");
   }
-  assertEquals(strictPermissionsNotice(app("strict"), SCOPE), null);
-  assertEquals(strictPermissionsNotice(app("default"), { dataScope: false }), null);
-  assertEquals(strictPermissionsNotice(undefined), null);
+  assertEquals(strictPermissionsProblem(app("strict"), SCOPE), null);
+  assertEquals(strictPermissionsProblem(app("default"), { dataScope: false }), null);
+  assertEquals(strictPermissionsProblem(undefined), null);
+});
+
+Deno.test("strict: why the runtime can't expand the folder tokens, with the fix", () => {
+  const env = (vars: Record<string, string>) => (k: string) => vars[k];
+  assertEquals(desktopDataTokenRuntimeProblem(env({}), "3.0.0-denext.8"), null);
+  assertEquals(desktopDataTokenRuntimeProblem(env({}), "3.0.0-denext.9"), null);
+  assertStringIncludes(
+    desktopDataTokenRuntimeProblem(env({}), "3.0.0-denext.7") ?? "",
+    "is 3.0.0-denext.7",
+  );
+  assertStringIncludes(
+    desktopDataTokenRuntimeProblem(env({ DENEXT_DESKTOP_RUNTIME: " Stock " }), "3.0.0-denext.8") ??
+      "",
+    "Unset DENEXT_DESKTOP_RUNTIME",
+  );
+  assertStringIncludes(
+    desktopDataTokenRuntimeProblem(env({ DENEXT_DESKTOP_RUNTIME_DIR: "/rt" }), "3.0.0-denext.8") ??
+      "",
+    "Unset DENEXT_DESKTOP_RUNTIME_DIR",
+  );
+});
+
+Deno.test("strict: a package script without desktop.app.identifier fails", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_strict_pkg_" });
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      'export default { desktop: { permissions: "strict" } };\n',
+    );
+    const entry = toFileUrl(join(dir, "scripts", "package-linux.ts")).href;
+    await assertRejects(
+      () => desktopPackageFlags(entry, "linux", false),
+      Error,
+      "desktop.app.identifier is not set",
+    );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("strict: a sidecar that hands its child the whole environment is refused", () => {

@@ -12,7 +12,7 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "@std/assert";
-import { join } from "@std/path";
+import { join, toFileUrl } from "@std/path";
 import {
   DESKTOP_TREE_RESOURCE,
   desktopTreeManifest,
@@ -24,7 +24,11 @@ import {
 } from "../src/build/desktop-tree-manifest.ts";
 import { readPeResources, stampPeResources, writePeResources } from "../src/build/pe-resources.ts";
 import { WINDOWS_PACKAGE_SCRIPT } from "../src/build/desktop-package-scripts.ts";
-import { desktopPeFiles, desktopSignWindows } from "../src/build/desktop.ts";
+import {
+  desktopPeFiles,
+  desktopSignWindows,
+  stampDesktopWindowsBundle,
+} from "../src/build/desktop.ts";
 import type { DesktopRunOptions } from "../src/build/desktop.ts";
 
 /** The app the fixture bundle is packaged as. */
@@ -294,7 +298,7 @@ Deno.test("windowsTreeManifestWarning: publish-update refuses a bundle changed a
   }
 });
 
-Deno.test("buildDesktopBundle stamps a Windows bundle's tree manifest last, after laufey-launch.json", async () => {
+Deno.test("package-windows.ts stamps the tree manifest as the bundle's last write, after the VC++ runtime", async () => {
   const src = await Deno.readTextFile(
     new URL("../src/build/desktop-package-script.ts", import.meta.url),
   );
@@ -302,20 +306,74 @@ Deno.test("buildDesktopBundle stamps a Windows bundle's tree manifest last, afte
   const end = body.indexOf("\n}\n");
   const fn = body.slice(0, end);
   const launch = fn.indexOf("await writeLaufeyLaunchConfig(");
-  const stamp = fn.indexOf("if (meta) await stampWindowsBundleTree(o.out, meta);");
+  // An older package script (no treeManifest option) still gets the stamp from buildDesktopBundle.
+  const stamp = fn.indexOf("if (meta) await stampWindowsBundleTreeUnlessDeferred(o, meta);");
   assert(launch > 0 && stamp > launch, "laufey-launch.json, then the manifest");
+  const deferred = src.slice(src.indexOf("async function stampWindowsBundleTreeUnlessDeferred("));
+  assertStringIncludes(
+    deferred.slice(0, deferred.indexOf("\n}\n")),
+    "if (o.treeManifest !== false) await stampWindowsBundleTree(o.out, meta);",
+  );
   const helper = src.slice(src.indexOf("async function stampWindowsBundleTree("));
   const helperFn = helper.slice(0, helper.indexOf("\n}\n"));
   const write = helperFn.indexOf("await stampDesktopTreeManifest(out, `${basename(out)}.exe`, {");
   assert(write > helperFn.indexOf("if (!meta.identifier)"), "no identifier, no manifest");
   assertStringIncludes(helperFn.slice(write, write + 200), "appId: meta.identifier");
   assertStringIncludes(helperFn.slice(write, write + 200), "version: meta.version");
-  // The package script signs after buildDesktopBundle and adds only PE images in between.
+  const exported = src.slice(src.indexOf("export async function stampDesktopWindowsBundle("));
+  assertStringIncludes(exported.slice(0, exported.indexOf("\n}\n")), "stampWindowsBundleTree(dir");
+  // The current script: the bundle is built without the stamp, the VC++ runtime's DLLs land, the
+  // manifest is written (whether or not the bundle is then signed), and only then is it signed.
   const script = WINDOWS_PACKAGE_SCRIPT;
-  const built = script.indexOf("const dir = await buildBundle(name, arch);");
-  const vc = script.indexOf("await bundleDesktopVcRuntime(dir, arch)");
-  const sign = script.indexOf("await signBundle(dir,");
-  assert(built > 0 && vc > built && sign > vc, "build → VC++ runtime DLLs → sign");
+  const bundleFn = script.slice(script.indexOf("async function buildBundle("));
+  assertStringIncludes(bundleFn.slice(0, bundleFn.indexOf("\n}\n")), "treeManifest: false,");
+  const arch = script.slice(script.indexOf("async function packageArch("));
+  const archFn = arch.slice(0, arch.indexOf("\n}\n"));
+  const built = archFn.indexOf("const dir = await buildBundle(name, arch);");
+  const vc = archFn.indexOf("await bundleDesktopVcRuntime(dir, arch)");
+  const stamped = archFn.indexOf("await stampTreeManifest(import.meta.url, dir);");
+  const signing = archFn.indexOf("if (signing) {");
+  assert(built > 0 && vc > built && stamped > vc, "build → VC++ runtime DLLs → manifest");
+  assert(signing > stamped, "the manifest is written before (and without) signing");
+  // Nothing after the stamp writes into the bundle directory but signing (which stamps again).
+  const after = archFn.slice(stamped + 1);
+  assert(!/copyFile|writeFile|bundleDesktopVcRuntime\(/.test(after), after);
+  assertStringIncludes(
+    script,
+    '  stampDesktopWindowsBundle: stampTreeManifest,\n} = await import("denext/desktop");',
+  );
+});
+
+Deno.test("stampDesktopWindowsBundle writes a manifest that lists the VC++ runtime copied in after the build", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_vc_stamp_" });
+  try {
+    await Deno.mkdir(join(dir, "scripts"));
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ name: "@x/myapp", version: "1.2.3" }),
+    );
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      'export default { desktop: { app: { name: "MyApp", identifier: "com.example.myapp" } } };\n',
+    );
+    const entry = toFileUrl(join(dir, "scripts", "package-windows.ts")).href;
+    const app = await fakeBundle();
+    try {
+      // The VC++ runtime's DLL lands after the build (bundleDesktopVcRuntime), then the stamp.
+      await Deno.writeFile(join(app, "vcruntime140.dll"), new Uint8Array([0x4d, 0x5a, 1, 2]));
+      await stampDesktopWindowsBundle(entry, app);
+      const manifest = readDesktopTreeManifest(await Deno.readFile(join(app, EXE)))!;
+      assertEquals(manifest.appId, "com.example.myapp");
+      assert(
+        manifest.files.some((f) => f.path === "vcruntime140.dll"),
+        JSON.stringify(manifest.files.map((f) => f.path)),
+      );
+    } finally {
+      await Deno.remove(join(app, ".."), { recursive: true });
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
 });
 
 Deno.test("desktopSignWindows signs the DLLs first, writes the manifest again with their signed bytes, then signs the .exe", async () => {

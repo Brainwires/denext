@@ -63,13 +63,24 @@ Deno.test("ghPath: where the GitHub CLI's installers put it, never PATH", () => 
     ghPath("windows", () => true, env({ ProgramFiles: "D:\\Apps" })),
     "D:\\Apps\\GitHub CLI\\gh.exe",
   );
+  // Never the per-user install under %LOCALAPPDATA%\\Programs: any program the user runs can
+  // write there, so a planted gh.exe would run.
   assertEquals(
     ghPath(
       "windows",
       only("C:\\Users\\me\\AppData\\Local\\Programs\\GitHub CLI\\gh.exe"),
       env({ LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local" }),
     ),
-    "C:\\Users\\me\\AppData\\Local\\Programs\\GitHub CLI\\gh.exe",
+    null,
+  );
+  // %ProgramFiles% counts only as an absolute drive path; anything else is the default install.
+  assertEquals(
+    ghPath(
+      "windows",
+      only("C:\\Program Files\\GitHub CLI\\gh.exe"),
+      env({ ProgramFiles: "..\\evil" }),
+    ),
+    "C:\\Program Files\\GitHub CLI\\gh.exe",
   );
   assertEquals(ghPath("windows", () => false, env({ LOCALAPPDATA: "relative" })), null);
 });

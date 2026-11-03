@@ -352,17 +352,25 @@ export async function publishFrom(
 
 /** The real dependencies: git in `cwd`, the network, the clock and the console. */
 export function realPublishDeps(cwd: string): PublishDeps {
+  const git: PublishDeps["git"] = async (...args) => {
+    const r = await new Deno.Command("git", { args, cwd, stdout: "piped", stderr: "inherit" })
+      .output();
+    return { code: r.code, out: new TextDecoder().decode(r.stdout).trim() };
+  };
   return {
-    async git(...args) {
-      const r = await new Deno.Command("git", { args, cwd, stdout: "piped", stderr: "inherit" })
-        .output();
-      return { code: r.code, out: new TextDecoder().decode(r.stdout).trim() };
-    },
+    git,
     fetch: (url) => fetch(url),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now(),
     log: (line) => console.log(line),
-    publishRun: (tag) => ghPublishRun(tag, cwd),
+    publishRun: (tag) =>
+      ghPublishRun(tag, {
+        gh: (...args) => gh(cwd, ...args),
+        tagCommit: async (t) => {
+          const r = await git("rev-parse", "--verify", "--quiet", `refs/tags/${t}^{commit}`);
+          return r.code === 0 && r.out !== "" ? r.out : null;
+        },
+      }),
   };
 }
 
@@ -381,20 +389,42 @@ async function gh(cwd: string, ...args: string[]): Promise<string> {
   return new TextDecoder().decode(r.stdout);
 }
 
-/** `publish.yml`'s newest run for `tag` and its `publish` job's state. */
-async function ghPublishRun(tag: string, cwd: string): Promise<PublishRun> {
+/** What {@linkcode ghPublishRun} asks GitHub and git through (tests stub them). */
+export interface GhPublishRunDeps {
+  /** Run `gh <args>`: its stdout, else a thrown error. */
+  gh(...args: string[]): Promise<string>;
+  /** The commit the local tag points at, or `null` when it can't be read. */
+  tagCommit(tag: string): Promise<string | null>;
+}
+
+/** How many of the tag's newest publish.yml runs are looked through for one on the tag's commit. */
+const PUBLISH_RUNS_LOOKED_AT = 20;
+
+/**
+ * `publish.yml`'s newest run for `tag` that ran on the tag's own commit, and its `publish` job's
+ * state. A run on any other commit (a branch of the same name, a tag pushed again) is never
+ * taken: with none on the tag's commit the state is `none` (still waiting), and a tag whose commit
+ * can't be read is `unknown` (the release stops).
+ *
+ * @param tag The release tag (`v4.11.13`).
+ * @param deps `gh` and the tag's commit.
+ * @returns The run's state.
+ */
+export async function ghPublishRun(tag: string, deps: GhPublishRunDeps): Promise<PublishRun> {
   try {
+    const commit = await deps.tagCommit(tag);
+    if (!commit) return { state: "unknown", detail: `the commit of tag ${tag} can't be read` };
     const runs = JSON.parse(
-      await gh(
-        cwd,
-        ...["run", "list", "--workflow", "publish.yml", "--branch", tag, "--limit", "1"],
-        ...["--json", "databaseId,url"],
+      await deps.gh(
+        ...["run", "list", "--workflow", "publish.yml", "--branch", tag],
+        ...["--limit", String(PUBLISH_RUNS_LOOKED_AT), "--json", "databaseId,url,headSha"],
       ),
-    ) as Array<{ databaseId: number; url: string }>;
-    if (runs.length === 0) return { state: "none" };
-    const { databaseId, url } = runs[0];
+    ) as Array<{ databaseId: number; url: string; headSha?: string }>;
+    const run = runs.find((r) => r.headSha === commit);
+    if (!run) return { state: "none" };
+    const { databaseId, url } = run;
     const id = String(databaseId);
-    const view = JSON.parse(await gh(cwd, "run", "view", id, "--json", "jobs")) as {
+    const view = JSON.parse(await deps.gh("run", "view", id, "--json", "jobs")) as {
       jobs: Array<{ name: string; status: string; conclusion: string }>;
     };
     const job = view.jobs.find((j) => j.name === "publish");

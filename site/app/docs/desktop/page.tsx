@@ -4053,18 +4053,28 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         <code>--allow-read</code>, <code>--allow-env</code>
         ). <code>desktop.permissions: &quot;strict&quot;</code>{" "}
         narrows both, from Deno Desktop runtime 3.0.0-denext.8 in an app with{" "}
-        <code>desktop.app.identifier</code> (an older runtime bakes the default, and{" "}
-        <code>denext desktop package</code> says so):
+        <code>desktop.app.identifier</code>. It never falls back to the unscoped grants:{" "}
+        <code>denext desktop package</code>{" "}
+        fails, naming the reason and the fix, when the identifier is missing or the runtime cannot
+        scope them (older than 3.0.0-denext.8, <code>DENEXT_DESKTOP_RUNTIME=stock</code>, or a local
+        {" "}
+        <code>DENEXT_DESKTOP_RUNTIME_DIR</code> build). <code>denext desktop run</code> and{" "}
+        <code>dev</code>, which build a local test copy, print a warning and bake the default
+        instead.
       </p>
       <ul>
         <li>
           <code>--allow-read</code> covers the app&apos;s data and cache folders (
           <code>$DENO_DESKTOP_DATA</code>, <code>$DENO_DESKTOP_CACHE</code>
           ), the folders the capabilities read and{" "}
-          <code>desktop.extraPermissions.read</code>. The embedded files are always readable. A
-          capability that reads a path picked at run time (<code>dialogs</code>,{" "}
-          <code>$DOCUMENTS</code> in <code>fs</code>) keeps it unscoped, and so does a{" "}
-          <code>&quot;*&quot;</code> entry; a file the OS opens with the app needs one of them.
+          <code>desktop.extraPermissions.read</code>. The embedded files are always readable. A read
+          with no folder token (<code>$APPDATA</code>,{" "}
+          <code>$CACHE</code>) that is not an absolute path fails the build, naming the entry: a
+          capability that reads a path picked at run time (<code>dialogs</code>),{" "}
+          <code>$DOCUMENTS</code> in <code>fs</code>
+          , a relative path or a <code>&quot;*&quot;</code>{" "}
+          entry. An app that reads picked files or files the OS opens with it keeps the default
+          mode.
         </li>
         <li>
           <code>--allow-env</code>{" "}
@@ -4072,10 +4082,19 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           <code>HOME</code>, <code>APPDATA</code>, <code>XDG_*</code>, the proxy variables,{" "}
           <code>PORT</code>, …) plus the ones the app declares in{" "}
           <code>desktop.permissions.env</code> or <code>desktop.extraPermissions.env</code>
-          . Every variable the app&apos;s own code reads, its <code>NEXT_PUBLIC_*</code>{" "}
-          ones and a module sidecar&apos;s included, must be declared: an undeclared read throws
-          {" "}
-          <code>NotCapable</code>.
+          . Every variable the app&apos;s own code reads, its <code>NEXT_PUBLIC_*</code> ones,{" "}
+          <code>SESSION_SECRET</code>{" "}
+          and a module sidecar&apos;s included, must be declared: an undeclared read throws{" "}
+          <code>NotCapable</code>. A <code>&quot;*&quot;</code>{" "}
+          entry fails the build. The packaging tools&apos; signing and credential variables (
+          <code>DENEXT_WINDOWS_CERT*</code>, <code>DENEXT_OTA_SIGNING_KEY</code>,{" "}
+          <code>DENEXT_NOTARY_*</code>, <code>DENEXT_CODESIGN_IDENTITY</code>, any{" "}
+          <code>*_TOKEN</code> / <code>*_SECRET</code> / <code>*_PASSWORD</code> /{" "}
+          <code>*_KEY</code>
+          ) are never in the list, so the app can&apos;t read a signing key from the environment of
+          the machine that tests it. A granted name can also be set (<code>Deno.env.set</code>
+          ), the listed <code>PATH</code> and <code>DENO_DIR</code>{" "}
+          included, as under the default mode.
         </li>
         <li>
           A program sidecar (<code>run.exec</code>) and <code>loginShellEnv</code>{" "}

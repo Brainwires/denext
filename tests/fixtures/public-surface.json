@@ -2079,6 +2079,7 @@
     "runDesktop:function",
     "shouldInjectDesktopToken:function",
     "stampDesktopTreeManifest:function",
+    "stampDesktopWindowsBundle:function",
     "stopSidecars:function",
     "stripDesktopCredentials:function",
     "syncDesktopAppConfig:function",

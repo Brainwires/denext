@@ -259,6 +259,7 @@ export {
   parseDesktopPackageArgs,
   type PreparedDesktopPackage,
   prepareDesktopPackage,
+  stampDesktopWindowsBundle,
 } from "./desktop-package-script.ts";
 // scripts/package-windows.ts: the tree manifest of the app's identifier and version and every file
 // but the .exe, embedded in the .exe before signing so its Authenticode signature covers the whole
