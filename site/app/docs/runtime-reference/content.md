@@ -57,7 +57,7 @@ stock-Deno escape hatch (`DENEXT_DENO=stock`) and every stock-Deno fallback are 
 on this page from `3.0.0-rc.5` and earlier — `Deno.SQL`, the lifecycle-script jail, the idle trim,
 the direction-split network flags, native TypeScript 7 — is always there. A `DENEXT_DENO=<path>`
 must be a build of it (told by the identity line above); anything else is refused with the fix
-([Upgrading to 5.0](/docs/toolchain#upgrading-to-50)).
+([Upgrading to denext 5.0](/docs/upgrading-to-5)).
 
 ## JavaScript and TypeScript APIs
 

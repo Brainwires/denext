@@ -839,8 +839,8 @@ version, tagged `denext-runtime-v3.0.0-rc.1`, with its archives named after it
 candidates end: the fork's releases are `3.0.0-denext.1`, `3.0.0-denext.2`, and so on, tagged
 `denext-runtime-v3.0.0-denext.1`. There is no upstream 3.0: upstream Deno stays on its 2.9.x LTS
 line, and denext's runtime is the forward line. The Deno release a runtime is built from stays in
-the pin's `deno` field (2.9.8 from `3.0.0-rc.4`, 2.9.7 before), and that is still the stock
-`deno desktop` it packages with. denext compares runtime versions by semver with one exception: on
+the pin's `deno` field (2.9.8 from `3.0.0-rc.4`, 2.9.7 before), and the toolchain's
+`deno desktop` that packages with it is built from that release. denext compares runtime versions by semver with one exception: on
 the `3.0.0` core a `denext.N` release ranks above every `rc.N` one, where plain semver would put it
 below, so `2.9.7-denext.22` < `3.0.0-rc.1` < `3.0.0-rc.6` < `3.0.0-denext.1` < `3.0.0-denext.2` < `3.0.0-denext.3` < `3.0.0-denext.5` < `3.0.0-denext.6` < `3.0.0-denext.7`.
 From `3.0.0-rc.3` denext tells its own Deno from stock Deno by an identity marker rather than the version: `Deno.build.denext` and a

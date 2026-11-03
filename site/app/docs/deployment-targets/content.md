@@ -324,8 +324,7 @@ them. A `start` task run straight on the toolchain (`denext task start`) re-runs
 them when it has `--allow-run` for its own Deno; the least-privilege task has not, so it warns
 instead: put the flags after `run` in the task, and set `DENEXT_LIMITS_APPLIED` to them
 (space-separated) to say so.
-Every runtime denext 5.0 runs on takes them (`DENEXT_DENO=stock` is refused); on a toolchain older
-than 3.0.0-rc.2 they would never be passed, and `denext start` / `build --compile` would warn. The Docker image
+Every runtime denext 5.0 runs on takes them. The Docker image
 needs a start task that is a plain `deno run` line, and the fly preset warns when `memory` is not
 below the machine's memory (the OOM killer would end the server first).
 
@@ -333,7 +332,7 @@ The config is read as the idle trim's is: what the last `denext build` recorded 
 `.denext/deploy-manifest.json` (`server.limits`), and before a first build the literal values in the
 config file. A generated file keeps the limits it was written with; regenerate after a change.
 
-`denext start` may re-run itself before it serves: onto denext's Deno toolchain from stock Deno, a
+`denext start` may re-run itself before it serves: onto denext's Deno toolchain from the Deno that started the CLI, a
 compiled `denext` handing the project to its pinned version, a source checkout's CSS or module
 config. Only the last process, the one that serves, runs with the flags; the ones before it hand
 the limits down as data and run without them, so no CLI hop's `--max-time` ends before the
@@ -389,7 +388,7 @@ and resource-limit re-runs), unless the variable is already set: set it yourself
 `A-Z a-z 0-9 @ . _ + / -`, for example `shop@2.3.1`) to name your app instead.
 
 `denext doctor` checks a set URL: it warns on `http:` and on any URL the runtime would ignore, and
-on stock Deno or an older runtime, which send no reports. `denext crash-report test` checks the
+on a runtime older than `3.0.0-denext.5`, which sends no reports. `denext crash-report test` checks the
 pipeline end to end: it runs the toolchain's `deno --version` with `DENEXT_CRASH_REPORT_SELFTEST=1`,
 which panics on purpose just after start-up and sends one report with `kind: "selftest"`. For a
 `file:` URL it prints the line that was written; for an endpoint, look for the report there.
@@ -440,7 +439,7 @@ Several certificates use the runtime's `resolveCertificate`, which picks one per
 name the client asks for (SNI) and caches it per name. It is behind the unstable net APIs, so the
 project's `deno.json` turns them on (`"unstable": ["net"]`), which every `deno` that runs the
 server reads: `denext start` and a Docker image's or systemd unit's `deno run`; `denext build
---compile` bakes `--unstable-net` into the binary itself. On stock Deno, an older toolchain, or without the flag, the server
+--compile` bakes `--unstable-net` into the binary itself. On a runtime older than `3.0.0-denext.3`, or without the flag, the server
 does not start and says which is missing, rather than serve one certificate for every name.
 
 The files are read once, when the server starts: a variable that is unset or a file that can't be

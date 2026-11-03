@@ -43,7 +43,7 @@ denext patch apply                      # what dev/build/start do at boot`}
       <h3>Applied on install, too (denext's Deno 3.0.0-denext.3+)</h3>
       <p>
         When the project runs on denext's Deno from runtime <code>3.0.0-denext.3</code>{" "}
-        (the pinned toolchain; not under <code>DENEXT_DENO=stock</code>), <code>create</code>{" "}
+        (the pinned toolchain, or a <code>DENEXT_DENO</code> build of it), <code>create</code>{" "}
         also registers the patch in the workspace root <code>deno.json</code>
         's{" "}
         <code>patchedDependencies</code>, which that runtime applies whenever it installs the

@@ -17055,13 +17055,13 @@
               "kind": "property",
               "name": "netConnect",
               "signature": "netConnect?: string[]",
-              "doc": "Outbound hosts only (`--allow-net-connect` under the pinned runtime; folded into `--allow-net`\nunder the stock one). The loopback baseline is always there."
+              "doc": "Outbound hosts only (`--allow-net-connect`). The loopback baseline is always there."
             },
             {
               "kind": "property",
               "name": "netListen",
               "signature": "netListen?: string[]",
-              "doc": "Listen addresses only (`--allow-net-listen` under the pinned runtime; folded into\n`--allow-net` under the stock one). The baseline listens on loopback (`127.0.0.1`,\n`localhost`, any port)."
+              "doc": "Listen addresses only (`--allow-net-listen`). The baseline listens on loopback (`127.0.0.1`,\n`localhost`, any port)."
             },
             {
               "kind": "property",

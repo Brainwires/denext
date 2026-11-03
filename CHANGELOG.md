@@ -62,7 +62,14 @@ and this project adheres to
   `denext toolchain install` once; run tasks, builds and tests with `denext task …` /
   `denext test` rather than a plain `deno task` / `deno test`; regenerate packaging scripts with
   `denext desktop package --regenerate-scripts`; point any `DENEXT_DENO` / `DENO_BIN` at a build of
-  denext's runtime. See https://denext.dev/docs/toolchain#upgrading-to-50.
+  denext's runtime. See https://denext.dev/docs/upgrading-to-5.
+
+### Documentation
+
+- **Upgrading to denext 5.0** (`/docs/upgrading-to-5`): what breaks, what to do instead, the CI
+  changes and the errors the 5.0 refusals print. The remaining docs that described stock-Deno
+  behaviour (resource limits, crash reports, multi-certificate TLS, desktop network grants,
+  patches) now describe the required runtime.
 
 ## [4.11.13] - 2026-11-02
 

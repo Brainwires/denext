@@ -1887,15 +1887,13 @@ export interface DesktopExtraPermissions {
    */
   net?: string[];
   /**
-   * Outbound hosts only (`--allow-net-connect` under the pinned runtime; folded into `--allow-net`
-   * under the stock one). The loopback baseline is always there.
+   * Outbound hosts only (`--allow-net-connect`). The loopback baseline is always there.
    *
    * @itemPattern "^(?!.*://)[^\\s,]+$"
    */
   netConnect?: string[];
   /**
-   * Listen addresses only (`--allow-net-listen` under the pinned runtime; folded into
-   * `--allow-net` under the stock one). The baseline listens on loopback (`127.0.0.1`,
+   * Listen addresses only (`--allow-net-listen`). The baseline listens on loopback (`127.0.0.1`,
    * `localhost`, any port).
    *
    * @itemPattern "^(?!.*://)[^\\s,]+$"

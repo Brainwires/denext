@@ -44,7 +44,7 @@ listed, with the version it arrived in, in the [runtime reference](/docs/runtime
 
 There is nothing to install and nothing to configure. Install denext as usual; you need no Deno of
 your own. From denext 5.0 the toolchain is the only Deno denext runs on: stock Deno is no longer
-supported ([Upgrading to 5.0](#upgrading-to-50)).
+supported ([Upgrading to denext 5.0](/docs/upgrading-to-5)).
 
 ## With no Deno installed
 
@@ -230,7 +230,8 @@ unless that Deno is denext's runtime. Run such scripts and tests with `denext ta
 
 ## Upgrading to 5.0
 
-denext 5.0 removed every stock-Deno path:
+denext 5.0 removed every stock-Deno path (the steps, CI changes and errors are in
+[Upgrading to denext 5.0](/docs/upgrading-to-5)):
 
 - `DENEXT_DENO=stock` and `DENEXT_DESKTOP_RUNTIME=stock` are refused; unset them.
 - `DENEXT_DENO=<path>` and a `DENO_BIN` of yours must name a build of denext's runtime
@@ -975,7 +976,7 @@ schemes sort in release order by semver (`2.9.7-denext.22` < `3.0.0-rc.1` < `3.0
 `3.0.0`), and denext accepts both: a pin, a `Deno.version.deno` and a `DENO_BIN` are compared that
 way. The Deno release a build is made from is the pin's `deno` field (2.9.7 up to `3.0.0-rc.3`,
 2.9.8 from `3.0.0-rc.4`): it is what a `Dockerfile`'s `denoland/deno` tag, `setup-deno` and the
-[Deno Desktop runtime](/docs/desktop-runtime)'s "Deno 2.9.8 exactly" check use. Releases are tagged
+[Deno Desktop runtime](/docs/desktop-runtime)'s build check (denext's Deno built from that release) use. Releases are tagged
 `denext-runtime-v<version>` on [Brainwires/deno](https://github.com/Brainwires/deno/releases). The
 toolchain's own `deno upgrade` is off from `3.0.0-rc.1` (it would replace denext's build with
 upstream Deno): `denext upgrade` moves the pin, or `denext toolchain install` fetches it.
@@ -998,10 +999,10 @@ denext 3.0.0-rc.5 (Brainwires)
 denext recognises its toolchain and the `deno` a desktop build runs by that marker (in its own
 process by `Deno.build.denext`, for another binary by the `--version` line): whether a command
 already runs on the toolchain, `denext toolchain status`, `denext doctor`, the native type check,
-the Deno release a Dockerfile or CI workflow is generated for, the desktop runtime's "Deno 2.9.8
-exactly" check and the direction-split network flags. A Deno without the marker is upstream Deno
+the Deno release a Dockerfile or CI workflow is generated for, and the desktop runtime's build
+check. A Deno without the marker is upstream Deno
 whatever its number, and denext 5.0 refuses it. A build from before the marker is recognised by its
-version only:
+version only (5.0 runs on none of them):
 `2.9.7-denext.N`, or exactly the pinned toolchain while the pin predates the marker (`3.0.0-rc.2`
 and earlier). A runtime release from `3.0.0-rc.3` must record the marker in its manifest
 (`cli.identity`), or `deno task desktop:pin-runtime` refuses it.

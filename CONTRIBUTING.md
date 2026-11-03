@@ -85,14 +85,14 @@ deno task release-check   # check + doc-lint + deno publish --dry-run (run befor
   verifies (every pass runs on it; when it can't be had, `DENEXT_DENO=stock` included, the run
   fails). Run one with `deno task test tests/jobs-timers.vitest.ts`. Outside CI that pass runs
   with `--no-check` (CI, `CI=true`, type-checks them): Deno wipes a `DENO_DIR`'s type-check cache
-  whenever another Deno version opens it, so a toolchain type-check would cost the next stock run
-  its whole cache (~25 s for the suite) every time; add `--check` to type-check them locally. A Vitest file never goes
-  in `tests/serial-tests.ts` (its pass is separate from the stock ones), and `vitest` needs no
+  whenever another Deno version opens it, so a toolchain type-check would cost the next run of
+  another Deno version its whole cache (~25 s for the suite) every time; add `--check` to type-check them locally. A Vitest file never goes
+  in `tests/serial-tests.ts` (its pass is separate from the `Deno.test` ones), and `vitest` needs no
   import-map entry. The pass runs with `--allow-read --allow-write` only (what the Vitest files
   use; from `2.9.7-denext.16` the Vitest layer's own reads need no grant): a new file that needs
   more adds it to `VITEST_GRANTS` in `scripts/test-run.ts`. **Coverage:** `test:coverage` and
   `coverage:fallow` include the Vitest files. With `--coverage=<dir>`, `scripts/test-run.ts` runs
-  every pass on the toolchain with `--coverage-raw-data-only` (the stock files in one pass without
+  every pass on the toolchain with `--coverage-raw-data-only` (the `Deno.test` files in one pass without
   `--parallel`, the serial ones included, then the Vitest files), and the report comes from the
   toolchain's `deno coverage <dir>` (`scripts/toolchain-deno.ts`). From `2.9.7-denext.17` it
   merges a module's plain-run and Vitest-run profiles per emitted form, so a line either pass ran

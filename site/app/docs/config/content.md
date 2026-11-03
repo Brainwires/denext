@@ -333,7 +333,7 @@ itself (it reads neither the config keys nor the env vars for them).
   never a CLI re-run before it), baked into the `build --compile` binary (whose
   `job` and `db` run under them too: the runtime can't lift them) and written
   into the generated Docker image / systemd unit; never for `dev`, tests or
-  `denext job`; not applied on stock Deno (a warning says so). See
+  `denext job`. See
   [Deployment targets › Resource limits](/docs/deployment-targets#resource-limits).
   `start.tls` — `{ certificates: { hostnames, certFileEnv, keyFileEnv }[] }`:
   serve HTTPS without a proxy. Each certificate lists the host names it serves

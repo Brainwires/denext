@@ -194,7 +194,7 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     desktop-file-utils i3-wm openbox xfwm4 weston sway libwebkit2gtk-4.1-0 libgtk-3-0 \
     libsoup-3.0-0 libayatana-appindicator3-1 libnss3 libatk-bridge2.0-0 libcups2 libxkbcommon0 \
     libgbm1 libasound2t64 libglib2.0-bin ca-certificates curl unzip git fonts-dejavu-core
-# Deno 2.9.8 exactly (the pinned runtime's): copy the binary in, or install it with deno's script.
+# denext's Deno toolchain (the binary `denext toolchain path` prints): copy it in as `deno`.
 COPY deno /usr/local/bin/deno
 RUN useradd -m u
 USER u
