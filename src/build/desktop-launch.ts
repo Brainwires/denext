@@ -266,11 +266,10 @@ const ENTRY_OUT_DIR = /\boutDir\s*:\s*(["'`])([^"'`$\n]+)\1/;
 
 /**
  * Where `denext desktop run` / `build` export the UI for an entry, relative to the project and
- * `/`-separated: the folder the app serves it from (`runDesktop`'s `resolveOutDir`, `out` or its
- * `outDir` resolved against the entry's `import.meta.url`). For an entry at the project root this
- * is `out`, as always (every packaged app compiles the root `desktop.ts`); for
- * `--entry app/desktop.ts` it is `app/out`, or the entry's own literal `outDir: "<path>"` resolved
- * from `app/`.
+ * `/`-separated: the folder the app serves it from (`runDesktop`'s `resolveOutDir`: `out`, or the
+ * entry's literal `outDir: "<path>"`, resolved against the entry's `import.meta.url`). `out` for a
+ * root `desktop.ts` that passes no `outDir`, as always; `app/out` for `--entry app/desktop.ts`;
+ * `ui` for a root entry with `outDir: "ui"`.
  *
  * @param projectDir The project.
  * @param entry The entry that calls `runDesktop`, relative to the project.
@@ -278,11 +277,83 @@ const ENTRY_OUT_DIR = /\boutDir\s*:\s*(["'`])([^"'`$\n]+)\1/;
  */
 export async function desktopEntryOutDir(projectDir: string, entry: string): Promise<string> {
   const entryDir = posixDirname(posixNormalize(entry.replaceAll("\\", "/")));
-  if (entryDir === ".") return "out";
-  const source = await Deno.readTextFile(join(projectDir, entry)).catch(() => "");
-  const outDir = ENTRY_OUT_DIR.exec(source)?.[2] ?? "out";
+  const outDir = await entryOutDirLiteral(projectDir, entry) ?? "out";
   if (isAbsolute(outDir)) return relative(projectDir, outDir).replaceAll("\\", "/");
-  return posixNormalize(posixJoin(entryDir, outDir.replaceAll("\\", "/")));
+  return posixNormalize(posixJoin(entryDir, outDir.replaceAll("\\", "/"))).replace(/(.)\/+$/, "$1");
+}
+
+/** The entry's literal `outDir: "<path>"` (the first one), else `undefined`. */
+async function entryOutDirLiteral(projectDir: string, entry: string): Promise<string | undefined> {
+  const source = await Deno.readTextFile(join(projectDir, entry)).catch(() => "");
+  return ENTRY_OUT_DIR.exec(source)?.[2];
+}
+
+/**
+ * Why the packaged app would serve no UI, or `null`: the root `desktop.ts`, which every packaging
+ * script compiles, passes `runDesktop` an `outDir` other than `out`, while the scripts export to
+ * and embed `out/` (`deno task export`, `--include out`).
+ *
+ * @param projectDir The project.
+ * @returns The message (one line), or `null`.
+ */
+export async function desktopPackageOutDirProblem(projectDir: string): Promise<string | null> {
+  const outDir = await desktopEntryOutDir(projectDir, "desktop.ts");
+  if (outDir === "out") return null;
+  return `desktop.ts passes runDesktop outDir "${await entryOutDirLiteral(
+    projectDir,
+    "desktop.ts",
+  )}" (${outDir}/), but the packaging scripts export to and embed out/, so the packaged window ` +
+    "would have no UI";
+}
+
+/** What to do about {@linkcode desktopPackageOutDirProblem}. */
+export const DESKTOP_PACKAGE_OUT_DIR_FIX =
+  'remove outDir from desktop.ts (runDesktop serves out/ by default), or set it to "out"';
+
+/** The `.gitignore` `denext desktop run` / `build` write into an export folder other than `out`. */
+export const DESKTOP_EXPORT_GITIGNORE =
+  "# The UI export of `denext desktop run` / `build` (replaced on each run).\n*\n";
+
+/**
+ * Why `denext desktop run` / `build` must not export to `outDir` (relative to the project), or
+ * `null`: the export replaces the folder wholesale, so a folder other than the root `out` is used
+ * only when it does not exist yet, is empty, or is already a denext export (it holds the
+ * {@linkcode DESKTOP_EXPORT_GITIGNORE} or a `_denext/` folder).
+ *
+ * @param projectDir The project.
+ * @param outDir The export folder, relative to the project.
+ * @returns The message, or `null`.
+ */
+export async function desktopExportTargetProblem(
+  projectDir: string,
+  outDir: string,
+): Promise<string | null> {
+  if (outDir === "out") return null;
+  const dir = join(projectDir, outDir);
+  const info = await Deno.lstat(dir).catch(() => null);
+  if (info === null) return null;
+  if (!info.isDirectory) return `${outDir} exists and is not a folder`;
+  const ignore = await Deno.readTextFile(join(dir, ".gitignore")).catch(() => null);
+  if (ignore === DESKTOP_EXPORT_GITIGNORE) return null;
+  if (await Deno.stat(join(dir, "_denext")).then((i) => i.isDirectory, () => false)) return null;
+  for await (const _ of Deno.readDir(dir)) {
+    return `${outDir}/ exists and is not a denext export; the export replaces it wholesale. ` +
+      "Move it, or point the entry's outDir at another folder";
+  }
+  return null;
+}
+
+/**
+ * Mark an export folder other than the root `out` as build output: write its
+ * {@linkcode DESKTOP_EXPORT_GITIGNORE} (the export has just replaced the folder, so it holds
+ * nothing of the user's).
+ *
+ * @param projectDir The project.
+ * @param outDir The export folder, relative to the project.
+ */
+export async function markDesktopExport(projectDir: string, outDir: string): Promise<void> {
+  if (outDir === "out") return;
+  await Deno.writeTextFile(join(projectDir, outDir, ".gitignore"), DESKTOP_EXPORT_GITIGNORE);
 }
 
 /** What {@linkcode desktopLaunchBuildPlan} plans. */

@@ -48,11 +48,19 @@ export default function Desktop() {
           <code>--entry app/desktop.ts</code> (<code>run</code>, <code>dev</code>,{" "}
           <code>build</code>) uses another entry. <code>runDesktop</code> serves{" "}
           <code>out</code>, or its <code>outDir</code>, from the entry&apos;s folder, so{" "}
-          <code>run</code> and <code>build</code> export there (<code>app/out/</code>, or a literal
+          <code>run</code> and <code>build</code>{" "}
+          export there (<code>app/out/</code>, or the entry&apos;s literal <code>outDir: "…"</code>
           {" "}
-          <code>outDir: "../out"</code> resolved from <code>app/</code>) and <code>run</code>{" "}
-          embeds that folder. The packaging scripts always compile the root{" "}
-          <code>desktop.ts</code>, which exports to <code>out/</code>.
+          resolved from its folder; a root <code>desktop.ts</code> with <code>outDir: "ui"</code>
+          {" "}
+          exports to <code>ui/</code>) and <code>run</code> embeds that folder. A folder other than
+          {" "}
+          <code>out/</code> gets a <code>.gitignore</code> of{" "}
+          <code>*</code>, and one that holds files but is not a denext export is refused, never
+          replaced. The packaging scripts always compile the root <code>desktop.ts</code>{" "}
+          and export to and embed <code>out/</code>: <code>denext desktop package</code> and{" "}
+          <code>denext doctor</code> warn when <code>desktop.ts</code> passes another{" "}
+          <code>outDir</code>.
         </li>
         <li>
           <code>denext desktop package</code> — build the app and its{" "}

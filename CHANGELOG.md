@@ -115,7 +115,11 @@ and this project adheres to
   export follows the same rule: `runDesktop` serves `out` (or its `outDir`) from the entry's folder,
   so `denext desktop run` / `build --entry app/desktop.ts` now export to `app/out/` (or to the
   entry's literal `outDir`, resolved from `app/`) and `run` embeds that folder, where a nested entry's
-  window had no UI before. An entry at the project root (every packaged app) is unchanged.
+  window had no UI before. A root `desktop.ts` that passes `outDir: "ui"` now gets its export in
+  `ui/` too. An export folder other than `out/` gets a `.gitignore` of `*`, and one that holds files
+  but is not a denext export is refused rather than replaced. The packaging scripts still export to
+  and embed `out/`, so `denext desktop package` and `denext doctor` warn when `desktop.ts` passes
+  another `outDir`. An entry at the project root with no `outDir` (the scaffold's) is unchanged.
 - **A `desktop.app.mediaCapture` in deno.json is no longer replaced silently.** denext writes the
   packaged app's `laufey-launch.json` after `deno desktop`, with its own grant (the app origin
   alone, for the kinds `desktop.capabilities.microphone` / `camera` turn on), so a deno.json grant

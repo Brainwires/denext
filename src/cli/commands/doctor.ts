@@ -54,6 +54,10 @@ import {
   mediaCaptureRuntimeProblem,
 } from "../../build/desktop-media-capture.ts";
 import { DENEXT_EXCLUDE, denextExemptions } from "../../build/dep-age.ts";
+import {
+  DESKTOP_PACKAGE_OUT_DIR_FIX,
+  desktopPackageOutDirProblem,
+} from "../../build/desktop-launch.ts";
 import { DEFAULT_DESKTOP_APP_ORIGIN } from "../../desktop/app-origin.ts";
 import {
   describeClash,
@@ -926,6 +930,8 @@ export async function desktopLaunchPolicyCheck(
     ),
   );
   if (replaced) problems.push({ message: replaced, fix: DENO_JSON_MEDIA_CAPTURE_FIX });
+  const outDir = await desktopPackageOutDirProblem(dir);
+  if (outDir) problems.push({ message: outDir, fix: DESKTOP_PACKAGE_OUT_DIR_FIX });
   const pinned = desktopPasskeyRpIds(config) === null
     ? "bridgeOrigins"
     : "bridgeOrigins + passkeyRpIds";

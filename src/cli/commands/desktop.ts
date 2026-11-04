@@ -32,10 +32,14 @@ import { desktopDevTarget, type DesktopWindow, runDesktopDev } from "../../build
 import { DESKTOP_DEV_LAN_ENV, DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
 import type { DesktopOs } from "../../build/desktop-capabilities.ts";
 import {
+  DESKTOP_PACKAGE_OUT_DIR_FIX,
   desktopEntryOutDir,
+  desktopExportTargetProblem,
   desktopLaunchBuildPlan,
   desktopLaunchExecutable,
   desktopLaunchScratchDir,
+  desktopPackageOutDirProblem,
+  markDesktopExport,
   writeDesktopDevEntry,
 } from "../../build/desktop-launch.ts";
 import { scaffoldFiles } from "../../build/scaffold.ts";
@@ -94,11 +98,17 @@ async function exportSpa(dir: string, entry = "desktop.ts"): Promise<void> {
   console.log(`\n  denext desktop — exporting SPA [${platform}]  ▸  ${dir}\n`);
   const result = await withProjectLocks(
     { projectDir: dir, buildDir: "exclusive", outputDirs: [outDir] },
-    () =>
-      runBuildStep(
+    async () => {
+      // A folder other than the root `out` is replaced only when it is (or becomes) an export.
+      const problem = await desktopExportTargetProblem(dir, outDir);
+      if (problem) fail(`denext desktop: ${problem}.`);
+      const result = await runBuildStep(
         () => staticExport(dir, { platform, ...(outDir === "out" ? {} : { outDir }) }),
         "desktop export",
-      ),
+      );
+      await markDesktopExport(dir, outDir);
+      return result;
+    },
   );
   console.log(`  Exported ${result.pages} page(s) to ${result.outDir}\n`);
 }
@@ -579,6 +589,11 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   // so clear the guards here before spawning.
   Deno.env.delete("DENEXT_CSS_ACTIVE");
   Deno.env.delete("DENEXT_MODULE_ACTIVE");
+  // The scripts export to and embed `out/`: a root entry serving another folder gets no UI.
+  const outProblem = await desktopPackageOutDirProblem(dir);
+  if (outProblem) {
+    console.error(`  ⚠ ${outProblem} — ${DESKTOP_PACKAGE_OUT_DIR_FIX}.`);
+  }
   const format = ctx.flags.format as string | undefined;
   const age = await checkPackageScript(dir, config, targetOs, scriptText, format);
   const formatArgs = format && age.formats ? ["--format", format] : [];

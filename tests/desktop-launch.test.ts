@@ -7,21 +7,26 @@ import { assert, assertEquals, assertRejects, assertStringIncludes } from "@std/
 import { join, toFileUrl } from "@std/path";
 import {
   DESKTOP_DEV_ENTRY_FILE,
+  DESKTOP_EXPORT_GITIGNORE,
   desktopDevEntrySource,
   desktopEntryOutDir,
+  desktopExportTargetProblem,
   desktopLaunchBuildArgs,
   desktopLaunchBuildPlan,
   desktopLaunchBundle,
   desktopLaunchExecutable,
   desktopLaunchName,
   desktopLaunchScratchDir,
+  desktopPackageOutDirProblem,
   isInsideDir,
+  markDesktopExport,
   withNetHosts,
   writeDesktopDevEntry,
 } from "../src/build/desktop-launch.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "../src/build/desktop-dev-build.ts";
 import { desktopBundleCommand } from "../src/build/desktop-package-script.ts";
 import { desktopDevProxyDecision } from "../src/build/desktop.ts";
+import { desktopLaunchPolicyCheck } from "../src/cli/commands/doctor.ts";
 
 /** A project whose config enables capabilities that widen the permissions, plus an extension. */
 async function project(): Promise<{ dir: string; config: unknown }> {
@@ -382,7 +387,7 @@ Deno.test("desktop run / dev: an entry at the project root gets the same flags a
   }
 });
 
-Deno.test("desktopEntryOutDir: the folder the entry's runDesktop serves; out for a root entry", async () => {
+Deno.test("desktopEntryOutDir: the folder the entry's runDesktop serves; out for a root entry with no outDir", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_desktop_entry_out_" });
   try {
     await Deno.mkdir(join(dir, "app"));
@@ -390,10 +395,27 @@ Deno.test("desktopEntryOutDir: the folder the entry's runDesktop serves; out for
       await Deno.writeTextFile(join(dir, rel), source);
       return await desktopEntryOutDir(dir, rel);
     };
-    // A root entry: `out`, as before, whatever its source says.
-    assertEquals(await entry("desktop.ts", ""), "out");
-    assertEquals(await entry("desktop.ts", 'runDesktop({ outDir: "dist" });'), "out");
+    // A root entry with no outDir: `out`, as before.
+    assertEquals(
+      await entry("desktop.ts", "runDesktop({ importMetaUrl: import.meta.url });"),
+      "out",
+    );
     assertEquals(await desktopEntryOutDir(dir, "./desktop.ts"), "out");
+    assertEquals(await desktopPackageOutDirProblem(dir), null);
+    // A root entry's literal outDir is the folder it serves, which packaging cannot follow.
+    assertEquals(await entry("desktop.ts", 'runDesktop({ outDir: "dist" });'), "dist");
+    assertEquals(await entry("desktop.ts", 'runDesktop({ outDir: "./out" });'), "out");
+    assertEquals(await entry("desktop.ts", "runDesktop({ outDir: `ui/` });"), "ui");
+    const problem = await desktopPackageOutDirProblem(dir);
+    assertStringIncludes(problem ?? "", 'outDir "ui/" (ui/)');
+    assertStringIncludes(problem ?? "", "would have no UI");
+    // `denext doctor` names it.
+    const check = await desktopLaunchPolicyCheck(dir, {}, {
+      env: () => undefined,
+      runtimeVersion: "3.0.0-denext.10",
+    });
+    assert(!check!.ok);
+    assertStringIncludes(check!.detail, 'outDir "ui/"');
     // A nested entry: `out` (or its literal `outDir`) resolved from its folder, as runDesktop does.
     assertEquals(
       await entry("app/desktop.ts", "runDesktop({ importMetaUrl: import.meta.url });"),
@@ -409,6 +431,46 @@ Deno.test("desktopEntryOutDir: the folder the entry's runDesktop serves; out for
       "web",
     );
     assertEquals(await desktopEntryOutDir(dir, "app\\missing.ts"), "app/out");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop run / build: an export folder other than out is used only when it is new, empty or an export, and is git-ignored", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_export_target_" });
+  try {
+    assertEquals(await desktopExportTargetProblem(dir, "out"), null);
+    // New: exported and marked.
+    assertEquals(await desktopExportTargetProblem(dir, "shell/out"), null);
+    await Deno.mkdir(join(dir, "shell", "out"), { recursive: true });
+    assertEquals(await desktopExportTargetProblem(dir, "shell/out"), null, "empty");
+    await markDesktopExport(dir, "shell/out");
+    assertEquals(
+      await Deno.readTextFile(join(dir, "shell", "out", ".gitignore")),
+      DESKTOP_EXPORT_GITIGNORE,
+    );
+    await Deno.writeTextFile(join(dir, "shell", "out", "index.html"), "");
+    assertEquals(await desktopExportTargetProblem(dir, "shell/out"), null, "marked");
+    // An export written by `denext export --out ui`.
+    await Deno.mkdir(join(dir, "ui", "_denext"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "ui", "index.html"), "");
+    assertEquals(await desktopExportTargetProblem(dir, "ui"), null);
+    // A user's folder: never replaced, never written into.
+    await Deno.mkdir(join(dir, "docs"));
+    await Deno.writeTextFile(join(dir, "docs", "notes.md"), "mine");
+    assertStringIncludes(
+      (await desktopExportTargetProblem(dir, "docs")) ?? "",
+      "docs/ exists and is not a denext export",
+    );
+    await Deno.writeTextFile(join(dir, "file"), "");
+    assertStringIncludes((await desktopExportTargetProblem(dir, "file")) ?? "", "not a folder");
+    // The root `out` is never marked (the scaffold's .gitignore already lists it).
+    await Deno.mkdir(join(dir, "out"));
+    await markDesktopExport(dir, "out");
+    assertEquals(
+      await Deno.stat(join(dir, "out", ".gitignore")).then(() => true, () => false),
+      false,
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
