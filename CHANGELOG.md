@@ -30,6 +30,16 @@ and this project adheres to
   `denext desktop package` warns once for a Linux target (it still packages: an app that only
   records is fine). An app that uses WebRTC sets `desktop: { backend: { linux: "cef" } }` in
   `denext.config.ts`, so macOS and Windows keep the system WebView. Docs: https://denext.dev/docs/desktop#desktop-media-capture
+- **A program sidecar runs only as it was packaged** (takes effect with Deno Desktop runtime
+  3.0.0-denext.9, once denext pins it, in an app with `desktop.app.identifier`). A project-file
+  `run: { exec }` is hashed at packaging and baked as
+  `--allow-run=$DENO_DESKTOP_CACHE/sidecars/<name>/<sha256>/<file>#sha256=<sha256>#embedded=<path>`,
+  with no write grant. The runtime writes the file from the binary, denies its folder to the app's
+  writes, and checks the hash in every spawn, so the app's own code can no longer write the program
+  and then run it, nor move a folder above it (the runtime refuses a rename of a folder that holds
+  a denied path, as it does a recursive remove). A file that differs is refused with `NotCapable`
+  and removed; the next start writes it again. An older runtime keeps the copy, its write grant and
+  the package-run warning.
 
 ## [4.12.0] - 2026-11-04
 

@@ -759,7 +759,18 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   (its copy in the app's cache folder has a per-user path); with runtime 3.0.0-denext.8 and
   `desktop.app.identifier` the write is scoped to the app's cache folder, but the run grant stays
   unscoped: Deno denies writes to every `--allow-run` path, so a run grant on the copy would keep
-  the app from writing it. Under
+  the app from writing it. Runtime 3.0.0-denext.9 (with `desktop.app.identifier`, from the denext
+  release that pins it) lifts that: the run grant records the program's SHA-256, no write grant is
+  baked, the runtime writes the file from the binary and refuses other bytes at every spawn. What
+  remains on macOS and Linux: another program of the same user that changes the file between the
+  check and the exec can run for a moment before the child is killed (`outputSync()` has no kill).
+  On Linux that check compares timestamps, which ext4 keeps to a coarse clock (a 1 ms tick on a
+  1000 Hz kernel, measured on Linux 6.8; multigrain timestamps, from 6.13, refine a timestamp that
+  has been read), so a same-length rewrite with the mode put back within that tick of the file's
+  last change goes unseen; that program must already be able to write the file, which the app's
+  own code cannot. An unscoped write grant could change a binary that is not signed, and with
+  unscoped read and write the app could symlink a folder above the program's before the runtime
+  first writes it and race a spawn the same way. Under
   `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets only
   the permissions the app holds unscoped (no scoped grants, `--unstable-*` or `--config`).
 - **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime

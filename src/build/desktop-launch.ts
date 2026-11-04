@@ -315,6 +315,7 @@ export async function desktopLaunchBuildPlan(
     permissionFlags: desktopBuildFlags(input.config, input.os, {
       // Dev only: a strict mode that cannot be honoured warned above and bakes the default.
       strictFallback: true,
+      projectDir: input.projectDir,
       // The split network grant needs the pinned runtime (a non-empty runtime env) at 3.0.0-rc.2+.
       netSplit: Boolean(input.runtimeEnv?.DENORT_DESKTOP_BIN) &&
         (input.netSplit ?? desktopNetSplit)(),

@@ -412,7 +412,7 @@ export async function desktopPackageMetaWarnings(
   const config = await loadConfigBeside(entryUrl);
   return [
     ...packageMetaWarnings(await readDenoJson(dir), config, meta, await readPackageJson(dir)),
-    ...sidecarRunWriteWarnings(config, os),
+    ...sidecarRunWriteWarnings(config, os, { projectDir: dir }),
   ];
 }
 

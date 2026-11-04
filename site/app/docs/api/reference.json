@@ -45360,6 +45360,18 @@
             },
             {
               "kind": "property",
+              "name": "projectDir",
+              "signature": "readonly projectDir?: string",
+              "doc": "The project directory, where a project-file program sidecar is read and hashed at packaging.\nWithout it the program's grant records no hash."
+            },
+            {
+              "kind": "property",
+              "name": "sidecarIntegrity",
+              "signature": "readonly sidecarIntegrity?: boolean",
+              "doc": "The runtime checks a program sidecar's recorded hash at spawn (denext's pinned Deno Desktop\nruntime, 3.0.0-denext.9 or later; see `desktopSidecarIntegrityRuntime`), so its `--allow-run`\nrecords the hash and it needs no write grant. Needs `desktop.app.identifier` and `projectDir`,\nand `cacheScope` not `false`. Default:\n`desktopSidecarIntegrityRuntime()`."
+            },
+            {
+              "kind": "property",
               "name": "dataScope",
               "signature": "readonly dataScope?: boolean",
               "doc": "The runtime expands `$DENO_DESKTOP_DATA` (and `$DENO_DESKTOP_CACHE`) in a baked permission\n(denext's pinned Deno Desktop runtime, 3.0.0-denext.8 or later; see `desktopDataTokenRuntime`):\nthe app-folder writes (`$APPDATA`, `$CACHE`: the `fs` / `sqlite` / `updates` capabilities, a\nsidecar's log file, the UI overlay's `ui-updates`) are baked as those folders instead of an\nunscoped `--allow-write`, when `desktop.app.identifier` names them. Default:\n`desktopDataTokenRuntime()`."

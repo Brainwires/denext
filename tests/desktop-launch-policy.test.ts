@@ -8,14 +8,17 @@ import {
   compareDenoVersions,
   FIRST_DESKTOP_CACHE_TOKEN_RUNTIME,
   FIRST_DESKTOP_DATA_TOKEN_RUNTIME,
+  FIRST_SIDECAR_INTEGRITY_RUNTIME,
   supportsDesktopCacheToken,
   supportsDesktopDataToken,
+  supportsSidecarIntegrity,
 } from "../src/build/deno-version.ts";
 import { desktopBridgeOrigins } from "../src/build/desktop-app-config.ts";
 import {
   desktopCacheTokenRuntime,
   desktopDataTokenRuntime,
   desktopPasskeyRpIds,
+  desktopSidecarIntegrityRuntime,
   FIRST_STRICT_LAUNCH_RUNTIME,
   isDesktopProject,
   launchPolicyProblems,
@@ -272,6 +275,15 @@ Deno.test("desktopCacheTokenRuntime: the pinned runtime from 3.0.0-denext.8, nev
   assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8", denextDeno), true);
   // A binary stock Deno compiled carries no identifier for the runtime to expand a token from.
   assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8", { deno: "2.9.8" }), false);
+  assertEquals(FIRST_SIDECAR_INTEGRITY_RUNTIME, "3.0.0-denext.9");
+  assertEquals(supportsSidecarIntegrity("3.0.0-denext.9"), true);
+  assertEquals(supportsSidecarIntegrity("3.0.0-denext.8"), false);
+  assertEquals(supportsSidecarIntegrity("nope"), false);
+  const denext9 = { deno: "2.9.8", denext: "3.0.0-denext.9" };
+  assertEquals(desktopSidecarIntegrityRuntime(env({}), "3.0.0-denext.9", denext9), true);
+  assertEquals(desktopSidecarIntegrityRuntime(env({}), "3.0.0-denext.8", denext9), false);
+  // The recorded grant is a $DENO_DESKTOP_CACHE path: a stock compiler bakes no identifier for it.
+  assertEquals(desktopSidecarIntegrityRuntime(env({}), "3.0.0-denext.9", { deno: "2.9.8" }), false);
   assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.7"), false);
   assertEquals(
     desktopCacheTokenRuntime(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-denext.8"),

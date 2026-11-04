@@ -11,6 +11,7 @@
 // `desktop.capabilities.<key>` value is written; everything else keeps its bytes. A key already
 // present is left as the user wrote it.
 
+import { createHash } from "node:crypto";
 import { basename, fromFileUrl, isAbsolute, join } from "@std/path";
 import { assertInsideProject } from "./project-confine.ts";
 import { CONFIG_FILES } from "./paths.ts";
@@ -21,6 +22,7 @@ import { desktopNetSplitFor } from "./desktop-runtime.ts";
 import {
   desktopDataTokenRuntime,
   desktopDataTokenRuntimeProblem,
+  desktopSidecarIntegrityRuntime,
 } from "./desktop-launch-policy.ts";
 import { netSplitFlags } from "./net-permissions.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
@@ -518,6 +520,19 @@ export interface DesktopBuildFlagOptions {
    */
   readonly cacheScope?: boolean;
   /**
+   * The project directory, where a project-file program sidecar is read and hashed at packaging.
+   * Without it the program's grant records no hash.
+   */
+  readonly projectDir?: string;
+  /**
+   * The runtime checks a program sidecar's recorded hash at spawn (denext's pinned Deno Desktop
+   * runtime, 3.0.0-denext.9 or later; see `desktopSidecarIntegrityRuntime`), so its `--allow-run`
+   * records the hash and it needs no write grant. Needs `desktop.app.identifier` and `projectDir`,
+   * and `cacheScope` not `false`. Default:
+   * `desktopSidecarIntegrityRuntime()`.
+   */
+  readonly sidecarIntegrity?: boolean;
+  /**
    * The runtime expands `$DENO_DESKTOP_DATA` (and `$DENO_DESKTOP_CACHE`) in a baked permission
    * (denext's pinned Deno Desktop runtime, 3.0.0-denext.8 or later; see `desktopDataTokenRuntime`):
    * the app-folder writes (`$APPDATA`, `$CACHE`: the `fs` / `sqlite` / `updates` capabilities, a
@@ -798,10 +813,52 @@ export function sidecarCacheProgram(
 }
 
 /**
+ * The baked `--allow-run` value of a project-file program sidecar on a runtime that checks it at
+ * spawn: `$DENO_DESKTOP_CACHE/sidecars/<name>/<sha256>/<file>#sha256=<sha256>#embedded=<exec>` (the
+ * hash in the path too, so an update's new bytes do not meet the previous version's copy).
+ * The hash is taken now, from the same file `--include` embeds. `undefined`, and the caller keeps
+ * the grants of a runtime without the check, when the value cannot be one entry of a permission
+ * list or the file cannot be read.
+ *
+ * @param name The sidecar's name.
+ * @param exec Its project-relative program path.
+ * @param projectDir The project directory.
+ * @returns The value.
+ */
+export function sidecarRecordedProgram(
+  name: string,
+  exec: string,
+  projectDir: string,
+): string | undefined {
+  const copy = sidecarCacheProgram(name, exec);
+  if (!copy || /[,#]/.test(exec) || name.includes("#")) return undefined;
+  let bytes: Uint8Array;
+  try {
+    bytes = Deno.readFileSync(join(projectDir, exec));
+  } catch {
+    return undefined;
+  }
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const file = copy.program.slice(copy.folder.length + 1);
+  const source = exec.replaceAll("\\", "/").replace(/^(\.\/)+/, "");
+  return `${copy.folder}/${sha256}/${file}#sha256=${sha256}#embedded=${source}`;
+}
+
+/** Which of a copied program's grants to bake: see {@linkcode sidecarPermissionSet}. */
+interface SidecarProgramBake {
+  /** Bake them as {@linkcode DESKTOP_CACHE_TOKEN} paths. */
+  readonly cacheScope: boolean;
+  /** Record the hash (a runtime that checks it): the project directory to read the program in. */
+  readonly integrityDir?: string;
+}
+
+/**
  * What the sidecars need baked in, as one permission set: each one's own `permissions`; a program
  * (`run.exec`) its `--allow-run` (for one of the project's files the packaged app runs it from a
  * copy in the app's cache folder, which also needs `--allow-write`: unscoped, or with `cacheScope`
- * the copy alone, `$DENO_DESKTOP_CACHE/sidecars/<name>/<file>`, and its folder); a log file
+ * the copy alone, `$DENO_DESKTOP_CACHE/sidecars/<name>/<file>`, and its folder; with `integrityDir`
+ * no write at all, and a run grant that records the program's hash, {@linkcode sidecarRecordedProgram});
+ * a log file
  * `--allow-write`; `loginShellEnv` (on macOS and Linux) the shells it may run
  * ({@linkcode LOGIN_SHELL_PATHS}).
  *
@@ -810,16 +867,19 @@ export function sidecarCacheProgram(
  * @param cacheScope Bake a copied program's grants as {@linkcode DESKTOP_CACHE_TOKEN} paths: only
  *   for a runtime that expands the token, in an app with `desktop.app.identifier` (the runtime
  *   expands it from the identifier baked into the binary, and drops an entry it cannot expand).
+ * @param integrityDir The project directory, for a runtime that checks a program's recorded hash at
+ *   spawn (with `cacheScope`).
  * @returns The permissions, merged like `desktop.extraPermissions`.
  */
 export function sidecarPermissionSet(
   sidecars: readonly SidecarDefinition[],
   os?: DesktopOs,
   cacheScope = false,
+  integrityDir?: string,
 ): DesktopPermissionSet {
   const out: Record<string, Set<string>> = {};
   for (const d of sidecars) {
-    const needs = sidecarNeeds(d, cacheScope);
+    const needs = sidecarNeeds(d, { cacheScope, integrityDir });
     const loginShell = d.loginShellEnv !== undefined && d.loginShellEnv !== false;
     if (loginShell && (os === "darwin" || os === "linux")) {
       needs.push(["run", LOGIN_SHELL_PATHS[os]]);
@@ -856,14 +916,14 @@ function checkedPermissions(field: string, value: unknown): DesktopPermissionSet
 /** One sidecar's needs as `[kind, values]`: its `permissions`, its program, its log file. */
 function sidecarNeeds(
   d: SidecarDefinition,
-  cacheScope: boolean,
+  bake: SidecarProgramBake,
 ): Array<[string, readonly string[]]> {
   const permissions = checkedPermissions(`desktop.sidecars "${d.name}" permissions`, d.permissions);
   const needs = Object.entries(permissions).filter(
     (e): e is [string, readonly string[]] => Array.isArray(e[1]),
   );
   const exec = (d.run as { exec?: unknown } | undefined)?.exec;
-  if (typeof exec === "string") needs.push(...programNeeds(d.name, exec, cacheScope));
+  if (typeof exec === "string") needs.push(...programNeeds(d.name, exec, bake));
   // Log files are `<data>/logs/<name>.log` (sidecar-host.ts).
   if (d.logs === "file" || d.logs === "both") needs.push(["write", ["$APPDATA/logs"]]);
   // A Node backend's packages are unpacked into the cache folder (sidecar-modules.ts).
@@ -877,10 +937,14 @@ function sidecarNeeds(
 function programNeeds(
   name: string,
   exec: string,
-  cacheScope: boolean,
+  bake: SidecarProgramBake,
 ): Array<[string, readonly string[]]> {
   if (!isProjectProgram(exec)) return [["run", [exec]]];
-  const copy = cacheScope ? sidecarCacheProgram(name, exec) : undefined;
+  const recorded = bake.cacheScope && bake.integrityDir !== undefined
+    ? sidecarRecordedProgram(name, exec, bake.integrityDir)
+    : undefined;
+  if (recorded) return [["run", [recorded]]];
+  const copy = bake.cacheScope ? sidecarCacheProgram(name, exec) : undefined;
   return copy ? [["run", [copy.program]], ["write", [copy.folder]]] : [["run", ["*"]], [
     "write",
     ["$CACHE"],
@@ -897,11 +961,14 @@ function programNeeds(
  * into its cache folder at launch, which takes a write grant on that folder (`sidecarCacheProgram`),
  * and runs it from there. Reported, never refused: refusing it would refuse every project-file
  * program sidecar, and a capability that writes (`fs`, the updater's UI overlay) bakes a write of
- * everything anyway. A bare program name (`git`, looked up on `PATH`) is not compared.
+ * everything anyway. A bare program name (`git`, looked up on `PATH`) is not compared, and neither
+ * is a grant that records its program's hash ({@linkcode sidecarRecordedProgram}): the runtime runs
+ * only those bytes, whatever the app writes.
  *
  * @param config The project config (`denext.config.ts` default export).
  * @param os The target OS (the sidecars' login shells depend on it; they are never reported).
- * @param options `cacheScope` / `dataScope`: see {@linkcode desktopBuildFlags}.
+ * @param options `cacheScope`, `dataScope`, `projectDir`, `sidecarIntegrity`: see
+ *   {@linkcode desktopBuildFlags}.
  * @returns The warnings, one per covered program.
  */
 export function sidecarRunWriteWarnings(
@@ -912,10 +979,10 @@ export function sidecarRunWriteWarnings(
   const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
   const sidecars = configSidecars(cfg);
   if (sidecars.length === 0) return [];
-  const cacheScope = sidecarCacheScope(cfg, options);
+  const bake = sidecarProgramBake(cfg, os, options);
   const extra = mergePermissionSets(
     checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
-    sidecarPermissionSet(sidecars, os, cacheScope),
+    sidecarPermissionSet(sidecars, os, bake.cacheScope, bake.integrityDir),
   );
   const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
   // The write grant the build bakes: scoped to the app's folders where desktopBuildFlags scopes it.
@@ -926,7 +993,7 @@ export function sidecarRunWriteWarnings(
   for (const d of sidecars) {
     const exec = (d.run as { exec?: unknown } | undefined)?.exec;
     if (typeof exec !== "string") continue;
-    const program = scopedSidecarProgram(d.name, exec, cacheScope);
+    const program = scopedSidecarProgram(d.name, exec, bake);
     const by = program === undefined ? undefined : writeGrantCovering(program, writes);
     if (by === undefined) continue;
     const grant = by === "*" ? "an unscoped --allow-write" : `--allow-write=${by}`;
@@ -946,9 +1013,15 @@ export function sidecarRunWriteWarnings(
  * The path a sidecar's baked `run` grant names for its program `exec`, or `undefined` when the
  * grant is not a path: an unscoped grant (`*`), or a bare name looked up on `PATH`.
  */
-function scopedSidecarProgram(name: string, exec: string, cacheScope: boolean): string | undefined {
-  const [[, [program]]] = programNeeds(name, exec, cacheScope);
-  return program === "*" || !/[\\/]/.test(program) ? undefined : program;
+function scopedSidecarProgram(
+  name: string,
+  exec: string,
+  bake: SidecarProgramBake,
+): string | undefined {
+  const [[, [program]]] = programNeeds(name, exec, bake);
+  return program === "*" || !/[\\/]/.test(program) || program.includes("#sha256=")
+    ? undefined
+    : program;
 }
 
 /**
@@ -969,11 +1042,40 @@ function writeGrantCovering(program: string, writes: readonly string[]): string 
  * Off by default although runtime 3.0.0-denext.8 expands the token
  * (`desktopCacheTokenRuntime`): Deno adds every `--allow-run` path to the deny-write
  * list, so a run grant on the copy's own path leaves the app unable to write the copy, and the
- * program sidecar never starts (`NotCapable` on its rename into place). The unscoped `--allow-run`
- * stays until a runtime exempts a token run path from that rule.
+ * program sidecar never starts (`NotCapable` on its rename into place). From runtime
+ * 3.0.0-denext.9 the program is baked with its recorded hash instead ({@linkcode sidecarProgramBake}):
+ * the runtime writes it itself, so the folder's denial is what is wanted there.
  */
 function sidecarCacheScope(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): boolean {
   return (options.cacheScope ?? false) && hasIdentifier(cfg);
+}
+
+/**
+ * How a copied program sidecar's grants are baked for `options`. An unscoped `--allow-run` from
+ * anywhere (`extraPermissions`, a capability, another sidecar) has no value to record a hash in, and
+ * the app could run anything anyway, so the program then keeps its copy and write grant.
+ */
+function sidecarProgramBake(
+  cfg: DesktopFlagConfig,
+  os: DesktopOs,
+  options: DesktopBuildFlagOptions,
+): SidecarProgramBake {
+  const fallback = { cacheScope: sidecarCacheScope(cfg, options) };
+  // `cacheScope: false` says the runtime expands no token; left out, the recorded grant needs only
+  // a runtime with the check (which expands the token too).
+  const integrityDir = hasIdentifier(cfg) && options.cacheScope !== false &&
+      (options.sidecarIntegrity ?? desktopSidecarIntegrityRuntime())
+    ? options.projectDir
+    : undefined;
+  if (integrityDir === undefined) return fallback;
+  // The recorded grant is a `$DENO_DESKTOP_CACHE` path, and the runtime writes the program itself:
+  // the deny-write Deno puts on a run path is what keeps the app's code off it.
+  const extra = mergePermissionSets(
+    checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
+    sidecarPermissionSet(configSidecars(cfg), os, true, integrityDir),
+  );
+  const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
+  return bakeableSets(capFlags, extra).run.has("*") ? fallback : { cacheScope: true, integrityDir };
 }
 
 /** Whether `desktop.app.identifier` is set (the runtime keys both folders by it). */
@@ -1155,9 +1257,10 @@ export function desktopBuildFlags(
 ): string[] {
   const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
   // `desktop.extraPermissions` and what the sidecars need, baked the same way.
+  const bake = sidecarProgramBake(cfg, os, options);
   const extra = mergePermissionSets(
     checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
-    sidecarPermissionSet(configSidecars(cfg), os, sidecarCacheScope(cfg, options)),
+    sidecarPermissionSet(configSidecars(cfg), os, bake.cacheScope, bake.integrityDir),
   );
   const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
 
@@ -1232,8 +1335,12 @@ export async function desktopPackageFlags(
 ): Promise<string[]> {
   // No config (or one that exports none) → the baseline; a config that fails to load fails.
   const config = await loadConfigBeside(entryUrl);
+  const root = new URL("../", entryUrl);
   // Strict mode that cannot be honoured throws here: a packaged build never falls back.
-  return desktopBuildFlags(config, os, { netSplit: netSplit ?? await desktopNetSplitFor() });
+  return desktopBuildFlags(config, os, {
+    netSplit: netSplit ?? await desktopNetSplitFor(),
+    ...(root.protocol === "file:" ? { projectDir: fromFileUrl(root) } : {}),
+  });
 }
 
 /**
