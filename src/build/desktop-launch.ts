@@ -271,6 +271,11 @@ export interface DesktopLaunchPlanInput {
   readonly scratch: string;
   /** Where a warning goes (default `console.warn`). */
   readonly warn?: (line: string) => void;
+  /**
+   * Whether the runtime checks a program sidecar's recorded hash (default
+   * `desktopSidecarIntegrityRuntime()`; see `DesktopBuildFlagOptions.sidecarIntegrity`).
+   */
+  readonly sidecarIntegrity?: boolean;
 }
 
 /** A planned `desktop run` / `dev` build. */
@@ -316,6 +321,10 @@ export async function desktopLaunchBuildPlan(
       // Dev only: a strict mode that cannot be honoured warned above and bakes the default.
       strictFallback: true,
       projectDir: input.projectDir,
+      // A recorded program sidecar's embedded path is relative to the compiled entry (`desktop dev`
+      // compiles `.denext/desktop-dev-entry.ts`).
+      entry: input.entry,
+      ...(input.sidecarIntegrity === undefined ? {} : { sidecarIntegrity: input.sidecarIntegrity }),
       // The split network grant needs the pinned runtime (a non-empty runtime env) at 3.0.0-rc.2+.
       netSplit: Boolean(input.runtimeEnv?.DENORT_DESKTOP_BIN) &&
         (input.netSplit ?? desktopNetSplit)(),

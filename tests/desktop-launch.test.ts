@@ -150,6 +150,41 @@ Deno.test("desktop dev: no export embedded, the generated entry, a LAN host adde
   }
 });
 
+Deno.test("desktop dev: a recorded program sidecar names its file relative to the generated entry", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_launch_sidecar_" });
+  const scratch = await desktopLaunchScratchDir(dir);
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.writeTextFile(join(dir, "desktop.ts"), "");
+    await Deno.mkdir(join(dir, "bin"));
+    await Deno.writeTextFile(join(dir, "bin", "server"), "packaged");
+    const config = {
+      desktop: {
+        app: { name: "My App", identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    };
+    const entry = await writeDesktopDevEntry(dir, join(dir, ".denext"), "desktop.ts");
+    const runGrant = async (entry: string) =>
+      (await desktopLaunchBuildPlan({
+        projectDir: dir,
+        config,
+        os: "linux",
+        denoFlags: [],
+        entry,
+        dev: entry !== "desktop.ts",
+        scratch,
+        sidecarIntegrity: true,
+      })).args.find((a) => a.startsWith("--allow-run"));
+    // The runtime resolves `#embedded=` from the compiled entry's folder (`.denext/`).
+    assertStringIncludes((await runGrant(entry)) ?? "", "#embedded=../bin/server");
+    assertStringIncludes((await runGrant("desktop.ts")) ?? "", "#embedded=bin/server");
+  } finally {
+    await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test('desktop run / dev: a "strict" that cannot be honoured warns loudly and bakes the default (packaging refuses it)', async () => {
   const { dir } = await project();
   const scratch = await desktopLaunchScratchDir(dir);

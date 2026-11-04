@@ -40,7 +40,11 @@ and this project adheres to
   and then run it, nor move a folder above it (the runtime refuses a rename of a folder that holds a
   denied path, as it does a recursive remove). A file that differs is refused with `NotCapable` and
   removed; the next start writes it again. An older runtime keeps the copy, its write grant and the
-  package-run warning.
+  package-run warning. The embedded path is relative to the entry `deno desktop` compiles, so the
+  program starts under `denext desktop dev` too (its build compiles `.denext/desktop-dev-entry.ts`);
+  a program that cannot be recorded (a `#` or `,` in its path, a path outside the project) keeps the
+  unscoped grants of a runtime without the check, never a run grant on its copy, which Deno denies
+  the app's writes to.
 - **Node's compile cache for CommonJS modules** (denext's Deno 3.0.0-denext.9).
   `module.enableCompileCache()`, `module.getCompileCacheDir()`, `module.flushCompileCache()`,
   `module.constants.compileCacheStatus`, `NODE_COMPILE_CACHE`, `NODE_COMPILE_CACHE_PORTABLE` and

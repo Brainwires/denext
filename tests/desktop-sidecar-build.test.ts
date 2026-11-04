@@ -747,6 +747,79 @@ Deno.test("a recorded program: the run grant carries the file's hash, with no wr
   }
 });
 
+Deno.test("a recorded program: its embedded path is relative to the entry deno desktop compiles", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-integrity-entry-" });
+  try {
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "server"), "packaged");
+    const sha256 = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("packaged"))
+      .then((d) => Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join(""));
+    const grant = (source: string) =>
+      `$DENO_DESKTOP_CACHE/sidecars/server/${sha256}/server#sha256=${sha256}#embedded=${source}`;
+    // The runtime reads `#embedded=` relative to the compiled entry's folder (`desktop.ts` at the
+    // project root for a packaging script): `desktop dev` compiles `.denext/desktop-dev-entry.ts`.
+    assertEquals(sidecarRecordedProgram("server", "./bin/server", root), grant("bin/server"));
+    assertEquals(
+      sidecarRecordedProgram("server", "./bin/server", root, "desktop.ts"),
+      grant("bin/server"),
+    );
+    assertEquals(
+      sidecarRecordedProgram("server", "./bin/server", root, ".denext/desktop-dev-entry.ts"),
+      grant("../bin/server"),
+    );
+    assertEquals(
+      sidecarRecordedProgram("server", "bin\\server", root, ".denext\\desktop-dev-entry.ts"),
+      grant("../bin/server"),
+    );
+    assertEquals(
+      sidecarRecordedProgram("server", "./bin/./server", root, "app/desktop.ts"),
+      grant("../bin/server"),
+    );
+    // A path that leaves the project is not one the build embeds: nothing is recorded.
+    assertEquals(sidecarRecordedProgram("server", "../bin/server", join(root, "bin")), undefined);
+    const config = {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    };
+    assertEquals(
+      desktopBuildFlags(config, "linux", {
+        sidecarIntegrity: true,
+        projectDir: root,
+        entry: ".denext/desktop-dev-entry.ts",
+      }).filter((f) => f.startsWith("--allow-run")),
+      [`--allow-run=${grant("../bin/server")}`],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a recorded program: one that cannot be recorded keeps the unscoped grants, never a run path on its copy", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-integrity-fallback-" });
+  try {
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "a#b"), "packaged");
+    const config = {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        // `#` cannot be in a recorded value, but a plain copy could be named after it.
+        sidecars: [{ name: "server", run: { exec: "./bin/a#b" } }],
+      },
+    };
+    // Deno denies writes to every --allow-run path: a run grant on the copy would leave the app
+    // unable to write it, and the sidecar would never start. So the runtime's default without the
+    // check: an unscoped run, and a write the copy can be made under.
+    const flags = desktopBuildFlags(config, "linux", { sidecarIntegrity: true, projectDir: root });
+    assert(flags.includes("--allow-run"), flags.join(" "));
+    assertEquals(flags.filter((f) => f.includes("sidecars/server")), [], flags.join(" "));
+    assert(flags.some((f) => f.startsWith("--allow-write")), flags.join(" "));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 Deno.test("sidecarRunWriteWarnings: a scoped --allow-run that a baked --allow-write covers is reported, never refused", () => {
   // A project-file program with the cache scope: the copy's folder is written, the copy run.
   const scoped = sidecarRunWriteWarnings(
