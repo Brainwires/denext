@@ -173,13 +173,14 @@ Deno.test({
     const dir = await Deno.makeTempDir({ prefix: "denext_bundle_held_" });
     const pidFile = join(dir, "pid");
     await Deno.writeTextFile(join(dir, "deno.json"), "{}\n");
-    // A stand-in `deno`: answers the version probe and `bundle --help`, and for a bundle writes
+    // A stand-in `deno`: answers the version probe as denext's runtime (bundling refuses any other
+    // Deno since 5.0) and `bundle --help`, and for a bundle writes
     // the entry into --outdir, then exits leaving a background process on its stdout and stderr.
     const fake = await script(
       dir,
       "fake-deno",
       `case "$1" in\n` +
-        `  --version) echo 'deno 2.9.7'; exit 0 ;;\n` +
+        `  --version) echo 'deno 3.0.0-denext.8 (stable)'; echo 'denext 3.0.0-denext.8 (Brainwires)'; exit 0 ;;\n` +
         `  bundle) [ "$2" = --help ] && exit 0 ;;\n` +
         `  *) exit 1 ;;\n` +
         `esac\n` +
