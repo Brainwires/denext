@@ -26,6 +26,7 @@ import { netSplitFlags } from "./net-permissions.ts";
 import type { SidecarDefinition } from "../desktop/sidecar.ts";
 import { LOGIN_SHELL_PATHS } from "../desktop/sidecar-login-env.ts";
 import { permissionListError } from "../desktop/permission-entries.ts";
+import { PTY_DEFAULT_SHELLS, resolvePtyConfig } from "../desktop/pty-config.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
 import { DESKTOP_STRICT_RUNTIME_ENV } from "./desktop-runtime-env.ts";
 import {
@@ -383,6 +384,36 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
       "updates: set desktop.update.ui = { feedUrl, publicKey } (a signed `denext ota manifest` export) and/or desktop.update.manifestUrl + publicKey (`denext desktop publish-update`); a target without its config is reported as not configured.",
     ],
   },
+  pty: {
+    key: "pty",
+    value: true,
+    api: [
+      "spawnPty (denext/desktop/client)",
+      "writePty",
+      "resizePty",
+      "killPty",
+      "ptyInfo",
+      "attachPty",
+      "listPtys",
+      "onPtyData",
+      "onPtyExit",
+    ],
+    // Deno.openPty (runtime 3.0.0-denext.11), checked against --allow-run like Deno.Command. The
+    // defaults shown here; a configured `pty.shells` replaces them (desktopPtyRunPaths).
+    os: {
+      darwin: { run: PTY_DEFAULT_SHELLS.darwin },
+      linux: { run: PTY_DEFAULT_SHELLS.linux },
+      windows: { run: PTY_DEFAULT_SHELLS.windows },
+    },
+    trust: "full",
+    notes:
+      "terminals for the page over Deno.openPty (runtime 3.0.0-denext.11): --allow-run of the allowed shells only",
+    manual: [
+      "pty: a page starts only a program on desktop.capabilities.pty.shells (absolute paths; default the OS's login shells and /bin/sh, or PowerShell and cmd.exe), and the package bakes --allow-run for exactly those. A shell is full trust: anything typed into it runs as the user.",
+      'pty: closing a terminal\'s window kills it; with pty: { onWindowClose: "detach" } it keeps running for a window to attachPty(), which only helps when the app outlives its windows (desktop.app.keepAlive or a tray).',
+      "pty: needs denext's Deno Desktop runtime 3.0.0-denext.11 or later; before it every call rejects `unsupported`.",
+    ],
+  },
   passkeys: {
     key: "passkeys",
     // Fail closed: an empty pin allows no relying party until the project lists its own.
@@ -454,6 +485,40 @@ export const DESKTOP_BASELINE_FLAGS: readonly string[] = [
   "--allow-read",
   "--allow-env",
 ];
+
+/**
+ * The `--allow-run` paths the `pty` capability bakes for `os`: its configured shells
+ * (`desktop.capabilities.pty.shells`, by default {@linkcode PTY_DEFAULT_SHELLS}), absolute paths
+ * only, never an unscoped run; `[]` when `pty` is not enabled. An invalid `pty` value throws (the
+ * package scripts read the config unvalidated).
+ *
+ * @param config The project config.
+ * @param os The target OS.
+ * @returns The paths, in the configured order.
+ */
+export function desktopPtyRunPaths(config: unknown, os: DesktopOs): string[] {
+  const caps = (config as DesktopFlagConfig | null | undefined)?.desktop?.capabilities;
+  const value = typeof caps === "object" && caps !== null
+    ? (caps as { pty?: unknown }).pty
+    : undefined;
+  if (value === undefined || value === null || value === false) return [];
+  return [...resolvePtyConfig(value, os).shells];
+}
+
+/**
+ * The enabled capabilities' flags for `os`: the catalog's, with `pty`'s `--allow-run` taken from
+ * its configured shells ({@linkcode desktopPtyRunPaths}) rather than the catalog's defaults.
+ */
+function capabilityFlags(cfg: DesktopFlagConfig, os: DesktopOs): string[] {
+  const keys = enabledCapabilityKeys(cfg.desktop?.capabilities).filter((k) => k !== "pty");
+  const flags = desktopPermissionFlags(keys, os);
+  const pty = desktopPtyRunPaths(cfg, os);
+  if (pty.length === 0) return flags;
+  const run = flags.find((f) => kindOfFlag(f) === "--allow-run");
+  if (run === "--allow-run") return flags;
+  const values = [...new Set([...(run ? valuesOfFlag(run) : []), ...pty])].sort();
+  return [...flags.filter((f) => f !== run), `--allow-run=${values.join(",")}`];
+}
 
 /** The capability keys enabled in a `desktop.capabilities` object (truthy; `extensions` is a
  * module list, not a capability, and a `false` value disables one). */
@@ -886,7 +951,7 @@ export function sidecarRunWriteWarnings(
     checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
     sidecarPermissionSet(sidecars, os, cacheScope),
   );
-  const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
+  const capFlags = capabilityFlags(cfg, os);
   // The write grant the build bakes: scoped to the app's folders where desktopBuildFlags scopes it.
   const [writeFlag] = writeFlags(capFlags, extra, cfg, folderScope(cfg, options));
   if (!writeFlag) return [];
@@ -1128,7 +1193,7 @@ export function desktopBuildFlags(
     checkedPermissions("desktop.extraPermissions", cfg.desktop?.extraPermissions),
     sidecarPermissionSet(configSidecars(cfg), os, sidecarCacheScope(cfg, options)),
   );
-  const capFlags = desktopPermissionFlags(enabledCapabilityKeys(cfg.desktop?.capabilities), os);
+  const capFlags = capabilityFlags(cfg, os);
 
   // net: baseline loopback + a non-loopback spa.proxy host + the update hosts (all outbound) +
   // extraPermissions' net (both ways), netConnect and netListen.

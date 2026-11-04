@@ -332,6 +332,24 @@ export function supportsDesktopDataToken(version: string): boolean {
   return compareDenoVersions(version, FIRST_DESKTOP_DATA_TOKEN_RUNTIME) >= 0;
 }
 
+/**
+ * The first Deno Desktop runtime with `Deno.openPty` (a pseudo-terminal: a program started on a
+ * PTY, its output as a stream, `resize` and `kill`; checked against `--allow-run` like
+ * `Deno.Command`), which the `pty` desktop capability is built on.
+ */
+export const FIRST_PTY_RUNTIME = "3.0.0-denext.11";
+
+/**
+ * Whether the Deno Desktop runtime `version` has `Deno.openPty` (from
+ * {@linkcode FIRST_PTY_RUNTIME}). A version that does not parse does not.
+ *
+ * @param version A Deno Desktop runtime version (`3.0.0-denext.N`).
+ * @returns Whether the `pty` capability can start terminals under it.
+ */
+export function supportsPty(version: string): boolean {
+  return compareDenoVersions(version, FIRST_PTY_RUNTIME) >= 0;
+}
+
 /** `<stock>-denext.N`: the shape of a release of denext's Deno before it took its own version. */
 const OLD_SCHEME = /^(\d+\.\d+\.\d+)-denext\.\d+(?:\+[0-9A-Za-z.-]+)?$/;
 

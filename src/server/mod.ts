@@ -318,6 +318,7 @@ export {
   type DesktopMacosConfig,
   type DesktopPasskeysConfig,
   type DesktopPermissionsConfig,
+  type DesktopPtyConfig,
   type DesktopShellConfig,
   type DesktopSidecarConfig,
   type DesktopSidecarLoginShellEnvConfig,

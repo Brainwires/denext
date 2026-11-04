@@ -46,6 +46,27 @@ export {
 } from "./bridge-client.ts";
 // Where the page's own WebSockets go: the runtime's loopback relay under denext's pinned runtime.
 export { desktopWebSocketUrl, desktopWsUrl } from "./ws-origin.ts";
+// Terminals for the page: the `pty` capability (`denext desktop add pty`).
+export {
+  attachPty,
+  killPty,
+  listPtys,
+  onPtyData,
+  onPtyExit,
+  type PtyAttachment,
+  type PtyDataEvent,
+  type PtyExitEvent,
+  type PtyInfo,
+  ptyInfo,
+  type PtyReplayEntry,
+  type PtySession,
+  type PtySignal,
+  type PtySpawned,
+  type PtySpawnOptions,
+  resizePty,
+  spawnPty,
+  writePty,
+} from "./pty-client.ts";
 import type { SidecarInfo, SidecarStatus } from "./sidecar.ts";
 export type { SidecarInfo, SidecarState, SidecarStatus } from "./sidecar.ts";
 

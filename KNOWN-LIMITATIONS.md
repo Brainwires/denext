@@ -654,6 +654,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   AuthenticationServices agent on demand; later requests, from any app while the agent runs, start
   in a few milliseconds. The page stays responsive. Don't put a short timeout on the first
   ceremony, and show your own pending state if you start one without a user gesture.
+- **Terminals (`pty`) need runtime 3.0.0-denext.11** (`Deno.openPty`); under an older runtime
+  every call rejects `unsupported`. On Windows the terminal is a ConPTY, whose output carries its
+  own VT sequences (cursor moves, repaints) even for a program that writes plain text, so render it
+  with a terminal emulator (xterm.js), not as a log. `ptyInfo` names the foreground process and its
+  folder on Linux only.
 - **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted
   while the app is closed need a `.deb` / `.rpm` install, xdg-desktop-portal 1.19+ and a systemd
   user manager; macOS shows them only from a signed bundle. A click's tag, action and `data` are

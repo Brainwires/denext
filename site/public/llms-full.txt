@@ -632,11 +632,12 @@ https://denext.dev/docs/navigation-native
 **Deno Desktop capabilities:** the same `denext/mobile` functions reach the desktop runtime when
 `runtimePlatform() === "desktop"`, once enabled with `denext desktop add <capability...>`
 (`secure-store`, `fs`, `sqlite`, `context-menu`, `shell`, `dialogs`, `notifications`,
-`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`; written to
+`keep-awake`, `clipboard`, `device`, `auth-session`, `passkeys`, `global-shortcuts`, `launch-at-login`, `updates`, `pty`; written to
 `desktop.capabilities`), plus desktop-only
 `openPath`, `revealInFileManager`, `moveToTrash`, `saveFile`, `pickFolder`, and
 `desktopExtension<typeof ext>(name)` from `denext/desktop/client` for your own native code
 (`desktopOs()` there returns the window's OS — `"darwin"` / `"windows"` / `"linux"` — with no capability).
+`pty` (runtime 3.0.0-denext.11+, `Deno.openPty`): `spawnPty` / `writePty` / `resizePty` / `killPty` / `ptyInfo` / `attachPty` / `listPtys` / `onPtyData` / `onPtyExit` from `denext/desktop/client`; each terminal is its window's (`pty: { onWindowClose: "kill" | "detach", replayBytes, shells }`), and only `shells` (absolute paths, baked as the app's `--allow-run`) can start.
 The runtime answers `fs`, `sqlite`, `device`, `dialogs`, `shell`, `keep-awake`, `secure-store`
 (macOS Keychain, written by the app's own process so another program gets macOS's prompt, not the
 secret; items an older denext wrote through `/usr/bin/security` move over during the first launch
@@ -1905,6 +1906,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `interface DesktopMacosConfig` — DesktopConfig.macos: the macOS provisioning profile and entitlements.
 - `interface DesktopPasskeysConfig` — desktop.capabilities.passkeys options.
 - `interface DesktopPermissionsConfig` — DesktopConfig.permissions as an object: the mode, and the app's own variables.
+- `interface DesktopPtyConfig` — desktop.capabilities.pty options.
 - `interface DesktopShellConfig` — The shell desktop capability's scoped options (an allowlist per action).
 - `interface DesktopSidecarConfig` — One DesktopConfig.sidecars entry: a backend the app runs and supervises (the data form of defineSidecar from denext/desktop, whose runDesktop({ sidecars }) also takes functions and a bootstrap value).
 - `interface DesktopSidecarLoginShellEnvConfig` — DesktopSidecarConfig.loginShellEnv with options.
@@ -3115,6 +3117,7 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 
 ### `denext/desktop/client`
 
+- `attachPty(id: string): Promise<PtyAttachment>` — Take a terminal over: one this window owns (after a reload) or a detached one. Its later events come to this window. Drop a replayed data whose seq an onPtyData handler has already seen. An ended terminal is forgotten once its replay is returned.
 - `claimDeepLinkScheme(scheme: string): Promise<ClaimDeepLinkSchemeResult>` — Make this app the handler of scheme (one of its desktop.app.deepLinks), taking it over from another app. **Only on an explicit user action** — a "Make this app the handler of myapp: links" button after openAuthSession rejected scheme_owned_by_other_app — because the other app loses the scheme. On macOS the OS may confirm it with the user; a Windows "UserChoice" cannot be overridden (registered: false). It must run inside that click: where the webview reports user activation (navigator.userActivation) and there is none, it rejects user_activation_required without calling the runtime. The runtime also takes a scheme over only from ANOTHER app (this app's own or an unclaimed scheme is registered without force), and only once per scheme per launch.
 - `interface ClaimDeepLinkSchemeResult extends DeepLinkSchemeOwner` — What claimDeepLinkScheme reports.
 - `deepLinkSchemeOwner(scheme: string): Promise<DeepLinkSchemeOwner>` — Which app handles scheme, one of the app's desktop.app.deepLinks (denext's pinned Deno Desktop runtime). A snapshot, and advisory: any program of the same user can register itself for a scheme at any time, so keep PKCE and state on every sign-in.
@@ -3135,14 +3138,31 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `desktopWebSocketUrl(path: string): string` — The URL for a WebSocket from this page to its own server at path ("/api/socket", or a bare query "?room=1" for /): the runtime's relay under denext's pinned Deno Desktop runtime (desktopWsUrl; the server then sees GET <path>), else wss:// / ws:// on the page's own host. Off a page (no location) it returns the absolute path as is.
 - `desktopWsUrl(): string | undefined` — The pinned runtime's WebSocket relay URL (ws://127.0.0.1:<port>/.deno-desktop-relay/<token>) when this page runs in a Deno Desktop window at a custom app origin, else undefined (the web, mobile, the stock desktop runtime, SSR). It carries the relay's per-launch token: append a path to it (desktopWebSocketUrl does), and don't hand it to other code.
 - `isDesktopBridgeError(value: unknown): value is DesktopBridgeError` — Whether value is a DesktopBridgeError.
+- `killPty(id: string, signal?: PtySignal): Promise<void>` — Send a signal to a terminal's program (default SIGHUP, as closing a terminal does); its onPtyExit follows. An ended terminal is forgotten.
+- `listPtys(): Promise<PtySession[]>` — The terminals this window owns, and the detached ones (which any window may attach).
 - `onDesktopEvent<T>(cap: string, event: string, handler: (data: T) => void): () => void` — Call handler for each event the desktop runtime emits for cap: an extension's name (its handlers emit the events it declares with ctx.emit), or a built-in capability that emits events (today only the echo diagnostic's pong). The first subscription opens the event stream and the last unsubscribe closes it; frames that arrived before a handler for that event subscribed are delivered to it once it does. Off desktop it does nothing.
+- `onPtyData(handler: (event: PtyDataEvent) => void): () => void` — Call handler with each chunk of output of this window's terminals. A chunk delivered twice (the event stream reconnected) is dropped by its seq. Off desktop it does nothing.
+- `onPtyExit(handler: (event: PtyExitEvent) => void): () => void` — Call handler once for each of this window's terminals that ends (its program exited or was killed). Off desktop it does nothing.
 - `onSidecarStatus(name: string, handler: (status: SidecarStatus) => void): () => void` — Call handler with the sidecar's status on every change (a status emitted before the page subscribed is delivered once it does). Off desktop it does nothing.
+- `interface PtyAttachment` — What attachPty resolves to.
+- `interface PtyDataEvent` — A chunk of a terminal's output (onPtyData).
+- `interface PtyExitEvent` — A terminal's end (onPtyExit).
+- `ptyInfo(id: string): Promise<PtyInfo>` — A terminal's process id, and (on Linux) the foreground process's name and folder.
+- `interface PtyInfo` — What ptyInfo resolves to.
+- `type PtyReplayEntry = { readonly event: "data"; readonly seq: number; readonly data: string } | { readonly event: "exit"; readonly exitCode: number; readonly signal: string | null }` — One entry of attachPty's replay, oldest first.
+- `interface PtySession` — One terminal listPtys reports.
+- `type PtySignal = "SIGHUP" | "SIGINT" | "SIGQUIT" | "SIGTERM" | "SIGKILL"` — The signals killPty sends.
+- `interface PtySpawned` — What spawnPty resolves to.
+- `interface PtySpawnOptions` — Options for spawnPty.
+- `resizePty(id: string, cols: number, rows: number): Promise<void>` — Change a terminal's size (the program gets SIGWINCH).
 - `restartSidecar(name: string): Promise<SidecarStatus>` — Restart one of the app's sidecars (stop it gracefully, start it again with a fresh attempt count), e.g. from a "Restart backend" button after it failed.
 - `sidecarInfo(name: string): Promise<SidecarInfo>` — What the page may know about a sidecar: its state, loopback port and url, and the values its definition exposes (expose, e.g. a per-launch token the page presents to it).
 - `interface SidecarInfo` — What the page (and a ready.probe) learns about a sidecar: sidecarInfo(name).
 - `type SidecarState = "idle" | "starting" | "ready" | "backoff" | "stopping" | "stopped" | "failed"` — A sidecar's lifecycle state.
 - `sidecarStatus(name: string): Promise<SidecarStatus>` — The status of one of the app's sidecars (desktop.sidecars): its state (starting, ready, backoff, failed, …), port, attempts and how its last run ended.
 - `interface SidecarStatus` — A sidecar's status: what sidecar(name).status, sidecarStatus and onSidecarStatus report.
+- `spawnPty(options: PtySpawnOptions): Promise<PtySpawned>` — Start a terminal running an allowed shell.
+- `writePty(id: string, data: string, options: { readonly binary?: boolean }): Promise<void>` — Send input to a terminal, in order with the previous writes.
 
 ### `denext/desktop/window`
 

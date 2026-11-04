@@ -47,6 +47,8 @@ import {
   type PowerShellRunner,
 } from "./desktop-windows-trust.ts";
 import { runToExitText } from "./exited-output.ts";
+import { type DoctorPty, ptyDoctorCheck, ptyFactLine } from "./desktop-pty-doctor.ts";
+import type { PtyOs } from "../desktop/pty-config.ts";
 
 /** One problem, with its fix. */
 export interface DesktopDoctorFinding {
@@ -190,6 +192,8 @@ export interface DesktopDoctorReport {
   /** The checks that ran, in order. */
   readonly checks: readonly string[];
   readonly findings: readonly DesktopDoctorFinding[];
+  /** The `pty` capability's baked `--allow-run` and runtime support, when it is enabled. */
+  readonly pty?: DoctorPty;
 }
 
 /**
@@ -226,6 +230,11 @@ export interface DesktopDoctorOptions {
    * runs only when given and it answers a list (`null`: not a desktop project).
    */
   readonly launchPolicy?: () => Promise<readonly LaunchPolicyProblem[] | null>;
+  /**
+   * The project's `desktop` config (as data), for the `pty` check; the check runs only when it
+   * answers one with `capabilities.pty` enabled (`null`: not a desktop project).
+   */
+  readonly desktopConfig?: () => Promise<unknown | null>;
 }
 
 /** The laufey API level that added `Deno.desktop.platformFeatures()`. */
@@ -1304,16 +1313,18 @@ export async function runDesktopDoctor(
     : null;
   const cefSigning = os === "windows" && runtime.status.backend === "cef";
   const policy = await launchPolicyFindings(options);
-  const checks = ["runtime", ...policy.checks, ...(linux ? linuxCheckNames(runtime) : [])];
-  if (cefSigning) checks.push("cef-signing");
+  const pty = await ptyCheck(options, os, pinVersion);
+  const checks = checkNames(policy.checks, pty !== null, linux ? runtime : null, cefSigning);
   return {
     os,
     runtime,
     linux,
     checks,
+    ...(pty?.pty ? { pty: pty.pty } : {}),
     findings: [
       ...runtimeFindings(runtime, linuxChecks),
       ...policy.findings,
+      ...(pty?.findings ?? []),
       ...(linux ? linuxFindings(linux, runtime) : []),
       ...(cefSigning
         ? await cefSigningFindings(options.env ?? ((k) => Deno.env.get(k)), options.powershell)
@@ -1337,6 +1348,34 @@ async function launchPolicyFindings(
       fix: p.fix,
     })),
   };
+}
+
+/** The checks that ran, in order. */
+function checkNames(
+  policy: readonly string[],
+  pty: boolean,
+  linuxRuntime: DoctorRuntime | null,
+  cefSigning: boolean,
+): string[] {
+  return [
+    "runtime",
+    ...policy,
+    ...(pty ? ["pty"] : []),
+    ...(linuxRuntime ? linuxCheckNames(linuxRuntime) : []),
+    ...(cefSigning ? ["cef-signing"] : []),
+  ];
+}
+
+/** The `pty` check: none without `options.desktopConfig`, off a desktop project or without `pty`. */
+async function ptyCheck(
+  options: DesktopDoctorOptions,
+  os: string,
+  pinVersion: unknown,
+): Promise<ReturnType<typeof ptyDoctorCheck>> {
+  const desktop = options.desktopConfig ? await options.desktopConfig() : null;
+  if (desktop === null) return null;
+  const target: PtyOs = os === "windows" || os === "linux" ? os : "darwin";
+  return ptyDoctorCheck(desktop, target, typeof pinVersion === "string" ? pinVersion : "");
 }
 
 /** The Linux session checks that run for `runtime`, in order. */
@@ -1431,6 +1470,7 @@ function factLines(report: DesktopDoctorReport): string[] {
       report.runtime.platformFeatures ? "available" : 'not in this runtime (facts read "unknown")'
     }`,
   );
+  if (report.pty) lines.push(ptyFactLine(report.pty));
   return report.linux ? [...lines, ...linuxFactLines(report.linux)] : lines;
 }
 

@@ -40,6 +40,8 @@ import {
   shellPathEnv,
 } from "../src/desktop/caps/shell.ts";
 import { keepAwakeCapability } from "../src/desktop/caps/keep-awake.ts";
+import { ptyCapability } from "../src/desktop/caps/pty.ts";
+import { resolvePtyConfig } from "../src/desktop/pty-config.ts";
 import {
   runSecureCli as realSecureRun,
   type SecureRunner,
@@ -1784,6 +1786,8 @@ const DRIFT_DIRS: DesktopAppDirs = { data: "/a", cache: "/b", documents: "/c" };
 /** Build each catalog cap's runtime twin for `os` (injected no-op backends; nothing spawns). */
 const DRIFT_FACTORIES: Record<string, (os: DesktopOs) => DesktopCapability> = {
   device: () => deviceCapability,
+  // The catalog shows the default shells; a configured list replaces them (tests/desktop-pty.test.ts).
+  pty: (os) => ptyCapability({ config: resolvePtyConfig(true, os), os }),
   passkeys: (os) => passkeysCapability({ os }),
   clipboard: () => clipboardCapability({ api: {} }),
   notifications: () => notificationsCapability({ api: {}, autoTopUp: false }),
