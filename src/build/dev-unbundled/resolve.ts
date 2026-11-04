@@ -3,7 +3,8 @@
 
 import { dirname, fromFileUrl, join, resolve, SEPARATOR, toFileUrl } from "@std/path";
 import { ensureDir } from "@std/fs";
-import { frameworkImports, frameworkRoot } from "../bundle.ts";
+import { frameworkImports, frameworkRoot, frameworkRootUrl } from "../bundle.ts";
+import { layeredFrameworkImports } from "../local-checkout-imports.ts";
 import {
   DENEXT_RUNTIME_FILES,
   libraryReactFile,
@@ -53,7 +54,13 @@ export async function ensureMergedConfig(st: UnbundledState): Promise<string> {
   }
   // The app's Deno workspace: its member packages by name and the root's imports.
   const workspace = await workspaceImports(configPath);
-  const merged = { ...(await frameworkImports()), ...workspace.imports, ...appImports };
+  // denext's entries only where its graph needs them and the app owns no such package: a whole
+  // root import map shadowed an app's node_modules `effect` with denext's test-only `effect@^3`.
+  const framework = await layeredFrameworkImports(await frameworkImports(), {
+    root: frameworkRootUrl(),
+    appDir: st.opts.projectDir,
+  });
+  const merged = { ...framework, ...workspace.imports, ...appImports };
   await ensureDir(st.depDir);
   const p = join(st.depDir, "deno.merged.json");
   const scopes = Object.keys(workspace.scopes).length > 0 ? { scopes: workspace.scopes } : {};

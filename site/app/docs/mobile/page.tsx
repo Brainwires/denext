@@ -1507,7 +1507,12 @@ export default {
         <code>denext mobile doctor --store</code> / <code>--release</code> reports{" "}
         <code>auth-session-generations</code>{" "}
         when the files left behind are from different template generations (an error: an edited file
-        kept beside upgraded ones) or all from an older one (a warning).
+        kept beside upgraded ones) or all from an older one (a warning, whose fix is the command
+        that refreshes them: <code>denext mobile add auth-session</code>, then a new binary).{" "}
+        <code>denext upgrade</code> (<code>--dry-run</code>{" "}
+        included) lists every native template family in <code>ios/</code> / <code>android/</code>
+        {" "}
+        older than the denext it moves to, with that command; it never rewrites native files itself.
       </p>
       <Code lang="bash">
         {`denext mobile add auth-session --scheme myapp`}

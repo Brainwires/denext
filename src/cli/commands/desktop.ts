@@ -47,6 +47,7 @@ import { type ProjectPaths, resolveProject } from "../../build/paths.ts";
 import { bundleDesktopPreload, DESKTOP_PRELOAD_ENV } from "../../build/desktop-preload.ts";
 import { syncDesktopAppConfigAt, unpackagedLaunchEnv } from "../../build/desktop-app-config.ts";
 import {
+  assertDesktopRuntimeMode,
   DESKTOP_RUNTIME_ATTEST_ENV,
   DESKTOP_RUNTIME_VERIFY_ENV,
   projectDesktopBackend,
@@ -196,6 +197,8 @@ async function prepareDesktopWindow(dir: string, dev = false): Promise<DesktopWi
   // runtime; a `DENEXT_DENO=<path>` build of another Deno release is refused with the fix.
   const runtime = await resolveDesktopRuntimeEnv({
     projectDir: dir,
+    // Its `desktop.backend` for the host picks the runtime flavour the window builds on.
+    config,
     deno: denoExecutable(),
     // An unpackaged window ships nothing: a revoked runtime is a warning here, a refusal when
     // packaging.
@@ -287,7 +290,7 @@ async function buildDesktopWindow(
     const bootstrap = os === "windows" &&
       await desktopWindowsBootstrapBundle(
         plan.bundle,
-        await desktopPackageMeta(scriptUrl, await desktopAppName(scriptUrl)),
+        await desktopPackageMeta(scriptUrl, await desktopAppName(scriptUrl), "windows"),
       );
     return { exe: await desktopLaunchExecutable(os, plan.bundle), scratch, bootstrap };
   } catch (err) {
@@ -435,7 +438,8 @@ async function inspectRendererFor(
   const input = {
     value: value === true ? true as const : String(value),
     allowRemote: ctx.flags["inspect-renderer-allow-remote"] === true,
-    backend: await projectDesktopBackend(dir),
+    // The host's engine: a per-OS `desktop.backend` in the loaded config, else deno.json's.
+    backend: await projectDesktopBackend(dir, { config: (await resolveProject(dir)).config }),
     os: hostDesktopOs(),
   };
   // A malformed or refused address fails now, before the build.
@@ -516,9 +520,13 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
     Deno.exit(1);
   }
   console.log(`\n  denext desktop — packaging (${targetOs})  ▸  ${dir}\n`);
-  // The script reads `desktop.denoFlags` itself; check them first.
+  // The script reads `desktop.denoFlags` itself, and would refuse DENEXT_DESKTOP_RUNTIME=stock only
+  // after its export; check them first.
+  let config: unknown;
   try {
-    desktopDenoFlags((await resolveProject(dir)).config);
+    config = (await resolveProject(dir)).config;
+    desktopDenoFlags(config);
+    assertDesktopRuntimeMode();
   } catch (err) {
     fail(`denext desktop package: ${err instanceof Error ? err.message : String(err)}`);
   }
@@ -531,10 +539,7 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   Deno.env.delete("DENEXT_CSS_ACTIVE");
   Deno.env.delete("DENEXT_MODULE_ACTIVE");
   const format = ctx.flags.format as string | undefined;
-  const age = packageScriptAge(scriptText);
-  for (const line of packageScriptWarnings(PACKAGE_SCRIPTS[targetOs], age, format)) {
-    console.error(line);
-  }
+  const age = await checkPackageScript(dir, config, targetOs, scriptText, format);
   const formatArgs = format && age.formats ? ["--format", format] : [];
   // A project with a package.json / node_modules runs its script with npm packages from Deno's
   // cache, as the script's own `deno desktop` does: in `nodeModulesDir: "manual"` (a pnpm
@@ -557,6 +562,29 @@ async function packageDesktop(ctx: CommandContext, dir: string): Promise<void> {
   );
 }
 
+/**
+ * Read how current the target's packaging script is, print its warnings, and refuse a macOS script
+ * that never passes `desktop.backend` while the config gives macOS another engine than deno.json's
+ * (it would build deno.json's engine on the other one's runtime).
+ */
+async function checkPackageScript(
+  dir: string,
+  config: unknown,
+  targetOs: PackageOs,
+  scriptText: string,
+  format: string | undefined,
+): Promise<PackageScriptAge> {
+  const age = packageScriptAge(scriptText);
+  for (const line of packageScriptWarnings(PACKAGE_SCRIPTS[targetOs], age, format)) {
+    console.error(line);
+  }
+  if (targetOs === "macos" && !age.backend) {
+    const mismatch = await staleBackendMismatch(dir, config, PACKAGE_SCRIPTS[targetOs]);
+    if (mismatch !== null) fail(mismatch);
+  }
+  return age;
+}
+
 /** What a packaging script predating denext 3.1 lacks. */
 export interface PackageScriptAge {
   /** It builds on denext's pinned runtime (calls `desktopRuntimeEnv` / `buildDesktopBundle`). */
@@ -569,6 +597,12 @@ export interface PackageScriptAge {
    * itself ships the x64 one into an Arm64 bundle on Windows on Arm.
    */
   readonly vcRuntime: boolean;
+  /**
+   * It passes `desktop.backend` to `deno desktop` (calls `desktopBackendArgs`, or builds through
+   * `buildDesktopBundle` / `desktopBundleCommand`, which do). A macOS script that does not builds
+   * deno.json's engine, whatever `denext.config.ts` gives macOS.
+   */
+  readonly backend: boolean;
 }
 
 /**
@@ -582,14 +616,41 @@ export function packageScriptAge(text: string): PackageScriptAge {
     runtime: /\b(desktopRuntimeEnv|buildDesktopBundle)\b/.test(text),
     formats: /\bparseDesktopPackageArgs\b/.test(text),
     vcRuntime: !text.includes('"vcruntime140_1.dll"'),
+    backend: /\b(desktopBackendArgs|buildDesktopBundle|desktopBundleCommand)\b/.test(text),
   };
 }
 
 /**
+ * Why `denext desktop package` refuses a packaging script that never passes `desktop.backend`
+ * (`PackageScriptAge.backend`): the engine `denext.config.ts` gives macOS differs from
+ * deno.json's, so the script would fetch one engine's runtime and build the other.
+ *
+ * @param dir The project directory.
+ * @param config The loaded project config (`undefined` for none).
+ * @param name The script's file name (`package-macos.ts`).
+ * @returns The refusal, or `null` when the engines agree.
+ */
+export async function staleBackendMismatch(
+  dir: string,
+  config: unknown,
+  name: string,
+): Promise<string | null> {
+  const configured = await projectDesktopBackend(dir, { target: "darwin", config });
+  const denoJson = await projectDesktopBackend(dir, { target: "darwin", config: undefined });
+  if (configured === denoJson) return null;
+  return `denext desktop package: scripts/${name} does not pass desktop.backend to deno desktop ` +
+    `(desktopBackendArgs), so it would build deno.json's "${denoJson}" engine on the "${configured}" ` +
+    "runtime denext.config.ts gives macOS.\n" +
+    "  Run `denext desktop package --regenerate-scripts` to adopt the current template " +
+    "(the old file is kept as a .bak).";
+}
+
+/**
  * The warnings for a stale packaging script: one predating denext 3.1 builds without denext's
- * pinned Deno Desktop runtime, one copying the VC++ runtime itself (a Windows script predating
- * `bundleDesktopVcRuntime`) can ship an x64 DLL in an Arm64 bundle, and a `--format` is not passed
- * to a script that cannot read it.
+ * pinned Deno Desktop runtime, one copying the VC++ runtime itself (a Windows script
+ * predating `bundleDesktopVcRuntime`) can ship an x64 DLL in an Arm64 bundle, a macOS script
+ * predating `desktopBackendArgs` builds deno.json's engine whatever `denext.config.ts` gives macOS,
+ * and a `--format` is not passed to a script that cannot read it.
  *
  * @param name The script's file name (`package-linux.ts`).
  * @param age What it supports.
@@ -614,6 +675,14 @@ export function packageScriptWarnings(
     out.push(
       `  ⚠ scripts/${name} copies the VC++ runtime from System32 itself: on Windows on Arm it ` +
         "ships the x64 vcruntime140_1.dll, a DLL of the wrong architecture, in an Arm64 bundle.\n" +
+        "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
+        "(the old file is kept as a .bak).",
+    );
+  }
+  if (name === PACKAGE_SCRIPTS.macos && age.runtime && !age.backend) {
+    out.push(
+      `  ⚠ scripts/${name} does not pass desktop.backend to deno desktop (desktopBackendArgs): ` +
+        "it builds deno.json's engine whatever denext.config.ts gives macOS.\n" +
         "    Run `denext desktop package --regenerate-scripts` to adopt the current template " +
         "(the old file is kept as a .bak).",
     );

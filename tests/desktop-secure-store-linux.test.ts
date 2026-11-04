@@ -17,6 +17,9 @@ const ctx = {
   emit: () => {},
   appSupportDir: "",
   runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+  pickedPath: () => {
+    throw new Error("no picked paths in tests");
+  },
   os: "linux" as const,
   signal: new AbortController().signal,
 };

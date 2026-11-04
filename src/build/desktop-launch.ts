@@ -28,9 +28,11 @@ import {
   desktopIncludeArgs,
   desktopNpmArgs,
   type DesktopOs,
+  strictPermissionsProblem,
 } from "./desktop-capabilities.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
 import { desktopAppName, desktopIconArgs } from "./desktop-package-script.ts";
+import { projectDesktopBackend } from "./desktop-runtime.ts";
 
 /** The file name of the generated `desktop dev` entry (written into the project's `.denext/`). */
 export const DESKTOP_DEV_ENTRY_FILE = "desktop-dev-entry.ts";
@@ -255,6 +257,8 @@ export interface DesktopLaunchPlanInput {
   readonly netSplit?: () => boolean;
   /** The scratch directory ({@linkcode desktopLaunchScratchDir}). */
   readonly scratch: string;
+  /** Where a warning goes (default `console.warn`). */
+  readonly warn?: (line: string) => void;
 }
 
 /** A planned `desktop run` / `dev` build. */
@@ -268,7 +272,13 @@ export interface DesktopLaunchBuildPlan {
 /**
  * Plan the `deno desktop` build of `desktop run` / `dev`, reading the project the way the
  * packaging scripts do (a script URL in its `scripts/` folder): the permissions from
- * `desktop.capabilities`, the extension modules, the npm args, the icon and the app name.
+ * `desktop.capabilities`, the extension modules, the npm args, the backend for the host, the icon
+ * and the app name.
+ *
+ * `desktop.permissions: "strict"` that cannot be honoured (no `desktop.app.identifier`, or a runtime
+ * that does not expand the folder tokens) does not stop this local test build, unlike a packaging
+ * build: it warns, naming the reason and the fix, and bakes the default unscoped `--allow-read` /
+ * `--allow-env`, so a runtime under development (`DENEXT_DESKTOP_RUNTIME_DIR`) can still be run.
  *
  * @param input The project, config, host OS and scratch directory.
  * @returns The args and the bundle path.
@@ -282,14 +292,26 @@ export async function desktopLaunchBuildPlan(
     input.scratch,
     desktopLaunchName(await desktopAppName(scriptUrl)),
   );
+  const strictProblem = strictPermissionsProblem(input.config);
+  if (strictProblem !== null) {
+    (input.warn ?? ((line: string) => console.warn(line)))(
+      `denext: WARNING: ${strictProblem}. This local test build bakes the default (unscoped) ` +
+        "--allow-read and --allow-env instead; `denext desktop package` refuses this configuration.",
+    );
+  }
   const args = desktopLaunchBuildArgs({
     permissionFlags: desktopBuildFlags(input.config, input.os, {
+      // Dev only: a strict mode that cannot be honoured warned above and bakes the default.
+      strictFallback: true,
       netSplit: input.netSplit?.() ?? true,
     }),
     denoFlags: input.denoFlags,
     extraArgs: [
       ...await desktopIncludeArgs(scriptUrl, input.os),
       ...await desktopNpmArgs(scriptUrl),
+      // The host's engine, as the runtime was fetched for (a per-OS `desktop.backend`).
+      "--backend",
+      await projectDesktopBackend(input.projectDir, { target: input.os, config: input.config }),
     ],
     iconArgs: await desktopIconArgs(scriptUrl, input.os),
     includeOut: !input.dev,

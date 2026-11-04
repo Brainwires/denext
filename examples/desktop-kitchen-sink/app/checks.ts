@@ -260,12 +260,19 @@ function cefOnWayland(
   caps: Awaited<ReturnType<typeof windowCapabilities>>,
   setup: KitchenSetup,
 ): boolean {
+  return onWayland(caps, setup) && (setup.backend === "cef" ||
+    caps.cookieEncryption === "os" || caps.cookieEncryption === "basic");
+}
+
+/** A Wayland session: the runtime's own session probe, else the runner's. */
+function onWayland(
+  caps: Awaited<ReturnType<typeof windowCapabilities>>,
+  setup: KitchenSetup,
+): boolean {
   const session = caps.sessionType === "unknown" || caps.sessionType === null
     ? setup.sessionType
     : caps.sessionType;
-  const cef = setup.backend === "cef" ||
-    caps.cookieEncryption === "os" || caps.cookieEncryption === "basic";
-  return session === "wayland" && cef;
+  return session === "wayland";
 }
 
 const near = (a: number, b: number) => Math.abs(a - b) <= 2;
@@ -695,7 +702,7 @@ const windowChecks: Check[] = [
     }
     return `asked ${asked}x, still open`;
   }],
-  ["window: drag and drop plumbing (no pointer)", async () => {
+  ["window: drag and drop plumbing (no pointer)", async ({ setup }) => {
     const stop = onFileDrop(() => {});
     stop();
     await writeFile("kitchen/drag.txt", "drag me", {
@@ -707,7 +714,13 @@ const windowChecks: Check[] = [
       directory: "data",
       path: "kitchen/drag.txt",
     }]);
-    eq(result, "failed", "startFileDrag without a held button");
+    // On Wayland WebKitGTK can't read the button outside an event: with the pointer over the window
+    // it asks, the compositor turns it down, and the drag ends "cancelled".
+    const caps = await windowCapabilities();
+    const asksCompositor = onWayland(caps, setup) && !cefOnWayland(caps, setup);
+    if (!(asksCompositor && result === "cancelled")) {
+      eq(result, "failed", "startFileDrag without a held button");
+    }
     // Only picked handles and the app's own folders can be dragged out.
     const refused = await rejection(
       startFileDrag([{ directory: "data", path: "../../../../etc/hosts" }]),

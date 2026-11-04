@@ -16,6 +16,7 @@ import {
   detectResume,
   gateMarkerName,
   gateRefusal,
+  ghPublishRun,
   type PublishDeps,
   publishFrom,
   type PublishRun,
@@ -390,4 +391,54 @@ Deno.test("release resume: a published release on JSR with a green run hands ove
   await publishFrom(TARGET, "pr", d);
   assert(logs.some((l) => l.includes(`✓ Released ${VERSION}`)));
   assert(logs.some((l) => l.includes("gh pr create --base main --head development")));
+});
+
+Deno.test("release resume: only a publish run on the tag's own commit counts", async () => {
+  const TAG_SHA = "a".repeat(40);
+  const calls: string[][] = [];
+  /** A gh that lists `runs` (newest first) and reports each run's publish job as `jobs[id]`. */
+  const fake = (
+    runs: Array<{ databaseId: number; url: string; headSha: string }>,
+    jobs: Record<string, { status: string; conclusion: string }>,
+    commit: string | null = TAG_SHA,
+  ) => ({
+    gh: (...args: string[]) => {
+      calls.push(args);
+      if (args[0] === "run" && args[1] === "list") return Promise.resolve(JSON.stringify(runs));
+      const job = jobs[args[2]];
+      return Promise.resolve(JSON.stringify({ jobs: job ? [{ name: "publish", ...job }] : [] }));
+    },
+    tagCommit: (tag: string) => Promise.resolve(tag === "v9.9.9" ? commit : null),
+  });
+  const ok = { status: "completed", conclusion: "success" };
+  // The newest run is a same-named branch's (another commit): skipped for the tag's own run.
+  const other = { databaseId: 2, url: "u2", headSha: "b".repeat(40) };
+  const own = { databaseId: 1, url: "u1", headSha: TAG_SHA };
+  assertEquals(
+    await ghPublishRun("v9.9.9", fake([other, own], { "2": ok, "1": ok })),
+    { state: "success", id: "1", url: "u1" },
+  );
+  const list = calls.find((c) => c[1] === "list")!;
+  assertStringIncludes(list.join(" "), "--branch v9.9.9");
+  assertStringIncludes(list.join(" "), "headSha");
+  // Only other commits' runs (even a green one): nothing for this tag yet.
+  assertEquals(await ghPublishRun("v9.9.9", fake([other], { "2": ok })), { state: "none" });
+  // A tag whose commit can't be read stops the release rather than trust any run.
+  const unread = await ghPublishRun("v9.9.9", fake([own], { "1": ok }, null));
+  assertEquals(unread.state, "unknown");
+  assertStringIncludes(unread.detail ?? "", "commit of tag v9.9.9");
+  // The tag's own run, still going, and failed.
+  assertEquals(
+    (await ghPublishRun("v9.9.9", fake([own], { "1": { status: "in_progress", conclusion: "" } })))
+      .state,
+    "pending",
+  );
+  assertEquals(
+    (await ghPublishRun(
+      "v9.9.9",
+      fake([own], { "1": { status: "completed", conclusion: "failure" } }),
+    ))
+      .state,
+    "failed",
+  );
 });

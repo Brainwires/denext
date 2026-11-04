@@ -20,9 +20,10 @@
 
 import { basename, dirname, fromFileUrl, join, relative, SEPARATOR } from "@std/path";
 import { parse as parseJsonc } from "@std/jsonc";
-import type { DesktopOs } from "./desktop-capabilities.ts";
 import { gzipBytes } from "./precompress.ts";
+import { type DesktopOs, sidecarRunWriteWarnings } from "./desktop-capabilities.ts";
 import { loadConfigBeside } from "./desktop-config-beside.ts";
+import { resolveDesktopBackend } from "../desktop/engine-backend.ts";
 
 /** Every installer format, by the OS it is built for. */
 export const DESKTOP_INSTALLER_FORMATS = {
@@ -174,7 +175,10 @@ export interface DesktopPackageMeta {
   readonly singleInstance: boolean;
   /** deno.json `license` (the `.rpm` License tag), when it is a string. */
   readonly license?: string;
-  /** The `deno desktop` backend (`"webview"` unless deno.json `desktop.backend` says otherwise). */
+  /**
+   * The `deno desktop` backend of the target OS: `desktop.backend` in `denext.config.ts` (one
+   * engine, or per OS), else deno.json's, else `"webview"`.
+   */
   readonly backend: string;
   /**
    * Whether `desktop.capabilities.secureStore` is on: the Linux packages then depend on libsecret,
@@ -281,13 +285,16 @@ function schemes(list: unknown): string[] {
  * @param config The loaded `denext.config.ts` default export.
  * @param fallbackName The name to use when neither file names the app.
  * @param pkg The parsed package.json, if the project has one.
+ * @param os The target OS, for a per-OS `desktop.backend` (default: the host's).
  * @returns The metadata.
+ * @throws {Error} When `denext.config.ts` `desktop.backend` is not a backend setting.
  */
 export function packageMetaFrom(
   deno: unknown,
   config: unknown,
   fallbackName: string,
   pkg?: unknown,
+  os: DesktopOs = Deno.build.os as DesktopOs,
 ): DesktopPackageMeta {
   const denoApp = field(field(deno, "desktop"), "app");
   const cfgDesktop = field(config, "desktop");
@@ -306,7 +313,8 @@ export function packageMetaFrom(
     deepLinks: schemes(denoApp.deepLinks ?? cfgApp.deepLinks),
     singleInstance: (denoApp.singleInstance ?? cfgApp.singleInstance) === true,
     license: str((deno as Obj | undefined)?.license),
-    backend: str(field(deno, "desktop").backend) ?? "webview",
+    backend: resolveDesktopBackend(cfgDesktop.backend, os) ??
+      str(field(deno, "desktop").backend) ?? "webview",
     secureStore: capabilityOn(field(cfgDesktop, "capabilities"), "secureStore", "secure-store"),
   };
 }
@@ -321,11 +329,13 @@ function capabilityOn(caps: Obj, ...names: string[]): boolean {
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param fallbackName The name to use when deno.json names no app.
+ * @param os The target OS, for a per-OS `desktop.backend` (default: the host's).
  * @returns The metadata.
  */
 export async function desktopPackageMeta(
   entryUrl: string,
   fallbackName: string,
+  os?: DesktopOs,
 ): Promise<DesktopPackageMeta> {
   const root = new URL("../", entryUrl);
   const dir = root.protocol === "file:" ? fromFileUrl(root) : ".";
@@ -335,6 +345,7 @@ export async function desktopPackageMeta(
     await loadConfigBeside(entryUrl),
     fallbackName,
     await readPackageJson(dir),
+    os,
   );
 }
 
@@ -388,20 +399,26 @@ export function packageMetaWarnings(
  *
  * @param entryUrl `import.meta.url` of a script in the project's `scripts/` folder.
  * @param meta The resolved metadata.
+ * @param os The target OS (default: this host's): what the sidecar warnings are baked for.
  * @returns The warning lines.
  */
 export async function desktopPackageMetaWarnings(
   entryUrl: string,
   meta: DesktopPackageMeta,
+  os: DesktopOs = hostDesktopOs(),
 ): Promise<string[]> {
   const root = new URL("../", entryUrl);
   const dir = root.protocol === "file:" ? fromFileUrl(root) : ".";
-  return packageMetaWarnings(
-    await readDenoJson(dir),
-    await loadConfigBeside(entryUrl),
-    meta,
-    await readPackageJson(dir),
-  );
+  const config = await loadConfigBeside(entryUrl);
+  return [
+    ...packageMetaWarnings(await readDenoJson(dir), config, meta, await readPackageJson(dir)),
+    ...sidecarRunWriteWarnings(config, os),
+  ];
+}
+
+/** The OS this process runs on, as a packaging target. */
+function hostDesktopOs(): DesktopOs {
+  return Deno.build.os === "darwin" ? "darwin" : Deno.build.os === "windows" ? "windows" : "linux";
 }
 
 // ---------------------------------------------------------------------------------------------

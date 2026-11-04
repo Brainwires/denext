@@ -156,6 +156,46 @@ Deno.test("desktop dev: no export embedded, the generated entry, a LAN host adde
   }
 });
 
+Deno.test('desktop run / dev: a "strict" that cannot be honoured warns loudly and bakes the default (packaging refuses it)', async () => {
+  const { dir } = await project();
+  const scratch = await desktopLaunchScratchDir(dir);
+  try {
+    const warnings: string[] = [];
+    const plan = await desktopLaunchBuildPlan({
+      projectDir: dir,
+      // No desktop.app.identifier: strict mode can't name the app's folders.
+      config: { desktop: { app: { name: "My App" }, permissions: "strict" } },
+      os: "linux",
+      denoFlags: [],
+      entry: "desktop.ts",
+      dev: true,
+      scratch,
+      warn: (line) => warnings.push(line),
+    });
+    assertEquals(warnings.length, 1, warnings.join("\n"));
+    assertStringIncludes(warnings[0], "WARNING");
+    assertStringIncludes(warnings[0], "desktop.app.identifier is not set");
+    assertStringIncludes(warnings[0], "`denext desktop package` refuses");
+    assert(plan.args.includes("--allow-read") && plan.args.includes("--allow-env"));
+    // An honourable or default config warns about nothing.
+    const quiet: string[] = [];
+    await desktopLaunchBuildPlan({
+      projectDir: dir,
+      config: { desktop: { app: { name: "My App" } } },
+      os: "linux",
+      denoFlags: [],
+      entry: "desktop.ts",
+      dev: true,
+      scratch,
+      warn: (line) => quiet.push(line),
+    });
+    assertEquals(quiet, []);
+  } finally {
+    await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("desktopLaunchScratchDir: refuses a temp dir inside the project", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_desktop_launch_" });
   try {

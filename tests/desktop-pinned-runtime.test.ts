@@ -13,6 +13,7 @@ import {
 } from "@std/assert";
 import { join } from "@std/path";
 import {
+  assertDesktopRuntimeMode,
   crossHostBackendRename,
   denoCacheDir,
   denoVersionMismatchMessage,
@@ -550,7 +551,9 @@ Deno.test("runtimeProgram: macOS plutil / codesign come from the OS's tool folde
   const mac = only("/usr/bin/plutil", "/usr/bin/codesign", "/opt/homebrew/bin/gh");
   assertEquals(runtimeProgram("plutil", "darwin", mac), "/usr/bin/plutil");
   assertEquals(runtimeProgram("codesign", "darwin", mac), "/usr/bin/codesign");
-  assertEquals(runtimeProgram("gh", "darwin", mac), "/opt/homebrew/bin/gh");
+  assertEquals(runtimeProgram("gh", "darwin", mac, () => true), "/opt/homebrew/bin/gh");
+  // A gh another user could have replaced is not run.
+  assertThrows(() => runtimeProgram("gh", "darwin", mac, () => false), Deno.errors.NotFound);
   // A missing tool is NotFound, as a program missing from PATH is; nothing falls back to PATH.
   assertThrows(() => runtimeProgram("codesign", "darwin", only()), Deno.errors.NotFound);
   assertThrows(() => runtimeProgram("gh", "linux", only()), Deno.errors.NotFound);
@@ -960,6 +963,21 @@ Deno.test("resolveDesktopRuntimeEnv: DENEXT_DESKTOP_RUNTIME=stock is refused bef
         env: envOf({ DENEXT_DESKTOP_RUNTIME: "bogus" }),
         log: quiet,
       }),
+    Error,
+    "must be",
+  );
+});
+
+Deno.test("assertDesktopRuntimeMode: unset or pinned passes; stock and anything else are refused (5.0)", () => {
+  assertDesktopRuntimeMode(envOf({}));
+  assertDesktopRuntimeMode(envOf({ DENEXT_DESKTOP_RUNTIME: " Pinned " }));
+  assertThrows(
+    () => assertDesktopRuntimeMode(envOf({ DENEXT_DESKTOP_RUNTIME: "stock" })),
+    Error,
+    "DENEXT_DESKTOP_RUNTIME=stock is no longer supported",
+  );
+  assertThrows(
+    () => assertDesktopRuntimeMode(envOf({ DENEXT_DESKTOP_RUNTIME: "bogus" })),
     Error,
     "must be",
   );

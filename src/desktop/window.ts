@@ -835,8 +835,11 @@ function registerGuardHandler<T>(set: Set<T>, handler: T): () => void {
  * through. While a handler is registered the runtime holds every close and calls the handlers; the
  * window closes (or the quit goes on) unless one returns (or resolves) `false`. A page that stops
  * answering cannot keep the window open: a close requested again after 5 seconds without an answer
- * goes through. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role ends the
- * app at once and is not asked. Needs denext's pinned runtime (`closeGuard` in
+ * goes through. From runtime 3.0.0-denext.8 the OS's own quits ask too (`reason: "quit"`): Cmd+Q, the
+ * Dock's Quit and a logout on macOS, the session ending on Windows; on an older runtime Cmd+Q ends
+ * the app at once. The OS is never held for long: an unanswered quit goes ahead after 5 seconds, a
+ * session end after 10 (macOS) or 4 (Windows). macOS takes no input for the app while a session end
+ * is pending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in
  * {@linkcode windowCapabilities}); elsewhere the handler is never called and the window closes.
  *
  * @param handler Return `false` to keep the window open (e.g. after a "Discard changes?" prompt).
@@ -862,8 +865,10 @@ export function onCloseRequested(handler: CloseRequestHandler): () => void {
  * tray menu), like Electron's `before-quit`: the quit goes on unless a handler returns (or
  * resolves) `false`. Plain closes of this window are not held. The before-quit handlers run before
  * the {@linkcode onCloseRequested} ones (which get `reason: "quit"`); a refusal here asks no close
- * handler. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role is not asked.
- * Needs denext's pinned runtime (`closeGuard` in {@linkcode windowCapabilities}); elsewhere the
+ * handler. From runtime 3.0.0-denext.8 the OS's own quits ask too (Cmd+Q, the Dock's Quit and a logout
+ * on macOS, the session ending on Windows), within the deadlines {@linkcode onCloseRequested} lists;
+ * on an older runtime Cmd+Q is not asked. macOS takes no input for the app while a session end is
+ * pending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in {@linkcode windowCapabilities}); elsewhere the
  * handler is never called.
  *
  * @param handler Return `false` to keep the app running.
@@ -975,7 +980,9 @@ export function onFileDrop(handler: (drop: FileDrop) => void): () => void {
  * @param items The files: picked handles, or files in the app's folders.
  * @param options `icon`: a PNG (base64) shown under the pointer; the OS's file icon by default.
  * @returns `"dropped"` when a target took the files, `"cancelled"` when the user let go where
- * nothing took them, `"failed"` when the drag never started (no button held, another drag running).
+ * nothing took them, `"failed"` when the drag never started (no button held, another drag running;
+ * on Wayland also with the pointer off the app's windows, and always under CEF, where `fileDragOut`
+ * is `false`). `"failed"` is an outcome, not an error: it never rejects.
  * @example
  * ```ts
  * import { startFileDrag } from "denext/desktop/window";
@@ -1243,6 +1250,16 @@ export interface OpenWindowOptions {
    * {@linkcode windowCapabilities}); an ordinary window elsewhere.
    */
   readonly overlay?: boolean;
+  /**
+   * What its page does while the window is not on screen (hidden, minimized or covered), like
+   * Electron's `webPreferences.backgroundThrottling`. `true` (the default): it keeps running with
+   * its timers slowed (about once a second on macOS); its events, messages and sockets are still
+   * handled. `false`: its timers keep their rate, for a hidden window that does the app's
+   * background work. Creation time only; runtime 3.0.0-denext.8 (an older one ignores it, and on
+   * macOS froze a page created hidden about a second after it loaded). The system WebView on
+   * Windows and Linux and the CEF backend throttle a hidden page without freezing it either way.
+   */
+  readonly backgroundThrottling?: boolean;
   /**
    * Show it once created (default `true`). With `false` it opens hidden (its page loads), to be
    * shown with the handle's `show()`; a runtime before 3.0.0-denext.6 may flash it first.

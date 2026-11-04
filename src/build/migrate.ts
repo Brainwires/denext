@@ -21,6 +21,13 @@ import { confineWrites, mfs } from "./migrate-io.ts";
 import { withCapacitorConfigValue } from "./capacitor-config.ts";
 import { applyJailExceptions, type JailReport } from "./jail-scripts.ts";
 import {
+  frameworkRuntimeDeps,
+  type ImportClash,
+  importsOf,
+  planFrameworkDeps,
+  readDenoConfig,
+} from "./local-checkout-imports.ts";
+import {
   type MappedViteEmitter,
   readViteConfig,
   tanstackRouterFacts,
@@ -352,7 +359,7 @@ async function buildAppRouterImports(
   // tsconfig/jsconfig path aliases (follows `extends` + a monorepo-root tsconfig), and — in
   // local-path mode — denext's own deps (`@std/*`, `ws`, …) so `deno desktop` etc. resolve.
   addMissing(imports, await collectTsPathAliases(dir));
-  addMissing(imports, frameworkDepsFor(R, deps));
+  addMissing(imports, await frameworkDepsFor(dir, R, deps));
   return imports;
 }
 
@@ -560,6 +567,13 @@ export interface MigrateResult {
    * `patches/npm/`) and the ones left for review (src/build/migrate-patches.ts).
    */
   patches?: MigratePatchesReport;
+  /**
+   * `--denext-local-path` only: the packages the app maps (its import map, or a package.json
+   * dependency) at another major than the denext checkout's own import map. The app's entry was
+   * kept (denext's would shadow the app's version); denext's modules that import the package
+   * then load the app's version, so check they still work with it.
+   */
+  importClashes?: ImportClash[];
 }
 
 /** How the app's `next.config.*` translated into `denext.config.ts`. */
@@ -748,74 +762,20 @@ async function packageExports(dir: string): Promise<Record<string, string>> {
 }
 
 /**
- * denext's own `jsr:`/`npm:` deps from a checkout's `deno.json` — the app config must carry
- * these so `deno desktop` (and any tool following the local file:// denext modules) can
- * resolve `@std/path`, `ws`, … Only the ones denext's own runtime source imports: the root
- * import map also serves the workspace packages and the tests (`effect@^3` for
- * `@denext/effect`, `jsqr` for a test), and mapping those into the app would shadow the app's
- * own versions (an app may run Effect 4).
+ * The framework deps an app's import map gets (local-path mode; none for JSR): never one the app
+ * maps itself. A key in the app's existing import map keeps the app's value, and a package.json
+ * dependency stays unmapped so it resolves to the app's own version (installed, or pinned by
+ * `classifyDeps`); see `src/build/local-checkout-imports.ts`, which also reports the clashes.
  */
-async function frameworkDepsOf(
-  abs: string,
-  denoCfg: Record<string, unknown>,
-): Promise<Record<string, string>> {
-  const used = await denextOwnSpecifiers(abs);
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries((denoCfg.imports ?? {}) as Record<string, string>)) {
-    if ((v.startsWith("jsr:") || v.startsWith("npm:")) && importsKey(used, k)) out[k] = v;
-  }
-  return out;
-}
-
-/** Static and dynamic import specifiers in module text (statements at a line start). */
-const IMPORT_SPECIFIERS = [
-  /^[ \t]*(?:import|export)\b[^;]*?\bfrom\s*["']([^"']+)["']/gm,
-  /^[ \t]*import\s*["']([^"']+)["']/gm,
-  /\bimport\(\s*["']([^"']+)["']\s*[,)]/g,
-];
-
-/** The specifiers each checkout's runtime source imports, cached (the source does not change). */
-const ownSpecifiers = new Map<string, Promise<Set<string>>>();
-
-/** Every specifier denext's runtime source (`src/`, `mod.ts`, `cli.ts`) imports. */
-function denextOwnSpecifiers(abs: string): Promise<Set<string>> {
-  let found = ownSpecifiers.get(abs);
-  if (!found) {
-    found = (async () => {
-      const specs = new Set<string>();
-      const scan = (text: string) => {
-        for (const re of IMPORT_SPECIFIERS) {
-          for (const m of text.matchAll(re)) specs.add(m[1]);
-        }
-      };
-      await walkCode(join(abs, "src"), scan);
-      for (const file of ["mod.ts", "cli.ts"]) {
-        const text = await mfs.readTextFile(join(abs, file)).catch(() => null);
-        if (text) scan(text);
-      }
-      return specs;
-    })();
-    ownSpecifiers.set(abs, found);
-  }
-  return found;
-}
-
-/** Whether an import-map key (`ws`, `@std/path`, a `prefix/`) covers one of `specs`. */
-function importsKey(specs: Set<string>, key: string): boolean {
-  if (key.endsWith("/")) return [...specs].some((s) => s.startsWith(key));
-  if (specs.has(key)) return true;
-  return [...specs].some((s) => s.startsWith(key + "/"));
-}
-
-/**
- * The framework deps an app's import map gets: never one the app depends on itself, which
- * resolves to the app's own version (installed, or pinned by `classifyDeps`).
- */
-function frameworkDepsFor(
+async function frameworkDepsFor(
+  dir: string,
   R: DenextResolver,
   deps: Record<string, string>,
-): Array<[string, string]> {
-  return Object.entries(R.frameworkDeps()).filter(([key]) => !(key in deps));
+): Promise<Array<[string, string]>> {
+  const framework = R.frameworkDeps();
+  if (Object.keys(framework).length === 0) return [];
+  const imports = importsOf(await readDenoConfig(dir));
+  return planFrameworkDeps(framework, { imports, deps }).entries;
 }
 
 /** The resolver: the published JSR package, or a local denext checkout (`--denext-local`). */
@@ -824,7 +784,7 @@ async function denextResolver(V: string, localPath?: string): Promise<DenextReso
   const abs = resolve(localPath);
   const denoCfg = (await readJson(join(abs, "deno.json"))) ?? {};
   const exp = (denoCfg.exports ?? {}) as Record<string, string>;
-  const frameworkDeps = await frameworkDepsOf(abs, denoCfg);
+  const frameworkDeps = await frameworkRuntimeDeps(abs, denoCfg);
   const fileFor = (root: string, rel: string) =>
     toFileUrl(join(root, rel.replace(/^\.\//, ""))).href;
   const local = (sub: string): string => {
@@ -1561,7 +1521,9 @@ export async function migrateProject(
 
 /** {@link migrateProject} inside the project's write confinement. */
 async function migrateConfined(dir: string, options: MigrateOptions): Promise<MigrateResult> {
-  const migrated = await migrateAnyProject(dir, options);
+  // Read before the migration rewrites a generated deno.json.
+  const clashes = await localImportClashes(dir, options.denextLocalPath);
+  const migrated = withClashes(await migrateAnyProject(dir, options), clashes);
   // Only the app is written: a workspace root's settings above it are left to the user.
   const jail = await applyJailExceptions(dir, {
     fs: mfs,
@@ -1573,6 +1535,27 @@ async function migrateConfined(dir: string, options: MigrateOptions): Promise<Mi
   const r = patches ? { ...withJail, patches } : withJail;
   if (!options.capacitor || r.capacitor) return r;
   return { ...r, capacitorSkipped: capacitorSkipReason(r) };
+}
+
+/**
+ * `--denext-local-path`: the keys the app maps itself (its import map, its package.json
+ * dependencies) at another major than the checkout's deps; none without a local path.
+ */
+async function localImportClashes(dir: string, localPath?: string): Promise<ImportClash[]> {
+  if (!localPath) return [];
+  const framework = await frameworkRuntimeDeps(resolve(localPath));
+  const pkg = await readJson(join(dir, "package.json"));
+  const deps = {
+    ...(pkg?.dependencies as Record<string, string> ?? {}),
+    ...(pkg?.devDependencies as Record<string, string> ?? {}),
+  };
+  const imports = importsOf(await readDenoConfig(dir));
+  return planFrameworkDeps(framework, { imports, deps }).clashes;
+}
+
+/** A result with its import clashes, when there are any. */
+function withClashes(r: MigrateResult, clashes: ImportClash[]): MigrateResult {
+  return clashes.length ? { ...r, importClashes: clashes } : r;
 }
 
 /** Refuse a bad `--app-id` / `--platform`, or one given without `--enable-capacitor`. */
@@ -3238,7 +3221,7 @@ async function spaImportMap(
   for (const [key, val] of await collectTsPathAliases(dir)) {
     if (!(key in imports)) imports[key] = val;
   }
-  addMissing(imports, frameworkDepsFor(R, deps));
+  addMissing(imports, await frameworkDepsFor(dir, R, deps));
   return imports;
 }
 

@@ -94,7 +94,9 @@ const {
   desktopToolGate,
   desktopWindowsTargetNote,
   parseDesktopPackageArgs,
+  runDesktopPackageMain,
   prepareDesktopPackage,
+  stampDesktopWindowsBundle: stampTreeManifest,
 } = await import("denext/desktop");
 
 const TARGETS: Record<string, string> = {
@@ -106,7 +108,8 @@ const TARGETS: Record<string, string> = {
 const LABELS: Record<string, string> = { x86_64: "x64", arm64: "arm64" };
 const OS = "windows";
 
-/** Build a Windows bundle directory for `arch` at dist/<name>-<label> (.ico icon). */
+/** Build a Windows bundle directory for `arch` at dist/<name>-<label> (.ico icon); its tree
+ * manifest is written by packageArch, after the VC++ runtime lands. */
 async function buildBundle(
   name: string,
   arch: "x86_64" | "arm64",
@@ -115,6 +118,7 @@ async function buildBundle(
     target: TARGETS[arch],
     out: `dist/${name}-${LABELS[arch]}`,
     icons: ["icons/app.ico", "desktop-icon.ico"],
+    treeManifest: false,
   });
 }
 
@@ -191,6 +195,9 @@ async function packageArch(
   // The VC++ runtime app-local (only the DLLs this arch imports, each checked to be its machine
   // type), so the target needs no redistributable; a warning names the one it needs otherwise.
   const vcBundled = await bundleDesktopVcRuntime(dir, arch);
+  // The tree manifest: the last write to the bundle, so it lists the VC++ DLLs signed or not
+  // (signing writes it again with the signed bytes before it signs the .exe).
+  await stampTreeManifest(import.meta.url, dir);
   if (signing) {
     await signBundle(dir, `${name}-${LABELS[arch]}.exe`, meta.backend);
   }
@@ -239,4 +246,4 @@ async function main(): Promise<void> {
   );
 }
 
-if (import.meta.main) await main();
+if (import.meta.main) await runDesktopPackageMain(main);

@@ -5,7 +5,7 @@
 > [KNOWN-LIMITATIONS.md](./KNOWN-LIMITATIONS.md); the standing guardrails and the security
 > policy are in [POLICIES.md](./POLICIES.md). A shipped item is deleted, not annotated.
 >
-> The current release is denext **4.11.13**; 4.x patch and minor releases are cut from
+> The current release is denext **4.12.0**; 4.x patch and minor releases are cut from
 > `development`, and what each one added is in the changelog.
 >
 > Two parts: **Before 5.0** is the work the 5.0 gate waits on (an item stays here until its branch
@@ -16,22 +16,6 @@
 
 ## Runtime fork (Brainwires/deno, `3.0.0-denext.N`)
 
-- **Runtime update and install checks, landing in `3.0.0-denext.8`:** a Windows update covering the
-  loose files beside its PE files; the verify-then-swap race; revocation that fails closed; the
-  macOS Developer ID requirement. Merged on the fork's integration branch; pin the release.
-- **V8 on Extended Stable 15.6, and the staleness-gate rework.** 15.2 gets no more fixes, so the next
-  exploited V8 bug would be unfixable there; the patch-bump dispatch workflow and the Extended Stable
-  plus patch-age rule come with it. If it can't fit the 5.0 date it becomes the first dated 5.x item,
-  and the release notes say so.
-- **A CEF 156 build with Chrome's fixes from 156.0.8078.73 on.** Runtime `3.0.0-denext.7` moved CEF
-  to 156 (Chromium 156.0.8078.48); the next runtime takes the newer build, whose re-bump is not merged
-  yet. The bump cadence is a 5.x item.
-- **The expected `denort` SHA-256 embedded in the CLI, landing in `3.0.0-denext.8`.** Today the
-  download checks `SHA256SUMS` only.
-- **`.deno/npm-compat` out of the project root, landing in `3.0.0-denext.8`:** the runtime's
-  type-check keeps its copy of the `@jsr/*` packages outside the project; delete the
-  KNOWN-LIMITATIONS entry with the pin.
-- **The blocking-pool cap documented (other holders of the pool), landing in `3.0.0-denext.8`.**
 - **A one-commit re-pin runbook** (the pin, the symbols, the revert) before 5.0.
 
 ## Breaking changes for 5.0
@@ -195,5 +179,4 @@ rewrite imports inside `node_modules` (the "two Reacts" fix) and run about 20 tr
   `randomFillSync` first: a correctness bug under `--seed`, and cheap), the `deno compile` `--`
   warning, native image operations. _Why 5.x: separate runtime features._
 - **Jest cross-realm rows, the Windows `cmd.exe` branch, and the 15 Linux-only enabled node tests
-  that need a macOS / Windows check.** _Why 5.x: Small, no user report._ The `SafeSet`
-  copy-constructor hang is fixed, landing in `3.0.0-denext.8`.
+  that need a macOS / Windows check.** _Why 5.x: Small, no user report._

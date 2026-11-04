@@ -1,6 +1,6 @@
 {
   "name": "@denext/docs-corpus",
-  "version": "4.11.13",
+  "version": "4.12.0",
   "exports": {
     ".": "./mod.ts",
     "./native-templates": "./native-templates.ts"

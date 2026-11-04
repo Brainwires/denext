@@ -33,6 +33,9 @@ function ctxOf(signal = new AbortController().signal) {
     emit: (event, data) => void emitted.push([event, data]),
     appSupportDir: "/tmp/app",
     runOnMainThread: () => Promise.reject(new Error("no UI thread")),
+    pickedPath: () => {
+      throw new Error("no picked paths in tests");
+    },
     os: "darwin",
     signal,
   };

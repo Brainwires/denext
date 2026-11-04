@@ -119,8 +119,11 @@ await runDesktop({
         {" "}
         pushes an event to the page, where <code>onDesktopEvent(cap, event, handler)</code> from
         {" "}
-        <code>denext/desktop/client</code>{" "}
-        receives it. An event emitted before the page subscribes is kept and delivered then:
+        <code>denext/desktop/client</code> receives it (a fourth argument,{" "}
+        <code>{"{ window: id }"}</code>, sends it to one window). An extension module emits through
+        its own <code>setup</code>{" "}
+        host instead (<a href="#desktop-extension-events">below</a>). An event emitted before the
+        page subscribes is kept and delivered then:
       </p>
       <Code lang="ts">
         {`const { emit } = await runDesktop({
@@ -211,6 +214,55 @@ export default {
           Linux, written to <code>.deno-desktop/</code>. Only an app with no icon at all gets{" "}
           <code>deno desktop</code>&apos;s generic one. A configured icon that does not exist fails
           the build.
+        </li>
+      </ul>
+      <h3 id="desktop-backend">The window engine, per OS</h3>
+      <p>
+        <code>desktop.backend</code> picks the engine <code>deno desktop</code>{" "}
+        builds the window with: <code>"webview"</code>{" "}
+        (the default: the system WebView, WKWebView on macOS, WebView2 on Windows, WebKitGTK on
+        Linux) or <code>"cef"</code> (Chromium, bundled with the app). In{" "}
+        <code>denext.config.ts</code>{" "}
+        it takes one engine for every target, or one per OS with the keys{" "}
+        <code>desktop.installers</code> uses (<code>macos</code>, <code>windows</code>,{" "}
+        <code>linux</code>, and <code>default</code>{" "}
+        for an OS left out). An app that needs WebRTC on Linux, where no distribution builds
+        WebKitGTK with it, ships Chromium there and the system WebView elsewhere:
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+export default {
+  desktop: {
+    backend: { linux: "cef" }, // macOS and Windows: "webview"
+  },
+};`}
+      </Code>
+      <ul>
+        <li>
+          Each build resolves it for its own target: the package scripts pass <code>--backend</code>
+          {" "}
+          to <code>deno desktop</code>{" "}
+          for the OS they package, fetch that target&apos;s runtime flavour, and gate the CEF-only
+          steps (the Windows CEF signature check and target note, the Linux packages&apos;
+          dependencies) on it; <code>denext desktop run</code> and <code>dev</code>{" "}
+          use the host&apos;s; <code>denext desktop doctor</code> and <code>denext doctor</code>
+          {" "}
+          check the host&apos;s (the Keychain cookie store, the CEF sandbox).
+        </li>
+        <li>
+          deno.json&apos;s <code>desktop.backend</code>{" "}
+          still works as one engine for every target, and is used when the config sets none.{" "}
+          <code>deno desktop</code>{" "}
+          reads that key itself and takes only a string there, so a per-OS object belongs in{" "}
+          <code>denext.config.ts</code>; one in deno.json is refused with that fix.
+        </li>
+        <li>
+          A <code>scripts/package-macos.ts</code> written before per-OS backends passes no{" "}
+          <code>--backend</code>: both doctors flag it, and <code>denext desktop package</code>{" "}
+          refuses to run it while the config gives macOS an engine other than deno.json&apos;s (it
+          would fetch one engine&apos;s runtime and build the other). Regenerate it with{" "}
+          <code>denext desktop package --regenerate-scripts</code>. The Linux and Windows builds
+          read it through <code>denext/desktop</code>.
         </li>
       </ul>
       <h3 id="desktop-deno-flags">Extra deno desktop flags</h3>
@@ -325,9 +377,10 @@ denext desktop dev --inspect-renderer=127.0.0.1:9339  # on a port of your choice
         profile. With no address it picks a free loopback port. It prints the endpoint before the
         window opens and, on the Chrome DevTools Protocol, the page&apos;s{" "}
         <code>webSocketDebuggerUrl</code> and a <code>devtools://</code>{" "}
-        URL to open in Chrome once the page has loaded. What it opens depends on the webview backend
-        (deno.json <code>desktop.backend</code>), with the same environment the runtime&apos;s own
-        {" "}
+        URL to open in Chrome once the page has loaded. What it opens depends on the host&apos;s
+        backend (<a href="#desktop-backend">
+          <code>desktop.backend</code>
+        </a>), with the same environment the runtime&apos;s own{" "}
         <code>deno desktop --inspect-renderer</code> sets:
       </p>
       <table class="table">
@@ -781,6 +834,22 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         (each rebuild of such a build would otherwise be asked for keychain access). The WebView
         backend (WKWebView) keeps cookies in WebKit&apos;s own store; on Windows CEF uses DPAPI (
         <code>"os"</code>).
+      </p>
+      <p id="desktop-cef-macos-x64-quit">
+        <strong>Known issue: CEF on an Intel Mac at quit.</strong>{" "}
+        Under runtime 3.0.0-denext.8 a CEF app on macOS x64 (x86_64) can crash in Chromium&apos;s
+        own teardown when it quits, about once in 5,600 launches. The app has already finished by
+        then, but profile writes still in flight can be lost and macOS keeps a crash report. Apple
+        silicon, the WebView backend and the other OSes are not affected; the fix comes with the
+        next runtime.
+      </p>
+      <p>
+        The runtime&apos;s own <code>Deno.desktop.clipboard</code> <code>change</code>{" "}
+        event may be absent: under CEF on a Wayland compositor without data-control,{" "}
+        <code>capabilities().changeEvents</code> is <code>false</code>{" "}
+        from runtime 3.0.0-denext.8 and the event never fires. Check it before relying on the event.
+        denext&apos;s <code>clipboard</code>{" "}
+        capability reads and writes without it, so it needs no change.
       </p>
       <p>
         Linux&apos;s <code>clipboard</code>{" "}
@@ -1378,6 +1447,15 @@ export default {
           <code>not_supported</code>: Linux has none). Otherwise (an older runtime, or a host
           without the library) it reports none, Clerk does not offer them, and the hosted browser
           sign-in is the way to use one.
+        </li>
+        <li>
+          On macOS the first passkey request after login can take noticeably longer than later ones:
+          about 0.5 s on Apple silicon and up to 2.5 s on Intel, measured on fresh CI machines. It
+          does not depend on the window backend. macOS starts its AuthenticationServices agent on
+          demand for that first request; later requests, from any app while the agent is running,
+          start in a few milliseconds. Your page stays responsive the whole time. Don&apos;t put a
+          short timeout on the first ceremony, and show your own pending state if you start one
+          without a user gesture.
         </li>
       </ul>
 
@@ -2438,8 +2516,17 @@ onCloseRequested(({ reason }) => {
           answers loses its hold: a close requested again 5 seconds later goes through.{" "}
           <code>closeWindow()</code> closes without asking; <code>quitApp()</code>{" "}
           asks first (Electron&apos;s{" "}
-          <code>app.quit()</code>). Cmd+Q from the macOS app menu and a macOS tray menu&apos;s quit
-          role end the app at once and are never held. A reload drops the hold.
+          <code>app.quit()</code>). From runtime 3.0.0-denext.8 the OS&apos;s own quits ask too,
+          with{" "}
+          <code>reason: "quit"</code>: Cmd+Q, the Dock&apos;s Quit and a logout on macOS, the
+          session ending on Windows. A handler that refuses a session end asks the OS to stop it,
+          which the OS may not honour: on macOS 26 a logout stopped for an app with a Dock icon,
+          with an alert that offers to try again, and went on anyway for an accessory app (a real
+          Windows logoff is untested). The OS is never held for long: an unanswered quit goes ahead
+          after 5 seconds, a session end after 10 (macOS) or 4 (Windows). While a session end is
+          pending macOS takes no input for the app, so a prompt can&apos;t be answered: decide
+          without asking the user. On an older runtime Cmd+Q ends the app at once. A reload drops
+          the hold.
         </li>
         <li>
           <strong>Before quitting</strong>: <code>onBeforeQuit(handler)</code> is Electron&apos;s
@@ -2449,7 +2536,7 @@ onCloseRequested(({ reason }) => {
           {" "}
           <code>false</code>{" "}
           keeps the app running, and no close handler is asked then. Use it to save state on the way
-          out.
+          out. The OS&apos;s own quits reach it under the same runtime and limits as above.
         </li>
       </ul>
       <p>
@@ -2606,6 +2693,18 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, â€
         (its tray icons, its close guard, its drops); keep-awake holds and global shortcuts are
         released when the main window&apos;s page reloads.
       </p>
+      <p id="desktop-background-throttling">
+        A window&apos;s page keeps running while the window is hidden, minimized or covered, with
+        its timers slowed to about once a second (Electron&apos;s default). For a hidden window that
+        does the app&apos;s background work, <code>backgroundThrottling: false</code> (in{" "}
+        <code>openWindow</code> or{" "}
+        <code>windows.open</code>, at creation only) keeps its timers at their rate. Both need Deno
+        Desktop runtime 3.0.0-denext.8: before it, on macOS, the system WebView froze a page created
+        hidden about a second after it loaded (no timers, events or sockets until the window
+        showed), and an older runtime ignores the option. The Windows and Linux system WebViews and
+        the CEF backend throttle a hidden page without freezing it either way. The main window is
+        the one the runtime starts with, which is always throttled.
+      </p>
       <h3 id="desktop-drag-and-drop">Files dragged in and out</h3>
       <p>
         <code>onFileDrop</code>{" "}
@@ -2622,7 +2721,15 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, â€
         <code>preventDefault()</code>) while the button is held. It takes picked handles or files in
         the app&apos;s own folders (<code>"data"</code>, <code>"cache"</code>,{" "}
         <code>"documents"</code>), never a raw path, and resolves <code>"dropped"</code>,{" "}
-        <code>"cancelled"</code> or <code>"failed"</code>.
+        <code>"cancelled"</code> or <code>"failed"</code>. On Wayland <code>"failed"</code>{" "}
+        is a normal outcome rather than an error: with runtime 3.0.0-denext.8 a drag with the
+        pointer off the app&apos;s windows reports it, where GTK used to end the process, and so
+        does every drag under CEF, which needs an X11 display to start one (<code>fileDragOut</code>
+        {" "}
+        in <code>windowCapabilities()</code> is <code>false</code> there; use the{" "}
+        <code>webview</code>{" "}
+        backend). With no button held, a WebKitGTK window under the pointer ends it{" "}
+        <code>"cancelled"</code> instead.
       </p>
       <Code lang="ts">
         {`import { onFileDrop, startFileDrag } from "denext/desktop/window";
@@ -3011,10 +3118,13 @@ tray?.onClick((_e, click) => click?.modifiers.ctrl && tray.popUpMenu()); // Cont
       <p>
         Its clicks reach the backend&apos;s handlers and every window&apos;s page;{" "}
         <code>showTrayPanel</code>, <code>hideTrayPanel</code> and <code>toggleTrayPanel</code>{" "}
-        drive the panel. A page hears them only while it runs, though: a window that does not show
-        may have its page suspended until it shows again (WKWebView does that on macOS), so a menu
-        item handled by a hidden main window&apos;s page does nothing there. Answer the menu items
-        and the double click in{" "}
+        drive the panel. A page hears them only while it runs, though: before Deno Desktop runtime
+        3.0.0-denext.8 a window that does not show may have its page suspended until it shows again
+        (WKWebView does that on macOS), so a menu item handled by a hidden main window&apos;s page
+        does nothing there. From 3.0.0-denext.8 a hidden page is only throttled (
+        <a href="#desktop-background-throttling">background throttling</a>) and keeps handling
+        events, so a tray app can rely on its hidden pages again; on an older runtime, or to act
+        with no page at all, answer the menu items and the double click in{" "}
         <code>desktop.ts</code>, in the app&apos;s process: the handle&apos;s{" "}
         <code>onMenuItem</code> / <code>onDoubleClick</code>, with <code>app.windows</code>{" "}
         to open and show windows (each ref has <code>visible</code>, <code>getBounds()</code> and
@@ -3177,6 +3287,97 @@ desktop: {
 },`}
       </Code>
 
+      <h3 id="desktop-extension-events">Events no page call started</h3>
+      <p>
+        A method&apos;s <code>ctx.emit(event, data)</code>{" "}
+        lives as long as its call. For work the extension or <code>desktop.ts</code>{" "}
+        starts on its own (a long job a tray item started, a file watcher), give the extension a
+        {" "}
+        <code>setup(host)</code>: it runs once when the app starts, before any page can call, and
+        {" "}
+        <code>host.emit(event, data)</code>{" "}
+        streams to the page with no call in flight. Both emits are limited to the capability&apos;s
+        declared <code>events</code>, and both keep an event until the page subscribes, like{" "}
+        <code>runDesktop</code>&apos;s <code>emit(cap, event, data)</code>. Pass{" "}
+        <code>{'{ window: "panel" }'}</code>{" "}
+        (a window id) as a third argument to reach one window instead of every one.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/jobs.ts
+import { defineDesktopExtension, type DesktopExtensionHost } from "denext/desktop";
+let host: DesktopExtensionHost | undefined;
+export function reportProgress(percent: number) {
+  host?.emit("progress", { percent }); // from desktop.ts, a tray item, a timer
+}
+export default defineDesktopExtension({
+  name: "jobs",
+  events: ["progress"],
+  setup: (h) => (host = h),
+  methods: {},
+});
+
+// a "use client" component
+onDesktopEvent<{ percent: number }>("jobs", "progress", ({ percent }) => setPercent(percent));`}
+      </Code>
+
+      <h3 id="desktop-picked-path">A picked file&apos;s path, for a host program</h3>
+      <p>
+        The <code>path</code> a pick returns to the page (<code>pickDocument</code>,{" "}
+        <code>openFile</code>, <code>pickFolder</code>,{" "}
+        <code>onFileDrop</code>) is for display: page script could send back any string, so an
+        extension never trusts a path from the page. Send the pick&apos;s <code>handle</code>{" "}
+        instead, and resolve it on the Deno side with <code>ctx.pickedPath(handle)</code>{" "}
+        (also on the <code>setup</code>{" "}
+        host): it returns the absolute path of a file or folder the user chose in a dialog, dropped
+        on a window or opened with the app in this launch, and throws <code>forbidden</code>{" "}
+        for anything else (a path, a made-up or expired handle). <code>{"{ write: true }"}</code>
+        {" "}
+        also refuses a read-only handle (an opened or dropped file). Keep the path in the Deno
+        process; the page already has its display copy.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/tools.ts
+info: {
+  handler: async (args, ctx) => {
+    const input = ctx.pickedPath((args as { handle?: unknown }).handle); // forbidden unless picked
+    const out = await new Deno.Command("qemu-img", { args: ["info", "--output=json", input] })
+      .output();
+    return JSON.parse(new TextDecoder().decode(out.stdout));
+  },
+},
+
+// the page
+const doc = await pickDocument();
+if (doc?.handle) await tools.info({ handle: doc.handle });`}
+      </Code>
+
+      <h3 id="desktop-validate-input">Validate what the page sends</h3>
+      <p>
+        An extension runs with the app&apos;s permissions, so treat every argument as untrusted,
+        whatever page you wrote. Declare an <code>input</code>{" "}
+        schema that lists the keys a page may send and refuses the rest (Zod&apos;s{" "}
+        <code>.strict()</code>, Valibot&apos;s{" "}
+        <code>strictObject</code>), and never spread the page&apos;s object into a settings store.
+        Settings that guard the machine (a program the app runs, a resource budget, a confirmation
+        step) stay out of the page&apos;s reach, or within bounds the extension checks against the
+        current value.{" "}
+        <a href="https://github.com/Brainwires/denext/tree/main/examples/hangar">
+          examples/hangar
+        </a>
+        &apos;s <code>setSettings</code>{" "}
+        is a worked example: a page may not change the QEMU prefix, and may raise the RAM budget
+        only to 90%.
+      </p>
+      <Code lang="ts">
+        {`setSettings: {
+  input: z.object({
+    libraryRoot: z.string().startsWith("/").optional(),
+    ramBudgetPercent: z.number().int().min(10).max(90).optional(), // the file may go higher
+  }).strict(), // an unknown key is a validation error, not silently kept
+  handler: (args) => saveSettings(args as PageSettings),
+},`}
+      </Code>
+
       <h3 id="desktop-main-thread">Native code on the UI thread</h3>
       <p>
         AppKit, Win32 windows and GTK objects belong to the app's UI thread, and a handler runs on
@@ -3290,13 +3491,13 @@ export default defineDesktopExtension({
           <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
           <code>--allow-run</code> and a broad{" "}
           <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
-          machine. From Deno Desktop runtime 3.0.0-denext.8 (once denext pins it), an app with{" "}
-          <code>desktop.app.identifier</code> is baked{" "}
-          <code>--allow-run=$DENO_DESKTOP_CACHE/sidecars/&lt;name&gt;/&lt;file&gt;</code>{" "}
-          instead, and the matching <code>--allow-write</code>{" "}
-          (scoped to that folder when nothing else writes): the runtime expands the token at launch
-          to the app&apos;s cache folder, keyed by the identifier. It gets the sidecar&apos;s
-          variables, and one JSON line on stdin (
+          machine (from Deno Desktop runtime 3.0.0-denext.8, in an app with{" "}
+          <code>desktop.app.identifier</code>, the write is scoped to the app&apos;s cache folder,
+          {" "}
+          <code>$DENO_DESKTOP_CACHE</code>). The run grant stays unscoped: Deno denies writes to
+          every <code>--allow-run</code>{" "}
+          path, so a run grant on the copy would leave the app unable to write it. It gets the
+          sidecar&apos;s variables, and one JSON line on stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
           as the app runs, so a program that exits on end-of-file never outlives it.
         </li>
@@ -3575,8 +3776,10 @@ await restartSidecar("server"); // after it gave up (state "failed")`}
         </li>
         <li>
           <strong>Downloaded once, verified before use.</strong>{" "}
-          The archive for your target and backend (<code>desktop.backend</code> in{" "}
-          <code>deno.json</code>, <code>webview</code> by default, or{" "}
+          The archive for your target and its backend (<a href="#desktop-backend">
+            <code>desktop.backend</code>
+          </a>{" "}
+          for that OS, <code>webview</code> by default, or{" "}
           <code>cef</code>) is pinned in denext by URL, size and SHA-256. It streams to a temp file,
           is refused the moment it outgrows its pinned size, and is extracted only after its size
           and SHA-256 match. Extraction refuses absolute paths, <code>..</code>{" "}
@@ -3958,6 +4161,108 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
           handler's stack, and the token never appear in it.
         </li>
       </ul>
+
+      <h3 id="desktop-baked-permissions">The permissions a package bakes</h3>
+      <p>
+        The package scripts derive the binary&apos;s <code>--allow-*</code>{" "}
+        flags from the config, never{" "}
+        <code>-A</code>: loopback networking, read and the environment as the baseline, plus what
+        the enabled capabilities, sidecars, the updater and <code>desktop.extraPermissions</code>
+        {" "}
+        need. The app&apos;s own folders (the <code>fs</code>, <code>sqlite</code> and{" "}
+        <code>updates</code> capabilities, a sidecar&apos;s log file, the UI overlay&apos;s{" "}
+        <code>ui-updates</code>) have a per-user path that is only known on the user&apos;s machine,
+        so a binary that writes there is baked an unscoped <code>--allow-write</code>.
+      </p>
+      <p>
+        From Deno Desktop runtime 3.0.0-denext.8, an app with <code>desktop.app.identifier</code>
+        {" "}
+        is baked those writes as the folders themselves: <code>$DENO_DESKTOP_DATA</code> (and{" "}
+        <code>$DENO_DESKTOP_DATA/logs</code>, <code>$DENO_DESKTOP_DATA/ui-updates</code>) and{" "}
+        <code>$DENO_DESKTOP_CACHE</code>, which the runtime expands at launch to the app&apos;s data
+        folder (<code>~/Library/Application Support/&lt;id&gt;</code> on macOS,{" "}
+        <code>%APPDATA%\&lt;id&gt;</code> on Windows, <code>$XDG_DATA_HOME/&lt;id&gt;</code>{" "}
+        on Linux) and cache folder. The token counts only at the start of a value, a value with a
+        {" "}
+        <code>..</code>{" "}
+        component is dropped, and with no folder to expand to the entry is dropped rather than
+        widened. In <code>desktop.extraPermissions.write</code>, <code>$APPDATA/â€¦</code> and{" "}
+        <code>$CACHE/â€¦</code>{" "}
+        become those tokens and an absolute path is kept as written. A write that has no token (a
+        picked path under <code>dialogs</code>, <code>$DOCUMENTS</code> in{" "}
+        <code>fs</code>, a relative path) keeps the unscoped <code>--allow-write</code>
+        . Code of the app that writes anywhere else needs that path in{" "}
+        <code>desktop.extraPermissions.write</code>. The runtime reads the identifier from the
+        binary, which denext&apos;s Deno writes when it compiles the app.
+      </p>
+
+      <h3 id="desktop-strict-permissions">Strict permissions</h3>
+      <p>
+        By default the binary can read any file and every environment variable (
+        <code>--allow-read</code>, <code>--allow-env</code>
+        ). <code>desktop.permissions: &quot;strict&quot;</code>{" "}
+        narrows both, from Deno Desktop runtime 3.0.0-denext.8 in an app with{" "}
+        <code>desktop.app.identifier</code>. It never falls back to the unscoped grants:{" "}
+        <code>denext desktop package</code>{" "}
+        fails, naming the reason and the fix, when the identifier is missing or the runtime cannot
+        scope them (older than 3.0.0-denext.8, or a local <code>DENEXT_DESKTOP_RUNTIME_DIR</code>
+        {" "}
+        build). <code>denext desktop run</code> and{" "}
+        <code>dev</code>, which build a local test copy, print a warning and bake the default
+        instead.
+      </p>
+      <ul>
+        <li>
+          <code>--allow-read</code> covers the app&apos;s data and cache folders (
+          <code>$DENO_DESKTOP_DATA</code>, <code>$DENO_DESKTOP_CACHE</code>
+          ), the folders the capabilities read and{" "}
+          <code>desktop.extraPermissions.read</code>. The embedded files are always readable. A read
+          with no folder token (<code>$APPDATA</code>,{" "}
+          <code>$CACHE</code>) that is not an absolute path fails the build, naming the entry: a
+          capability that reads a path picked at run time (<code>dialogs</code>),{" "}
+          <code>$DOCUMENTS</code> in <code>fs</code>
+          , a relative path or a <code>&quot;*&quot;</code>{" "}
+          entry. An app that reads picked files or files the OS opens with it keeps the default
+          mode.
+        </li>
+        <li>
+          <code>--allow-env</code>{" "}
+          covers the variables denext&apos;s desktop runtime reads (its own settings,{" "}
+          <code>HOME</code>, <code>APPDATA</code>, <code>XDG_*</code>, the proxy variables,{" "}
+          <code>PORT</code>, â€¦) plus the ones the app declares in{" "}
+          <code>desktop.permissions.env</code> or <code>desktop.extraPermissions.env</code>
+          . Every variable the app&apos;s own code reads, its <code>NEXT_PUBLIC_*</code> ones,{" "}
+          <code>SESSION_SECRET</code>{" "}
+          and a module sidecar&apos;s included, must be declared: an undeclared read throws{" "}
+          <code>NotCapable</code>. A <code>&quot;*&quot;</code>{" "}
+          entry fails the build. The packaging tools&apos; signing and credential variables (
+          <code>DENEXT_WINDOWS_CERT*</code>, <code>DENEXT_OTA_SIGNING_KEY</code>,{" "}
+          <code>DENEXT_NOTARY_*</code>, <code>DENEXT_CODESIGN_IDENTITY</code>, any{" "}
+          <code>*_TOKEN</code> / <code>*_SECRET</code> / <code>*_PASSWORD</code> /{" "}
+          <code>*_KEY</code>
+          ) are never in the list, so the app can&apos;t read a signing key from the environment of
+          the machine that tests it. A granted name can also be set (<code>Deno.env.set</code>
+          ), the listed <code>PATH</code> and <code>DENO_DIR</code>{" "}
+          included, as under the default mode.
+        </li>
+        <li>
+          A program sidecar (<code>run.exec</code>) and <code>loginShellEnv</code>{" "}
+          start a child with the app&apos;s whole environment, which a scoped{" "}
+          <code>--allow-env</code>{" "}
+          cannot read, so a config with either is refused in strict mode. A module sidecar&apos;s
+          {" "}
+          <code>spawnSelf()</code> copies the whole environment too; pass it an <code>env</code>
+          {" "}
+          of its own.
+        </li>
+      </ul>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  app: { identifier: "com.example.notes" },
+  permissions: { mode: "strict", env: ["NOTES_API_URL"] }, // or permissions: "strict"
+},`}
+      </Code>
 
       <h2 id="desktop-react-native">React Native on desktop</h2>
       <p>

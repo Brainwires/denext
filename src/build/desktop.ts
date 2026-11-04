@@ -47,7 +47,7 @@ import { appUpdateAutoConfirm, combineBootHooks } from "../desktop/app-update-co
 import { createDesktopBridge, type DesktopBridge } from "../desktop/bridge.ts";
 import { DESKTOP_PRELOAD_ENV, inlineSafeScript, readDesktopPreload } from "../desktop/preload.ts";
 import { DESKTOP_NOTIFICATION_SHIM_JS } from "../desktop/notification-shim.ts";
-import type { DesktopCapability } from "../desktop/extension.ts";
+import type { DesktopCapability, DesktopEmitOptions } from "../desktop/extension.ts";
 import { createLaunchRouter, desktopAppApi } from "../desktop/launch-events.ts";
 import { createSchemeAuthSessions } from "../desktop/scheme-auth-session.ts";
 import type { PickedPaths } from "../desktop/picked-paths.ts";
@@ -110,8 +110,11 @@ export {
   type DesktopCapabilityMethod,
   type DesktopCapCtx,
   DesktopCapError,
+  type DesktopEmitOptions,
+  type DesktopExtensionHost,
   type DesktopMainThreadFn,
   type DesktopPermissions,
+  type DesktopPickedPathOptions,
 } from "../desktop/extension.ts";
 
 // Sidecars: backends the app runs and supervises next to its window (`desktop.sidecars`,
@@ -178,6 +181,7 @@ export {
   desktopNpmArgs,
   type DesktopOs,
   desktopPackageFlags,
+  DesktopStrictPermissionsError,
 } from "./desktop-capabilities.ts";
 
 // `desktop.denoFlags` (an allow-list of resolution / type-check flags) for the package scripts.
@@ -235,6 +239,7 @@ export {
 export {
   buildDesktopBundle,
   desktopAppName,
+  desktopBackendArgs,
   type DesktopBundleOptions,
   desktopExportEnv,
   desktopHasTool,
@@ -259,7 +264,24 @@ export {
   parseDesktopPackageArgs,
   type PreparedDesktopPackage,
   prepareDesktopPackage,
+  runDesktopPackageMain,
+  stampDesktopWindowsBundle,
 } from "./desktop-package-script.ts";
+// scripts/package-windows.ts: the tree manifest of the app's identifier and version and every file
+// but the .exe, embedded in the .exe before signing so its Authenticode signature covers the whole
+// app.
+export {
+  DESKTOP_TREE_RESOURCE,
+  type DesktopTreeFile,
+  type DesktopTreeIdentity,
+  type DesktopTreeManifest,
+  desktopTreeManifest,
+  type DesktopTreeManifestProblem,
+  desktopTreeManifestProblem,
+  embedDesktopTreeManifest,
+  readDesktopTreeManifest,
+  stampDesktopTreeManifest,
+} from "./desktop-tree-manifest.ts";
 // scripts/package-windows.ts: the app-local VC++ runtime, only the DLLs the target arch imports,
 // each checked to be the target's machine type.
 export {
@@ -641,10 +663,12 @@ export interface DesktopRuntime {
   /** The desktop world the gates enforce. */
   readonly trust: DesktopTrust;
   /**
-   * Push an event to the page (`cap` need not be a registered capability's). Events are retained
-   * for replay, so one emitted before the page subscribes is still delivered.
+   * Push an event to the pages (`cap` need not be a registered capability's): every window's, or
+   * only `options.window`'s. Events are retained for replay, so one emitted before the page
+   * subscribes is still delivered. An extension module reaches the same stream without this
+   * handle through its {@linkcode DesktopCapability.setup} host.
    */
-  emit(cap: string, event: string, data: unknown): void;
+  emit(cap: string, event: string, data: unknown, options?: DesktopEmitOptions): void;
   /**
    * The handle of one sidecar (`desktop.sidecars` / `runDesktop({ sidecars })`): its `status`,
    * `onStatus`, `restart` and `stop`. Throws for a name the app does not declare.
@@ -1561,6 +1585,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
         : {}),
       dev: devDecision.proxy,
       trust,
+      ...(options.pickedPaths ? { pickedPaths: options.pickedPaths } : {}),
     },
   );
   bridgeRef.bridge = bridge;
@@ -1619,7 +1644,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     setActivationPolicy: (policy) => windows.setActivationPolicy(policy),
     getActivationPolicy: () => windows.getActivationPolicy(),
     trust,
-    emit: (cap, event, data) => bridge.emit(cap, event, data),
+    emit: (cap, event, data, emitOptions) => bridge.emit(cap, event, data, emitOptions?.window),
     sidecar: (name) => {
       if (!sidecarHost) throw new Error(`desktop: no sidecar named "${name}" (none declared)`);
       return sidecarHost.handle(name);

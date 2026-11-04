@@ -242,6 +242,9 @@ function ctx() {
     window: undefined,
     signal: new AbortController().signal,
     runOnMainThread: () => Promise.reject(new Error("none")),
+    pickedPath: () => {
+      throw new Error("no picked paths in tests");
+    },
   };
 }
 

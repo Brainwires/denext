@@ -58,6 +58,9 @@ const ctxFor = (windowId = "main"): DesktopCapCtx => ({
   emit: () => {},
   appSupportDir: "/tmp/app",
   runOnMainThread: () => Promise.reject(new Error("no UI thread")),
+  pickedPath: () => {
+    throw new Error("no picked paths in tests");
+  },
   os: "darwin",
   windowId,
   signal: new AbortController().signal,

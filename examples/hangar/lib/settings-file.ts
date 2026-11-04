@@ -3,7 +3,7 @@
 // `resolveDesktopCapabilities`). Read once at launch, written by the settings page.
 
 import { join } from "@std/path/posix";
-import { defaultSettings, HangarError, parseSettings } from "./hangar.ts";
+import { defaultSettings, HangarError, parsePageSettings, parseSettings } from "./hangar.ts";
 import type { Host } from "./host.ts";
 import type { HangarSettings } from "./types.ts";
 
@@ -44,4 +44,19 @@ export async function saveSettings(
   const path = settingsPath(appSupportDir);
   await host.mkdir(appSupportDir);
   await host.writeTextFile(path, JSON.stringify(settings, null, 2) + "\n");
+}
+
+/**
+ * A save from the settings page: `raw` is checked against what a page may change
+ * (`parsePageSettings`) over `current`, then written. Returns the settings to apply.
+ */
+export async function savePageSettings(
+  host: Host,
+  appSupportDir: string,
+  raw: unknown,
+  current: HangarSettings,
+): Promise<HangarSettings> {
+  const next = parsePageSettings(raw, current);
+  await saveSettings(host, appSupportDir, next);
+  return next;
 }

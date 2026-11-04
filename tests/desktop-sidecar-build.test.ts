@@ -17,8 +17,8 @@ import {
   desktopSidecarIncludeArgs,
   sidecarCacheProgram,
   sidecarPermissionSet,
+  sidecarRunWriteWarnings,
 } from "../src/build/desktop-capabilities.ts";
-import { desktopCacheTokenRuntime } from "../src/build/desktop-launch-policy.ts";
 import { desktopAppDirs } from "../src/desktop/app-dirs.ts";
 import { addDesktopSidecar } from "../src/build/desktop-sidecar-add.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
@@ -282,37 +282,51 @@ Deno.test("desktopBuildFlags: a copied program runs scoped to its cache copy on 
     `--allow-run=${DESKTOP_CACHE_TOKEN}/sidecars/server/server,git`,
   ]);
   // No identifier (the fallback id is not in the binary: the runtime would drop the entry), or a
-  // runtime without the token: today's unscoped grants.
+  // runtime without the tokens (both arrived in 3.0.0-denext.8, so neither scope): today's
+  // unscoped grants.
   for (
     const flags of [
       desktopBuildFlags(config(), "linux", { cacheScope: true }),
       desktopBuildFlags(config(" "), "linux", { cacheScope: true }),
-      desktopBuildFlags(config("com.example.app"), "linux", { cacheScope: false }),
+      desktopBuildFlags(config("com.example.app"), "linux", {
+        cacheScope: false,
+        dataScope: false,
+      }),
     ]
   ) {
     assert(flags.includes("--allow-run"), flags.join(" "));
     assert(flags.includes("--allow-write"), flags.join(" "));
   }
-  // The pinned runtime decides by default.
-  assertEquals(
-    desktopBuildFlags(config("com.example.app"), "linux").includes("--allow-run"),
-    !desktopCacheTokenRuntime(),
-  );
-  // Another write (a log file) keeps the broad --allow-write; the run stays scoped.
+  // Off by default, whatever the runtime: Deno denies writes to every --allow-run path, so a run
+  // grant on the copy would leave the app unable to write it (the sidecar never started).
+  assert(desktopBuildFlags(config("com.example.app"), "linux").includes("--allow-run"));
+  // With the cache token alone (no app-folder scoping, `dataScope: false`), another write (a log
+  // file) keeps the broad --allow-write; the run stays scoped.
   const logged = desktopBuildFlags(
     config("com.example.app", { extraPermissions: { write: ["/tmp/x"] } }),
     "darwin",
-    { cacheScope: true },
+    { cacheScope: true, dataScope: false },
   );
   assert(logged.includes("--allow-write"), logged.join(" "));
   assert(logged.includes(`--allow-run=${DESKTOP_CACHE_TOKEN}/sidecars/server/server,git`));
-  // A capability that writes, or the UI overlay, also keeps it broad.
+  // With both (3.0.0-denext.8), an absolute write is kept as written beside the copy's folder.
+  assert(
+    desktopBuildFlags(
+      config("com.example.app", { extraPermissions: { write: ["/tmp/x"] } }),
+      "darwin",
+      { cacheScope: true, dataScope: true },
+    ).includes(`--allow-write=${DESKTOP_CACHE_TOKEN}/sidecars/server,/tmp/x`),
+  );
+  // A capability that writes, or the UI overlay, also keeps it broad (cache token alone).
   for (
     const more of [{ capabilities: { fs: true } }, {
       update: { ui: { feedUrl: "https://u.example.com/f", publicKey: "k" } },
     }]
   ) {
-    const flags = desktopBuildFlags(config("com.example.app", more), "linux", { cacheScope: true });
+    const flags = desktopBuildFlags(config("com.example.app", more), "linux", {
+      cacheScope: true,
+      dataScope: false,
+    });
     assert(flags.includes("--allow-write"), flags.join(" "));
   }
   // A program name that cannot be one list value keeps the unscoped grant.
@@ -635,4 +649,118 @@ Deno.test("bundleDesktopSidecars: the host's OS by default, a sidecar with nothi
   } finally {
     await Deno.remove(root, { recursive: true });
   }
+});
+
+Deno.test("sidecarRunWriteWarnings: a scoped --allow-run that a baked --allow-write covers is reported, never refused", () => {
+  // A project-file program with the cache scope: the copy's folder is written, the copy run.
+  const scoped = sidecarRunWriteWarnings(
+    {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    },
+    "linux",
+    { cacheScope: true },
+  );
+  assertEquals(scoped.length, 1);
+  assertMatch(
+    scoped[0],
+    /sidecar "server": --allow-run=\$DENO_DESKTOP_CACHE\/sidecars\/server\/server is not containment/,
+  );
+  assertMatch(scoped[0], /--allow-write=\$DENO_DESKTOP_CACHE\/sidecars\/server covers/);
+  assertMatch(scoped[0], /copied into the app's cache folder/);
+  // A broad write (another write grant) covers it too, and says so.
+  const broad = sidecarRunWriteWarnings(
+    {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        extraPermissions: { write: ["/tmp/x"] },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    },
+    "linux",
+    { cacheScope: true, dataScope: false },
+  );
+  assertEquals(broad.length, 1);
+  assertMatch(broad[0], /an unscoped --allow-write covers/);
+  // An absolute program under a configured write of its folder (baked as the unscoped
+  // --allow-write: only cache-token writes stay scoped).
+  const own = sidecarRunWriteWarnings(
+    {
+      desktop: {
+        sidecars: [{
+          name: "tool",
+          run: { exec: "/opt/tool/bin/tool" },
+          permissions: { write: ["/opt/tool"] },
+        }],
+      },
+    },
+    "linux",
+    { dataScope: false },
+  );
+  assertEquals(own.length, 1);
+  assertMatch(
+    own[0],
+    /--allow-run=\/opt\/tool\/bin\/tool is not containment: an unscoped --allow-write covers/,
+  );
+  assert(!own[0].includes("cache folder"));
+  // Nothing to report: no write at all, a write elsewhere, a bare name, an unscoped run (the old
+  // runtime's grant), no sidecars.
+  assertEquals(
+    sidecarRunWriteWarnings(
+      { desktop: { sidecars: [{ name: "git", run: { exec: "git" } }] } },
+      "linux",
+    ),
+    [],
+  );
+  assertEquals(
+    sidecarRunWriteWarnings({
+      desktop: {
+        sidecars: [{
+          name: "tool",
+          run: { exec: "/opt/tool/bin/tool" },
+          permissions: { write: ["$DENO_DESKTOP_CACHE/other"] },
+        }],
+      },
+    }, "linux"),
+    [],
+  );
+  assertEquals(
+    sidecarRunWriteWarnings(
+      { desktop: { sidecars: [{ name: "server", run: { exec: "./bin/server" } }] } },
+      "linux",
+      { cacheScope: false },
+    ),
+    [],
+  );
+  assertEquals(sidecarRunWriteWarnings({}, "linux"), []);
+});
+
+Deno.test("sidecarRunWriteWarnings: the write grant it compares is the one the build bakes, folder-scoped included", () => {
+  const SCOPED = { cacheScope: true, dataScope: true } as const;
+  const config = (exec: string) => ({
+    desktop: {
+      app: { identifier: "com.example.app" },
+      capabilities: { fs: { read: ["$APPDATA"], write: ["$APPDATA"] } },
+      sidecars: [{ name: "tool", run: { exec } }],
+    },
+  });
+  // On a runtime that expands the folder tokens the baked writes are the app's two folders, which
+  // cover neither program.
+  const writes = desktopBuildFlags(config("/opt/tool/bin/tool"), "linux", SCOPED)
+    .filter((f) => f.startsWith("--allow-write"));
+  assertEquals(writes, ["--allow-write=$DENO_DESKTOP_CACHE,$DENO_DESKTOP_DATA"]);
+  assertEquals(sidecarRunWriteWarnings(config("/opt/tool/bin/tool"), "linux", SCOPED), []);
+  // A project-file program is covered by the cache folder the build bakes, never "an unscoped"
+  // write.
+  const copied = sidecarRunWriteWarnings(config("./bin/tool"), "linux", SCOPED);
+  assertEquals(copied.length, 1);
+  assertMatch(copied[0], /--allow-write=\$DENO_DESKTOP_CACHE covers/);
+  // On a runtime that doesn't expand them, the fs write is unscoped and covers both.
+  const OLD = { cacheScope: false, dataScope: false } as const;
+  assertMatch(
+    sidecarRunWriteWarnings(config("/opt/tool/bin/tool"), "linux", OLD)[0],
+    /an unscoped --allow-write covers/,
+  );
 });

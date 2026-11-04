@@ -70,7 +70,8 @@ export interface PickedDocument {
   readonly data?: string;
   /**
    * The file's path, for display only: the picked copy natively, the file itself on desktop
-   * (a browser hides it).
+   * (a browser hides it). To hand the file to a desktop extension (a host program needs its
+   * path), send {@linkcode PickedDocument.handle} and resolve it there with `ctx.pickedPath`.
    */
   readonly path?: string;
   /**

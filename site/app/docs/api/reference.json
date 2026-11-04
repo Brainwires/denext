@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.11.13\"",
+          "signature": "VERSION: \"4.12.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],
@@ -16772,6 +16772,44 @@
           ]
         },
         {
+          "name": "DesktopBackendConfig",
+          "slug": "DesktopBackendConfig",
+          "kind": "interface",
+          "signature": "interface DesktopBackendConfig",
+          "doc": "DesktopConfig.backend per OS: each target's window engine. An OS left out takes default, else \"webview\".",
+          "docFull": "{@link DesktopConfig.backend} per OS: each target's window engine. An OS left out takes\n`default`, else `\"webview\"`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "macos",
+              "signature": "macos?: \"webview\" | \"cef\"",
+              "doc": "The macOS app's engine (`\"webview\"`: WKWebView)."
+            },
+            {
+              "kind": "property",
+              "name": "windows",
+              "signature": "windows?: \"webview\" | \"cef\"",
+              "doc": "The Windows app's engine (`\"webview\"`: WebView2)."
+            },
+            {
+              "kind": "property",
+              "name": "linux",
+              "signature": "linux?: \"webview\" | \"cef\"",
+              "doc": "The Linux app's engine (`\"webview\"`: WebKitGTK, which has no WebRTC)."
+            },
+            {
+              "kind": "property",
+              "name": "default",
+              "signature": "default?: \"webview\" | \"cef\"",
+              "doc": "The engine of every OS not named here."
+            }
+          ]
+        },
+        {
           "name": "DesktopCapabilitiesConfig",
           "slug": "DesktopCapabilitiesConfig",
           "kind": "interface",
@@ -16973,9 +17011,21 @@
             },
             {
               "kind": "property",
+              "name": "permissions",
+              "signature": "permissions?: \"default\" | \"strict\" | DesktopPermissionsConfig",
+              "doc": "How narrow the packaged binary's baked read and environment grants are. `\"default\"` (or unset):\n`--allow-read` and `--allow-env` unscoped, as before. `\"strict\"` (needs Deno Desktop runtime\n3.0.0-denext.8 and `desktop.app.identifier`): `--allow-read` scoped to the app's data and cache\nfolders (`$DENO_DESKTOP_DATA`, `$DENO_DESKTOP_CACHE`; the embedded files are always readable)\nplus {@link DesktopExtraPermissions.read} and what the capabilities read, and `--allow-env`\nscoped to the variables denext's desktop runtime reads (never a signing or credential variable\nof the packaging tools) plus {@link DesktopPermissionsConfig.env} and\n{@link DesktopExtraPermissions.env}. Strict mode never falls back to the unscoped grants:\npackaging fails, naming the reason and the fix, when the runtime is older (or\n`DENEXT_DESKTOP_RUNTIME=stock` / `DENEXT_DESKTOP_RUNTIME_DIR` is set) or the identifier is\nmissing, and when a read has no folder token or absolute path (a capability that reads a path\npicked at run time, `dialogs`; `$DOCUMENTS`; a relative path; `\"*\"`) or an env entry is `\"*\"`.\n`denext desktop run` / `dev` warn and bake the default instead for the first two. Refused with\na program sidecar (`run.exec`) or `loginShellEnv`, which hand the child the whole environment."
+            },
+            {
+              "kind": "property",
               "name": "update",
               "signature": "update?: DesktopUpdateConfig",
               "doc": "Full-app self-update (`checkForAppUpdate` … from `denext/desktop/updater`): the whole signed\napp is replaced by a newer signed build. Needs denext's pinned Deno Desktop runtime."
+            },
+            {
+              "kind": "property",
+              "name": "backend",
+              "signature": "backend?: \"webview\" | \"cef\" | DesktopBackendConfig",
+              "doc": "The window engine `deno desktop` builds the app with: `\"webview\"` (the system WebView:\nWKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux) or `\"cef\"` (Chromium, bundled).\nOne engine for every target, or one per OS (`{ linux: \"cef\" }`: Chromium on Linux, where\nWebKitGTK has no WebRTC, and the system WebView elsewhere). The package scripts, `desktop run` /\n`dev`, the runtime download and both doctors resolve it for the OS they build or run for. It\ntakes precedence over deno.json's `desktop.backend`, which `deno desktop` reads as one engine\nand which stays the fallback. Default `\"webview\"`."
             },
             {
               "kind": "property",
@@ -17043,7 +17093,7 @@
               "kind": "property",
               "name": "write",
               "signature": "write?: string[]",
-              "doc": "`--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be scoped)."
+              "doc": "`--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be\nscoped) — except under Deno Desktop runtime 3.0.0-denext.8 in an app with\n`desktop.app.identifier`, where `$APPDATA/…`, `$CACHE/…` and absolute paths are baked as\nwritten (the folders as `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE`)."
             },
             {
               "kind": "property",
@@ -17228,6 +17278,32 @@
               "name": "rpIds",
               "signature": "rpIds: string[]",
               "doc": "The relying-party IDs (`\"example.com\"`) the app may request. Required: an empty list allows\nnone (enforced natively and failing closed; `denext doctor` flags it), and no default allows\nany."
+            }
+          ]
+        },
+        {
+          "name": "DesktopPermissionsConfig",
+          "slug": "DesktopPermissionsConfig",
+          "kind": "interface",
+          "signature": "interface DesktopPermissionsConfig",
+          "doc": "DesktopConfig.permissions as an object: the mode, and the app's own variables.",
+          "docFull": "{@link DesktopConfig.permissions} as an object: the mode, and the app's own variables.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "mode",
+              "signature": "mode: \"default\" | \"strict\"",
+              "doc": "`\"strict\"` scopes the baked read and environment grants (see {@link DesktopConfig.permissions})."
+            },
+            {
+              "kind": "property",
+              "name": "env",
+              "signature": "env?: string[]",
+              "doc": "The environment variables the app's own code reads (`DATABASE_URL`, `NEXT_PUBLIC_*` names, …),\nadded to the strict `--allow-env` allow-list. One name per entry."
             }
           ]
         },
@@ -44578,8 +44654,8 @@
           "slug": "buildDesktopBundle",
           "kind": "function",
           "signature": "buildDesktopBundle(entryUrl: string, os: \"linux\" | \"windows\", o: DesktopBundleOptions): Promise<string>",
-          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable.",
-          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable.",
+          "doc": "Build a Linux / Windows bundle directory with deno desktop on denext's pinned runtime: the least-privilege flags from desktop.capabilities (with --no-prompt: a packaged GUI has no TTY to answer a prompt), desktop.denoFlags, the export and the extension modules embedded, the first existing icon, then the webview backend's laufey-launch.json beside the executable, and on Windows the tree manifest in the executable (stampDesktopTreeManifest, for the app's identifier and version; desktopSignWindows writes it again with the signed DLLs' hashes before it signs the executable).",
+          "docFull": "Build a Linux / Windows bundle directory with `deno desktop` on denext's pinned runtime: the\nleast-privilege flags from `desktop.capabilities` (with `--no-prompt`: a packaged GUI has no TTY to\nanswer a prompt), `desktop.denoFlags`, the export and the extension modules embedded, the first\nexisting icon, then\nthe webview backend's `laufey-launch.json` beside the executable, and on Windows the tree\nmanifest in the executable ({@linkcode stampDesktopTreeManifest}, for the app's identifier and\nversion; {@linkcode desktopSignWindows} writes it again with the signed DLLs' hashes before it\nsigns the executable).",
           "params": [
             {
               "name": "entryUrl",
@@ -44963,6 +45039,18 @@
           "denextOnly": true
         },
         {
+          "name": "DESKTOP_TREE_RESOURCE",
+          "slug": "DESKTOP_TREE_RESOURCE",
+          "kind": "variable",
+          "signature": "DESKTOP_TREE_RESOURCE: \"DENEXT_TREE\"",
+          "doc": "The RT_RCDATA resource name the manifest is stored under.",
+          "docFull": "The `RT_RCDATA` resource name the manifest is stored under.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DESKTOP_VC_RUNTIME_DLLS",
           "slug": "DESKTOP_VC_RUNTIME_DLLS",
           "kind": "variable",
@@ -45150,6 +45238,27 @@
           "denextOnly": true
         },
         {
+          "name": "desktopBackendArgs",
+          "slug": "desktopBackendArgs",
+          "kind": "function",
+          "signature": "desktopBackendArgs(entryUrl: string, os: DesktopOs): Promise<string[]>",
+          "doc": "The --backend <engine> args for deno desktop on os: the project's desktop.backend for that OS (denext.config.ts, one engine or per OS, else deno.json's, else \"webview\"). Always passed, so the engine built is the one the runtime was fetched for, whatever deno.json says.",
+          "docFull": "The `--backend <engine>` args for `deno desktop` on `os`: the project's `desktop.backend` for\nthat OS (`denext.config.ts`, one engine or per OS, else deno.json's, else `\"webview\"`). Always\npassed, so the engine built is the one the runtime was fetched for, whatever deno.json says.",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of a script in the project's scripts/ folder."
+            },
+            {
+              "name": "os",
+              "doc": "The target OS."
+            }
+          ],
+          "returns": "[\"--backend\", \"webview\" | \"cef\"].",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "DesktopBridge",
           "slug": "DesktopBridge",
           "kind": "interface",
@@ -45215,7 +45324,19 @@
               "kind": "property",
               "name": "cacheScope",
               "signature": "readonly cacheScope?: boolean",
-              "doc": "The runtime expands `$DENO_DESKTOP_CACHE` in a baked permission (denext's pinned Deno Desktop\nruntime, 3.0.0-denext.8 or later; see `desktopCacheTokenRuntime`): a program sidecar copied\ninto the app's cache folder gets `--allow-run` over that copy alone, when\n`desktop.app.identifier` names the folder. Default: `desktopCacheTokenRuntime()`."
+              "doc": "The runtime expands `$DENO_DESKTOP_CACHE` in a baked permission (denext's pinned Deno Desktop\nruntime, 3.0.0-denext.8 or later; see `desktopCacheTokenRuntime`): a program sidecar copied\ninto the app's cache folder gets `--allow-run` over that copy alone, when\n`desktop.app.identifier` names the folder. Default `false`: Deno denies writes to every\n`--allow-run` path, so the app could not write the copy it then runs."
+            },
+            {
+              "kind": "property",
+              "name": "dataScope",
+              "signature": "readonly dataScope?: boolean",
+              "doc": "The runtime expands `$DENO_DESKTOP_DATA` (and `$DENO_DESKTOP_CACHE`) in a baked permission\n(denext's pinned Deno Desktop runtime, 3.0.0-denext.8 or later; see `desktopDataTokenRuntime`):\nthe app-folder writes (`$APPDATA`, `$CACHE`: the `fs` / `sqlite` / `updates` capabilities, a\nsidecar's log file, the UI overlay's `ui-updates`) are baked as those folders instead of an\nunscoped `--allow-write`, when `desktop.app.identifier` names them. Default:\n`desktopDataTokenRuntime()`."
+            },
+            {
+              "kind": "property",
+              "name": "strictFallback",
+              "signature": "readonly strictFallback?: boolean",
+              "doc": "What `desktop.permissions: \"strict\"` does when it cannot be honoured (the runtime does not\nexpand the folder tokens, or `desktop.app.identifier` is unset; see\n{@linkcode strictPermissionsProblem}): `false` (the default, every packaging build) throws,\nnaming the reason and the fix; `true` bakes the default unscoped `--allow-read` /\n`--allow-env` instead, for `denext desktop run` / `dev`, which build a local test copy and\nprint a warning. Never set it for a build that ships."
             }
           ]
         },
@@ -45224,8 +45345,8 @@
           "slug": "desktopBuildFlags",
           "kind": "function",
           "signature": "desktopBuildFlags(config: unknown, os: DesktopOs, options?: DesktopBuildFlagOptions): string[]",
-          "doc": "The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it); an unscoped --allow-sys when a capability needs it (clipboard, global shortcuts, launch at login, notifications) or desktop.app.deepLinks declares a scheme (claiming it back needs it): the pinned runtime refuses those with NotCapable under a partial --allow-sys=<names>; - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's, desktop.update.ui.feedUrl's and desktop.update.hosts), and desktop.update.ui adds the broad --allow-write its overlay needs. With netSplit (the pinned runtime, 3.0.0-rc.2 or later) the network grant is baked by direction instead: --allow-net-connect takes those outbound hosts, loopback and extraPermissions.netConnect, --allow-net-listen only loopback and extraPermissions.netListen (any port: the app's server picks one at launch), and extraPermissions.net / a sidecar's net go to both; - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.",
-          "docFull": "The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the\nleast-privilege replacement for `-A` in the package scripts — derived from the WHOLE project\nconfig, not just `desktop.capabilities` (deriving from capabilities alone would starve the\nnon-capability runtime features: an audit found the updater, `openAuthSession` and a non-loopback\nproxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:\n- the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a\n  single broad `--allow-write` when any capability writes (a per-user path can't be baked; the\n  runtime cap layer confines it); an unscoped `--allow-sys` when a capability needs it\n  (clipboard, global shortcuts, launch at login, notifications) or `desktop.app.deepLinks`\n  declares a scheme (claiming it back needs it): the pinned runtime refuses those with\n  `NotCapable` under a partial `--allow-sys=<names>`;\n- a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only\n  the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts\n  (`desktop.update.manifestUrl`'s, `desktop.update.ui.feedUrl`'s and `desktop.update.hosts`), and\n  `desktop.update.ui` adds the broad `--allow-write` its overlay needs. With `netSplit` (the\n  pinned runtime, 3.0.0-rc.2 or later) the network grant is baked by direction instead:\n  `--allow-net-connect` takes those outbound hosts, loopback and `extraPermissions.netConnect`,\n  `--allow-net-listen` only loopback and `extraPermissions.netListen` (any port: the app's server\n  picks one at launch), and `extraPermissions.net` / a sidecar's `net` go to both;\n- `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's\n  feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED\n  in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.\nA capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`\n(only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`\ngrant, never `*` baked in.",
+          "doc": "The full --allow-* flag list to bake into the deno desktop binary for os — the least-privilege replacement for -A in the package scripts — derived from the WHOLE project config, not just desktop.capabilities (deriving from capabilities alone would starve the non-capability runtime features: an audit found the updater, openAuthSession and a non-loopback proxy all broke). On top of DESKTOP_BASELINE_FLAGS it adds: - the enabled capabilities' run / ffi / sys exactly (the real least-privilege wins), and a single broad --allow-write when any capability writes (a per-user path can't be baked; the runtime cap layer confines it) — or, on a runtime that expands $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE (3.0.0-denext.8, dataScope) in an app with desktop.app.identifier, --allow-write scoped to those folders (and any absolute extraPermissions.write path) unless a write has no token (a picked path, $DOCUMENTS); an unscoped --allow-sys when a capability needs it (clipboard, global shortcuts, launch at login, notifications) or desktop.app.deepLinks declares a scheme (claiming it back needs it): the pinned runtime refuses those with NotCapable under a partial --allow-sys=<names>; - a non-loopback spa.proxy target's host, MERGED into the single --allow-net (Deno keeps only the last --allow-net, so every host is one flag), and so are full-app self-update's hosts (desktop.update.manifestUrl's, desktop.update.ui.feedUrl's and desktop.update.hosts), and desktop.update.ui adds the broad --allow-write its overlay needs. With netSplit (the pinned runtime, 3.0.0-rc.2 or later) the network grant is baked by direction instead: --allow-net-connect takes those outbound hosts, loopback and extraPermissions.netConnect, --allow-net-listen only loopback and extraPermissions.netListen (any port: the app's server picks one at launch), and extraPermissions.net / a sidecar's net go to both; - desktop.extraPermissions — the escape hatch for what the catalog can't see: the updater's feed host (net) and data dir (write), an extension's own run/ffi, etc. It is UNIONED in, and --regenerate-scripts preserves it because it lives in the config, not the script. - with desktop.permissions: \"strict\" on such a runtime (and desktop.app.identifier), --allow-read scoped to the app's folders and the declared reads, and --allow-env to DESKTOP_STRICT_RUNTIME_ENV and the declared variables. Strict mode never falls back to the unscoped grants: when it cannot be honoured (strictPermissionsProblem) this throws (unless options.strictFallback), and a read or variable entry it cannot scope always throws. A capability's read/env is dropped (already broad in the baseline); a capability's net (only downloadToFile's *) is dropped too — per-host download access is an extraPermissions grant, never * baked in.",
+          "docFull": "The full `--allow-*` flag list to bake into the `deno desktop` binary for `os` — the\nleast-privilege replacement for `-A` in the package scripts — derived from the WHOLE project\nconfig, not just `desktop.capabilities` (deriving from capabilities alone would starve the\nnon-capability runtime features: an audit found the updater, `openAuthSession` and a non-loopback\nproxy all broke). On top of {@linkcode DESKTOP_BASELINE_FLAGS} it adds:\n- the enabled capabilities' `run` / `ffi` / `sys` exactly (the real least-privilege wins), and a\n  single broad `--allow-write` when any capability writes (a per-user path can't be baked; the\n  runtime cap layer confines it) — or, on a runtime that expands `$DENO_DESKTOP_DATA` /\n  `$DENO_DESKTOP_CACHE` (3.0.0-denext.8, `dataScope`) in an app with `desktop.app.identifier`,\n  `--allow-write` scoped to those folders (and any absolute `extraPermissions.write` path) unless\n  a write has no token (a picked path, `$DOCUMENTS`); an unscoped `--allow-sys` when a capability needs it\n  (clipboard, global shortcuts, launch at login, notifications) or `desktop.app.deepLinks`\n  declares a scheme (claiming it back needs it): the pinned runtime refuses those with\n  `NotCapable` under a partial `--allow-sys=<names>`;\n- a non-loopback `spa.proxy` target's host, MERGED into the single `--allow-net` (Deno keeps only\n  the last `--allow-net`, so every host is one flag), and so are full-app self-update's hosts\n  (`desktop.update.manifestUrl`'s, `desktop.update.ui.feedUrl`'s and `desktop.update.hosts`), and\n  `desktop.update.ui` adds the broad `--allow-write` its overlay needs. With `netSplit` (the\n  pinned runtime, 3.0.0-rc.2 or later) the network grant is baked by direction instead:\n  `--allow-net-connect` takes those outbound hosts, loopback and `extraPermissions.netConnect`,\n  `--allow-net-listen` only loopback and `extraPermissions.netListen` (any port: the app's server\n  picks one at launch), and `extraPermissions.net` / a sidecar's `net` go to both;\n- `desktop.extraPermissions` — the escape hatch for what the catalog can't see: the updater's\n  feed host (`net`) and data dir (`write`), an extension's own `run`/`ffi`, etc. It is UNIONED\n  in, and `--regenerate-scripts` preserves it because it lives in the config, not the script.\n- with `desktop.permissions: \"strict\"` on such a runtime (and `desktop.app.identifier`),\n  `--allow-read` scoped to the app's folders and the declared reads, and `--allow-env` to\n  {@linkcode DESKTOP_STRICT_RUNTIME_ENV} and the declared variables. Strict mode never falls back\n  to the unscoped grants: when it cannot be honoured ({@linkcode strictPermissionsProblem}) this\n  throws (unless `options.strictFallback`), and a read or variable entry it cannot scope always\n  throws.\nA capability's `read`/`env` is dropped (already broad in the baseline); a capability's `net`\n(only `downloadToFile`'s `*`) is dropped too — per-host download access is an `extraPermissions`\ngrant, never `*` baked in.",
           "params": [
             {
               "name": "config",
@@ -45237,7 +45358,7 @@
             },
             {
               "name": "options",
-              "doc": "netSplit: bake the network grant by direction."
+              "doc": "netSplit: bake the network grant by direction; cacheScope / dataScope: the runtime expands the folder tokens (default: the pinned runtime's); strictFallback: see DesktopBuildFlagOptions.strictFallback."
             }
           ],
           "returns": "The flags, ready to splice into the deno desktop argv (never -A).",
@@ -45273,6 +45394,12 @@
               "name": "icons",
               "signature": "readonly icons: readonly string[]",
               "doc": "Candidate icon paths; the first that exists is passed as `--icon` when neither\n`denext.config.ts` nor deno.json sets `desktop.app.icons.<os>` (see {@linkcode desktopIconArgs})."
+            },
+            {
+              "kind": "property",
+              "name": "treeManifest",
+              "signature": "readonly treeManifest?: boolean",
+              "doc": "Windows: write the tree manifest into the bundle's `.exe` as the bundle's last file (default\n`true`, for package scripts from before {@linkcode stampDesktopWindowsBundle}). The current\n`package-windows.ts` passes `false` and calls {@linkcode stampDesktopWindowsBundle} after the\nVC++ runtime's DLLs land, so the manifest lists them even when the bundle is not signed."
             }
           ]
         },
@@ -45317,6 +45444,12 @@
               "name": "perWindow",
               "signature": "readonly perWindow?: boolean",
               "doc": "The capability keeps per-page state for each window (keyed by\n{@linkcode DesktopCapCtx.windowId}), so {@linkcode DesktopCapability.onPageLoad} is called for\nevery window's page loads, not just the main window's."
+            },
+            {
+              "kind": "property",
+              "name": "setup",
+              "signature": "readonly setup?: (host: DesktopExtensionHost) => void",
+              "doc": "Called once, when the app's bridge starts (before any page can call), with the\n{@linkcode DesktopExtensionHost}: the extension's own process-level `emit` (scoped to its\ndeclared {@linkcode DesktopCapability.events}) and `pickedPath`. Keep the host in a module\nvariable so work started outside a method call — by `desktop.ts`, a tray menu, a timer — can\nstream to the page. An error it throws is logged, never surfaced."
             }
           ]
         },
@@ -45409,8 +45542,14 @@
             {
               "kind": "method",
               "name": "emit",
-              "signature": "emit(event: string, data: unknown): void",
-              "doc": "Push an event to the page's event stream. `event` must be one the capability declared in\n{@linkcode DesktopCapability.events}; emitting an undeclared event throws."
+              "signature": "emit(event: string, data: unknown, options?: DesktopEmitOptions): void",
+              "doc": "Push an event to the pages' event stream: every window's, or only `options.window`'s. `event`\nmust be one the capability declared in {@linkcode DesktopCapability.events}; emitting an\nundeclared event throws. Events are retained for replay, so a page that subscribes later still\nreceives it. For work that outlives the call (or that no page call started), use the\n{@linkcode DesktopExtensionHost} {@linkcode DesktopCapability.setup} receives."
+            },
+            {
+              "kind": "method",
+              "name": "pickedPath",
+              "signature": "pickedPath(handle: unknown, options?: DesktopPickedPathOptions): string",
+              "doc": "The absolute host path of a file or folder the USER picked in this launch: a `handle` that a\nnative dialog (`pickDocument`, `openFile`, `saveFile`, `pickFolder`), a file dropped on a window\nor a file the OS opened with the app produced. Use it to hand a picked file to a host program\n(a CLI tool) that needs its path. Anything else — a path string, a forged or expired handle —\nthrows a `forbidden` {@linkcode DesktopCapError}, so page script cannot turn a string of its\nchoosing into a host path. With `{ write: true }` a read-only handle (an opened or dropped\nfile) is refused too. Never send the returned path back to the page."
             },
             {
               "kind": "method",
@@ -45557,6 +45696,26 @@
           "denextOnly": true
         },
         {
+          "name": "DesktopEmitOptions",
+          "slug": "DesktopEmitOptions",
+          "kind": "interface",
+          "signature": "interface DesktopEmitOptions",
+          "doc": "Where an event goes: DesktopCapCtx.emit, DesktopExtensionHost.emit.",
+          "docFull": "Where an event goes: {@linkcode DesktopCapCtx.emit}, {@linkcode DesktopExtensionHost.emit}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "window",
+              "signature": "readonly window?: string",
+              "doc": "The one window the event is for (`\"main\"`, `\"panel\"`, or an id `openWindow` returned); every\nwindow's stream when omitted."
+            }
+          ]
+        },
+        {
           "name": "DesktopEventLog",
           "slug": "DesktopEventLog",
           "kind": "class",
@@ -45639,6 +45798,44 @@
           "returns": "",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "DesktopExtensionHost",
+          "slug": "DesktopExtensionHost",
+          "kind": "interface",
+          "signature": "interface DesktopExtensionHost",
+          "doc": "What an extension's DesktopCapability.setup receives once, when the app starts: the process-level counterpart of DesktopCapCtx, for work the extension (or desktop.ts) starts on its own — a tray-started job, a file watcher — that streams to the page with no page call in flight. Keep it at module scope and use it for the life of the app.",
+          "docFull": "What an extension's {@linkcode DesktopCapability.setup} receives once, when the app starts: the\nprocess-level counterpart of {@linkcode DesktopCapCtx}, for work the extension (or `desktop.ts`)\nstarts on its own — a tray-started job, a file watcher — that streams to the page with no page\ncall in flight. Keep it at module scope and use it for the life of the app.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "appSupportDir",
+              "signature": "readonly appSupportDir: string",
+              "doc": "The OS per-app support directory (create-on-first-use); durable across launches."
+            },
+            {
+              "kind": "property",
+              "name": "os",
+              "signature": "readonly os: \"darwin\" | \"windows\" | \"linux\"",
+              "doc": "The running OS."
+            },
+            {
+              "kind": "method",
+              "name": "emit",
+              "signature": "emit(event: string, data: unknown, options?: DesktopEmitOptions): void",
+              "doc": "Push an event to the pages' streams (every window's, or `options.window`'s). `event` must be\none the capability declared in {@linkcode DesktopCapability.events}; an undeclared one throws.\nEvents are retained for replay: one emitted before any page subscribes is delivered to the\nfirst `onDesktopEvent` subscriber, as with {@linkcode DesktopCapCtx.emit}."
+            },
+            {
+              "kind": "method",
+              "name": "pickedPath",
+              "signature": "pickedPath(handle: unknown, options?: DesktopPickedPathOptions): string",
+              "doc": "The same lookup as {@linkcode DesktopCapCtx.pickedPath}."
+            }
+          ]
         },
         {
           "name": "desktopHasTool",
@@ -46043,6 +46240,12 @@
             },
             {
               "kind": "property",
+              "name": "backgroundThrottling",
+              "signature": "readonly backgroundThrottling?: boolean",
+              "doc": "`false`: its page keeps its timers' rate while the window is not on screen (Electron's\n`backgroundThrottling`; default `true`, throttled, never frozen). Creation time only; runtime\n3.0.0-denext.8 (an older one ignores it)."
+            },
+            {
+              "kind": "property",
               "name": "show",
               "signature": "readonly show?: boolean",
               "doc": "Show it once created (default `true`)."
@@ -46208,7 +46411,7 @@
           "name": "desktopPackageMeta",
           "slug": "desktopPackageMeta-fn",
           "kind": "function",
-          "signature": "desktopPackageMeta(entryUrl: string, fallbackName: string): Promise<DesktopPackageMeta>",
+          "signature": "desktopPackageMeta(entryUrl: string, fallbackName: string, os?: DesktopOs): Promise<DesktopPackageMeta>",
           "doc": "packageMetaFrom for the project whose scripts/ holds entryUrl.",
           "docFull": "{@linkcode packageMetaFrom} for the project whose `scripts/` holds `entryUrl`.",
           "params": [
@@ -46219,6 +46422,10 @@
             {
               "name": "fallbackName",
               "doc": "The name to use when deno.json names no app."
+            },
+            {
+              "name": "os",
+              "doc": "The target OS, for a per-OS desktop.backend (default: the host's)."
             }
           ],
           "returns": "The metadata.",
@@ -46289,7 +46496,7 @@
               "kind": "property",
               "name": "backend",
               "signature": "readonly backend: string",
-              "doc": "The `deno desktop` backend (`\"webview\"` unless deno.json `desktop.backend` says otherwise)."
+              "doc": "The `deno desktop` backend of the target OS: `desktop.backend` in `denext.config.ts` (one\nengine, or per OS), else deno.json's, else `\"webview\"`."
             },
             {
               "kind": "property",
@@ -46422,6 +46629,26 @@
           ]
         },
         {
+          "name": "DesktopPickedPathOptions",
+          "slug": "DesktopPickedPathOptions",
+          "kind": "interface",
+          "signature": "interface DesktopPickedPathOptions",
+          "doc": "Options for DesktopCapCtx.pickedPath.",
+          "docFull": "Options for {@linkcode DesktopCapCtx.pickedPath}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "write",
+              "signature": "readonly write?: boolean",
+              "doc": "The caller will write to the path: a read-only handle (an opened or dropped file) is refused."
+            }
+          ]
+        },
+        {
           "name": "DesktopProxyFn",
           "slug": "DesktopProxyFn",
           "kind": "typeAlias",
@@ -46463,8 +46690,8 @@
           "slug": "desktopRun",
           "kind": "function",
           "signature": "desktopRun(cmd: string[], env?: Record<string, string>, options?: DesktopRunOptions): Promise<void>",
-          "doc": "Run a command with inherited stdio; throws on a non-zero exit. The error names the command line with every DesktopRunOptions.secrets value redacted.",
-          "docFull": "Run a command with inherited stdio; throws on a non-zero exit. The error names the command\nline with every {@linkcode DesktopRunOptions.secrets} value redacted.",
+          "doc": "Run a command with inherited stdio; throws on a non-zero exit. The error names the command line with every DesktopRunOptions.secrets value redacted. A deno command runs on this script's own Deno (Deno.execPath()), not the first deno on PATH.",
+          "docFull": "Run a command with inherited stdio; throws on a non-zero exit. The error names the command\nline with every {@linkcode DesktopRunOptions.secrets} value redacted. A `deno` command runs on\nthis script's own Deno (`Deno.execPath()`), not the first `deno` on PATH.",
           "params": [
             {
               "name": "cmd",
@@ -46566,8 +46793,8 @@
             {
               "kind": "method",
               "name": "emit",
-              "signature": "emit(cap: string, event: string, data: unknown): void",
-              "doc": "Push an event to the page (`cap` need not be a registered capability's). Events are retained\nfor replay, so one emitted before the page subscribes is still delivered."
+              "signature": "emit(cap: string, event: string, data: unknown, options?: DesktopEmitOptions): void",
+              "doc": "Push an event to the pages (`cap` need not be a registered capability's): every window's, or\nonly `options.window`'s. Events are retained for replay, so one emitted before the page\nsubscribes is still delivered. An extension module reaches the same stream without this\nhandle through its {@linkcode DesktopCapability.setup} host."
             },
             {
               "kind": "method",
@@ -46671,7 +46898,7 @@
           "kind": "function",
           "signature": "desktopSignWindows(files: readonly string[], deps?: DesktopSignWindowsDeps): Promise<boolean>",
           "doc": "Authenticode-sign files with the certificate in DENEXT_WINDOWS_CERT (password DENEXT_WINDOWS_CERT_PASSWORD), else the certificate store's DENEXT_WINDOWS_CERT_THUMBPRINT, timestamped by DENEXT_SIGN_TIMESTAMP_URL, batched a few dozen files per signtool sign call. Without a certificate nothing is signed and a warning says so. With one but without signtool (off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the script's --no-sign builds unsigned on purpose. The password, which signtool takes only as /p, never reaches its command line: a password-protected .pfx is imported into the user's certificate store for the run and signed with by thumbprint (withSigntoolCertificate).",
-          "docFull": "Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password\n`DENEXT_WINDOWS_CERT_PASSWORD`), else the certificate store's `DENEXT_WINDOWS_CERT_THUMBPRINT`,\ntimestamped by `DENEXT_SIGN_TIMESTAMP_URL`, batched a few dozen files per `signtool sign` call.\nWithout a certificate nothing is signed and a warning says so. With one but without `signtool`\n(off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the\nscript's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as\n`/p`, never reaches its command line: a password-protected `.pfx` is imported into the user's\ncertificate store for the run and signed with by thumbprint ({@linkcode withSigntoolCertificate}).",
+          "docFull": "Authenticode-sign `files` with the certificate in `DENEXT_WINDOWS_CERT` (password\n`DENEXT_WINDOWS_CERT_PASSWORD`), else the certificate store's `DENEXT_WINDOWS_CERT_THUMBPRINT`,\ntimestamped by `DENEXT_SIGN_TIMESTAMP_URL`, batched a few dozen files per `signtool sign` call.\nWithout a certificate nothing is signed and a warning says so. With one but without `signtool`\n(off Windows, or no Windows SDK) it throws instead of letting the run ship an unsigned app: the\nscript's `--no-sign` builds unsigned on purpose. The password, which signtool takes only as\n`/p`, never reaches its command line: a password-protected `.pfx` is imported into the user's\ncertificate store for the run and signed with by thumbprint ({@linkcode withSigntoolCertificate}).\n\nAn executable among `files` that carries a tree manifest ({@linkcode stampDesktopTreeManifest})\nis signed last: every other file is signed first, the manifest is written again so it lists the\nother PE images as signed, and then the executable is signed, whatever order the caller listed\nthe files in. (The manifest lists every file of the bundle but the executable, DLLs included;\nsigning a DLL after the manifest was written would make the installed app refuse the update.)",
           "params": [
             {
               "name": "files",
@@ -46746,6 +46973,37 @@
           "returns": "The slug (\"app\" when nothing usable remains).",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "DesktopStrictPermissionsError",
+          "slug": "DesktopStrictPermissionsError",
+          "kind": "class",
+          "signature": "class DesktopStrictPermissionsError extends Error",
+          "doc": "desktop.permissions: \"strict\" could not be honoured or scoped (the message names the reason and the fix). The generated package scripts print it as one line, not a stack trace.",
+          "docFull": "`desktop.permissions: \"strict\"` could not be honoured or scoped (the message names the reason and\nthe fix). The generated package scripts print it as one line, not a stack trace.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "constructor",
+              "name": "constructor",
+              "signature": "constructor(message: string)",
+              "doc": "Build the refusal.",
+              "params": [
+                {
+                  "name": "message",
+                  "doc": "The refusal, with the fix."
+                }
+              ]
+            }
+          ],
+          "extends": [
+            {
+              "type": "Error"
+            }
+          ]
         },
         {
           "name": "desktopToolGate",
@@ -47087,6 +47345,172 @@
               "name": "menu",
               "signature": "readonly menu?: readonly unknown[] | null",
               "doc": "The menu."
+            }
+          ]
+        },
+        {
+          "name": "DesktopTreeFile",
+          "slug": "DesktopTreeFile",
+          "kind": "interface",
+          "signature": "interface DesktopTreeFile",
+          "doc": "One listed file: its path relative to the bundle directory (/-separated), size and SHA-256.",
+          "docFull": "One listed file: its path relative to the bundle directory (`/`-separated), size and SHA-256.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "path",
+              "signature": "readonly path: string",
+              "doc": "Relative to the bundle directory, `/`-separated."
+            },
+            {
+              "kind": "property",
+              "name": "size",
+              "signature": "readonly size: number",
+              "doc": "Its size in bytes."
+            },
+            {
+              "kind": "property",
+              "name": "sha256",
+              "signature": "readonly sha256: string",
+              "doc": "Lowercase hex."
+            }
+          ]
+        },
+        {
+          "name": "DesktopTreeIdentity",
+          "slug": "DesktopTreeIdentity",
+          "kind": "interface",
+          "signature": "interface DesktopTreeIdentity",
+          "doc": "The app a manifest is written for: the runtime refuses a manifest for another app or version.",
+          "docFull": "The app a manifest is written for: the runtime refuses a manifest for another app or version.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "appId",
+              "signature": "readonly appId: string",
+              "doc": "`desktop.app.identifier` (the installed app's, as compiled into it)."
+            },
+            {
+              "kind": "property",
+              "name": "version",
+              "signature": "readonly version: string",
+              "doc": "The app's version (deno.json `version`: the version the update offers)."
+            }
+          ]
+        },
+        {
+          "name": "desktopTreeManifest",
+          "slug": "desktopTreeManifest-fn",
+          "kind": "function",
+          "signature": "desktopTreeManifest(dir: string, exe: string, identity: DesktopTreeIdentity): Promise<DesktopTreeManifest>",
+          "doc": "The manifest of a Windows bundle directory for identity: every regular file but the executable exe (the manifest's carrier, which cannot hold its own hash: its signature is its check), PE images included, sorted by path.",
+          "docFull": "The manifest of a Windows bundle directory for `identity`: every regular file but the executable\n`exe` (the manifest's carrier, which cannot hold its own hash: its signature is its check), PE\nimages included, sorted by path.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            },
+            {
+              "name": "exe",
+              "doc": "The executable's name inside it (<App>.exe)."
+            },
+            {
+              "name": "identity",
+              "doc": "The app and version the manifest is for."
+            }
+          ],
+          "returns": "The manifest.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTreeManifest",
+          "slug": "DesktopTreeManifest-iface",
+          "kind": "interface",
+          "signature": "interface DesktopTreeManifest extends DesktopTreeIdentity",
+          "doc": "The manifest's JSON shape (version 1).",
+          "docFull": "The manifest's JSON shape (version 1).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "v",
+              "signature": "readonly v: 1",
+              "doc": "The format version."
+            },
+            {
+              "kind": "property",
+              "name": "files",
+              "signature": "readonly files: readonly DesktopTreeFile[]",
+              "doc": "Every listed file."
+            }
+          ],
+          "extends": [
+            {
+              "type": "DesktopTreeIdentity",
+              "ref": "denext-desktop/DesktopTreeIdentity"
+            }
+          ]
+        },
+        {
+          "name": "desktopTreeManifestProblem",
+          "slug": "desktopTreeManifestProblem-fn",
+          "kind": "function",
+          "signature": "desktopTreeManifestProblem(dir: string, exe: string, identity?: DesktopTreeIdentity): Promise<DesktopTreeManifestProblem | undefined>",
+          "doc": "Why a Windows bundle's files no longer match its executable's tree manifest (the runtime would refuse it as an update), or why the manifest is not for identity when one is given, or undefined when all is well. A bundle whose executable carries no manifest is reported with unlisted: true: its other files would be protected by the update key alone, and an installed app that has a manifest refuses it.",
+          "docFull": "Why a Windows bundle's files no longer match its executable's tree manifest (the runtime would\nrefuse it as an update), or why the manifest is not for `identity` when one is given, or\n`undefined` when all is well. A bundle whose executable carries no manifest is reported with\n`unlisted: true`: its other files would be protected by the update key alone, and an installed\napp that has a manifest refuses it.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            },
+            {
+              "name": "exe",
+              "doc": "The executable's name inside it."
+            },
+            {
+              "name": "identity",
+              "doc": "The app and version the manifest must be for (when known)."
+            }
+          ],
+          "returns": "The problem, if any.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "DesktopTreeManifestProblem",
+          "slug": "DesktopTreeManifestProblem-iface",
+          "kind": "interface",
+          "signature": "interface DesktopTreeManifestProblem",
+          "doc": "Why a bundle's files don't match its executable's tree manifest.",
+          "docFull": "Why a bundle's files don't match its executable's tree manifest.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "problem",
+              "signature": "readonly problem: string",
+              "doc": "What differs."
+            },
+            {
+              "kind": "property",
+              "name": "unlisted",
+              "signature": "readonly unlisted: boolean",
+              "doc": "`true` when the executable carries no manifest at all (packaged before the manifest)."
             }
           ]
         },
@@ -47537,6 +47961,27 @@
           "denextOnly": true
         },
         {
+          "name": "embedDesktopTreeManifest",
+          "slug": "embedDesktopTreeManifest",
+          "kind": "function",
+          "signature": "embedDesktopTreeManifest(pe: Uint8Array, manifest: DesktopTreeManifest): Uint8Array",
+          "doc": "pe with manifest as its RT_RCDATA DENEXT_TREE resource (replacing one it has), every other resource kept. Any Authenticode signature is dropped: sign after this.",
+          "docFull": "`pe` with `manifest` as its `RT_RCDATA` `DENEXT_TREE` resource (replacing one it has), every\nother resource kept. Any Authenticode signature is dropped: sign after this.",
+          "params": [
+            {
+              "name": "pe",
+              "doc": "The executable's bytes."
+            },
+            {
+              "name": "manifest",
+              "doc": "The manifest to embed."
+            }
+          ],
+          "returns": "The new executable's bytes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "injectDesktopGlobal",
           "slug": "injectDesktopGlobal",
           "kind": "function",
@@ -47825,6 +48270,22 @@
             },
             {
               "kind": "method",
+              "name": "path",
+              "signature": "path(handle: unknown, write?: boolean): string",
+              "doc": "The absolute real path a handle names: the file or folder the user picked. Only a handle this\nset issued resolves; any other value (a path string, a forged or expired handle) throws\n`forbidden`, and with `write` a read-only handle does too. For the Deno side only (an\nextension's `ctx.pickedPath`): the path is never sent to the page.",
+              "params": [
+                {
+                  "name": "handle",
+                  "doc": "The opaque handle from a dialog, a drop or an opened file."
+                },
+                {
+                  "name": "write",
+                  "doc": "Whether the caller writes to it (refused for a read-only handle)."
+                }
+              ]
+            },
+            {
+              "kind": "method",
               "name": "resolve",
               "signature": "resolve(handle: unknown, rel: string, write: boolean): Promise<PickedTarget>",
               "doc": "Resolve `(handle, rel)` to a confined absolute {@link PickedTarget} for the requested access, or\nthrow `forbidden` for an unknown/expired handle, a write to a read-only handle, or a relative\npath on a single-file handle.",
@@ -47996,6 +48457,23 @@
           "docFull": "The lazily-imported reverse-proxy module ({@link ./dev-proxy.ts}) {@linkcode createDesktopHandler}\nforwards to when a backend proxy is configured; exported so the handler's signature is public.",
           "params": [],
           "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "readDesktopTreeManifest",
+          "slug": "readDesktopTreeManifest",
+          "kind": "function",
+          "signature": "readDesktopTreeManifest(pe: Uint8Array): DesktopTreeManifest | null",
+          "doc": "The DENEXT_TREE manifest an executable carries, or null when it has none.",
+          "docFull": "The `DENEXT_TREE` manifest an executable carries, or `null` when it has none.",
+          "params": [
+            {
+              "name": "pe",
+              "doc": "The executable's bytes."
+            }
+          ],
+          "returns": "The manifest.",
           "examples": [],
           "denextOnly": true
         },
@@ -48301,6 +48779,23 @@
               "doc": "`desktop.sidecars` from the config (from {@link resolveDesktopCapabilities}); {@link sidecars}\nis laid over it."
             }
           ]
+        },
+        {
+          "name": "runDesktopPackageMain",
+          "slug": "runDesktopPackageMain",
+          "kind": "function",
+          "signature": "runDesktopPackageMain(main: () => Promise<void>): Promise<void>",
+          "doc": "Run a package script's main, printing a desktop.permissions: \"strict\" refusal (DesktopStrictPermissionsError) as its one-line message and exiting 1. Any other error keeps its stack.",
+          "docFull": "Run a package script's `main`, printing a `desktop.permissions: \"strict\"` refusal\n({@linkcode DesktopStrictPermissionsError}) as its one-line message and exiting 1. Any other error\nkeeps its stack.",
+          "params": [
+            {
+              "name": "main",
+              "doc": "The script's entry point."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "shouldInjectDesktopToken",
@@ -48912,6 +49407,52 @@
               "doc": "Runs the removal from a signal handler (default: the process, synchronously)."
             }
           ]
+        },
+        {
+          "name": "stampDesktopTreeManifest",
+          "slug": "stampDesktopTreeManifest",
+          "kind": "function",
+          "signature": "stampDesktopTreeManifest(dir: string, exe: string, identity: DesktopTreeIdentity): Promise<DesktopTreeManifest>",
+          "doc": "Write the tree manifest of a finished Windows bundle into its executable. Run it once nothing else will be written into the bundle (after the VC++ runtime and laufey-launch.json) and once every other PE image is signed as it ships (the manifest lists their bytes), and before the executable is signed: its Authenticode signature then covers every file of the app. desktopSignWindows runs it again between signing the DLLs and the executable, so a bundle stamped before signing (as buildDesktopBundle does) ends up right whatever the order.",
+          "docFull": "Write the tree manifest of a finished Windows bundle into its executable. Run it once nothing\nelse will be written into the bundle (after the VC++ runtime and `laufey-launch.json`) and once\nevery other PE image is signed as it ships (the manifest lists their bytes), and before the\nexecutable is signed: its Authenticode signature then covers every file of the app.\n`desktopSignWindows` runs it again between signing the DLLs and the executable, so a bundle\nstamped before signing (as `buildDesktopBundle` does) ends up right whatever the order.",
+          "params": [
+            {
+              "name": "dir",
+              "doc": "The bundle directory."
+            },
+            {
+              "name": "exe",
+              "doc": "The executable's name inside it (<App>.exe)."
+            },
+            {
+              "name": "identity",
+              "doc": "The app and version the manifest is for."
+            }
+          ],
+          "returns": "The manifest written.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "stampDesktopWindowsBundle",
+          "slug": "stampDesktopWindowsBundle",
+          "kind": "function",
+          "signature": "stampDesktopWindowsBundle(entryUrl: string, dir: string): Promise<void>",
+          "doc": "Write the tree manifest of a finished Windows bundle into its .exe (stampDesktopTreeManifest, for the app's identifier and version): the package script's last write to the bundle before it signs it, after the VC++ runtime's DLLs are copied in, so an unsigned bundle (--no-sign, no DENEXT_WINDOWS_CERT) carries a manifest that lists every file it ships and denext desktop publish-update takes it. desktopSignWindows writes it again with the signed DLLs' bytes before it signs the .exe. Without desktop.app.identifier no manifest is written (the full-app updater needs one).",
+          "docFull": "Write the tree manifest of a finished Windows bundle into its `.exe`\n({@linkcode stampDesktopTreeManifest}, for the app's identifier and version): the package\nscript's last write to the bundle before it signs it, after the VC++ runtime's DLLs are copied\nin, so an unsigned bundle (`--no-sign`, no `DENEXT_WINDOWS_CERT`) carries a manifest that lists\nevery file it ships and `denext desktop publish-update` takes it. {@linkcode desktopSignWindows}\nwrites it again with the signed DLLs' bytes before it signs the `.exe`. Without\n`desktop.app.identifier` no manifest is written (the full-app updater needs one).",
+          "params": [
+            {
+              "name": "entryUrl",
+              "doc": "import.meta.url of the script."
+            },
+            {
+              "name": "dir",
+              "doc": "The bundle directory (buildDesktopBundle with treeManifest: false)."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         },
         {
           "name": "stopSidecars",
@@ -51197,8 +51738,8 @@
           "slug": "onBeforeQuit",
           "kind": "function",
           "signature": "onBeforeQuit(handler: BeforeQuitHandler): () => void",
-          "doc": "Ask before the app quits (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu), like Electron's before-quit: the quit goes on unless a handler returns (or resolves) false. Plain closes of this window are not held. The before-quit handlers run before the onCloseRequested ones (which get reason: \"quit\"); a refusal here asks no close handler. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role is not asked. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called.",
-          "docFull": "Ask before the app quits ({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows\ntray menu), like Electron's `before-quit`: the quit goes on unless a handler returns (or\nresolves) `false`. Plain closes of this window are not held. The before-quit handlers run before\nthe {@linkcode onCloseRequested} ones (which get `reason: \"quit\"`); a refusal here asks no close\nhandler. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role is not asked.\nNeeds denext's pinned runtime (`closeGuard` in {@linkcode windowCapabilities}); elsewhere the\nhandler is never called.",
+          "doc": "Ask before the app quits (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu), like Electron's before-quit: the quit goes on unless a handler returns (or resolves) false. Plain closes of this window are not held. The before-quit handlers run before the onCloseRequested ones (which get reason: \"quit\"); a refusal here asks no close handler. From runtime 3.0.0-denext.8 the OS's own quits ask too (Cmd+Q, the Dock's Quit and a logout on macOS, the session ending on Windows), within the deadlines onCloseRequested lists; on an older runtime Cmd+Q is not asked. macOS takes no input for the app while a session end is pending, so answer it without asking the user. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called.",
+          "docFull": "Ask before the app quits ({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows\ntray menu), like Electron's `before-quit`: the quit goes on unless a handler returns (or\nresolves) `false`. Plain closes of this window are not held. The before-quit handlers run before\nthe {@linkcode onCloseRequested} ones (which get `reason: \"quit\"`); a refusal here asks no close\nhandler. From runtime 3.0.0-denext.8 the OS's own quits ask too (Cmd+Q, the Dock's Quit and a logout\non macOS, the session ending on Windows), within the deadlines {@linkcode onCloseRequested} lists;\non an older runtime Cmd+Q is not asked. macOS takes no input for the app while a session end is\npending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in {@linkcode windowCapabilities}); elsewhere the\nhandler is never called.",
           "params": [
             {
               "name": "handler",
@@ -51216,8 +51757,8 @@
           "slug": "onCloseRequested",
           "kind": "function",
           "signature": "onCloseRequested(handler: CloseRequestHandler): () => void",
-          "doc": "Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu). The handler gets a CloseRequestEvent whose reason says which (\"close\" or \"quit\"), like Electron's before-quit + close pair: a close-to-tray window hides on a close and lets a quit through. While a handler is registered the runtime holds every close and calls the handlers; the window closes (or the quit goes on) unless one returns (or resolves) false. A page that stops answering cannot keep the window open: a close requested again after 5 seconds without an answer goes through. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role ends the app at once and is not asked. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called and the window closes.",
-          "docFull": "Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting\n({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows tray menu). The handler\ngets a {@linkcode CloseRequestEvent} whose `reason` says which (`\"close\"` or `\"quit\"`), like\nElectron's `before-quit` + `close` pair: a close-to-tray window hides on a close and lets a quit\nthrough. While a handler is registered the runtime holds every close and calls the handlers; the\nwindow closes (or the quit goes on) unless one returns (or resolves) `false`. A page that stops\nanswering cannot keep the window open: a close requested again after 5 seconds without an answer\ngoes through. Quitting from the macOS app menu (Cmd+Q) or a macOS tray menu's quit role ends the\napp at once and is not asked. Needs denext's pinned runtime (`closeGuard` in\n{@linkcode windowCapabilities}); elsewhere the handler is never called and the window closes.",
+          "doc": "Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting (quitApp, Deno.desktop.quit(), the Quit item of a Windows tray menu). The handler gets a CloseRequestEvent whose reason says which (\"close\" or \"quit\"), like Electron's before-quit + close pair: a close-to-tray window hides on a close and lets a quit through. While a handler is registered the runtime holds every close and calls the handlers; the window closes (or the quit goes on) unless one returns (or resolves) false. A page that stops answering cannot keep the window open: a close requested again after 5 seconds without an answer goes through. From runtime 3.0.0-denext.8 the OS's own quits ask too (reason: \"quit\"): Cmd+Q, the Dock's Quit and a logout on macOS, the session ending on Windows; on an older runtime Cmd+Q ends the app at once. The OS is never held for long: an unanswered quit goes ahead after 5 seconds, a session end after 10 (macOS) or 4 (Windows). macOS takes no input for the app while a session end is pending, so answer it without asking the user. Needs denext's pinned runtime (closeGuard in windowCapabilities); elsewhere the handler is never called and the window closes.",
+          "docFull": "Ask before the window closes: its close button, Cmd+W / Alt+F4, or the app quitting\n({@linkcode quitApp}, `Deno.desktop.quit()`, the Quit item of a Windows tray menu). The handler\ngets a {@linkcode CloseRequestEvent} whose `reason` says which (`\"close\"` or `\"quit\"`), like\nElectron's `before-quit` + `close` pair: a close-to-tray window hides on a close and lets a quit\nthrough. While a handler is registered the runtime holds every close and calls the handlers; the\nwindow closes (or the quit goes on) unless one returns (or resolves) `false`. A page that stops\nanswering cannot keep the window open: a close requested again after 5 seconds without an answer\ngoes through. From runtime 3.0.0-denext.8 the OS's own quits ask too (`reason: \"quit\"`): Cmd+Q, the\nDock's Quit and a logout on macOS, the session ending on Windows; on an older runtime Cmd+Q ends\nthe app at once. The OS is never held for long: an unanswered quit goes ahead after 5 seconds, a\nsession end after 10 (macOS) or 4 (Windows). macOS takes no input for the app while a session end\nis pending, so answer it without asking the user. Needs denext's pinned runtime (`closeGuard` in\n{@linkcode windowCapabilities}); elsewhere the handler is never called and the window closes.",
           "params": [
             {
               "name": "handler",
@@ -51454,6 +51995,12 @@
               "name": "overlay",
               "signature": "readonly overlay?: boolean",
               "doc": "A desktop overlay surface (runtime 3.0.0-denext.6): on a Wayland compositor with\nwlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) a layer above every window, on every\nworkspace and out of the task list, placed with `setBounds` (`layerShell` in\n{@linkcode windowCapabilities}); an ordinary window elsewhere."
+            },
+            {
+              "kind": "property",
+              "name": "backgroundThrottling",
+              "signature": "readonly backgroundThrottling?: boolean",
+              "doc": "What its page does while the window is not on screen (hidden, minimized or covered), like\nElectron's `webPreferences.backgroundThrottling`. `true` (the default): it keeps running with\nits timers slowed (about once a second on macOS); its events, messages and sockets are still\nhandled. `false`: its timers keep their rate, for a hidden window that does the app's\nbackground work. Creation time only; runtime 3.0.0-denext.8 (an older one ignores it, and on\nmacOS froze a page created hidden about a second after it loaded). The system WebView on\nWindows and Linux and the CEF backend throttle a hidden page without freezing it either way."
             },
             {
               "kind": "property",
@@ -51862,7 +52409,7 @@
               "doc": "icon: a PNG (base64) shown under the pointer; the OS's file icon by default."
             }
           ],
-          "returns": "\"dropped\" when a target took the files, \"cancelled\" when the user let go where nothing took them, \"failed\" when the drag never started (no button held, another drag running).",
+          "returns": "\"dropped\" when a target took the files, \"cancelled\" when the user let go where nothing took them, \"failed\" when the drag never started (no button held, another drag running; on Wayland also with the pointer off the app's windows, and always under CEF, where fileDragOut is false). \"failed\" is an outcome, not an error: it never rejects.",
           "examples": [
             "```ts\nimport { startFileDrag } from \"denext/desktop/window\";\n\nel.addEventListener(\"dragstart\", (e) => {\n  e.preventDefault();\n  void startFileDrag([{ directory: \"cache\", path: \"export/report.pdf\" }]);\n});\n```"
           ],
@@ -60428,7 +60975,7 @@
               "kind": "property",
               "name": "path",
               "signature": "readonly path?: string",
-              "doc": "The file's path, for display only: the picked copy natively, the file itself on desktop\n(a browser hides it)."
+              "doc": "The file's path, for display only: the picked copy natively, the file itself on desktop\n(a browser hides it). To hand the file to a desktop extension (a host program needs its\npath), send {@linkcode PickedDocument.handle} and resolve it there with `ctx.pickedPath`."
             },
             {
               "kind": "property",

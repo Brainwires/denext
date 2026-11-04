@@ -114,13 +114,6 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   keeps TypeScript 6 whatever the setting says, and a `deno.unstable` list in
   `.vscode/settings.json` that names other features but not `"tsgo-lsp"` keeps it for that
   project.
-- **The runtime's type-check leaves `.deno/npm-compat` in the project root** (3.0.0-rc.5 through
-  the pinned 3.0.0-denext.7). It holds
-  an npm-shaped copy of the `@jsr/*` packages, their `_test.ts` files included, and a later
-  `deno test` with default discovery would run those. A `denext create` project's `deno.json`
-  excludes `.deno/` (top-level `exclude`), as denext's own does; an older project adds
-  `"exclude": [".deno/"]` itself. A runtime issue, to be fixed in a later runtime by keeping the
-  copy out of the project. Planned before 5.0 (ROADMAP, "Before 5.0 / Runtime fork").
 - **On Windows, a closed console window, logoff or system shutdown cuts the drain short.**
   `denext start` begins its graceful shutdown on those events too, but Windows ends a console
   process as soon as Deno's console handler returns, which it does at once, so in-flight requests,
@@ -657,6 +650,11 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   work only for the RP IDs listed in `desktop.capabilities.passkeys.rpIds`, which the packaged
   launch file pins natively (`passkeyRpIds`); from runtime `3.0.0-denext.1` (`strictPolicy`) a
   missing or empty list refuses every ceremony with `invalid_rp`.
+- **The first macOS passkey request after login is slower:** about 0.5 s on Apple silicon and up to
+  2.5 s on Intel (measured on fresh CI machines), whatever the window backend. macOS starts its
+  AuthenticationServices agent on demand; later requests, from any app while the agent runs, start
+  in a few milliseconds. The page stays responsive. Don't put a short timeout on the first
+  ceremony, and show your own pending state if you start one without a user gesture.
 - **Notifications:** on Linux a click that starts a quit app and a scheduled notification posted
   while the app is closed need a `.deb` / `.rpm` install, xdg-desktop-portal 1.19+ and a systemd
   user manager; macOS shows them only from a signed bundle. A click's tag, action and `data` are
@@ -693,14 +691,23 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move
   its own window; CEF gets no paths from a file drop (use the webview backend).
+  `startFileDrag` resolves `"failed"` as a normal outcome with the pointer off the app's windows,
+  and always under CEF (`fileDragOut` is `false`). Under CEF the runtime's clipboard `change` event
+  doesn't fire where the compositor lacks data-control (`Deno.desktop.clipboard.capabilities()`
+  has `changeEvents: false`).
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
-- **The CEF backend is on Chromium 156.0.8078.48** (runtime 3.0.0-denext.7), without Chrome's fixes
-  from 156.0.8078.73 on (73 CVEs by Chrome's notes), which need a newer CEF 156 build and come with
-  the next runtime. Keep untrusted remote content out of app windows
+- **The CEF backend is on Chromium 156.0.8078.80** (CEF 156.0.15, runtime 3.0.0-denext.8). Chrome's
+  fixes released after that build reach CEF apps only with a later runtime, so CEF trails Chrome's
+  own security releases. Keep untrusted remote content out of app windows
   (`desktop.app.allowedNavigationOrigins`) or use a system web view; see
   [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj).
+- **A CEF app on an Intel Mac can crash when it quits** (runtime 3.0.0-denext.8): about once in
+  5,600 launches, Chromium's own teardown crashes after the app has finished. Profile writes still
+  in flight can be lost and macOS keeps a crash report; Apple silicon, the WebView backend and the
+  other OSes are not affected. The fix comes with the next runtime
+  ([details](https://denext.dev/docs/desktop#desktop-cef-macos-x64-quit)).
 - **CEF on Linux spellchecks seven languages out of the box** (runtime 2.9.7-denext.21): the
   runtime makes no network requests of its own, so it never downloads Hunspell dictionaries; it
   ships en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT. For any other language the app ships
@@ -709,7 +716,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):
   navigations and subresources arrive whole. Stream through `fetch` / `EventSource`, or use CEF.
 - **Overlay and tray-first windows depend on the OS for part of what they ask for.** With the
-  pinned runtime (3.0.0-denext.7): always-on-top levels above `"floating"` and
+  pinned runtime (3.0.0-denext.7 and later): always-on-top levels above `"floating"` and
   `visibleOnFullScreen` are macOS-only (Windows and Linux have one floating level); a transparent
   window is opaque on CEF; `overlay: true` is a layer surface only on a Wayland compositor with
   wlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) and with gtk-layer-shell installed, an
@@ -727,7 +734,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   and drops; keep-awake holds and global shortcuts are released only by the main window's reload.
   A runtime without window bindings treats every page as the main window's.
 - **Window and menu features differ per OS and backend** (title-bar styles and the Dock menu are
-  macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held; a badge is a
+  macOS-only, Mica/Acrylic Windows 11, no CEF backdrops; Cmd+Q can't be held before runtime 3.0.0-denext.8 (from it, a quit is held only up to a deadline, macOS takes no input while a session end is pending, and macOS ignores an accessory app's refusal of a logout); a badge is a
   window-title prefix on Windows, and on Linux too unless a dock reads launcher badges). Ask
   `windowCapabilities()` and `appCapabilities()`.
 - **macOS can hand your deep-link scheme to another app;** denext requires PKCE S256 and an exact
@@ -736,13 +743,18 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Installers need their OS's tools:** `.dmg` / `.pkg` on macOS (sign the `.pkg`), `.msi` needs
   WiX 5 on Windows, `.rpm` `rpmbuild`, AppImage `appimagetool`. No MSIX, Flatpak, Snap or Mac App
   Store build (each sandbox breaks per-app storage and deep-link registration).
-- **Permissions:** a packaged app keeps `--allow-read` / `--allow-env` unscoped, and a picked path
-  needs unscoped read/write (permissions bake at build time); FFI, Node-API addons and spawned OS
+- **Permissions:** by default a packaged app keeps `--allow-read` / `--allow-env` unscoped, and a
+  picked path needs unscoped read/write (permissions bake at build time). `desktop.permissions:
+  "strict"` (runtime 3.0.0-denext.8, `desktop.app.identifier`) scopes both, but refuses to package
+  an app that reads a picked path (`dialogs`), `$DOCUMENTS` or `"*"`, and its `--allow-env=<names>`
+  also lets app code set those names (`PATH`, `DENO_DIR`, … included), as the default does; FFI, Node-API addons and spawned OS
   tools are full trust; the bridge token is readable by any script in the page, so keep the
   strict CSP and enable only the capabilities you use. A program sidecar shipped in the app
   (`run: { exec: "./bin/…" }`) is baked an unscoped `--allow-run` and a broad `--allow-write`
-  (its copy in the app's cache folder has a per-user path); runtime 3.0.0-denext.8 scopes both to
-  that copy when the app sets `desktop.app.identifier`, from the denext release that pins it. Under
+  (its copy in the app's cache folder has a per-user path); with runtime 3.0.0-denext.8 and
+  `desktop.app.identifier` the write is scoped to the app's cache folder, but the run grant stays
+  unscoped: Deno denies writes to every `--allow-run` path, so a run grant on the copy would keep
+  the app from writing it. Under
   `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets only
   the permissions the app holds unscoped (no scoped grants, `--unstable-*` or `--config`).
 - **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime

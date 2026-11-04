@@ -7,8 +7,9 @@
 import { defineDesktopExtension, DesktopCapError } from "denext/desktop";
 import { denoHost } from "../lib/deno-host.ts";
 import type { HangarWindows } from "../lib/tray-driver.ts";
-import { createHangar, type Hangar, HangarError, parseSettings } from "../lib/hangar.ts";
-import { loadSettings, saveSettings } from "../lib/settings-file.ts";
+import { CHANGED_EVENT, createChangeNotifier } from "../lib/changes.ts";
+import { createHangar, type Hangar, HangarError } from "../lib/hangar.ts";
+import { loadSettings, savePageSettings } from "../lib/settings-file.ts";
 
 const host = denoHost();
 
@@ -31,6 +32,17 @@ export function hangarBackend(appSupportDir: string): Promise<Hangar> {
 }
 
 let windows: HangarWindows | undefined;
+
+const changes = createChangeNotifier();
+
+/**
+ * Tell the open pages the instances changed (a VM the tray started or stopped), so they refresh
+ * now instead of at their next poll. No page call is in flight then: the event goes through the
+ * host the extension's `setup` received, and a page that subscribes later still gets it.
+ */
+export function hangarChanged(): void {
+  changes.changed();
+}
 
 /** Hand the methods desktop.ts's window manager (`open` opens every full window through it). */
 export function setHangarWindows(manager: HangarWindows): void {
@@ -80,6 +92,9 @@ const ACTIONS = ["create", "apply", "delete"] as const;
 
 export default defineDesktopExtension({
   name: "hangar",
+  events: [CHANGED_EVENT],
+  // The extension's process-level host, for events no page call started (the tray's actions).
+  setup: (host) => changes.attach(host),
   methods: {
     overview: method((_a, h) => h.overview()),
     status: method((a, h) => h.status(str(a.id, "id"))),
@@ -150,11 +165,13 @@ export default defineDesktopExtension({
       },
     },
     getSettings: method((_a, h) => Promise.resolve(h.settings())),
+    // The page's settings are checked against what a PAGE may change (lib/page-settings.ts's
+    // PAGE_SETTINGS): unknown keys, the QEMU prefix and a RAM budget past the page's bound are
+    // refused, so page script cannot loosen what guards the host.
     setSettings: {
       handler: (raw: unknown, ctx: { appSupportDir: string }) =>
         call(ctx.appSupportDir, async (h) => {
-          const next = parseSettings(raw, h.settings());
-          await saveSettings(host, ctx.appSupportDir, next);
+          const next = await savePageSettings(host, ctx.appSupportDir, raw, h.settings());
           h.setSettings(next);
           return next;
         }),

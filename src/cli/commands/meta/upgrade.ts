@@ -30,6 +30,9 @@ export const upgradeMeta: CommandMeta = {
     'denext 5.0 clean-ups: "no-legacy-abort" leaves "unstable" (the runtime\'s default now), and\n' +
     "the desktop:package tasks create wrote before 5.0 (`deno run -A scripts/package-*.ts`) become\n" +
     "`denext desktop package` (a hand-edited one is reported, not rewritten).\n" +
+    "Native templates in ios/ / android/ older than this denext writes (`denext mobile add`'s\n" +
+    "files) are listed, --dry-run included, with the command that refreshes each (such as\n" +
+    "`denext mobile add auth-session`); upgrade never rewrites native files itself.\n" +
     "Upgrading the Deno binary itself is Deno's `deno upgrade`: `denext deno upgrade`.",
   positionals: [{ name: "dir", help: "Project directory (default: .)" }],
   flags: [
