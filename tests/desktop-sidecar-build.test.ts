@@ -5,7 +5,7 @@
 // `desktop add sidecar` config edit and the config validation.
 
 import { assert, assertEquals, assertMatch, assertThrows } from "@std/assert";
-import { join, normalize, toFileUrl } from "@std/path";
+import { fromFileUrl, join, normalize, relative, toFileUrl } from "@std/path";
 import {
   bundleDesktopSidecar,
   bundleDesktopSidecars,
@@ -25,7 +25,7 @@ import { desktopAppDirs } from "../src/desktop/app-dirs.ts";
 import { addDesktopSidecar } from "../src/build/desktop-sidecar-add.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
-import type { SidecarDefinition } from "../src/desktop/sidecar.ts";
+import { type SidecarDefinition, sidecarModuleUrl } from "../src/desktop/sidecar.ts";
 import { resolveSidecarProgram, workerSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
 import { prepareSidecarModules } from "../src/desktop/sidecar-modules.ts";
 
@@ -879,6 +879,46 @@ Deno.test("a nested entry: the --include, the recorded hash and the app's own re
       [`--allow-run=${grant("../app/bin/server")}`],
     );
   } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a nested entry: a module sidecar's module and a Node backend's bundle are embedded where the app loads them", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-nested-modules-" });
+  const log = console.log;
+  console.log = () => {};
+  try {
+    await writeTree(root, {
+      ...BACKEND,
+      "app/server/deno.ts": "export {};\n",
+      "server/deno.ts": "a different file at the root",
+    });
+    const deno: SidecarDefinition = { name: "deno", run: { module: "./server/deno.ts" } };
+    const config = { desktop: { sidecars: [SIDECAR, deno] } };
+    const args = await desktopSidecarIncludeArgs(root, config, "linux", "app/desktop.ts");
+    assertEquals(args, [
+      "--include",
+      "app/.deno-desktop/sidecars/api",
+      "--include",
+      "app/server/deno.ts",
+    ]);
+    // Each is the file the app loads: `sidecarModuleUrl` against `app/desktop.ts`'s URL.
+    const entryUrl = toFileUrl(join(root, "app", "desktop.ts")).href;
+    for (const def of [SIDECAR, deno]) {
+      const file = fromFileUrl(sidecarModuleUrl(def, entryUrl));
+      assert(await Deno.stat(file).then((s) => s.isFile, () => false), file);
+      const included = args.filter((_, i) => i % 2 === 1);
+      assert(
+        included.some((p) => !relative(join(root, p), file).startsWith("..")),
+        `${def.name}: ${file} is embedded (${included.join(" ")})`,
+      );
+    }
+    assertEquals(
+      await Deno.readTextFile(join(root, "app", ".deno-desktop", "sidecars", ".gitignore")),
+      "*\n",
+    );
+  } finally {
+    console.log = log;
     await Deno.remove(root, { recursive: true });
   }
 });

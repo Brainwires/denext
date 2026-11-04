@@ -240,6 +240,146 @@ Deno.test("desktop run / dev --entry app/desktop.ts: a program sidecar is the fi
   }
 });
 
+/** A project whose app entry is `app/desktop.ts`, with an extension, a module and a Node backend. */
+async function nestedProject(): Promise<{ dir: string; config: unknown }> {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_launch_nested_inc_" });
+  const files: Record<string, string> = {
+    "deno.json": "{}",
+    "desktop.ts": "",
+    "app/desktop.ts": "",
+    "app/ext.ts": "",
+    "app/worker/main.ts": "",
+    "srv/main.mjs": "console.log(1);\n",
+  };
+  for (const [rel, text] of Object.entries(files)) {
+    await Deno.mkdir(join(dir, rel, ".."), { recursive: true });
+    await Deno.writeTextFile(join(dir, rel), text);
+  }
+  await Deno.mkdir(join(dir, "srv", "node_modules"));
+  const config = {
+    desktop: {
+      app: { name: "My App", identifier: "com.example.app" },
+      capabilities: { extensions: ["./ext.ts", "jsr:@x/ext"] },
+      sidecars: [
+        { name: "worker", run: { module: "./worker/main.ts" } },
+        { name: "api", run: { module: "srv/main.mjs", nodeModules: "srv/node_modules" } },
+      ],
+    },
+  };
+  await Deno.writeTextFile(
+    join(dir, "denext.config.ts"),
+    `export default ${JSON.stringify(config)};\n`,
+  );
+  return { dir, config };
+}
+
+/** The `--include` values of `args`. */
+function includes(args: readonly string[]): string[] {
+  return args.flatMap((a, i) => args[i - 1] === "--include" ? [a] : []);
+}
+
+Deno.test("desktop run / dev --entry app/desktop.ts: an extension, a module sidecar and a Node backend's bundle are embedded where the app loads them", async () => {
+  const { dir, config } = await nestedProject();
+  const scratch = await desktopLaunchScratchDir(dir);
+  const log = console.log;
+  console.log = () => {};
+  try {
+    const plan = (entry: string, dev: boolean) =>
+      desktopLaunchBuildPlan({
+        projectDir: dir,
+        config,
+        os: "linux",
+        denoFlags: [],
+        entry,
+        appEntry: "app/desktop.ts",
+        dev,
+        scratch,
+      });
+    // What the app loads, resolved as it resolves them against `app/desktop.ts`'s URL.
+    const base = toFileUrl(join(dir, "app", "desktop.ts")).href;
+    const fromApp = (spec: string) =>
+      new URL(spec, base).href.slice(toFileUrl(dir).href.length + 1);
+    const want = [
+      fromApp("./ext.ts"),
+      "jsr:@x/ext",
+      fromApp("./.deno-desktop/sidecars/api"),
+      fromApp("./worker/main.ts"),
+    ];
+    assertEquals(want, [
+      "app/ext.ts",
+      "jsr:@x/ext",
+      "app/.deno-desktop/sidecars/api",
+      "app/worker/main.ts",
+    ]);
+    const check = (got: string[], what: string) => {
+      assert(got.includes("app/ext.ts"), `${what}: the extension (${got.join(" ")})`);
+      assert(got.includes("app/worker/main.ts"), `${what}: the module sidecar (${got.join(" ")})`);
+      assert(
+        got.includes("app/.deno-desktop/sidecars/api"),
+        `${what}: the Node backend's bundle (${got.join(" ")})`,
+      );
+    };
+    // `desktop run` compiles the entry itself.
+    const run = includes((await plan("app/desktop.ts", false)).args);
+    check(run, "desktop run");
+    assertEquals(run, ["out", ...want]);
+    // The bundle is on disk where the app loads it.
+    const main = join(dir, "app", ".deno-desktop", "sidecars", "api", "main.mjs");
+    assert(await Deno.stat(main).then(() => true, () => false), main);
+    // `desktop dev` compiles the generated entry, which imports `app/desktop.ts`.
+    const entry = await writeDesktopDevEntry(dir, join(dir, ".denext"), "app/desktop.ts");
+    const dev = includes((await plan(entry, true)).args);
+    check(dev, "desktop dev");
+    assertEquals(dev, want);
+  } finally {
+    console.log = log;
+    await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop run / dev: an entry at the project root gets the same flags and includes as before", async () => {
+  const { dir, config } = await nestedProject();
+  const scratch = await desktopLaunchScratchDir(dir);
+  const log = console.log;
+  console.log = () => {};
+  try {
+    const plan = (entry: string, dev: boolean, appEntry?: string) =>
+      desktopLaunchBuildPlan({
+        projectDir: dir,
+        config,
+        os: "linux",
+        denoFlags: [],
+        entry,
+        ...(appEntry === undefined ? {} : { appEntry }),
+        dev,
+        scratch,
+      });
+    const run = (await plan("desktop.ts", false)).args;
+    // Every path as written in the config, the bundle in the project's `.deno-desktop/`.
+    assertEquals(includes(run), [
+      "out",
+      "./ext.ts",
+      "jsr:@x/ext",
+      ".deno-desktop/sidecars/api",
+      "./worker/main.ts",
+    ]);
+    assertEquals((await plan("desktop.ts", false, "desktop.ts")).args, run);
+    assertEquals((await plan("desktop.ts", false, "./desktop.ts")).args, run);
+    const entry = await writeDesktopDevEntry(dir, join(dir, ".denext"), "desktop.ts");
+    const dev = (await plan(entry, true, "desktop.ts")).args;
+    assertEquals(includes(dev), includes(run).slice(1));
+    assertEquals(
+      dev.filter((a) => a.startsWith("--allow-")),
+      run.filter((a) => a.startsWith("--allow-")),
+    );
+  } finally {
+    console.log = log;
+    await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test('desktop run / dev: a "strict" that cannot be honoured warns loudly and bakes the default (packaging refuses it)', async () => {
   const { dir } = await project();
   const scratch = await desktopLaunchScratchDir(dir);

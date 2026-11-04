@@ -3339,7 +3339,13 @@ const stream = await navigator.mediaDevices.getUserMedia({ audio: true });`}
         <code>desktop.capabilities.extensions</code>, then call it from the page through{" "}
         <code>denext/desktop/client</code>. The page half (<code>desktopExtension</code>,{" "}
         <code>onDesktopEvent</code>) is in <code>denext/desktop/client</code>;{" "}
-        <code>defineDesktopExtension</code> is exported from <code>denext/desktop</code>:
+        <code>defineDesktopExtension</code> is exported from{" "}
+        <code>denext/desktop</code>. A relative path (<code>
+          "./desktop/extensions/scanner.ts"
+        </code>) is resolved from the folder of the entry that calls{" "}
+        <code>resolveDesktopCapabilities</code> (the project root for{" "}
+        <code>desktop.ts</code>, which packaging compiles; <code>app/</code> for{" "}
+        <code>denext desktop run --entry app/desktop.ts</code>), and that is the file embedded:
       </p>
       <Code lang="tsx">
         {`// desktop/extensions/scanner.ts: runs in the Deno process only
@@ -3584,12 +3590,15 @@ export default defineDesktopExtension({
           <code>run: {"{ module }"}</code> runs a module{" "}
           <strong>inside the app&apos;s own Deno runtime</strong>, in a dedicated worker with Node
           compatibility. No second binary ships (a Deno CLI would add about 100 MB), and the worker
-          cannot outlive the app. A Node backend names its{" "}
-          <code>nodeModules</code>: the package scripts and <code>denext desktop run</code>{" "}
-          bundle it into <code>.deno-desktop/sidecars/&lt;name&gt;/</code>{" "}
-          (every npm import inlined) and embed the folder in the app. The packages it loads with
+          cannot outlive the app. The module is relative to the folder of the entry that calls{" "}
+          <code>runDesktop</code> (the project root for <code>desktop.ts</code>; <code>app/</code>
           {" "}
-          <code>require</code>{" "}
+          for <code>denext desktop run --entry app/desktop.ts</code>). A Node backend names its{" "}
+          <code>nodeModules</code> (both relative to the project): the package scripts and{" "}
+          <code>denext desktop run</code> bundle it into{" "}
+          <code>.deno-desktop/sidecars/&lt;name&gt;/</code>{" "}
+          beside that entry (every npm import inlined) and embed the folder in the app. The packages
+          it loads with <code>require</code>{" "}
           at run time (those that carry a native addon, with only the target OS&apos;s prebuilds,
           and those listed in{" "}
           <code>external</code>) travel as one archive beside it and are unpacked into the

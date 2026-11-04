@@ -45,7 +45,8 @@ export interface SidecarPermissions {
 /**
  * What runs: a module in the app's runtime, or a program.
  *
- * `module` is relative to the project (`"./server/main.ts"`). Without `nodeModules` it is part of
+ * `module` is relative to the folder of the entry that calls `runDesktop`, the project root for
+ * `desktop.ts` (`"./server/main.ts"`). Without `nodeModules` it is part of
  * the app's own module graph (resolved through the app's `deno.json`) and embedded as it is. With
  * `nodeModules` (a Node backend, e.g. `"apps/server/dist/bin.mjs"` and its package's
  * `node_modules`) denext bundles it at packaging, every npm import inlined, except the packages
@@ -59,7 +60,11 @@ export interface SidecarPermissions {
  */
 export type SidecarRun =
   | {
-    /** The module to run, relative to the project. */
+    /**
+     * The module to run, relative to the folder of the entry that calls `runDesktop` (the project
+     * root for `desktop.ts`). With `nodeModules`, relative to the project: the bundle is written to
+     * `.deno-desktop/sidecars/<name>/` beside that entry, where the app loads it.
+     */
     readonly module: string;
     /** The `node_modules` folder the module's bare imports resolve from (bundled at packaging). */
     readonly nodeModules?: string;

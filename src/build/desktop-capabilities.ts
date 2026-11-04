@@ -845,8 +845,45 @@ export function sidecarCacheProgram(
  * @returns The path, normalized (`..` when it leaves the project, `../…` below it).
  */
 export function sidecarProgramFile(exec: string, appEntry = "desktop.ts"): string {
-  const entryDir = posixDirname(posixNormalize(appEntry.replaceAll("\\", "/")));
-  return posixNormalize(posixJoin(entryDir, exec.replaceAll("\\", "/")));
+  return appEntryFile(exec, appEntry);
+}
+
+/**
+ * A path the app resolves against the `import.meta.url` of the entry that calls `runDesktop` (a
+ * program sidecar's `exec`, a module sidecar's module, a relative `desktop.capabilities.extensions`
+ * module, a Node backend's bundle folder), as the project-relative, `/`-separated file it names.
+ *
+ * @param path The configured path, relative to the entry's folder.
+ * @param appEntry The entry that calls `runDesktop`, relative to the project (default `desktop.ts`).
+ * @returns The path, normalized.
+ */
+function appEntryFile(path: string, appEntry = "desktop.ts"): string {
+  return posixNormalize(posixJoin(appEntryDir(appEntry), path.replaceAll("\\", "/")));
+}
+
+/**
+ * The folder of the entry that calls `runDesktop`, relative to the project and `/`-separated (`.`
+ * for the project's `desktop.ts`).
+ *
+ * @param appEntry The entry, relative to the project.
+ * @returns The folder.
+ */
+function appEntryDir(appEntry = "desktop.ts"): string {
+  return posixDirname(posixNormalize(appEntry.replaceAll("\\", "/")));
+}
+
+/**
+ * The `--include` of a file the app resolves against the entry that calls `runDesktop`: as written
+ * when that entry is at the project root (every packaging build, unchanged), else the file
+ * {@linkcode appEntryFile} names.
+ *
+ * @param path The configured path.
+ * @param appEntry The entry that calls `runDesktop`, relative to the project.
+ * @returns The path to include.
+ */
+function appEntryInclude(path: string, appEntry: string): string {
+  const file = appEntryFile(path, appEntry);
+  return appEntryFile(path) === file ? path : file;
 }
 
 /**
@@ -1510,7 +1547,8 @@ function configExtensionPaths(config: unknown): string[] {
  * @param entryUrl The packaging script's `import.meta.url`.
  * @param os The OS packaged for (default: the host's).
  * @param appEntry The entry that calls `runDesktop`, relative to the project (default `desktop.ts`;
- *   `denext desktop run` / `dev --entry`): a program sidecar's file is resolved from its folder.
+ *   `denext desktop run` / `dev --entry`): a relative extension module and a sidecar's module,
+ *   program or bundle are resolved from its folder, as the app resolves them.
  * @returns `["--include", path, …, "--import-map", file]`, ready to splice into the `deno desktop`
  * argv.
  */
@@ -1521,7 +1559,11 @@ export async function desktopIncludeArgs(
 ): Promise<string[]> {
   // No config → no extensions to embed; a config that fails to load fails.
   const config = await loadConfigBeside(entryUrl);
-  const includes = configExtensionPaths(config).flatMap((p) => ["--include", p]);
+  // A relative extension resolves against the entry (`loadExtension`); any other spec as written.
+  const includes = configExtensionPaths(config).flatMap((p) => [
+    "--include",
+    p.startsWith("./") || p.startsWith("../") ? appEntryInclude(p, appEntry ?? "desktop.ts") : p,
+  ]);
   const projectUrl = new URL("../", entryUrl);
   const local = projectUrl.protocol === "file:";
   const importMap = local ? await desktopImportMapArgsFor(fromFileUrl(projectUrl)) : [];
@@ -1538,7 +1580,10 @@ const SIDECAR_BUNDLER = "./desktop-sidecar-bundle.ts";
  * The `--include`s of `desktop.sidecars`: a Node backend's bundle (built now, see
  * `desktop-sidecar-bundle.ts`), a module sidecar's module, and a program sidecar's file when it is
  * one of the project's (a relative path, embedded as {@linkcode sidecarProgramFile}: the file the
- * app resolves it to).
+ * app resolves it to). The app resolves all three against the `import.meta.url` of the entry that
+ * calls `runDesktop`, so for an entry below the project root (`denext desktop run --entry
+ * app/desktop.ts`) the bundle is written to `app/.deno-desktop/sidecars/<name>/` and a module or
+ * program is embedded at its path from `app/`.
  *
  * @param projectDir The project root.
  * @param config The project config.
@@ -1561,18 +1606,27 @@ export async function desktopSidecarIncludeArgs(
       projectDir: string,
       config: unknown,
       os?: DesktopOs,
+      entryDir?: string,
     ): Promise<Array<{ dir: string }>>;
   };
-  const reports = await bundler.bundleDesktopSidecars(projectDir, config, os);
+  // A Node backend's bundle is loaded from `.deno-desktop/sidecars/<name>/` beside the entry.
+  const entryDir = appEntryDir(appEntry);
+  const reports = await bundler.bundleDesktopSidecars(
+    projectDir,
+    config,
+    os,
+    ...(entryDir === "." ? [] : [entryDir]),
+  );
   const args = reports.flatMap((r) => ["--include", r.dir]);
+  // Each as written for an entry at the project root; else the file the app resolves it to.
   for (const d of sidecars) {
     const run = d.run as { module?: unknown; nodeModules?: unknown; exec?: unknown };
     if (typeof run.module === "string" && run.nodeModules === undefined) {
-      if (!/^[a-z][a-z0-9+.-]*:/i.test(run.module)) args.push("--include", run.module);
+      if (!/^[a-z][a-z0-9+.-]*:/i.test(run.module)) {
+        args.push("--include", appEntryInclude(run.module, appEntry));
+      }
     } else if (typeof run.exec === "string" && isProjectProgram(run.exec)) {
-      // As written for an entry at the project root; else the file the app resolves it to.
-      const file = sidecarProgramFile(run.exec, appEntry);
-      args.push("--include", sidecarProgramFile(run.exec) === file ? run.exec : file);
+      args.push("--include", appEntryInclude(run.exec, appEntry));
     }
   }
   return args;
