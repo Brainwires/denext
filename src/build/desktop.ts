@@ -1511,11 +1511,16 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
   // capabilities, keepAlive and the Dock): set up once the window is adopted; the close listener
   // consults it so a page-guarded close keeps the app running, and a close quits only after the
   // app's last window unless it is kept alive.
-  const windowsRef: { setup?: DesktopWindowsSetup } = {};
+  // A close before the windows are set up (the sidecars are started first) is kept until then,
+  // so it still goes through the close rules and the lifecycle hooks.
+  const windowsRef: { setup?: DesktopWindowsSetup; closedEarly?: boolean } = {};
   const exit = Deno.exit;
   const appWindow = installWindowCloseHandler(
     undefined,
-    () => windowsRef.setup ? windowsRef.setup.mainClosed() : exit(0),
+    () => {
+      if (windowsRef.setup) windowsRef.setup.mainClosed();
+      else windowsRef.closedEarly = true;
+    },
     (event) => windowsRef.setup?.interceptMainClose(event) ?? false,
   );
   // Which desktop world this is, decided ONCE from what the runtime published: the pinned runtime's
@@ -1590,6 +1595,7 @@ export async function runDesktop(options: RunDesktopOptions = {}): Promise<Deskt
     ...(options.appSupportDir !== undefined ? { appSupportDir: options.appSupportDir } : {}),
   });
   windowsRef.setup = windows;
+  if (windowsRef.closedEarly) windows.mainClosed();
   const registry = windows.registry;
   const capabilities = [
     ...(options.capabilities ?? []),

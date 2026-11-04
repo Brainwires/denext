@@ -40,7 +40,7 @@ import {
   type WindowConstructor,
   type WindowRegistry,
 } from "./window-registry.ts";
-import type { WindowLifecycle } from "./window-lifecycle.ts";
+import { registerAppLifecycle, type WindowLifecycle } from "./window-lifecycle.ts";
 import type { SessionWindow } from "./window-store.ts";
 import {
   applyDesktopWindowSettings,
@@ -471,6 +471,8 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
   st.registry.adopt(win, "main", "main", {
     overlay: o.windowSettings?.overlay === true && overlayRuntime(st),
   });
+  // The full-app updater's install quits through the lifecycle (its guards and hooks run first).
+  registerAppLifecycle(st.registry.lifecycle);
   st.app = createAppController({
     window: win,
     api: o.api,

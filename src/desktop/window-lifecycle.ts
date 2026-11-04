@@ -103,6 +103,42 @@ export interface WindowLifecycle extends WindowLifecycleHost {
   holdQuitClose(event: Event, last: boolean, hide: () => void, closed: () => void): boolean;
   /** The last app window closed, not by a quit: run the quit hooks (bounded), then exit. */
   endApp(): void;
+  /**
+   * Quit through `issue` (`Deno.desktop.quit()`, or the updater's `applyAndRelaunch`): when the
+   * lifecycle holds the quit for its guards or hooks, it is `issue` that is called again once they
+   * ran, so an install-and-relaunch stays one. `true` when the app is quitting, or the lifecycle
+   * holds the quit (it is issued again unless a guard refuses); `false` when a page holds it or
+   * `issue` refused.
+   */
+  quit(issue: () => boolean): boolean;
+}
+
+/** The app's lifecycle, once the registry made one (the updater's quit goes through it). */
+let registered: WindowLifecycle | undefined;
+
+/**
+ * Register the app's window lifecycle (`setUpDesktopWindows` does), so the parts of the runtime
+ * that quit the app from module scope — the full-app updater's install — issue the quit through
+ * it ({@linkcode WindowLifecycle.quit}).
+ *
+ * @param lifecycle The lifecycle.
+ * @returns A function that unregisters it.
+ */
+export function registerAppLifecycle(lifecycle: WindowLifecycle): () => void {
+  registered = lifecycle;
+  return () => {
+    if (registered === lifecycle) registered = undefined;
+  };
+}
+
+/**
+ * The registered app lifecycle, or `undefined` when the app has none (no window, a plain
+ * `deno run`).
+ *
+ * @returns The lifecycle.
+ */
+export function appLifecycle(): WindowLifecycle | undefined {
+  return registered;
 }
 
 /** The lifecycle's state. */
@@ -122,6 +158,12 @@ interface LifecycleState {
   quitHooksRan: boolean;
   /** `endApp` started (a second last-close changes nothing). */
   ending: boolean;
+  /** What issues the quit in progress when it is issued again (default `Deno.desktop.quit`). */
+  issuer: (() => boolean) | undefined;
+  /** `quit(issue)` is calling its issuer (its `beforequit` keeps the issuer). */
+  issuing: boolean;
+  /** A quit's last close is held while the quit hooks run. */
+  holding: boolean;
 }
 
 /** The message of a hook failure. */
@@ -222,13 +264,14 @@ async function runQuitWork(st: LifecycleState): Promise<void> {
   }
 }
 
-/** Issue the quit again, the pages' consents kept; `true` when the app is quitting. */
+/** Issue the quit again (through its issuer), the pages' consents kept; `true` when quitting. */
 function reissue(st: LifecycleState): boolean {
   const api = st.options.api;
-  if (typeof api?.quit !== "function") return false;
+  const issue = st.issuer ?? (typeof api?.quit === "function" ? () => api.quit!() : undefined);
+  if (!issue) return false;
   st.releasing = true;
   try {
-    return reissueAppQuit(api, () => api.quit!() === true);
+    return reissueAppQuit(api, () => issue() === true);
   } finally {
     st.releasing = false;
   }
@@ -260,8 +303,10 @@ async function startQuit(st: LifecycleState): Promise<void> {
 /** The runtime's `beforequit`: a new quit is held for the guards; one issued again passes. */
 function onBeforeQuitEvent(st: LifecycleState, event: Event): void {
   if (st.releasing || isReissuingQuit(st.options.api)) return;
-  // A new quit: the hooks of a refused one are due again.
+  // A new quit: the hooks of a refused one are due again, and one not issued through `quit()`
+  // is issued again with `Deno.desktop.quit()`.
   st.quitHooksRan = false;
+  if (!st.issuing) st.issuer = undefined;
   const needsHold = st.guards.size > 0 ||
     (hasQuitWork(st) && st.options.windows().length === 0);
   if (!needsHold) return;
@@ -292,6 +337,9 @@ export function createWindowLifecycle(options: WindowLifecycleOptions): WindowLi
     guarding: false,
     quitHooksRan: false,
     ending: false,
+    issuer: undefined,
+    issuing: false,
+    holding: false,
   };
   const onWindowOpened = (fn: WindowOpenedHook, name = "a host"): () => void => {
     const off = subscribe(st.opened, { fn, name });
@@ -344,14 +392,27 @@ export function createWindowLifecycle(options: WindowLifecycleOptions): WindowLi
       event.preventDefault();
       hide();
       closed();
+      st.holding = true;
       void runQuitWork(st).then(() => {
         st.quitHooksRan = true;
         options.beforeExit?.();
+        st.holding = false;
         // `false`: a page holds the quit after all (a guard set meanwhile); it issues the quit
         // again when it lets go, and the hooks, which ran, are not run twice.
         reissue(st);
       });
       return true;
+    },
+    quit: (issue) => {
+      st.issuer = issue;
+      st.issuing = true;
+      try {
+        const quitting = issue() === true;
+        // Held by the guards (`startQuit` is running) or the last-close hold: issued again.
+        return quitting || st.guarding || st.holding;
+      } finally {
+        st.issuing = false;
+      }
     },
     endApp: () => {
       if (!hasQuitWork(st)) {

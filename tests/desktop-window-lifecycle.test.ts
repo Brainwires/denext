@@ -35,6 +35,8 @@ import { maxWindowsProblem, resolveDesktopAppSettings } from "../src/desktop/win
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import { DESKTOP_DATA_TOKEN, desktopBuildFlags } from "../src/build/desktop-capabilities.ts";
+import { registerAppLifecycle } from "../src/desktop/window-lifecycle.ts";
+import { installAppUpdateAndRelaunch } from "../src/desktop/app-updater.ts";
 
 /** A runtime window recording its calls, with bounds that follow `setBounds` and the events. */
 class FakeWin extends EventTarget implements RegistryWindow {
@@ -449,6 +451,54 @@ Deno.test("guards: the setup host and DesktopRuntime-shaped subscriptions reach 
   off();
   assertEquals(api.quit!(), true, "no guard, no quit hook: the quit goes straight through");
   assertEquals(exits, [0], "the last close's exit, as before");
+});
+
+Deno.test("updater: an install held for the quit hooks is issued again as the install, not a plain quit", async () => {
+  const { reg, api, quits, cancels } = registry();
+  const rec = recorder();
+  reg.lifecycle.addCapabilities([rec.cap]);
+  const unregister = registerAppLifecycle(reg.lifecycle);
+  // The runtime's applyAndRelaunch dispatches beforequit + closes like quit() (the fake delegates).
+  const relaunches: unknown[] = [];
+  const had = Object.getOwnPropertyDescriptor(Deno, "desktop");
+  Object.defineProperty(Deno, "desktop", {
+    value: {
+      updater: {
+        applyAndRelaunch: (o: unknown) => {
+          relaunches.push(o);
+          return { quitting: api.quit!() };
+        },
+      },
+    },
+    configurable: true,
+  });
+  try {
+    assertEquals(
+      installAppUpdateAndRelaunch(),
+      { quitting: true },
+      "held for the hooks: it goes on",
+    );
+    await until(() => quits.length > 0);
+    assertEquals(relaunches, [{}, {}], "issued again as the install once the hooks ran");
+    assertEquals(rec.quit, ["quit"]);
+    // A refusing guard: the install stands down (no plain quit either).
+    const refused = registry();
+    refused.reg.lifecycle.onBeforeQuit(() => false);
+    registerAppLifecycle(refused.reg.lifecycle);
+    relaunches.length = 0;
+    (Deno as unknown as { desktop: { updater: { applyAndRelaunch: (o: unknown) => unknown } } })
+      .desktop.updater.applyAndRelaunch = (o) => {
+        relaunches.push(o);
+        return { quitting: refused.api.quit!() };
+      };
+    assertEquals(installAppUpdateAndRelaunch({ force: true }), { quitting: true });
+    await until(() => refused.cancels.length > 0);
+    assertEquals([relaunches, refused.quits, cancels], [[{ force: true }], [], []]);
+  } finally {
+    unregister();
+    if (had) Object.defineProperty(Deno, "desktop", had);
+    else delete (Deno as unknown as Record<string, unknown>).desktop;
+  }
 });
 
 // --- keys and frames ----------------------------------------------------------------------------
