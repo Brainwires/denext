@@ -403,7 +403,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     // the packaged launch file grants it to the app origin alone.
     trust: "none",
     notes:
-      "the page's getUserMedia gets the microphone, for the app origin only (runtime 3.0.0-denext.9+)",
+      "the page's getUserMedia gets the microphone, for the app origin only (runtime 3.0.0-denext.10+)",
     manual: [
       MEDIA_CAPTURE_RUNTIME_MANUAL("microphone"),
       'microphone: macOS asks the user once, with the text in desktop.capabilities.microphone = { usageDescription } (Info.plist NSMicrophoneUsageDescription; default "<app> uses your microphone."); a signed build gets the com.apple.security.device.audio-input entitlement. Windows asks through Settings › Privacy › Microphone (desktop apps).',
@@ -415,7 +415,7 @@ export const DESKTOP_CAPABILITIES: Readonly<Record<string, DesktopCapabilityEntr
     api: ["navigator.mediaDevices.getUserMedia({ video }) (the page's own)"],
     trust: "none",
     notes:
-      "the page's getUserMedia gets the camera, for the app origin only (runtime 3.0.0-denext.9+)",
+      "the page's getUserMedia gets the camera, for the app origin only (runtime 3.0.0-denext.10+)",
     manual: [
       MEDIA_CAPTURE_RUNTIME_MANUAL("camera"),
       'camera: macOS asks the user once, with the text in desktop.capabilities.camera = { usageDescription } (Info.plist NSCameraUsageDescription; default "<app> uses your camera."); a signed build gets the com.apple.security.device.camera entitlement. Windows asks through Settings › Privacy › Camera (desktop apps).',
@@ -537,7 +537,7 @@ export interface DesktopBuildFlagOptions {
   readonly entry?: string;
   /**
    * The runtime checks a program sidecar's recorded hash at spawn (denext's pinned Deno Desktop
-   * runtime, 3.0.0-denext.9 or later; see `desktopSidecarIntegrityRuntime`), so its `--allow-run`
+   * runtime, 3.0.0-denext.10 or later; see `desktopSidecarIntegrityRuntime`), so its `--allow-run`
    * records the hash and it needs no write grant. Needs `desktop.app.identifier` and `projectDir`,
    * and `cacheScope` not `false`. Default:
    * `desktopSidecarIntegrityRuntime()`.
@@ -1074,7 +1074,7 @@ function writeGrantCovering(program: string, writes: readonly string[]): string 
  * (`desktopCacheTokenRuntime`): Deno adds every `--allow-run` path to the deny-write
  * list, so a run grant on the copy's own path leaves the app unable to write the copy, and the
  * program sidecar never starts (`NotCapable` on its rename into place). From runtime
- * 3.0.0-denext.9 the program is baked with its recorded hash instead ({@linkcode sidecarProgramBake}):
+ * 3.0.0-denext.10 the program is baked with its recorded hash instead ({@linkcode sidecarProgramBake}):
  * the runtime writes it itself, so the folder's denial is what is wanted there.
  */
 function sidecarCacheScope(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): boolean {

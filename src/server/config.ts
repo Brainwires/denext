@@ -1011,7 +1011,7 @@ export interface DesktopCapabilitiesConfig {
    * `allow="microphone"` gets it). The packaged app's `laufey-launch.json` carries the grant
    * (`"mediaCapture"`), macOS's `Info.plist` its `NSMicrophoneUsageDescription`, and a signed macOS
    * build the `com.apple.security.device.audio-input` entitlement. It needs Deno Desktop runtime
-   * 3.0.0-denext.9 or later, which enforces the grant: `denext desktop package` refuses an older
+   * 3.0.0-denext.10 or later, which enforces the grant: `denext desktop package` refuses an older
    * one. macOS still asks the user once. The options take `usageDescription` only.
    */
   microphone?: boolean | DesktopMediaCaptureConfig;

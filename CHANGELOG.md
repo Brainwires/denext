@@ -19,7 +19,7 @@ and this project adheres to
   `Info.plist` gets `NSMicrophoneUsageDescription` / `NSCameraUsageDescription` (from
   `desktop.capabilities.microphone = { usageDescription }`, else "<app> uses your microphone.") and
   a signed build the Hardened Runtime entitlements `com.apple.security.device.audio-input` /
-  `com.apple.security.device.camera`. It needs Deno Desktop runtime 3.0.0-denext.9 or later: `denext
+  `com.apple.security.device.camera`. It needs Deno Desktop runtime 3.0.0-denext.10 or later: `denext
   desktop package` refuses an older runtime, which cannot restrict capture to the app's origin, and
   `denext doctor` says so. An unpackaged window (`denext desktop run` / `dev`) gets no grant and
   says so at launch. Docs: https://denext.dev/docs/desktop#desktop-media-capture
@@ -32,7 +32,7 @@ and this project adheres to
   `denext.config.ts`, so macOS and Windows keep the system WebView. Docs:
   https://denext.dev/docs/desktop#desktop-media-capture
 - **A program sidecar runs only as it was packaged** (takes effect with Deno Desktop runtime
-  3.0.0-denext.9, once denext pins it, in an app with `desktop.app.identifier`). A project-file
+  3.0.0-denext.10, once denext pins it, in an app with `desktop.app.identifier`). A project-file
   `run: { exec }` is hashed at packaging and baked as
   `--allow-run=$DENO_DESKTOP_CACHE/sidecars/<name>/<sha256>/<file>#sha256=<sha256>#embedded=<path>`,
   with no write grant. The runtime writes the file from the binary, denies its folder to the app's
@@ -45,7 +45,7 @@ and this project adheres to
   a program that cannot be recorded (a `#` or `,` in its path, a path outside the project) keeps the
   unscoped grants of a runtime without the check, never a run grant on its copy, which Deno denies
   the app's writes to.
-- **Node's compile cache for CommonJS modules** (denext's Deno 3.0.0-denext.9).
+- **Node's compile cache for CommonJS modules** (denext's Deno 3.0.0-denext.10).
   `module.enableCompileCache()`, `module.getCompileCacheDir()`, `module.flushCompileCache()`,
   `module.constants.compileCacheStatus`, `NODE_COMPILE_CACHE`, `NODE_COMPILE_CACHE_PORTABLE` and
   `NODE_DISABLE_COMPILE_CACHE` work as in Node: a CommonJS module's V8 code cache is stored and
@@ -56,28 +56,28 @@ and this project adheres to
   `<DENO_DIR>/node_compile_cache`, not the shared temporary directory, and a directory other users
   can write is refused. A compiled program (`deno compile`, `denext build --compile`, a Deno Desktop
   app) never reads or writes the cache.
-- **`node --test` round-out** (denext's Deno 3.0.0-denext.9): `--test-rerun-failures <file>` reruns
+- **`node --test` round-out** (denext's Deno 3.0.0-denext.10): `--test-rerun-failures <file>` reruns
   only what failed (`t.attempt`, `run({ rerunFailuresFilePath })`); test tags reach reporters on
   every test event, and `--experimental-test-tag-filter=<tag>` / `run({ testTagFilters })` run only
   the tests with every tag given.
 - **`--seed` makes `node:crypto`'s random functions repeat run to run** (denext's Deno
-  3.0.0-denext.9): `randomInt`, `randomFill` and `randomFillSync` draw from the seeded generator, as
+  3.0.0-denext.10): `randomInt`, `randomFill` and `randomFillSync` draw from the seeded generator, as
   `Math.random`, `crypto.getRandomValues` and `randomUUID` already did. Key generation, signing and
   prime generation keep the OS's generator.
-- **`deno compile` warns when its own flags come after the script** (denext's Deno 3.0.0-denext.9):
+- **`deno compile` warns when its own flags come after the script** (denext's Deno 3.0.0-denext.10):
   `deno compile main.ts --output app --allow-net` embeds those flags as the program's arguments
   instead of applying them. A leading `--` silences the warning; `DENO_COMPILE_ARG_SEPARATOR=strict`
   or deno.json `"compile": { "argSeparator": "strict" }` requires the `--` and leaves it out of the
   embedded arguments.
 - **`deno desktop` writes the microphone / camera grant from deno.json** (Deno Desktop runtime
-  3.0.0-denext.9): `desktop.app.mediaCapture` (`{ "microphone": [origins], "camera": [origins] }`,
+  3.0.0-denext.10): `desktop.app.mediaCapture` (`{ "microphone": [origins], "camera": [origins] }`,
   exact origins only) goes into the launch file. A denext app does not need it: `denext desktop
   package` writes the grant from `desktop.capabilities.microphone` / `camera`.
 
 ### Changed
 
 - **`node --test` runs Node's test runner instead of `deno test`** (takes effect with denext's Deno
-  3.0.0-denext.9). Each test file runs in its own process, files are found with Node's patterns, and
+  3.0.0-denext.10). Each test file runs in its own process, files are found with Node's patterns, and
   Node's reporters (`spec`, `tap`, `dot`, `junit`, `lcov` or a custom one), `run()` and
   `--experimental-test-coverage` work as in Node. What changes for a project that relied on the old
   behaviour:
@@ -93,25 +93,25 @@ and this project adheres to
     still exits with 1, and a custom reporter that throws ends the run with 7, as in Node.
   - `node --test --watch` still runs `deno test --watch`.
 - **`--import`, `--experimental-loader` and `--require=<module>` in `NODE_OPTIONS` take effect**
-  (denext's Deno 3.0.0-denext.9), in Node's order: loaders, then imports, then the command line's
+  (denext's Deno 3.0.0-denext.10), in Node's order: loaders, then imports, then the command line's
   preloads, under `deno run` as well as `node`. A `NODE_OPTIONS` left over from Node tooling (say
   `--import tsx`) now loads that module in every process that reads it, and stops with `Module not
   found` when it can't be resolved.
 
 ### Fixed
 
-- **`dns.lookup()` passes its `hints` to the system resolver** (denext's Deno 3.0.0-denext.9), so
+- **`dns.lookup()` passes its `hints` to the system resolver** (denext's Deno 3.0.0-denext.10), so
   `net.connect()`'s default `dns.ADDRCONFIG` takes effect: on a machine with no IPv6, AAAA records
   no longer come back and slow down family autoselection. `dns.ADDRCONFIG`, `dns.ALL` and
   `dns.V4MAPPED` are the operating system's values, as in Node.js, and on glibc an `EAI_ADDRFAMILY`
   failure is reported as `EAI_ADDRFAMILY`, not `ENOTFOUND`.
 - **`node --test` failure stacks and TypeScript coverage look like Node's** (denext's Deno
-  3.0.0-denext.9): the runner's own frames show as `node:internal/...`, CommonJS frames show the
+  3.0.0-denext.10): the runner's own frames show as `node:internal/...`, CommonJS frames show the
   file path, and a `.ts` file's coverage maps back to its own lines, functions and branches. `run()`
   no longer emits a file's first events before the caller can listen, and `node` started from
   `child_process` with arguments it can't parse exits with 9 and `node: <message>` instead of
   throwing from `spawn()`.
-- **Deno Desktop runtime fixes** (Deno Desktop runtime 3.0.0-denext.9): a CEF app on an Intel Mac no
+- **Deno Desktop runtime fixes** (Deno Desktop runtime 3.0.0-denext.10): a CEF app on an Intel Mac no
   longer crashes in Chromium's teardown when it quits (about once in 5,600 quits; the shutdown now
   ends with `_exit` once the helpers have ended, as on Windows); a window is created hidden, sized,
   then shown, so a Wayland compositor maps it at the size asked for instead of 800x600 under load;
@@ -124,18 +124,18 @@ and this project adheres to
 
 ### Security
 
-- **V8 15.6.75.38** (from 15.6.75.33; 3.0.0-denext.9) in denext's Deno and the Deno Desktop runtime,
+- **V8 15.6.75.38** (from 15.6.75.33; 3.0.0-denext.10) in denext's Deno and the Deno Desktop runtime,
   with five security merges, among them **CVE-2026-121057** (High, type confusion in module star
   exports) and **CVE-2026-121137** (High, type confusion when a debugger breaks inside optimized
   WebAssembly; reachable only with an inspector session attached).
-- **denext's Deno 3.0.0-denext.9: `deno compile`, `deno desktop` and `deno install` no longer build
+- **denext's Deno 3.0.0-denext.10: `deno compile`, `deno desktop` and `deno install` no longer build
   `NODE_OPTIONS`' `--import`, `--experimental-loader` or `--require` modules into the program they
   write.** Those preloads would run at every launch of the built program, so a `NODE_OPTIONS` left
   in a build machine's environment shipped with it; they are ignored with one warning naming them.
   `--preload` and `--require` on the command line still apply.
 - **A rename needs write access to every path it moves** (denext's Deno and the Deno Desktop runtime
-  3.0.0-denext.9): `--deny-write=a/b` now stops `Deno.rename("a", "c")`.
-- **The runtime's release builds are hardened** (from 3.0.0-denext.9): no build caches in a tag
+  3.0.0-denext.10): `--deny-write=a/b` now stops `Deno.rename("a", "c")`.
+- **The runtime's release builds are hardened** (from 3.0.0-denext.10): no build caches in a tag
   build, pinned runner images, the CEF staleness gate enforced, a V8 or CEF pin more than 14 days
   behind its branch's newest patch fails the build, and each archive's `BUILD_INFO.json` records the
   exact build toolchain.

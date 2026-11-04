@@ -275,15 +275,19 @@ Deno.test("desktopCacheTokenRuntime: the pinned runtime from 3.0.0-denext.8, nev
   assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8", denextDeno), true);
   // A binary stock Deno compiled carries no identifier for the runtime to expand a token from.
   assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8", { deno: "2.9.8" }), false);
-  assertEquals(FIRST_SIDECAR_INTEGRITY_RUNTIME, "3.0.0-denext.9");
-  assertEquals(supportsSidecarIntegrity("3.0.0-denext.9"), true);
+  assertEquals(FIRST_SIDECAR_INTEGRITY_RUNTIME, "3.0.0-denext.10");
+  assertEquals(supportsSidecarIntegrity("3.0.0-denext.10"), true);
+  assertEquals(supportsSidecarIntegrity("3.0.0-denext.9"), false);
   assertEquals(supportsSidecarIntegrity("3.0.0-denext.8"), false);
   assertEquals(supportsSidecarIntegrity("nope"), false);
-  const denext9 = { deno: "2.9.8", denext: "3.0.0-denext.9" };
-  assertEquals(desktopSidecarIntegrityRuntime(env({}), "3.0.0-denext.9", denext9), true);
-  assertEquals(desktopSidecarIntegrityRuntime(env({}), "3.0.0-denext.8", denext9), false);
+  const denext10 = { deno: "2.9.8", denext: "3.0.0-denext.10" };
+  assertEquals(desktopSidecarIntegrityRuntime(env({}), "3.0.0-denext.10", denext10), true);
+  assertEquals(desktopSidecarIntegrityRuntime(env({}), "3.0.0-denext.8", denext10), false);
   // The recorded grant is a $DENO_DESKTOP_CACHE path: a stock compiler bakes no identifier for it.
-  assertEquals(desktopSidecarIntegrityRuntime(env({}), "3.0.0-denext.9", { deno: "2.9.8" }), false);
+  assertEquals(
+    desktopSidecarIntegrityRuntime(env({}), "3.0.0-denext.10", { deno: "2.9.8" }),
+    false,
+  );
   assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.7"), false);
   assertEquals(
     desktopCacheTokenRuntime(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-denext.8"),

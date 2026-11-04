@@ -836,7 +836,7 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         Under runtime 3.0.0-denext.8 a CEF app on macOS x64 (x86_64) can crash in Chromium&apos;s
         own teardown when it quits, about once in 5,600 launches. The app has already finished by
         then, but profile writes still in flight can be lost and macOS keeps a crash report. Apple
-        silicon, the WebView backend and the other OSes are not affected. Runtime 3.0.0-denext.9
+        silicon, the WebView backend and the other OSes are not affected. Runtime 3.0.0-denext.10
         fixes it: its CEF shutdown ends with <code>_exit</code>{" "}
         once the helpers have ended, as on Windows, instead of running exit&apos;s destructors.
       </p>
@@ -2166,7 +2166,7 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
             <td>
               the page&apos;s own{" "}
               <code>getUserMedia({"{ audio: true }"})</code>, for the app origin only
-              (<a href="#desktop-media-capture">packaged app</a>; runtime 3.0.0-denext.9+)
+              (<a href="#desktop-media-capture">packaged app</a>; runtime 3.0.0-denext.10+)
             </td>
             <td>
               none (the webview captures; macOS: <code>NSMicrophoneUsageDescription</code> and the
@@ -2182,7 +2182,7 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
             <td>
               the page&apos;s own{" "}
               <code>getUserMedia({"{ video: true }"})</code>, for the app origin only
-              (<a href="#desktop-media-capture">packaged app</a>; runtime 3.0.0-denext.9+)
+              (<a href="#desktop-media-capture">packaged app</a>; runtime 3.0.0-denext.10+)
             </td>
             <td>
               none (macOS: <code>NSCameraUsageDescription</code> and the <code>camera</code>{" "}
@@ -3250,7 +3250,7 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
         <li>
           the grant in the packaged app&apos;s <code>laufey-launch.json</code>{" "}
           (<code>"mediaCapture"</code>), which the webview backend enforces natively: WKWebView,
-          CEF, WebView2 and WebKitGTK alike. It needs Deno Desktop runtime 3.0.0-denext.9 or later.
+          CEF, WebView2 and WebKitGTK alike. It needs Deno Desktop runtime 3.0.0-denext.10 or later.
           An older runtime does not enforce it (each engine asks, or refuses, by its own rules, for
           whatever origin asks), so <code>denext desktop package</code>{" "}
           refuses to package the microphone or camera on one, and <code>denext doctor</code>{" "}
@@ -3278,7 +3278,7 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
         <code>NotAllowedError</code> too. An unpackaged window (<code>denext desktop run</code> /
         {" "}
         <code>dev</code>) has no launch file, usage description or entitlement, so it has no grant
-        (from runtime 3.0.0-denext.9 it refuses the device): build and test the capture UI in the
+        (from runtime 3.0.0-denext.10 it refuses the device): build and test the capture UI in the
         browser with <code>denext dev</code>, where the browser asks.
       </p>
       <p>
@@ -3602,7 +3602,7 @@ export default defineDesktopExtension({
           <code>$DENO_DESKTOP_CACHE</code>). The run grant stays unscoped: Deno denies writes to
           every <code>--allow-run</code>{" "}
           path, so a run grant on the copy would leave the app unable to write it. From runtime
-          3.0.0-denext.9 (once denext pins it; the same app) the program&apos;s SHA-256, taken at
+          3.0.0-denext.10 (once denext pins it; the same app) the program&apos;s SHA-256, taken at
           packaging, is baked into the run grant, and the runtime keeps the file itself: it writes
           it from the binary to{" "}
           <code>sidecars/&lt;name&gt;/&lt;sha256&gt;/&lt;file&gt;</code>, denies that folder to the

@@ -711,7 +711,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **A CEF app on an Intel Mac can crash when it quits** (runtime 3.0.0-denext.8): about once in
   5,600 launches, Chromium's own teardown crashes after the app has finished. Profile writes still
   in flight can be lost and macOS keeps a crash report; Apple silicon, the WebView backend and the
-  other OSes are not affected. Runtime 3.0.0-denext.9 fixes it (its CEF shutdown ends with `_exit`
+  other OSes are not affected. Runtime 3.0.0-denext.10 fixes it (its CEF shutdown ends with `_exit`
   once the helpers have ended) ([details](https://denext.dev/docs/desktop#desktop-cef-macos-x64-quit)).
 - **CEF on Linux spellchecks seven languages out of the box** (runtime 2.9.7-denext.21): the
   runtime makes no network requests of its own, so it never downloads Hunspell dictionaries; it
@@ -759,7 +759,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   (its copy in the app's cache folder has a per-user path); with runtime 3.0.0-denext.8 and
   `desktop.app.identifier` the write is scoped to the app's cache folder, but the run grant stays
   unscoped: Deno denies writes to every `--allow-run` path, so a run grant on the copy would keep
-  the app from writing it. Runtime 3.0.0-denext.9 (with `desktop.app.identifier`, from the denext
+  the app from writing it. Runtime 3.0.0-denext.10 (with `desktop.app.identifier`, from the denext
   release that pins it) lifts that: the run grant records the program's SHA-256, no write grant is
   baked, the runtime writes the file from the binary and refuses other bytes at every spawn. What
   remains on macOS and Linux: another program of the same user that changes the file between the

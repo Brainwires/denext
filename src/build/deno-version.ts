@@ -340,13 +340,13 @@ export function supportsDesktopDataToken(version: string): boolean {
  * own rules, for whatever origin asks, so `denext desktop package` refuses the microphone and
  * camera on one.
  *
- * Runtime 3.0.0-denext.9 carries laufey `6d88bf8` (laufey API {@linkcode MEDIA_CAPTURE_LAUFEY_API};
+ * Runtime 3.0.0-denext.10 carries laufey `6d88bf8` (laufey API {@linkcode MEDIA_CAPTURE_LAUFEY_API};
  * Brainwires/deno DENEXT.md item 239). The gate holds only while the pinned release records that
  * API or later: `deno task desktop:pin-runtime` refuses to pin a release at or above this version
  * whose manifest records an older laufey API (or none), and tests/desktop-media-capture.test.ts
  * fails when the committed pin does.
  */
-export const FIRST_MEDIA_CAPTURE_RUNTIME = "3.0.0-denext.9";
+export const FIRST_MEDIA_CAPTURE_RUNTIME = "3.0.0-denext.10";
 
 /** The laufey API version that reads `"mediaCapture"` (see {@linkcode FIRST_MEDIA_CAPTURE_RUNTIME}). */
 export const MEDIA_CAPTURE_LAUFEY_API = 53;
@@ -392,7 +392,7 @@ export function supportsMediaCapture(version: string): boolean {
  * those bytes, written from the binary and checked at every spawn, and the program's folder is
  * denied to the app's writes (Brainwires/deno DENEXT.md item 232).
  */
-export const FIRST_SIDECAR_INTEGRITY_RUNTIME = "3.0.0-denext.9";
+export const FIRST_SIDECAR_INTEGRITY_RUNTIME = "3.0.0-denext.10";
 
 /**
  * Whether the Deno Desktop runtime `version` checks a program sidecar's recorded hash at spawn

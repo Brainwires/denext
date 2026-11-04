@@ -155,18 +155,20 @@ Deno.test("media capture: a usage description with markup round-trips through In
   );
 });
 
-Deno.test("media capture: gated on runtime 3.0.0-denext.9", () => {
-  assertEquals(FIRST_MEDIA_CAPTURE_RUNTIME, "3.0.0-denext.9");
-  assert(supportsMediaCapture("3.0.0-denext.9"));
+Deno.test("media capture: gated on runtime 3.0.0-denext.10", () => {
+  assertEquals(FIRST_MEDIA_CAPTURE_RUNTIME, "3.0.0-denext.10");
+  assert(supportsMediaCapture("3.0.0-denext.10"));
   assert(supportsMediaCapture("3.0.0-denext.12"));
+  // No 3.0.0-denext.9 release exists; the version still sorts below the gate.
+  assert(!supportsMediaCapture("3.0.0-denext.9"));
   assert(!supportsMediaCapture("3.0.0-denext.8"));
   assert(!supportsMediaCapture("3.0.0-rc.7"));
   assert(!supportsMediaCapture("garbage"));
   const env = (vars: Record<string, string>) => (k: string) => vars[k];
-  assert(mediaCaptureRuntime(env({}), "3.0.0-denext.9"));
+  assert(mediaCaptureRuntime(env({}), "3.0.0-denext.10"));
   assert(!mediaCaptureRuntime(env({}), "3.0.0-denext.7"));
-  assert(!mediaCaptureRuntime(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-denext.9"));
-  assert(!mediaCaptureRuntime(env({ DENEXT_DESKTOP_RUNTIME_DIR: "/x" }), "3.0.0-denext.9"));
+  assert(!mediaCaptureRuntime(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-denext.10"));
+  assert(!mediaCaptureRuntime(env({ DENEXT_DESKTOP_RUNTIME_DIR: "/x" }), "3.0.0-denext.10"));
   assertEquals(desktopRuntimeLabel(env({}), "3.0.0-denext.7"), "runtime 3.0.0-denext.7");
   assertEquals(desktopRuntimeLabel(env({ DENEXT_DESKTOP_RUNTIME: "Stock" })), "the stock runtime");
   assertEquals(
@@ -176,11 +178,11 @@ Deno.test("media capture: gated on runtime 3.0.0-denext.9", () => {
 
   const problem = mediaCaptureRuntimeProblem(BOTH, false, "runtime 3.0.0-denext.7");
   assertStringIncludes(problem!, "desktop.capabilities.microphone / camera");
-  assertStringIncludes(problem!, "3.0.0-denext.9");
+  assertStringIncludes(problem!, "3.0.0-denext.10");
   assertStringIncludes(problem!, "runtime 3.0.0-denext.7");
   assertStringIncludes(problem!, "cannot restrict capture to the app's origin");
   assert(!problem!.includes("\n"));
-  assertEquals(mediaCaptureRuntimeProblem(BOTH, true, "runtime 3.0.0-denext.9"), null);
+  assertEquals(mediaCaptureRuntimeProblem(BOTH, true, "runtime 3.0.0-denext.10"), null);
   assertEquals(mediaCaptureRuntimeProblem({}, false, "runtime 3.0.0-denext.7"), null);
 
   // Packaging refuses it, with one plain line.
@@ -190,10 +192,10 @@ Deno.test("media capture: gated on runtime 3.0.0-denext.9", () => {
   } catch (e) {
     refused = e as Error;
   }
-  assertStringIncludes(refused!.message, "needs Deno Desktop runtime 3.0.0-denext.9 or later");
+  assertStringIncludes(refused!.message, "needs Deno Desktop runtime 3.0.0-denext.10 or later");
   assertStringIncludes(refused!.message, "the stock runtime");
   assert(!refused!.message.includes("\n"));
-  assertMediaCaptureRuntime(BOTH, true, "runtime 3.0.0-denext.9");
+  assertMediaCaptureRuntime(BOTH, true, "runtime 3.0.0-denext.10");
   assertMediaCaptureRuntime({}, false, "the stock runtime");
 });
 
@@ -201,10 +203,11 @@ Deno.test("media capture: a pin past the gate must carry the laufey API that enf
   assertEquals(MEDIA_CAPTURE_LAUFEY_API, 53);
   assertEquals(mediaCapturePinProblem("3.0.0-denext.8", 50), null);
   assertEquals(mediaCapturePinProblem("3.0.0-denext.8", null), null);
-  assertEquals(mediaCapturePinProblem("3.0.0-denext.9", 53), null);
-  assertEquals(mediaCapturePinProblem("3.0.0-denext.10", 54), null);
-  assertStringIncludes(mediaCapturePinProblem("3.0.0-denext.9", 51)!, "laufey API 51");
-  assertStringIncludes(mediaCapturePinProblem("3.0.0-denext.9", null)!, "laufey API none");
+  assertEquals(mediaCapturePinProblem("3.0.0-denext.9", 51), null);
+  assertEquals(mediaCapturePinProblem("3.0.0-denext.10", 53), null);
+  assertEquals(mediaCapturePinProblem("3.0.0-denext.11", 54), null);
+  assertStringIncludes(mediaCapturePinProblem("3.0.0-denext.10", 51)!, "laufey API 51");
+  assertStringIncludes(mediaCapturePinProblem("3.0.0-denext.10", null)!, "laufey API none");
   // The committed pin: bumping it to the gate without the API fails here.
   assertEquals(mediaCapturePinProblem(pinJson.version, pinJson.laufeyApiVersion ?? null), null);
 });
@@ -231,7 +234,7 @@ Deno.test("media capture: the packaged launch file grants the app origin; Info.p
     const err = await assertRejects(
       () => writeLaufeyLaunchConfig(entry, "darwin", old, { mediaCapture: false }),
       Error,
-      "needs Deno Desktop runtime 3.0.0-denext.9 or later to package",
+      "needs Deno Desktop runtime 3.0.0-denext.10 or later to package",
     );
     assert(!err.message.includes("\n"));
     const oldPlist = await Deno.readTextFile(join(old, "Contents", "Info.plist"));
@@ -369,7 +372,7 @@ Deno.test("media capture: a signed build gets the device entitlements; the confi
     const refused = await assertRejects(
       () => desktopMacosSigning(entry, { mediaCapture: false }),
       Error,
-      "needs Deno Desktop runtime 3.0.0-denext.9 or later to package",
+      "needs Deno Desktop runtime 3.0.0-denext.10 or later to package",
     );
     assert(!refused.message.includes("\n"));
     // Without either capability the runtime does not matter.
@@ -485,7 +488,7 @@ Deno.test("media capture: the schema closes the options object", async () => {
 Deno.test("media capture: `desktop add microphone camera` writes both keys", async () => {
   assertEquals(DESKTOP_CAPABILITIES.microphone.key, "microphone");
   assertEquals(DESKTOP_CAPABILITIES.camera.trust, "none");
-  assertStringIncludes(DESKTOP_CAPABILITIES.microphone.manual!.join("\n"), "3.0.0-denext.9");
+  assertStringIncludes(DESKTOP_CAPABILITIES.microphone.manual!.join("\n"), "3.0.0-denext.10");
   const { dir } = await project({ desktop: { capabilities: {} } });
   try {
     const report = await addDesktopCapabilities({
@@ -520,13 +523,13 @@ Deno.test("media capture: the doctor names a runtime without the grant", async (
 
     const stock = await desktopLaunchPolicyCheck(dir, BOTH, {
       env: env({ DENEXT_DESKTOP_RUNTIME: "stock" }),
-      runtimeVersion: "3.0.0-denext.9",
+      runtimeVersion: "3.0.0-denext.10",
     });
     assertStringIncludes(stock!.detail, "the stock runtime");
 
     const good = await desktopLaunchPolicyCheck(dir, BOTH, {
       env: env({}),
-      runtimeVersion: "3.0.0-denext.9",
+      runtimeVersion: "3.0.0-denext.10",
     });
     assert(!good!.detail.includes("needs Deno Desktop runtime"), good!.detail);
     assert(good!.ok, good!.detail);

@@ -176,10 +176,10 @@ seeded fallback. No Deno has the hook below yet.
   _Why 5.x: Low._
 - **Node compatibility, continuing:** `node:test`, `async_hooks`, TLS, CLI flags, HTTP edge cases,
   the ESM loader, `worker_threads`, `fs`, `crypto`, `stream/iter`, `child_process`, the ES-module
-  compile cache (CommonJS's landed in 3.0.0-denext.9), `repl` / inspector, Node 26 experimental APIs (per-cluster counts in the fork's gap list).
+  compile cache (CommonJS's landed in 3.0.0-denext.10), `repl` / inspector, Node 26 experimental APIs (per-cluster counts in the fork's gap list).
   _Why 5.x: a continuous track with no 5.0 promise._
 - **Upstream carries:** the npm side-effects cache, native image operations (seeded `node:crypto`
-  under `--seed` and the `deno compile` `--` warning landed in runtime 3.0.0-denext.9). _Why 5.x:
+  under `--seed` and the `deno compile` `--` warning landed in runtime 3.0.0-denext.10). _Why 5.x:
   separate runtime features._
 - **Jest cross-realm rows, the Windows `cmd.exe` branch, and the 15 Linux-only enabled node tests
   that need a macOS / Windows check.** _Why 5.x: Small, no user report._

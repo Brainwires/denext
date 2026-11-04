@@ -4,7 +4,7 @@
 // - `laufey-launch.json` `"mediaCapture"`: the webview backend grants the kinds to the app's own
 //   origin only (exact match: never another origin the window navigates to, nor a sub-frame of
 //   another origin; on Linux, where WebKitGTK does not say which frame asks, a sub-frame the page
-//   delegates the device to with `allow="microphone"` is honoured), from runtime `3.0.0-denext.9`
+//   delegates the device to with `allow="microphone"` is honoured), from runtime `3.0.0-denext.10`
 //   (laufey API 53), which refuses every other request (`NotAllowedError`).
 // - macOS `Info.plist` `NSMicrophoneUsageDescription` / `NSCameraUsageDescription`: the text
 //   macOS shows when it asks the user (TCC). Without it macOS ends the app the first time the page

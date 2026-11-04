@@ -98,7 +98,7 @@ export interface LaufeyLaunchConfig {
   readonly passkeyRpIds?: string[];
   /**
    * The documents that get the microphone and / or camera (file only, no env var, runtime
-   * `3.0.0-denext.9`+): the app origin alone, per kind enabled in `desktop.capabilities`
+   * `3.0.0-denext.10`+): the app origin alone, per kind enabled in `desktop.capabilities`
    * (`microphone`, `camera`). laufey refuses every other origin, and a sub-frame of another origin
    * (except on Linux, where WebKitGTK does not say which frame asks: a sub-frame the page delegates
    * the device to with `allow="microphone"` gets it).
@@ -527,7 +527,7 @@ export interface LaufeyLaunchWriteOptions {
   readonly activationPolicy?: boolean;
   /**
    * Whether the runtime reads `"mediaCapture"` (default `mediaCaptureRuntime()`: denext's pinned
-   * runtime from `3.0.0-denext.9`). Without it a config with the microphone or camera on is
+   * runtime from `3.0.0-denext.10`). Without it a config with the microphone or camera on is
    * refused.
    */
   readonly mediaCapture?: boolean;

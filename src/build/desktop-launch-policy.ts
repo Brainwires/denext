@@ -165,7 +165,7 @@ function compilerBakesAppIdentifier(compiler: DenoIdentity): boolean {
  * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime that
  * checks a program sidecar's recorded hash at spawn: denext's pinned runtime (not
  * `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown version)
- * from `FIRST_SIDECAR_INTEGRITY_RUNTIME` (`3.0.0-denext.9`). An older runtime would read the recorded
+ * from `FIRST_SIDECAR_INTEGRITY_RUNTIME` (`3.0.0-denext.10`). An older runtime would read the recorded
  * value as a path, so there a program sidecar keeps its copy in the cache folder under a write
  * grant, and the package run warns. Only when denext's Deno compiles the app: the recorded value is
  * a `$DENO_DESKTOP_CACHE` path, expanded from the identifier that compiler bakes.
@@ -251,7 +251,7 @@ export function desktopDataTokenRuntimeProblem(
  * Whether a package script in this process builds on a runtime that grants the microphone and
  * camera from the launch file (`"mediaCapture"` in `laufey-launch.json`): denext's pinned runtime
  * (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of unknown
- * version) from `FIRST_MEDIA_CAPTURE_RUNTIME` (`3.0.0-denext.9`).
+ * version) from `FIRST_MEDIA_CAPTURE_RUNTIME` (`3.0.0-denext.10`).
  *
  * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
  * @param version The pinned runtime's version (default: the pin's).

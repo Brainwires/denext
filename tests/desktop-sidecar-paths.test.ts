@@ -403,7 +403,7 @@ Deno.test("resolveSidecarProgram: where the runtime keeps the program it is not 
 });
 
 Deno.test("a program the runtime refuses at spawn: a crash for the supervisor, and the restart runs what the runtime wrote again", async () => {
-  // What Deno Desktop runtime 3.0.0-denext.9 does with a program swapped after packaging: the first
+  // What Deno Desktop runtime 3.0.0-denext.10 does with a program swapped after packaging: the first
   // spawn throws NotCapable (and removes the file), the next one runs the packaged bytes. The
   // refusal itself is tested in Brainwires/deno (.github/denext-runtime/e2e/areas/sidecarint.ts).
   let spawns = 0;
