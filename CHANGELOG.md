@@ -125,6 +125,25 @@ and this project adheres to
   alone, for the kinds `desktop.capabilities.microphone` / `camera` turn on), so a deno.json grant
   never reached the app. `denext desktop package` now warns and `denext doctor` reports it when
   deno.json's grant differs. Docs: https://denext.dev/docs/desktop#desktop-media-capture
+- **A `denext desktop run` / `dev` window no longer takes deno.json's microphone / camera grant.**
+  `deno desktop` writes deno.json's `desktop.app.mediaCapture` (any exact origins, a loopback dev
+  server's too) into the window's `laufey-launch.json`, which no environment variable overrides, so
+  an unpackaged window granted capture to those origins although denext said it got none. The grant
+  is now taken out of that file after the build, with a warning naming it.
+- **`denext desktop package` says when a program sidecar runs unchecked.** On a runtime that checks
+  a program sidecar's recorded hash, a program that cannot be recorded (no `desktop.app.identifier`,
+  a `,`, `#`, `%` or `?` in its path, a file outside the project or one that cannot be read), or an
+  unscoped `--allow-run` from `desktop.extraPermissions`, a capability or a sidecar's permissions,
+  gave every program sidecar an unscoped `--allow-run` and a write grant on its cache folder with no
+  word; the package run now warns, naming the cause. A `%` or `?` in the path is no longer recorded:
+  the app resolves such a path to another file, so the sidecar could not start.
+- **`desktop.capabilities.microphone` / `camera` with an unknown option is off, not on, in a
+  packaging script.** The scripts read the config without validating it, so `{ enabled: false }`
+  turned the device on; now only `true` or `{ usageDescription }` does (`denext` still reports the
+  key as a config error).
+- **`denext desktop run` / `build` / `dev --entry` refuse an entry outside the project.** The build
+  writes a Node backend's bundles (and removes stale ones) and the UI export beside the entry, so an
+  entry such as `../other/desktop.ts` wrote and deleted outside the project.
 - **`dns.lookup()` passes its `hints` to the system resolver** (denext's Deno 3.0.0-denext.10), so
   `net.connect()`'s default `dns.ADDRCONFIG` takes effect: on a machine with no IPv6, AAAA records
   no longer come back and slow down family autoselection. `dns.ADDRCONFIG`, `dns.ALL` and

@@ -16,6 +16,7 @@ import {
   desktopBuildFlags,
   desktopSidecarIncludeArgs,
   sidecarCacheProgram,
+  sidecarIntegrityWarnings,
   sidecarPermissionSet,
   sidecarProgramFile,
   sidecarRecordedProgram,
@@ -942,6 +943,98 @@ Deno.test("a recorded program: one that cannot be recorded keeps the unscoped gr
     assert(flags.includes("--allow-run"), flags.join(" "));
     assertEquals(flags.filter((f) => f.includes("sidecars/server")), [], flags.join(" "));
     assert(flags.some((f) => f.startsWith("--allow-write")), flags.join(" "));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a recorded program: a `%` or `?` in its path is not recorded (the app would ask for another file)", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-integrity-url-" });
+  try {
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "a%20b"), "packaged");
+    await Deno.writeTextFile(join(root, "bin", "a?b"), "packaged").catch(() => {});
+    // `new URL("./bin/a%20b", base)` decodes to `bin/a b`: the kept path the app asks for would not
+    // be the recorded one, and with no write grant its copy could not be made either.
+    assertEquals(sidecarRecordedProgram("server", "./bin/a%20b", root), undefined);
+    // `?` starts a query in that URL.
+    assertEquals(sidecarRecordedProgram("server", "./bin/a?b", root), undefined);
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("sidecarIntegrityWarnings: a program the runtime could check but that runs unchecked is said, never baked silently", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-integrity-warn-" });
+  try {
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "server"), "packaged");
+    await Deno.writeTextFile(join(root, "bin", "a#b"), "packaged");
+    const app = { identifier: "com.example.app" };
+    const on = { sidecarIntegrity: true, projectDir: root };
+    const recorded = {
+      desktop: { app, sidecars: [{ name: "server", run: { exec: "./bin/server" } }] },
+    };
+    // Recorded: nothing to say. A runtime without the check: the run-write warning's business.
+    assertEquals(sidecarIntegrityWarnings(recorded, "linux", on), []);
+    assertEquals(
+      sidecarIntegrityWarnings(recorded, "linux", { ...on, sidecarIntegrity: false }),
+      [],
+    );
+    // A bare name or an absolute path is not the app's to record.
+    assertEquals(
+      sidecarIntegrityWarnings(
+        {
+          desktop: { app, sidecars: [{ name: "git", run: { exec: "git" } }] },
+        },
+        "linux",
+        on,
+      ),
+      [],
+    );
+
+    // Not recordable: the build falls back to an unscoped --allow-run, and says so.
+    const hash = {
+      desktop: {
+        app,
+        sidecars: [
+          { name: "server", run: { exec: "./bin/server" } },
+          { name: "odd", run: { exec: "./bin/a#b" } },
+        ],
+      },
+    };
+    const flags = desktopBuildFlags(hash, "linux", on);
+    assert(flags.includes("--allow-run"), flags.join(" "));
+    const lines = sidecarIntegrityWarnings(hash, "linux", on);
+    assertEquals(lines.length, 2, lines.join("\n"));
+    assertMatch(lines[0], /sidecar "odd".*not recorded \(its path holds/);
+    assertMatch(lines[0], /unscoped --allow-run/);
+    assertMatch(lines[1], /every program sidecar unrecorded: "server", "odd"/);
+
+    // Outside the project, or missing.
+    const outside = {
+      desktop: { app, sidecars: [{ name: "server", run: { exec: "../bin/server" } }] },
+    };
+    assertMatch(sidecarIntegrityWarnings(outside, "linux", on)[0], /outside the project/);
+    const missing = {
+      desktop: { app, sidecars: [{ name: "server", run: { exec: "./bin/missing" } }] },
+    };
+    assertMatch(sidecarIntegrityWarnings(missing, "linux", on)[0], /bin\/missing cannot be read/);
+
+    // No identifier: nothing can be recorded.
+    const anonymous = { desktop: { sidecars: recorded.desktop.sidecars } };
+    assertMatch(
+      sidecarIntegrityWarnings(anonymous, "linux", on)[0],
+      /needs desktop\.app\.identifier/,
+    );
+
+    // An unscoped run grant from elsewhere leaves the program unrecorded too.
+    const wide = { desktop: { ...recorded.desktop, extraPermissions: { run: ["*"] } } };
+    assertEquals(
+      desktopBuildFlags(wide, "linux", on).filter((f) => f.includes("#sha256=")),
+      [],
+    );
+    assertMatch(sidecarIntegrityWarnings(wide, "linux", on)[0], /an unscoped --allow-run/);
   } finally {
     await Deno.remove(root, { recursive: true });
   }

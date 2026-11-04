@@ -87,6 +87,25 @@ Deno.test("media capture: the enabled kinds and their usage text", () => {
     { camera: {} },
   );
   assertEquals(desktopMediaCapture({ desktop: { capabilities: { microphone: ["x"] } } }), {});
+  // A package script reads the config unvalidated: an object with any other key is off, never on.
+  assertEquals(
+    desktopMediaCapture({
+      desktop: {
+        capabilities: {
+          microphone: { enabled: false },
+          camera: { origins: ["https://x.example"], usageDescription: "Video." },
+        },
+      },
+    }),
+    {},
+  );
+  assertEquals(
+    mediaCaptureLaunchGrant(
+      { desktop: { capabilities: { microphone: { enabled: false } } } },
+      "app://localhost",
+    ),
+    undefined,
+  );
 });
 
 Deno.test("media capture: the launch grant names the app origin alone, per kind", () => {

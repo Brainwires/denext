@@ -911,24 +911,139 @@ export function sidecarRecordedProgram(
   entry = "desktop.ts",
   appEntry = entry,
 ): string | undefined {
+  const recorded = recordSidecarProgram(name, exec, projectDir, entry, appEntry);
+  return "value" in recorded ? recorded.value : undefined;
+}
+
+/**
+ * {@linkcode sidecarRecordedProgram}'s value, or why the program cannot be recorded (a phrase for
+ * {@linkcode sidecarIntegrityWarnings}).
+ */
+function recordSidecarProgram(
+  name: string,
+  exec: string,
+  projectDir: string,
+  entry: string,
+  appEntry: string,
+): { value: string } | { problem: string } {
   const copy = sidecarCacheProgram(name, exec);
-  if (!copy || /[,#]/.test(exec) || name.includes("#")) return undefined;
+  if (!copy || name.includes("#")) {
+    return { problem: "its file name cannot be one entry of a permission list" };
+  }
+  // `,` and `#` would split the value; `%` and `?` read differently in the `new URL(exec, base)`
+  // the app resolves the program with (decoded, or a query), so the path it asks for would not be
+  // the one recorded.
+  if (/[,#%?]/.test(exec)) return { problem: "its path holds a `,`, `#`, `%` or `?`" };
   // `/`-separated and normalized, as the copy's `new URL(exec, base)` reads it.
   const program = sidecarProgramFile(exec, appEntry);
   // Outside the project: not one of the files the build embeds by a project-relative path.
-  if (program === ".." || program.startsWith("../")) return undefined;
+  if (program === ".." || program.startsWith("../")) {
+    return { problem: "it is outside the project" };
+  }
   let bytes: Uint8Array;
   try {
     bytes = Deno.readFileSync(join(projectDir, program));
   } catch {
-    return undefined;
+    return { problem: `${program} cannot be read` };
   }
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   const file = copy.program.slice(copy.folder.length + 1);
   const entryDir = posixDirname(posixNormalize(entry.replaceAll("\\", "/")));
   const source = posixRelative(`/${entryDir}`, `/${program}`);
-  if (source === "" || /[,#]/.test(source)) return undefined;
-  return `${copy.folder}/${sha256}/${file}#sha256=${sha256}#embedded=${source}`;
+  if (source === "" || /[,#]/.test(source)) {
+    return { problem: "its path from the compiled entry cannot be recorded" };
+  }
+  return { value: `${copy.folder}/${sha256}/${file}#sha256=${sha256}#embedded=${source}` };
+}
+
+/**
+ * Why a project-file program sidecar will run unchecked on a runtime that could check it: on a
+ * runtime with the check (`sidecarIntegrity`, default `desktopSidecarIntegrityRuntime()`), a
+ * program whose grant cannot record its hash ({@linkcode sidecarRecordedProgram}: no
+ * `desktop.app.identifier`, a `,` / `#` / `%` / `?` in its path, a file outside the project or one
+ * that cannot be read), or an unscoped `--allow-run` from elsewhere (`desktop.extraPermissions`, a
+ * capability, another sidecar's `permissions`), falls back to the grants of a runtime without it:
+ * an unscoped `--allow-run`, and a write grant on the cache folder it is copied into. The package
+ * run says so, one line per cause, instead of baking that silently.
+ *
+ * @param config The project config (`denext.config.ts` default export).
+ * @param os The target OS.
+ * @param options `projectDir` (required for a warning), `cacheScope`, `sidecarIntegrity`, `entry`,
+ *   `appEntry`: see {@linkcode desktopBuildFlags}.
+ * @returns The warnings (empty when every program is recorded, or the runtime has no check).
+ */
+export function sidecarIntegrityWarnings(
+  config: unknown,
+  os: DesktopOs,
+  options: DesktopBuildFlagOptions = {},
+): string[] {
+  const cfg = (typeof config === "object" && config !== null ? config : {}) as DesktopFlagConfig;
+  const programs = projectPrograms(cfg);
+  const projectDir = options.projectDir;
+  if (programs.length === 0 || projectDir === undefined || !integrityChecked(options)) return [];
+  const names = programs.map((p) => `"${p.name}"`).join(", ");
+  if (!hasIdentifier(cfg)) {
+    return [
+      `  sidecar ${names}: the program's hash is not recorded (it needs desktop.app.identifier), ` +
+      UNCHECKED_PROGRAM + ". Set desktop.app.identifier.",
+    ];
+  }
+  const out = unrecordedPrograms(programs, projectDir, options);
+  if (out.length > 0) {
+    if (programs.length > 1) {
+      out.push(`  (one unrecorded program leaves every program sidecar unrecorded: ${names})`);
+    }
+    return out;
+  }
+  if (sidecarProgramBake(cfg, os, options).integrityDir !== undefined) return [];
+  return [
+    `  sidecar ${names}: an unscoped --allow-run (desktop.extraPermissions, a capability or a ` +
+    "sidecar's permissions) leaves the program's hash unrecorded, " + UNCHECKED_PROGRAM +
+    ". Scope that run grant to the programs it needs.",
+  ];
+}
+
+/** What an unrecorded program gets, for {@linkcode sidecarIntegrityWarnings}. */
+const UNCHECKED_PROGRAM = "so the app gets an unscoped --allow-run and a write grant on the " +
+  "folder the program is copied into: the runtime does not check what it runs, and the app's " +
+  "own code could replace it";
+
+/** Whether `options` build for a runtime that checks a recorded program (see `sidecarIntegrity`). */
+function integrityChecked(options: DesktopBuildFlagOptions): boolean {
+  return options.cacheScope !== false &&
+    (options.sidecarIntegrity ?? desktopSidecarIntegrityRuntime());
+}
+
+/** The sidecars whose program is one of the project's files (a relative path). */
+function projectPrograms(cfg: DesktopFlagConfig): Array<{ name: string; exec: string }> {
+  return configSidecars(cfg).flatMap((d) => {
+    const exec = (d.run as { exec?: unknown } | undefined)?.exec;
+    return typeof exec === "string" && isProjectProgram(exec) ? [{ name: d.name, exec }] : [];
+  });
+}
+
+/** One warning per program that cannot be recorded, naming why. */
+function unrecordedPrograms(
+  programs: ReadonlyArray<{ name: string; exec: string }>,
+  projectDir: string,
+  options: DesktopBuildFlagOptions,
+): string[] {
+  const entry = options.entry ?? "desktop.ts";
+  return programs.flatMap((p) => {
+    const recorded = recordSidecarProgram(
+      p.name,
+      p.exec,
+      projectDir,
+      entry,
+      options.appEntry ?? entry,
+    );
+    return "problem" in recorded
+      ? [
+        `  sidecar "${p.name}": its program ${p.exec} is not recorded (${recorded.problem}), ` +
+        UNCHECKED_PROGRAM + ".",
+      ]
+      : [];
+  });
 }
 
 /** Which of a copied program's grants to bake: see {@linkcode sidecarPermissionSet}. */

@@ -14,8 +14,9 @@
 // npm args — into a temp directory, and launch the bundle's executable (macOS: the `.app`'s
 // `Contents/MacOS/<CFBundleExecutable>`, so stdout/stderr come back; Linux / Windows: the bundle's
 // `<app>` / `<app>.exe`). The webview's launch settings come from `LAUFEY_*` env (an env var wins
-// over a `laufey-launch.json`, and the bundle has none), so the window gets DevTools as documented
-// and never takes the single-instance lock of an installed copy.
+// over the bundle's `laufey-launch.json`), so the window gets DevTools as documented and never takes
+// the single-instance lock of an installed copy. A key with no env var (deno.json's
+// `desktop.app.mediaCapture`) is taken out of that file ({@linkcode stripUnpackagedMediaCapture}).
 //
 // `desktop dev` builds a generated entry instead of `desktop.ts`: it marks the build as a dev build
 // ({@linkcode DESKTOP_DEV_BUILD_KEY}) and then imports the real entry. A built binary is not the
@@ -45,6 +46,7 @@ import {
   strictPermissionsProblem,
 } from "./desktop-capabilities.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
+import { laufeyLaunchPath } from "./desktop-app-config.ts";
 import { desktopAppName, desktopIconArgs } from "./desktop-package-script.ts";
 import {
   desktopNetSplit,
@@ -189,6 +191,28 @@ export async function desktopLaunchExecutable(
   const exe = /<key>CFBundleExecutable<\/key>\s*<string>([^<]+)<\/string>/.exec(plist)?.[1];
   if (!exe) throw new Error(`no CFBundleExecutable in ${bundle}/Contents/Info.plist`);
   return join(bundle, "Contents", "MacOS", exe);
+}
+
+/**
+ * A `--entry` as the project-relative path every desktop step reads it as, or an error when it is
+ * not one of the project's files: the build writes beside the entry (a Node backend's bundles, and
+ * drops stale ones there; the UI export) and embeds what it loads, so an entry outside the project
+ * would write and delete outside it.
+ *
+ * @param projectDir The project.
+ * @param entry The `--entry` value (relative to the project, or absolute).
+ * @returns The entry, relative to the project.
+ * @throws {Error} When the entry is the project itself or outside it.
+ */
+export function desktopProjectEntry(projectDir: string, entry: string): string {
+  const abs = resolve(projectDir, entry);
+  if (!isInsideDir(abs, projectDir) || resolve(abs) === resolve(projectDir)) {
+    throw new Error(
+      `--entry ${entry} is outside the project (${projectDir}): pass a file inside it`,
+    );
+  }
+  // `/`-separated, as the flag is usually written (every step reads either separator).
+  return relative(resolve(projectDir), abs).replaceAll(SEPARATOR, "/");
 }
 
 /** Whether `path` is `dir` or inside it. */
@@ -354,6 +378,38 @@ export async function desktopExportTargetProblem(
 export async function markDesktopExport(projectDir: string, outDir: string): Promise<void> {
   if (outDir === "out") return;
   await Deno.writeTextFile(join(projectDir, outDir, ".gitignore"), DESKTOP_EXPORT_GITIGNORE);
+}
+
+/**
+ * Take the microphone / camera grant out of an unpackaged window's bundle (`denext desktop run` /
+ * `dev`). `deno desktop` writes deno.json's `desktop.app.mediaCapture` (any exact origins, a
+ * loopback dev server's too) into the bundle's `laufey-launch.json`, which the window reads and no
+ * `LAUFEY_*` env var overrides; denext's own grant is the packaged app's alone, so this window
+ * gets none, as `denext desktop run` / `dev` say at launch. Nothing changes for a bundle without
+ * the key (or without the file).
+ *
+ * @param os The host OS.
+ * @param bundle The scratch bundle ({@linkcode desktopLaunchBundle}).
+ * @returns What was taken out (one line, for a warning), or `null` when there was nothing.
+ */
+export async function stripUnpackagedMediaCapture(
+  os: DesktopOs,
+  bundle: string,
+): Promise<string | null> {
+  const file = laufeyLaunchPath(os, bundle);
+  const text = await Deno.readTextFile(file).catch((e) => {
+    if (e instanceof Deno.errors.NotFound) return null;
+    throw e;
+  });
+  if (text === null) return null;
+  const launch = JSON.parse(text) as Record<string, unknown>;
+  if (typeof launch !== "object" || launch === null || !("mediaCapture" in launch)) return null;
+  const granted = JSON.stringify(launch.mediaCapture);
+  delete launch.mediaCapture;
+  await Deno.writeTextFile(file, JSON.stringify(launch, null, 2) + "\n");
+  return `deno.json's desktop.app.mediaCapture (${granted}) was taken out of this window's ` +
+    "laufey-launch.json: an unpackaged window gets no microphone / camera grant, and the packaged " +
+    "app's is denext's own (desktop.capabilities.microphone / camera, the app origin alone)";
 }
 
 /** What {@linkcode desktopLaunchBuildPlan} plans. */

@@ -39,7 +39,9 @@ import {
   desktopLaunchExecutable,
   desktopLaunchScratchDir,
   desktopPackageOutDirProblem,
+  desktopProjectEntry,
   markDesktopExport,
+  stripUnpackagedMediaCapture,
   writeDesktopDevEntry,
 } from "../../build/desktop-launch.ts";
 import { scaffoldFiles } from "../../build/scaffold.ts";
@@ -144,7 +146,7 @@ export const desktopCommand: CommandSpec = {
     if (ctx.flags["attest-runtime"] === true) Deno.env.set(DESKTOP_RUNTIME_ATTEST_ENV, "1");
     // At a monorepo root, the workspace's app: never a desktop shell or config in the root.
     const dir = await desktopTargetDir(ctx, action);
-    const entry = (ctx.flags.entry as string | undefined) ?? "desktop.ts";
+    const entry = desktopEntryFlag(dir, ctx.flags.entry as string | undefined);
     if (action !== "dev" && ctx.flags["inspect-renderer"] !== undefined) {
       fail("denext desktop: --inspect-renderer applies to `denext desktop dev` only.");
     }
@@ -157,6 +159,15 @@ export const desktopCommand: CommandSpec = {
     Deno.exit(1);
   },
 };
+
+/** `--entry` (default `desktop.ts`) as a project-relative path; one outside the project fails. */
+function desktopEntryFlag(dir: string, flag: string | undefined): string {
+  try {
+    return desktopProjectEntry(dir, flag ?? "desktop.ts");
+  } catch (err) {
+    fail(`denext desktop: ${err instanceof Error ? err.message : String(err)}.`);
+  }
+}
 
 /**
  * The project a `denext desktop <action>` runs on: {@linkcode desktopDir}, or at a Deno workspace
@@ -205,7 +216,7 @@ interface DesktopWindowLaunch {
  * configured origin + identifier, embedded through deno.json `compile.include`), resolve denext's
  * pinned Deno Desktop runtime for the build (downloaded and verified on first use; nothing under
  * `DENEXT_DESKTOP_RUNTIME=stock`), and the webview backend's launch settings as `LAUFEY_*` env for
- * the launched executable (the scratch bundle has no `laufey-launch.json`; DevTools on in `dev`,
+ * the launched executable (they win over the scratch bundle's `laufey-launch.json`; DevTools on in `dev`,
  * and in `run` unless `desktop.inspectable: false`). Single instance is left out on purpose: a dev
  * window must never hand itself to an installed copy of the same app and exit.
  */
@@ -333,6 +344,9 @@ async function buildDesktopWindow(
       stderr: "inherit",
     }).output();
     if (code !== 0) throw new Error(`deno desktop exited with code ${code}`);
+    // deno.json's own microphone / camera grant never reaches an unpackaged window.
+    const media = await stripUnpackagedMediaCapture(os, plan.bundle);
+    if (media) console.warn(`  denext desktop: ${media}.`);
     // A CEF runtime with Chromium's sandbox on Windows: the bootstrap layout, as packaging does
     // (or as a `deno desktop` that knows it already wrote it).
     const scriptUrl = toFileUrl(join(dir, "scripts", "run.ts")).href;

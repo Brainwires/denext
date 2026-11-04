@@ -50,7 +50,9 @@ export interface DesktopMediaGrant {
 
 /**
  * The enabled kinds of `desktop.capabilities` (`microphone` / `camera`: `true` or
- * `{ usageDescription }`; `false`, absent or an invalid value is off).
+ * `{ usageDescription }`; `false`, absent or an invalid value is off, an object with any other key
+ * too: a package script reads the config unvalidated, and `{ enabled: false }` must not turn the
+ * device on).
  *
  * @param config The project config.
  * @returns The enabled kinds with their usage text.
@@ -65,7 +67,10 @@ export function desktopMediaCapture(
   for (const kind of DESKTOP_MEDIA_KINDS) {
     const value = (caps as Record<string, unknown>)[kind];
     if (value === true) out[kind] = {};
-    else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    else if (
+      typeof value === "object" && value !== null && !Array.isArray(value) &&
+      Object.keys(value).every((k) => k === "usageDescription")
+    ) {
       const text = (value as { usageDescription?: unknown }).usageDescription;
       out[kind] = typeof text === "string" && text.trim() !== ""
         ? { usageDescription: text.trim() }

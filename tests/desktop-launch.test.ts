@@ -18,12 +18,15 @@ import {
   desktopLaunchName,
   desktopLaunchScratchDir,
   desktopPackageOutDirProblem,
+  desktopProjectEntry,
   isInsideDir,
   markDesktopExport,
+  stripUnpackagedMediaCapture,
   withNetHosts,
   writeDesktopDevEntry,
 } from "../src/build/desktop-launch.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "../src/build/desktop-dev-build.ts";
+import { laufeyLaunchPath } from "../src/build/desktop-app-config.ts";
 import { desktopBundleCommand } from "../src/build/desktop-package-script.ts";
 import { desktopDevProxyDecision } from "../src/build/desktop.ts";
 import { desktopLaunchPolicyCheck } from "../src/cli/commands/doctor.ts";
@@ -640,4 +643,58 @@ Deno.test("desktopDevProxyDecision: a dev build proxies; a packaged app still ig
     desktopDevProxyDecision("http://192.168.1.5:3000", true, packaged, true).proxy,
     true,
   );
+});
+
+Deno.test("stripUnpackagedMediaCapture: deno.json's grant never reaches an unpackaged window", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_launch_media_" });
+  try {
+    for (const os of ["darwin", "linux", "windows"] as const) {
+      const bundle = desktopLaunchBundle(os, join(dir, os, "App"));
+      const file = laufeyLaunchPath(os, bundle);
+      // No launch file: nothing to do.
+      assertEquals(await stripUnpackagedMediaCapture(os, bundle), null);
+      await Deno.mkdir(join(file, ".."), { recursive: true });
+      // What `deno desktop` writes from deno.json's desktop.app.mediaCapture: any exact origin,
+      // a loopback dev server's too, which this window would otherwise grant.
+      const written = {
+        mediaCapture: { microphone: ["http://127.0.0.1:3000", "https://x.example"] },
+        bridgeOrigins: ["app://localhost"],
+        singleInstance: false,
+      };
+      await Deno.writeTextFile(file, JSON.stringify(written));
+      const said = await stripUnpackagedMediaCapture(os, bundle);
+      assert(said !== null);
+      assertStringIncludes(said, "https://x.example");
+      assertEquals(JSON.parse(await Deno.readTextFile(file)), {
+        bridgeOrigins: ["app://localhost"],
+        singleInstance: false,
+      });
+      // Already without the key: left as it is.
+      const before = await Deno.readTextFile(file);
+      assertEquals(await stripUnpackagedMediaCapture(os, bundle), null);
+      assertEquals(await Deno.readTextFile(file), before);
+    }
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktopProjectEntry: an --entry outside the project is refused (the build writes beside it)", () => {
+  const dir = join(Deno.cwd(), "proj");
+  assertEquals(desktopProjectEntry(dir, "desktop.ts"), "desktop.ts");
+  assertEquals(desktopProjectEntry(dir, "app/desktop.ts"), "app/desktop.ts");
+  assertEquals(desktopProjectEntry(dir, "./app/../desktop.ts"), "desktop.ts");
+  assertEquals(desktopProjectEntry(dir, join(dir, "app", "desktop.ts")), "app/desktop.ts");
+  for (
+    const entry of ["../other/desktop.ts", "app/../../desktop.ts", ".", join(Deno.cwd(), "x.ts")]
+  ) {
+    let threw = false;
+    try {
+      desktopProjectEntry(dir, entry);
+    } catch (err) {
+      threw = true;
+      assertStringIncludes(String(err), "outside the project");
+    }
+    assert(threw, entry);
+  }
 });
