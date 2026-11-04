@@ -559,10 +559,10 @@ Deno.test("resolveDenoToolchain: DENEXT_DENO=<path> runs a verified build of den
       Promise.resolve(identity);
     const ok = await resolveDenoToolchain({
       env: envOf({ DENEXT_DENO: bin }),
-      identify: as(denextIdentity("3.0.0-rc.6")),
+      identify: as(denextIdentity("3.0.0-denext.9")),
     });
     // The marker is the build's own version (its identity line), never an unknown "path".
-    assertEquals([ok.deno, ok.version], [bin, "3.0.0-rc.6"]);
+    assertEquals([ok.deno, ok.version], [bin, "3.0.0-denext.9"]);
     assert(ok.warning);
     assertStringIncludes(ok.warning, "not downloaded, pinned or hash-checked");
     const upstream = await refusal(resolveDenoToolchain({
@@ -573,9 +573,9 @@ Deno.test("resolveDenoToolchain: DENEXT_DENO=<path> runs a verified build of den
     assertStringIncludes(upstream, "denext toolchain install");
     const old = await refusal(resolveDenoToolchain({
       env: envOf({ DENEXT_DENO: bin }),
-      identify: as(denextIdentity("3.0.0-rc.4")),
+      identify: as(denextIdentity("3.0.0-denext.7")),
     }));
-    assertStringIncludes(old, "older than 3.0.0-rc.5");
+    assertStringIncludes(old, "older than 3.0.0-denext.8");
     const garbage = await refusal(resolveDenoToolchain({
       env: envOf({ DENEXT_DENO: bin }),
       identify: as(null),
@@ -598,9 +598,9 @@ Deno.test("resolveDenoToolchain: a DENO_BIN the user set is verified like DENEXT
   try {
     const bin = join(dir, "deno");
     await Deno.writeTextFile(bin, BINARY);
-    const denext = () => Promise.resolve(denextIdentity("3.0.0-rc.5"));
+    const denext = () => Promise.resolve(denextIdentity("3.0.0-denext.8"));
     const ok = await resolveDenoToolchain({ env: envOf({ DENO_BIN: bin }), identify: denext });
-    assertEquals([ok.deno, ok.version], [bin, "3.0.0-rc.5"]);
+    assertEquals([ok.deno, ok.version], [bin, "3.0.0-denext.8"]);
     assertStringIncludes(ok.warning!, "(DENO_BIN)");
     const upstream = await refusal(resolveDenoToolchain({
       env: envOf({ DENO_BIN: bin }),
@@ -634,12 +634,12 @@ Deno.test("DENEXT_DENO: one pair of matching surrounding quotes is stripped (Win
   try {
     const bin = join(dir, "deno");
     await Deno.writeTextFile(bin, BINARY);
-    const identify = () => Promise.resolve(denextIdentity("3.0.0-rc.5"));
+    const identify = () => Promise.resolve(denextIdentity("3.0.0-denext.8"));
     for (const quoted of [`"${bin}"`, `'${bin}'`]) {
       const choice = await resolveDenoToolchain({ env: envOf({ DENEXT_DENO: quoted }), identify });
       assertEquals(
         [choice.deno, choice.version],
-        [bin, "3.0.0-rc.5"],
+        [bin, "3.0.0-denext.8"],
         `${quoted} names the binary`,
       );
     }
@@ -723,12 +723,12 @@ Deno.test("denoToolchainStatus: each cache state, the opt-outs, and whether this
     assertStringIncludes(upstream.detail, "REFUSED: upstream Deno 2.9.8");
     const build = await denoToolchainStatus({
       ...opts,
-      env: envOf({ DENEXT_DENO: rt.deno, DENEXT_TOOLCHAIN_ACTIVE: "3.0.0-rc.6" }),
-      identify: () => Promise.resolve(denextIdentity("3.0.0-rc.6")),
-      running: denextIdentity("3.0.0-rc.6"),
+      env: envOf({ DENEXT_DENO: rt.deno, DENEXT_TOOLCHAIN_ACTIVE: "3.0.0-denext.9" }),
+      identify: () => Promise.resolve(denextIdentity("3.0.0-denext.9")),
+      running: denextIdentity("3.0.0-denext.9"),
     });
     assertEquals([build.mode, build.ok, build.active], ["path", true, true]);
-    assertStringIncludes(build.detail, "denext's Deno 3.0.0-rc.6, not pinned or hash-checked");
+    assertStringIncludes(build.detail, "denext's Deno 3.0.0-denext.9, not pinned or hash-checked");
   } finally {
     await f.close();
   }
@@ -941,7 +941,7 @@ Deno.test("the desktop runtime refuses a toolchain build from before 5.0's minim
   const root = await Deno.makeTempDir();
   try {
     // A pre-marker build (`2.9.8-denext.15`) was once accepted by its version; denext 5.0 builds
-    // only on its runtime from 3.0.0-rc.5, told by the identity line.
+    // only on its runtime from 3.0.0-denext.8, told by the identity line.
     const status = await desktopRuntimeStatus({
       projectDir: root,
       target: "x86_64-unknown-linux-gnu",
@@ -1013,11 +1013,13 @@ Deno.test("a pin under the fork's own version (3.0.0-rc.1): parsed, downloaded, 
   }
 });
 
-Deno.test("the desktop runtime accepts the toolchain under its own version (3.0.0-rc.N)", async () => {
+Deno.test("the desktop runtime accepts the toolchain under its own version (3.0.0-denext.N)", async () => {
   const root = await Deno.makeTempDir();
   try {
     const marked = (v: string) => ({ deno: v, denext: v });
-    for (const found of [marked("3.0.0-rc.5"), marked("3.0.0-rc.6+ci.42"), marked("3.0.0")]) {
+    for (
+      const found of [marked("3.0.0-denext.8"), marked("3.0.0-denext.9+ci.42"), marked("3.0.0")]
+    ) {
       const status = await desktopRuntimeStatus({
         projectDir: root,
         target: "x86_64-unknown-linux-gnu",
@@ -1029,14 +1031,14 @@ Deno.test("the desktop runtime accepts the toolchain under its own version (3.0.
       assert(status.ok, `${found.deno}: ${status.detail}`);
       assertEquals(status.deno.denext, found.denext);
     }
-    // denext's own runtime from before 5.0's minimum (3.0.0-rc.5) is refused too.
+    // denext's own runtime from before 5.0's minimum (3.0.0-denext.8) is refused too.
     const old = await desktopRuntimeStatus({
       projectDir: root,
       target: "x86_64-unknown-linux-gnu",
       backend: "webview",
       cacheRoot: root,
       env: () => undefined,
-      denoVersion: () => Promise.resolve(marked("3.0.0-rc.3")),
+      denoVersion: () => Promise.resolve(marked("3.0.0-denext.7")),
     });
     assertFalse(old.ok, old.detail);
     // Upstream Deno's 3.0.0-rc.N / 3.0.0 (no identity line) is not the runtime's Deno 2.9.7.

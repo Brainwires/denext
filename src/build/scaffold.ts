@@ -378,7 +378,7 @@ function scaffoldImports(opts: ScaffoldOptions): Record<string, string> {
 /**
  * The `unstable` entries denext once wrote and 5.0 drops: `no-legacy-abort` (Deno.serve's
  * `request.signal` aborting only when a response is not delivered) is the default on every runtime
- * denext 5.0 runs on (3.0.0-rc.5 and later), which accepts the key as a no-op. `create` no longer
+ * denext 5.0 runs on (3.0.0-denext.8 and later), which accepts the key as a no-op. `create` no longer
  * writes it, and `migrate` and `upgrade` take it out of an existing `deno.json`.
  */
 export const RETIRED_UNSTABLE: readonly string[] = ["no-legacy-abort"];

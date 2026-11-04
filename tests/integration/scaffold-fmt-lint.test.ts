@@ -11,7 +11,7 @@ import {
   scaffoldProject,
 } from "../../src/build/scaffold.ts";
 import { scaffoldMonorepo } from "../../src/build/scaffold-monorepo.ts";
-import { isToolchainBuild, toolchainDeno } from "../../scripts/test-run.ts";
+import { toolchainDeno } from "../../scripts/test-run.ts";
 import { boundedOutput } from "../helpers/bounded-command.ts";
 
 /** The feature switches `denext create` offers. */
@@ -61,31 +61,13 @@ function combos(): Combo[] {
 }
 
 /**
- * The Deno the children run on: denext's toolchain (what users get from `denext lint`), because
- * stock Deno 2.9.6/2.9.7 can crash on shutdown (exit 139, use-after-free; denoland/deno#37025)
- * after a JS lint plugin ran, about 2% of runs. Stock (`DENEXT_DENO=stock`, or a toolchain that
- * can't be had) is the fallback, with a retry on exit 139 only.
+ * The Deno the children run on: denext's toolchain (what users get from `denext lint`). denext 5.0
+ * runs on nothing else, so a toolchain that can't be had fails the suite.
  */
-const DENO = await toolchainDeno().catch((err) => {
-  console.error(`scaffold-fmt-lint: toolchain unavailable, using stock Deno: ${err}`);
-  return null;
-}) ?? Deno.execPath();
-
-/** Whether the children run on a stock Deno (no toolchain), the only build with the crash. */
-const STOCK_FALLBACK = DENO === Deno.execPath() && !isToolchainBuild();
+const DENO = await toolchainDeno();
 
 /** Run `deno <args>` in `cwd`; the combined output when it fails. */
-async function deno(args: string[], cwd: string): Promise<{ ok: boolean; output: string }> {
-  let result = await denoOnce(args, cwd);
-  // Only stock Deno's known shutdown crash is retried; a toolchain crash is a real failure.
-  for (let i = 0; i < 2 && STOCK_FALLBACK && result.code === 139; i++) {
-    result = await denoOnce(args, cwd);
-  }
-  return result;
-}
-
-/** One `deno <args>` run in `cwd`. */
-async function denoOnce(
+async function deno(
   args: string[],
   cwd: string,
 ): Promise<{ ok: boolean; output: string; code: number }> {

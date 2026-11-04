@@ -603,7 +603,7 @@ Deno.test("a relative DENEXT_DENO resolves against the starting directory", asyn
     const rel = relative(Deno.cwd(), bin);
     const choice = await resolveDenoToolchain({
       env: (name) => (name === "DENEXT_DENO" ? rel : undefined),
-      identify: () => Promise.resolve({ deno: "3.0.0-rc.5", denext: "3.0.0-rc.5" }),
+      identify: () => Promise.resolve({ deno: "3.0.0-denext.8", denext: "3.0.0-denext.8" }),
     });
     assertEquals(choice.deno, bin, "an absolute path, so a child in another cwd still finds it");
   } finally {

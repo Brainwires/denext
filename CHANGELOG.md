@@ -11,11 +11,11 @@ and this project adheres to
 ### Breaking
 
 - **denext 5.0 requires denext's own Deno runtime; stock Deno is no longer supported.** Every
-  command runs on the pinned toolchain (`3.0.0-rc.5` or later) and nothing else:
+  command runs on the pinned toolchain (`3.0.0-denext.8` or later) and nothing else:
   - `DENEXT_DENO=stock` and `DENEXT_DESKTOP_RUNTIME=stock` are refused with an error naming the
     5.0 change and the fix (`denext toolchain install`). Unset them.
   - `DENEXT_DENO=<path>`, and a `DENO_BIN` you set, must name a build of denext's runtime: it is
-    verified by the `denext <version> (Brainwires)` line of its `deno --version` (`3.0.0-rc.5` or
+    verified by the `denext <version> (Brainwires)` line of its `deno --version` (`3.0.0-denext.8` or
     later), and any other binary is refused. The child marker is now that build's version.
   - A compiled `denext` no longer looks for `~/.deno/bin/deno` or a `deno` on PATH when the
     toolchain is missing; it refuses with the fix.

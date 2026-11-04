@@ -66,7 +66,7 @@ import { minGlibcFor } from "../src/build/linux-libc.ts";
 import { acquireCacheLock, withProjectLocks } from "../src/build/project-locks.ts";
 
 /** What denext's toolchain says about itself: the only Deno that builds on the runtime (5.0). */
-const TOOLCHAIN_DENO = { deno: "3.0.0-rc.5", denext: "3.0.0-rc.5" };
+const TOOLCHAIN_DENO = { deno: "3.0.0-denext.8", denext: "3.0.0-denext.8" };
 /** The Deno release the toolchain is built from (`deno-toolchain-pin.json`'s `deno`). */
 const RUNTIME_DENO_RELEASE = denoReleaseVersion(TOOLCHAIN_DENO);
 
@@ -928,12 +928,12 @@ Deno.test("resolveDesktopRuntimeEnv: upstream Deno, or denext's Deno of another 
           pin: f.pin,
           cacheRoot: f.cacheRoot,
           env: envOf({}),
-          denoVersion: () => Promise.resolve({ deno: "3.0.0-rc.3", denext: "3.0.0-rc.3" }),
+          denoVersion: () => Promise.resolve({ deno: "3.0.0-denext.7", denext: "3.0.0-denext.7" }),
           log: quiet,
         }),
       Error,
     );
-    assertStringIncludes(old.message, "older than 3.0.0-rc.5");
+    assertStringIncludes(old.message, "older than 3.0.0-denext.8");
     assertEquals(f.hits(), 0);
   } finally {
     await f.close();
@@ -1416,7 +1416,7 @@ Deno.test("doctor desktopRuntimeCheck: version, cache state and the deno match",
     const rt = await ensure(f);
     c = (await desktopRuntimeCheck(project, opts))!;
     assertStringIncludes(c.detail, "cached + verified");
-    assertStringIncludes(c.detail, "deno 3.0.0-rc.5 (denext's Deno) ✓");
+    assertStringIncludes(c.detail, "deno 3.0.0-denext.8 (denext's Deno) ✓");
     await Deno.writeTextFile(rt.runtimeLib, "r");
     c = (await desktopRuntimeCheck(project, opts))!;
     assertEquals(c.ok, false);

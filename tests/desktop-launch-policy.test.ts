@@ -212,7 +212,7 @@ const status: DesktopRuntimeStatus = {
   backend: "webview",
   cache: "cached",
   // denext's runtime, built from the runtime's Deno release (5.0 refuses an upstream `deno`).
-  deno: { found: "3.0.0-denext.1", required: "2.9.8", denext: "3.0.0-denext.1" },
+  deno: { found: "3.0.0-denext.8", required: "2.9.8", denext: "3.0.0-denext.8" },
   ok: true,
   detail: "runtime 3.0.0-denext.1",
 };

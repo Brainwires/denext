@@ -77,7 +77,7 @@ a build of denext's runtime.
 ```sh
 denext toolchain install
 denext toolchain status      # which Deno a command runs on, and why
-# or a build of denext's runtime (3.0.0-rc.5 or later)
+# or a build of denext's runtime (3.0.0-denext.8 or later)
 DENEXT_DENO=/path/to/denext-runtime/deno denext task build
 ```
 

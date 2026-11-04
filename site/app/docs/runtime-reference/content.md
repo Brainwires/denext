@@ -52,7 +52,7 @@ would put them below. There is no upstream 3.0: upstream Deno stays on its 2.9.x
 denext's runtime is the forward line. denext 4.x pins `3.0.0-denext.8`, so the rows marked "rc.6",
 "denext.1", "denext.2", "denext.3", "denext.5", "denext.6", "denext.7" and "denext.8" below apply to it. Before the marker (`3.0.0-rc.2` and earlier) denext recognises its runtime by the version alone ([Versions](/docs/toolchain#versions)).
 
-**Required from denext 5.0.** denext runs only on this runtime, `3.0.0-rc.5` or later: the
+**Required from denext 5.0.** denext runs only on this runtime, `3.0.0-denext.8` or later: the
 stock-Deno escape hatch (`DENEXT_DENO=stock`) and every stock-Deno fallback are gone, so everything
 on this page from `3.0.0-rc.5` and earlier — `Deno.SQL`, the lifecycle-script jail, the idle trim,
 the direction-split network flags, native TypeScript 7 — is always there. A `DENEXT_DENO=<path>`

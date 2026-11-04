@@ -365,11 +365,11 @@ Deno.test("windows DENEXT_DENO=<path>: a drive-letter path (as cmd.exe sets it) 
     await Deno.writeTextFile(exe, DENO_EXE);
     const forms = [exe, `${exe} `]; // `set DENEXT_DENO=… && …` keeps the trailing space
     if (onWindows) forms.push(exe.replaceAll("\\", "/"));
-    const identify = () => Promise.resolve({ deno: "3.0.0-rc.5", denext: "3.0.0-rc.5" });
+    const identify = () => Promise.resolve({ deno: "3.0.0-denext.8", denext: "3.0.0-denext.8" });
     for (const raw of forms) {
       const choice = await resolveDenoToolchain({ env: envFrom({ DENEXT_DENO: raw }), identify });
       assert(choice.warning, JSON.stringify(raw));
-      assertEquals([choice.deno, choice.version], [resolve(exe), "3.0.0-rc.5"]);
+      assertEquals([choice.deno, choice.version], [resolve(exe), "3.0.0-denext.8"]);
       assertStringIncludes(choice.warning, "not downloaded, pinned or hash-checked");
     }
     if (onWindows) assert(/^[A-Za-z]:\\/.test(resolve(exe)), resolve(exe));

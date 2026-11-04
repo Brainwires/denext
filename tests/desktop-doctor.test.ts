@@ -94,7 +94,7 @@ const status = (over: Partial<DesktopRuntimeStatus> = {}): DesktopRuntimeStatus 
   backend: "webview",
   cache: "cached",
   // denext's toolchain (its identity line), built from the runtime's Deno release.
-  deno: { found: "3.0.0-rc.5", required: "2.9.8", denext: "3.0.0-rc.5" },
+  deno: { found: "3.0.0-denext.8", required: "2.9.8", denext: "3.0.0-denext.8" },
   ok: true,
   detail: "runtime 2.9.7-denext.10 for x86_64-unknown-linux-gnu/webview; cached + verified",
   ...over,
@@ -333,19 +333,22 @@ Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, refus
     pin: pin(45),
   });
   assertEquals(checksOf(preMarker).filter((c) => c === "error:runtime"), ["error:runtime"]);
-  // The toolchain under its own version (3.0.0-rc.N), built from the pin's Deno, by its identity
+  // The toolchain under its own version (3.0.0-denext.N), built from the pin's Deno, by its identity
   // marker: no mismatch ...
   const own = await runDesktopDoctor({
     ...linux,
     runtimeStatus: () =>
       Promise.resolve(
-        status({ deno: { found: "3.0.0-rc.6", required: "2.9.8", denext: "3.0.0-rc.6" } }),
+        status({ deno: { found: "3.0.0-denext.9", required: "2.9.8", denext: "3.0.0-denext.9" } }),
       ),
     pin: pin(45),
   });
   assertEquals(checksOf(own).filter((c) => c === "error:runtime"), []);
-  // ... but upstream Deno's 3.0.0-rc.5 (no marker) is a mismatch, and so is denext's rc.4.
-  for (const deno of [{ found: "3.0.0-rc.5" }, { found: "3.0.0-rc.4", denext: "3.0.0-rc.4" }]) {
+  // ... but upstream Deno's 3.0.0-rc.5 (no marker) is a mismatch, and so is denext's runtime from
+  // before 5.0's minimum (3.0.0-denext.7).
+  for (
+    const deno of [{ found: "3.0.0-rc.5" }, { found: "3.0.0-denext.7", denext: "3.0.0-denext.7" }]
+  ) {
     const refused = await runDesktopDoctor({
       ...linux,
       runtimeStatus: () => Promise.resolve(status({ deno: { ...deno, required: "2.9.8" } })),

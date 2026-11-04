@@ -972,7 +972,7 @@ The Deno cache is `DENO_DIR` when it is set, otherwise the default Deno itself u
 backend comes from `desktop.backend` in `deno.json` (`webview` by default, or `cef`).
 
 **denext's Deno, built from 2.9.8.** `deno desktop` embeds the runtime, so the `deno` that builds
-must be denext's Deno runtime (its `denext <version> (Brainwires)` identity line, `3.0.0-rc.5` or
+must be denext's Deno runtime (its `denext <version> (Brainwires)` identity line, `3.0.0-denext.8` or
 later) built from the runtime's Deno release. `denext desktop run`, `dev` and `package` build with
 the toolchain (`package` puts it first on the packaging script's `PATH`), as does the scaffolded
 `desktop:package` task, which runs `denext desktop package`; a task of your own that runs a

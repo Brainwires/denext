@@ -26,13 +26,12 @@ import { compareDenoVersions } from "../src/build/deno-version.ts";
 const DENEXT_LINE = ["3.0.0-denext.1", "3.0.0-denext.2", "3.0.0-denext.10"];
 
 Deno.test("3.0.0-denext.N is past every 3.0.0-rc.N gate", () => {
-  // denext 5.0 runs only on MIN_DENEXT_RUNTIME (3.0.0-rc.5) or later, so the gates at or below it
-  // (net split, legacy abort, idle trim, the default jail) are gone; the later ones stay.
+  // denext 5.0 runs only on MIN_DENEXT_RUNTIME or later, so the gates at or below it (net split,
+  // legacy abort, idle trim, the default jail) are gone; the later ones stay.
   for (
     const gate of [
       FIRST_OWN_VERSION_RUNTIME,
       FIRST_MARKER_RUNTIME,
-      MIN_DENEXT_RUNTIME,
       UPSTREAM_BY_NAME_RELEASE,
       "3.0.0-rc.6",
     ]
@@ -43,6 +42,16 @@ Deno.test("3.0.0-denext.N is past every 3.0.0-rc.N gate", () => {
   // The last release candidate keeps its answers.
   assert(jailHostListsSupported("3.0.0-rc.6"));
   assertFalse(jailHostListsSupported("3.0.0-rc.5"));
+});
+
+Deno.test("denext 5.0's minimum is the runtime 4.12.0 pins: 3.0.0-denext.8, past every rc", () => {
+  assertEquals(MIN_DENEXT_RUNTIME, "3.0.0-denext.8");
+  for (const v of ["3.0.0-rc.5", "3.0.0-rc.7", "3.0.0-denext.1", "3.0.0-denext.7"]) {
+    assert(compareDenoVersions(v, MIN_DENEXT_RUNTIME) < 0, v);
+  }
+  for (const v of ["3.0.0-denext.8", "3.0.0-denext.10", "3.0.0"]) {
+    assert(compareDenoVersions(v, MIN_DENEXT_RUNTIME) >= 0, v);
+  }
 });
 
 Deno.test("the hardened jail's gate is 3.0.0-denext.1: rc.6 below, denext.1 and denext.2 at or above", () => {

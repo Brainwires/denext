@@ -7,7 +7,7 @@
 // `start: { limits: { memory, cpuSeconds, deadlineSeconds } }` in denext.config turns them on for
 // the production server only, where it starts: the process of `denext start` that serves, the
 // `build --compile` executable, the Docker image's `CMD` and the systemd unit's `ExecStart` —
-// never `dev` (a watcher), tests or jobs. Every runtime denext 5.0 runs on (3.0.0-rc.5 and later)
+// never `dev` (a watcher), tests or jobs. Every runtime denext 5.0 runs on (3.0.0-denext.8 and later)
 // takes them.
 //
 // `denext start` may re-run itself before it serves (onto the toolchain, to the project's pinned

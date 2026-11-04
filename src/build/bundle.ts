@@ -167,7 +167,7 @@ let bundleSupport: Promise<void> | undefined;
 
 /**
  * Verify the resolved `deno` is denext's Deno runtime ({@linkcode isSupportedDenextRuntime}: the
- * `denext <version> (Brainwires)` line of `deno --version`, 3.0.0-rc.5 or later) before it bundles: the native path relies on what only that runtime has (`deno bundle
+ * `denext <version> (Brainwires)` line of `deno --version`, 3.0.0-denext.8 or later) before it bundles: the native path relies on what only that runtime has (`deno bundle
  * --define`), so another Deno — a stock `deno test` running a build, a `DENO_BIN` of another
  * Deno — is refused with the fix rather than producing a broken bundle. Runs the check once per
  * process (memoized).

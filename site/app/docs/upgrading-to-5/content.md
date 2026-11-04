@@ -6,7 +6,7 @@ lead: denext 5.0 runs only on its own Deno runtime. The stock-Deno opt-outs are 
 
 denext 4.x ran on [denext's Deno toolchain](/docs/toolchain) by default and let you opt out to the
 Deno that started it, with a deprecation notice. 5.0 removes the opt-outs: every command, build,
-test and desktop window runs on the pinned runtime (`3.0.0-rc.5` or later), and nothing else.
+test and desktop window runs on the pinned runtime (`3.0.0-denext.8` or later), and nothing else.
 
 Most projects need one step: run `denext toolchain install` once (the installer already does), and
 run tasks, builds and tests through `denext`.
@@ -27,16 +27,16 @@ run tasks, builds and tests through `denext`.
 
 ## What breaks
 
-| 4.x                                                                                                  | 5.0                                                                                                       |
-| ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
-| `DENEXT_DENO=stock` runs every command on the Deno that started the CLI (with a deprecation notice). | Refused.                                                                                                  |
-| `DENEXT_DESKTOP_RUNTIME=stock` builds desktop windows on the stock Deno Desktop runtime.             | Refused.                                                                                                  |
-| `DENEXT_DENO=<path>` and a `DENO_BIN` of yours may name any `deno`.                                  | They must name a build of denext's runtime, `3.0.0-rc.5` or later, told by its `--version` identity line. |
-| A compiled `denext` with no toolchain falls back to `~/.deno/bin/deno` or a `deno` on PATH.          | It refuses with `denext toolchain install`.                                                               |
-| A build or `createTestApp()` under a plain `deno test` on upstream Deno runs, or fails later.        | `build()`, `createTestApp()` and `probeApp()` refuse up front; so does any bundle.                        |
-| `denext desktop run` / `dev` fall back to the stock runtime when the `deno` doesn't match.           | They always build on the toolchain; another `deno` is refused.                                            |
-| esbuild falls back to the npm `@esbuild/<platform>` binary.                                          | esbuild comes from the toolchain, or `ESBUILD_BINARY_PATH`.                                               |
-| `DENEXT_NO_DEPRECATION_WARNINGS` hides the stock-Deno notice.                                        | Not read: there is no notice, each path is an error.                                                      |
+| 4.x                                                                                                  | 5.0                                                                                                           |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `DENEXT_DENO=stock` runs every command on the Deno that started the CLI (with a deprecation notice). | Refused.                                                                                                      |
+| `DENEXT_DESKTOP_RUNTIME=stock` builds desktop windows on the stock Deno Desktop runtime.             | Refused.                                                                                                      |
+| `DENEXT_DENO=<path>` and a `DENO_BIN` of yours may name any `deno`.                                  | They must name a build of denext's runtime, `3.0.0-denext.8` or later, told by its `--version` identity line. |
+| A compiled `denext` with no toolchain falls back to `~/.deno/bin/deno` or a `deno` on PATH.          | It refuses with `denext toolchain install`.                                                                   |
+| A build or `createTestApp()` under a plain `deno test` on upstream Deno runs, or fails later.        | `build()`, `createTestApp()` and `probeApp()` refuse up front; so does any bundle.                            |
+| `denext desktop run` / `dev` fall back to the stock runtime when the `deno` doesn't match.           | They always build on the toolchain; another `deno` is refused.                                                |
+| esbuild falls back to the npm `@esbuild/<platform>` binary.                                          | esbuild comes from the toolchain, or `ESBUILD_BINARY_PATH`.                                                   |
+| `DENEXT_NO_DEPRECATION_WARNINGS` hides the stock-Deno notice.                                        | Not read: there is no notice, each path is an error.                                                          |
 
 The checks for an older or stock runtime are gone with them: the idle trim, the lifecycle-script
 jail, the direction-split network grants and `start.limits` no longer depend on the runtime, and
@@ -51,7 +51,7 @@ says whether a command runs on it, and `denext toolchain path` prints the binary
 your shell and editor the toolchain too, run `denext toolchain link`.
 
 **A runtime build of your own.** Point `DENEXT_DENO=<path>` at it. denext runs that binary after
-checking its `deno --version` for the `denext <version> (Brainwires)` line (`3.0.0-rc.5` or later),
+checking its `deno --version` for the `denext <version> (Brainwires)` line (`3.0.0-denext.8` or later),
 but does not pin or hash-check it. `DENO_BIN` works the same way when `DENEXT_DENO` is unset. For a
 Deno Desktop runtime build, use `DENEXT_DESKTOP_RUNTIME_DIR=<an unpacked runtime build>`.
 

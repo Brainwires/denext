@@ -119,7 +119,7 @@ pinned one.
 
 `request.signal` aborts only when a response is not delivered (the client went away or the request
 timed out), and Deno prints no legacy-abort notice: that is the default of every runtime denext 5.0
-runs on (`3.0.0-rc.5` and later). Code that relied on the old abort after every delivered response
+runs on (`3.0.0-denext.8` and later). Code that relied on the old abort after every delivered response
 opts back in with `--unstable-legacy-abort`, `"unstable": ["legacy-abort"]` or
 `DENO_LEGACY_ABORT=1` (use the handler's `info.completed` to learn that a response was delivered).
 `denext create` and `denext migrate` no longer write `"unstable": ["no-legacy-abort"]` into
@@ -201,15 +201,15 @@ supported list on musl or an older glibc, rather than downloading a binary that 
 
 ## Another build of the runtime, and when it refuses
 
-| Setting              | Effect                                                                                                                                                                                                              |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `DENEXT_DENO=<path>` | That build of denext's runtime is used as the toolchain (one warning per run). Its `deno --version` must carry the `denext <version> (Brainwires)` line of `3.0.0-rc.5` or later; it is not pinned or hash-checked. |
-| `DENO_BIN=<path>`    | The same, for the `deno` the CLI's own child processes run, when `DENEXT_DENO` is unset.                                                                                                                            |
-| `DENEXT_DENO=stock`  | Refused since denext 5.0 (it used to run everything on the Deno that started the CLI).                                                                                                                              |
+| Setting              | Effect                                                                                                                                                                                                                  |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DENEXT_DENO=<path>` | That build of denext's runtime is used as the toolchain (one warning per run). Its `deno --version` must carry the `denext <version> (Brainwires)` line of `3.0.0-denext.8` or later; it is not pinned or hash-checked. |
+| `DENO_BIN=<path>`    | The same, for the `deno` the CLI's own child processes run, when `DENEXT_DENO` is unset.                                                                                                                                |
+| `DENEXT_DENO=stock`  | Refused since denext 5.0 (it used to run everything on the Deno that started the CLI).                                                                                                                                  |
 
 denext never runs another Deno. On a platform with no pinned build, offline on first use, behind a
 failed or mismatching download, with `DENEXT_DENO=stock`, or with a `DENEXT_DENO` / `DENO_BIN` that
-is upstream Deno (or denext's runtime from before `3.0.0-rc.5`), a command stops with one error that
+is upstream Deno (or denext's runtime from before `3.0.0-denext.8`), a command stops with one error that
 says why and names the fix (`denext toolchain install`). A command that runs project code (`start`,
 `dev`, `build`, `job`, …) in a process that lacks the grants to install and run the toolchain
 (`--allow-run`, and read/write on the cache directory) stops too, rather than run on another Deno,
@@ -235,7 +235,7 @@ denext 5.0 removed every stock-Deno path (the steps, CI changes and errors are i
 
 - `DENEXT_DENO=stock` and `DENEXT_DESKTOP_RUNTIME=stock` are refused; unset them.
 - `DENEXT_DENO=<path>` and a `DENO_BIN` of yours must name a build of denext's runtime
-  (`3.0.0-rc.5` or later, told by its `--version` identity line).
+  (`3.0.0-denext.8` or later, told by its `--version` identity line).
 - A compiled `denext` no longer looks for a `deno` of yours (`~/.deno/bin`, PATH) when the toolchain
   is missing; it refuses with `denext toolchain install`.
 - Bundling, `deno desktop` packaging and Vitest files in `denext test` need the runtime: a plain

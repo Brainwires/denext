@@ -89,10 +89,10 @@ async function probeWithFakeDeno(script: string): Promise<string> {
 const POSIX = Deno.build.os !== "windows";
 
 Deno.test({
-  name: "ensureBundleSupport: denext's runtime (its identity line, 3.0.0-rc.5+) bundles",
+  name: "ensureBundleSupport: denext's runtime (its identity line, 3.0.0-denext.8+) bundles",
   ignore: !POSIX,
 }, async () => {
-  const denext = `echo 'deno 3.0.0-rc.6 (stable)'; echo 'denext 3.0.0-rc.6 (Brainwires)'`;
+  const denext = `echo 'deno 3.0.0-denext.9 (stable)'; echo 'denext 3.0.0-denext.9 (Brainwires)'`;
   assertEquals(await probeWithFakeDeno(denext), "PROBE:ok");
 });
 
@@ -105,9 +105,9 @@ Deno.test({
   assertStringIncludes(upstream, "upstream Deno 2.9.8");
   assertStringIncludes(upstream, "denext toolchain install");
   const old = await probeWithFakeDeno(
-    `echo 'deno 3.0.0-rc.3 (stable)'; echo 'denext 3.0.0-rc.3 (Brainwires)'`,
+    `echo 'deno 3.0.0-denext.7 (stable)'; echo 'denext 3.0.0-denext.7 (Brainwires)'`,
   );
-  assertStringIncludes(old, "older than 3.0.0-rc.5");
+  assertStringIncludes(old, "older than 3.0.0-denext.8");
   assertStringIncludes(await probeWithFakeDeno("exit 2"), "not a deno binary");
 });
 

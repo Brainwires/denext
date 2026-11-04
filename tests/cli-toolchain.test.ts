@@ -399,7 +399,7 @@ Deno.test("toolchainApplies: a compiled binary hands the toolchain to every verb
 const posix = Deno.build.os !== "windows";
 
 /** The version a {@linkcode wrapper} says it is (denext 5.0 runs only on its runtime). */
-const WRAPPER_VERSION = "3.0.0-rc.99";
+const WRAPPER_VERSION = "3.0.0-denext.99";
 
 /**
  * A `deno` stand-in: answers `--version` as denext's runtime of {@linkcode WRAPPER_VERSION} (the

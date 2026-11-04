@@ -25,14 +25,17 @@ import { runToExit } from "./exited-output.ts";
 export const MIN_DENO_VERSION = "2.9.0";
 
 /**
- * The oldest release of denext's Deno that denext 5.0 runs on: the toolchain a `DENEXT_DENO=<path>`
- * or `DENO_BIN` names, and the Deno that bundles or runs `deno desktop`, must carry the identity
- * marker of this release or a later one ({@linkcode isSupportedDenextRuntime}). Every runtime
- * feature denext used to gate on a version at or below it — the identity marker (3.0.0-rc.3), the
- * direction-split network flags (3.0.0-rc.2), `Deno.serve`'s no-legacy-abort default, the idle
- * trim and the lifecycle-script jail (3.0.0-rc.5) — is therefore always there.
+ * The oldest release of denext's Deno that denext 5.0 runs on (the runtime denext 4.12.0 pins): the
+ * toolchain a `DENEXT_DENO=<path>` or `DENO_BIN` names, and the Deno that bundles or runs
+ * `deno desktop`, must carry the identity marker of this release or a later one
+ * ({@linkcode isSupportedDenextRuntime}). Every runtime feature denext used to gate on a version at
+ * or below it — the identity marker (3.0.0-rc.3), the direction-split network flags (3.0.0-rc.2),
+ * `Deno.serve`'s no-legacy-abort default, the idle trim and the lifecycle-script jail
+ * (3.0.0-rc.5), the jail's host lists (3.0.0-rc.6), the hardened jail and the strict launch policy
+ * (3.0.0-denext.1), the app-folder permission tokens and a compiled app's resource-limit lift
+ * (3.0.0-denext.8) — is therefore always there.
  */
-export const MIN_DENEXT_RUNTIME = "3.0.0-rc.5";
+export const MIN_DENEXT_RUNTIME = "3.0.0-denext.8";
 
 /**
  * What every refusal of another Deno ends with: the 5.0 change and the fix.
