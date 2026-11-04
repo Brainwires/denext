@@ -348,16 +348,16 @@ removes both variables from its own environment, so nothing it starts inherits t
 
 `build --compile` bakes the limits into the executable, and denort reads them only from the
 binary's own metadata: it takes no `--max-*` flag at run time (every argument goes to the program)
-and no variable that lifts or changes them. From denext's Deno 3.0.0-denext.8, the binary's
+and no variable that lifts or changes them. The binary's
 generated main module lifts them for `./app job <name>` and `./app db migrate` before it dispatches
 (`Deno.disarmResourceLimits(import.meta)`, which the runtime takes only with the main module's own
 `import.meta` while it evaluates, so neither the app's code, a dependency nor whoever starts the
 program can lift them).
 `./app` and `./app start` serve under them as before.
 
-On an older runtime, which has no such call, `job` and `db` run under the server's `memory`,
-`cpuSeconds` and `deadlineSeconds` as well, a long migration or job past them ends with the limit's
-exit code, and those verbs print a notice naming the baked flags. Run long jobs and migrations with
+If the runtime refuses the call, `job` and `db` run under the server's `memory`, `cpuSeconds` and
+`deadlineSeconds` as well, a long migration or job past them ends with the limit's exit code, and
+those verbs print a notice naming the baked flags. Run long jobs and migrations with
 `denext job` / `denext db` from the project, or from a second binary compiled without
 `start.limits`.
 

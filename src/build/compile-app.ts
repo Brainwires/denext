@@ -453,8 +453,8 @@ function standaloneSpecifier(entryUrl: string): string {
  * `limitsBaked` names the `start.limits` flags baked in. With them, the module lifts the limits
  * for `job` and `db` with `Deno.disarmResourceLimits(import.meta)` (denext's Deno from
  * 3.0.0-denext.8, which takes only the main module's own `import.meta`, while it evaluates, hence
- * here and not in `runStandalone`); on an older runtime, which has no such function, those verbs keep running
- * under them and say so (src/build/resource-limits.ts `bakedLimitsNotice`).
+ * here and not in `runStandalone`); if the runtime refuses, those verbs keep running under them and
+ * say so (src/build/resource-limits.ts `bakedLimitsNotice`).
  */
 export function entrySource(
   entryUrl: string,
@@ -484,7 +484,7 @@ export function entrySource(
 
 /**
  * The entry's lines that lift the baked `start.limits` for `job` and `db`: the runtime (denext's
- * Deno from 3.0.0-denext.8) wants the main module's own `import.meta`, so it is generated here; `false` on an older runtime (no function) or when it refuses.
+ * Deno from 3.0.0-denext.8) wants the main module's own `import.meta`, so it is generated here; `false` when it refuses.
  */
 const LIFT_LIMITS = [
   "// `job` and `db` run past the server's start.limits: lift them (this module's import.meta can, now).",
@@ -493,8 +493,8 @@ const LIFT_LIMITS = [
   'if (verb === "job" || verb === "db") {',
   "  try {",
   "    limitsLifted =",
-  "      (Deno as unknown as { disarmResourceLimits?: (meta: ImportMeta) => boolean })",
-  "        .disarmResourceLimits?.(import.meta) === true;",
+  "      (Deno as unknown as { disarmResourceLimits(meta: ImportMeta): boolean })",
+  "        .disarmResourceLimits(import.meta) === true;",
   "  } catch {",
   "    // Refused: the limits stay, and the verb says so.",
   "  }",

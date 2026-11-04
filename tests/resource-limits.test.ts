@@ -398,6 +398,9 @@ Deno.test("resource limits: a compiled binary bakes them in and says so on `job`
     entrySource("file:///p/.denext/compile/main.ts", "file:///p/", true, ["--max-time=60"]),
     'Deno.args, { idleTrimBaked: true, limitsBaked: ["--max-time=60"], limitsLifted });',
   );
+  // Every supported runtime (denext.8+) has the call: no feature-detection of an older one.
+  assert(entry.includes("disarmResourceLimits(import.meta)"), entry);
+  assert(!entry.includes("disarmResourceLimits?."), entry);
   const plain = entrySource("file:///p/.denext/compile/main.ts", "file:///p/");
   assert(!plain.includes("limitsBaked"), plain);
   assert(!plain.includes("disarmResourceLimits"), plain);
@@ -464,8 +467,7 @@ Deno.test("resource limits: the compiled entry lifts them for `job` and `db` whe
     assertEquals(kept.disarmed, false, args.join(" "));
     assertEquals(kept.options.limitsLifted, false);
   }
-  // An older runtime (no function), or one that refuses: the limits stay and the verb says so.
-  assertEquals((await run(["job", "x"])).options.limitsLifted, false);
+  // A runtime that refuses: the limits stay and the verb says so.
   for (const disarm of ["false", "throw"]) {
     const refused = await run(["job", "x"], disarm);
     assertEquals([refused.disarmed, refused.options.limitsLifted], [true, false]);
