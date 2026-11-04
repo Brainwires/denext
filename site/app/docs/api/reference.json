@@ -7805,7 +7805,7 @@
           "name": "VERSION",
           "slug": "VERSION",
           "kind": "variable",
-          "signature": "VERSION: \"4.11.13\"",
+          "signature": "VERSION: \"4.12.0\"",
           "doc": "The denext framework version.",
           "docFull": "The denext framework version.",
           "params": [],

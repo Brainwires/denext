@@ -8,6 +8,8 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.12.0] - 2026-11-04
+
 ### Added
 
 - **`desktop.backend` per OS.** `denext.config.ts` `desktop.backend` takes `"webview"`, `"cef"` or
@@ -127,6 +129,51 @@ and this project adheres to
   `deno desktop` (and `deno task export`) on the Deno running the script rather than the first
   `deno` on PATH, so `denext desktop package` compiles on denext's toolchain.
 
+### Fixed
+
+- **`SafeSet` / `SafeMap` built from another collection no longer hang or throw** in denext's Deno
+  and the Deno Desktop runtime. The runtime's internal safe collections read a `Set` or `Map`
+  argument by index, so `new SafeSet(otherSet)` never returned and `new SafeMap(otherMap)` threw
+  `Iterator value undefined is not an entry object` (OpenTelemetry's trace-state copy hit it); any
+  iterable that isn't array-like is now read by its own iterator.
+- **A `desktop.permissions: "strict"` refusal prints as one line.** The generated
+  `scripts/package-*.ts` (and so `denext desktop package`) end with the refusal's message and exit 1
+  instead of an uncaught error with a stack trace; other errors keep their stack. Regenerate the
+  scripts with `denext desktop package --regenerate-scripts` to pick it up.
+- **The desktop kitchen-sink's drag check passes on a Wayland WebKitGTK window**, where a drag with
+  no button held ends `"cancelled"` rather than `"failed"`. The desktop guide and known limitations
+  now say that `startFileDrag` resolving `"failed"` is a normal outcome on Wayland (always under
+  CEF), and that the runtime's clipboard `change` event can be absent under CEF on Wayland.
+- **`.deno/npm-compat` is no longer listed as a limitation of the pinned runtime**: from runtime
+  3.0.0-denext.8 the type check keeps it under `DENO_DIR` and removes the old folder. A project
+  on an older runtime still wants `"exclude": [".deno/"]`.
+- **`migrate --denext-local-path` never overrides a package the app maps itself.** A key in the
+  app's existing import map keeps the app's value on a re-run (it was replaced by the checkout's),
+  a `package.json` dependency stays the app's, and a clash at another major is reported (package,
+  the app's specifier, the checkout's) instead of shadowing the app's version.
+- **`migrate --denext-local-path` maps only the deps an app's graph can load.** They come from the
+  modules reachable from the checkout's public entry points, not from every file under `src/`: a
+  dependency only denext's CLI imports (its profiler's headless-browser client) no longer lands in
+  the app's import map, and neither does one of the checkout's workspace packages or tests.
+- **denext's own import map no longer shadows an app's package in dev and build configs.** The
+  merged configs the unbundled dev loop, the stylesheet build, the runtime prebuild and the
+  module re-exec of a build resolve through layered denext's whole root import map under the
+  app's, so a package the app leaves unmapped and resolves from its own `node_modules` (an app on
+  Effect 4) got denext's test-only `effect@^3` instead. They now carry denext's `jsr:` / `npm:`
+  entries only where denext's own module graph imports them, and never for a package the app has
+  in package.json or `node_modules` (the runtime prebuild, which bundles none of the app's
+  modules, applies only the first rule).
+- **The desktop examples no longer print Deno's "Ignored build scripts" box.** The examples that
+  are their own workspace root (Hangar, Companion, the kitchen sink, Clerk, React Native desktop)
+  carry the `allowScripts` deny of `@parcel/watcher` a scaffold writes, so an app copied from one
+  runs `denext desktop package --regenerate-scripts` and every other command without the warning.
+- **Hangar's settings page can no longer loosen what guards the host.** `setSettings` checks the
+  page's arguments against the settings a page may change: unknown keys are refused instead of
+  dropped, the QEMU prefix (the program Hangar runs) is set only in the settings file, and the RAM
+  budget goes up to 90% from a page. A VM the tray starts or stops now refreshes the open pages at
+  once through the extension's `setup` host, and Hangar's tests type-check it with a timeout helper
+  of their own instead of a repository script.
+
 ### Security
 
 - **Rebuild and reship: V8 moves to 15.6 (Chrome Extended Stable 156).** denext's Deno and the
@@ -242,51 +289,6 @@ and this project adheres to
   writable by no other user (macOS's admin group, whose members can become root anyway, and a
   sticky folder such as `/tmp` excepted). One that fails the check is skipped, and with none left
   the attestation check reports that `gh` was not run.
-
-### Fixed
-
-- **`SafeSet` / `SafeMap` built from another collection no longer hang or throw** in denext's Deno
-  and the Deno Desktop runtime. The runtime's internal safe collections read a `Set` or `Map`
-  argument by index, so `new SafeSet(otherSet)` never returned and `new SafeMap(otherMap)` threw
-  `Iterator value undefined is not an entry object` (OpenTelemetry's trace-state copy hit it); any
-  iterable that isn't array-like is now read by its own iterator.
-- **A `desktop.permissions: "strict"` refusal prints as one line.** The generated
-  `scripts/package-*.ts` (and so `denext desktop package`) end with the refusal's message and exit 1
-  instead of an uncaught error with a stack trace; other errors keep their stack. Regenerate the
-  scripts with `denext desktop package --regenerate-scripts` to pick it up.
-- **The desktop kitchen-sink's drag check passes on a Wayland WebKitGTK window**, where a drag with
-  no button held ends `"cancelled"` rather than `"failed"`. The desktop guide and known limitations
-  now say that `startFileDrag` resolving `"failed"` is a normal outcome on Wayland (always under
-  CEF), and that the runtime's clipboard `change` event can be absent under CEF on Wayland.
-- **`.deno/npm-compat` is no longer listed as a limitation of the pinned runtime**: from runtime
-  3.0.0-denext.8 the type check keeps it under `DENO_DIR` and removes the old folder. A project
-  on an older runtime still wants `"exclude": [".deno/"]`.
-- **`migrate --denext-local-path` never overrides a package the app maps itself.** A key in the
-  app's existing import map keeps the app's value on a re-run (it was replaced by the checkout's),
-  a `package.json` dependency stays the app's, and a clash at another major is reported (package,
-  the app's specifier, the checkout's) instead of shadowing the app's version.
-- **`migrate --denext-local-path` maps only the deps an app's graph can load.** They come from the
-  modules reachable from the checkout's public entry points, not from every file under `src/`: a
-  dependency only denext's CLI imports (its profiler's headless-browser client) no longer lands in
-  the app's import map, and neither does one of the checkout's workspace packages or tests.
-- **denext's own import map no longer shadows an app's package in dev and build configs.** The
-  merged configs the unbundled dev loop, the stylesheet build, the runtime prebuild and the
-  module re-exec of a build resolve through layered denext's whole root import map under the
-  app's, so a package the app leaves unmapped and resolves from its own `node_modules` (an app on
-  Effect 4) got denext's test-only `effect@^3` instead. They now carry denext's `jsr:` / `npm:`
-  entries only where denext's own module graph imports them, and never for a package the app has
-  in package.json or `node_modules` (the runtime prebuild, which bundles none of the app's
-  modules, applies only the first rule).
-- **The desktop examples no longer print Deno's "Ignored build scripts" box.** The examples that
-  are their own workspace root (Hangar, Companion, the kitchen sink, Clerk, React Native desktop)
-  carry the `allowScripts` deny of `@parcel/watcher` a scaffold writes, so an app copied from one
-  runs `denext desktop package --regenerate-scripts` and every other command without the warning.
-- **Hangar's settings page can no longer loosen what guards the host.** `setSettings` checks the
-  page's arguments against the settings a page may change: unknown keys are refused instead of
-  dropped, the QEMU prefix (the program Hangar runs) is set only in the settings file, and the RAM
-  budget goes up to 90% from a page. A VM the tray starts or stops now refreshes the open pages at
-  once through the extension's `setup` host, and Hangar's tests type-check it with a timeout helper
-  of their own instead of a repository script.
 
 ## [4.11.13] - 2026-11-02
 
@@ -21052,7 +21054,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.13...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.12.0...development
+[4.12.0]: https://jsr.io/@denext/denext@4.12.0
 [4.11.13]: https://jsr.io/@denext/denext@4.11.13
 [4.11.12]: https://jsr.io/@denext/denext@4.11.12
 [4.11.11]: https://jsr.io/@denext/denext@4.11.11
