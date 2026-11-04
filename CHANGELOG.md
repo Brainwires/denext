@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **`createOwnedResources()` in `denext/desktop`: per-window backend resources for extensions.** An
+  extension that keeps a PTY, a watcher or a subprocess alive for one window registers it with
+  an owner (`ctx.windowId`) and connects the registry from `setup(host)`. `emit(id, event, data)`
+  reaches the owner window only, as `{ id, data }`. When the owner closes, `onOwnerClosed:
+  "dispose"` (the default) disposes its resources, and `"detach"` keeps them alive with no owner:
+  `ownedBy(key)` finds them for a window reopened with the same key and `attach(id, windowId)`
+  hands one over with what it emitted meanwhile (`replay: { maxBytes }`, a per-resource ring
+  buffer that drops the oldest chunks and keeps the tail of an oversized string or byte chunk).
+  The app's quit disposes everything whatever the policy, each dispose bounded by
+  `disposeTimeoutMs`. It needs the host's window lifecycle hooks (`onWindowClosed`, `onAppQuit`,
+  `windows()`).
+
 ## [4.12.0] - 2026-11-04
 
 ### Added

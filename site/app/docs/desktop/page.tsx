@@ -3316,6 +3316,74 @@ export default defineDesktopExtension({
 onDesktopEvent<{ percent: number }>("jobs", "progress", ({ percent }) => setPercent(percent));`}
       </Code>
 
+      <h3 id="desktop-owned-resources">Resources a window owns: PTYs, watchers, subprocesses</h3>
+      <p>
+        An extension that keeps something alive for one window (a terminal&apos;s PTY, a file
+        watcher, a subprocess) registers it in <code>createOwnedResources()</code> from{" "}
+        <code>denext/desktop</code>, connected from <code>setup(host)</code>.{" "}
+        <code>sessions.emit(id, event, data)</code>{" "}
+        sends to the resource&apos;s owner window only, never to every window, as{" "}
+        <code>{"{ id, data }"}</code> (an unknown id is a no-op that returns{" "}
+        <code>false</code>). When the owner closes, the default{" "}
+        <code>onOwnerClosed: "dispose"</code> disposes its resources. <code>"detach"</code>{" "}
+        keeps them alive with no owner and remembers the window&apos;s{" "}
+        <code>key</code>: a window reopened with that key finds them with{" "}
+        <code>sessions.ownedBy(key)</code> and takes one over with{" "}
+        <code>sessions.attach(id, ctx.windowId)</code>, which returns what it emitted meanwhile. Use
+        {" "}
+        <code>"detach"</code> only with{" "}
+        <code>replay</code>, and give the user a way to end a detached resource (<code>
+          sessions.detached()
+        </code>{" "}
+        lists them): it lives until <code>sessions.remove(id)</code>{" "}
+        or the app quits. When the app quits, or a window closes because it is quitting, every
+        resource is disposed whatever the policy; each <code>dispose</code> is awaited for at most
+        {" "}
+        <code>disposeTimeoutMs</code> (5 s), and a failure is logged without stopping the others.
+      </p>
+      <p>
+        <code>replay: {"{ maxBytes }"}</code>{" "}
+        keeps each resource&apos;s recent event data, emitted while owned or detached, in a ring
+        buffer of that many bytes: a string counts its UTF-8 bytes, an <code>ArrayBuffer</code>{" "}
+        or typed array its{" "}
+        <code>byteLength</code>, anything else its JSON. The oldest whole chunks go first; one chunk
+        larger than the whole buffer keeps its last <code>maxBytes</code>{" "}
+        bytes when it is a string or bytes, and is dropped otherwise.
+      </p>
+      <Code lang="ts">
+        {`// desktop/extensions/terminal.ts: runs in the Deno process only
+import { createOwnedResources, defineDesktopExtension } from "denext/desktop";
+const sessions = createOwnedResources<Pty>({
+  onOwnerClosed: "detach", // survive the window; "dispose" (the default) ends with it
+  dispose: (pty) => pty.kill(),
+  replay: { maxBytes: 256 * 1024 },
+});
+export default defineDesktopExtension({
+  name: "terminal",
+  events: ["output"],
+  setup: (host) => sessions.connect(host),
+  methods: {
+    open: {
+      handler: (_args, ctx) => {
+        const id = crypto.randomUUID();
+        const pty = spawnPty(); // your PTY
+        sessions.add(id, pty, { owner: ctx.windowId });
+        pty.onData((text) => sessions.emit(id, "output", text));
+        return id;
+      },
+    },
+    // a window reopened with openWindow({ key: "terminal" }) restores its sessions
+    restore: { handler: () => sessions.ownedBy("terminal") },
+    resume: {
+      handler: (args, ctx) => sessions.attach((args as { id: string }).id, ctx.windowId ?? "main"),
+    },
+  },
+});
+
+// a "use client" component
+onDesktopEvent<{ id: string; data: string }>("terminal", "output", ({ id, data }) => write(id, data));`}
+      </Code>
+
       <h3 id="desktop-picked-path">A picked file&apos;s path, for a host program</h3>
       <p>
         The <code>path</code> a pick returns to the page (<code>pickDocument</code>,{" "}

@@ -44917,6 +44917,25 @@
           "denextOnly": true
         },
         {
+          "name": "createOwnedResources",
+          "slug": "createOwnedResources",
+          "kind": "function",
+          "signature": "createOwnedResources<T>(options: OwnedResourcesOptions<T>): OwnedResources<T>",
+          "doc": "Build a registry of per-window resources for a desktop extension.",
+          "docFull": "Build a registry of per-window resources for a desktop extension.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "The close policy, the dispose function and the replay size."
+            }
+          ],
+          "returns": "The registry.",
+          "examples": [
+            "```ts\n// desktop/extensions/terminal.ts: runs in the Deno process only\nimport { createOwnedResources, defineDesktopExtension } from \"denext/desktop\";\nconst sessions = createOwnedResources<Pty>({\n  onOwnerClosed: \"detach\",\n  dispose: (pty) => pty.kill(),\n  replay: { maxBytes: 256 * 1024 },\n});\nexport default defineDesktopExtension({\n  name: \"terminal\",\n  events: [\"output\"],\n  setup: (host) => sessions.connect(host),\n  methods: {\n    open: {\n      handler: (_args, ctx) => {\n        const id = crypto.randomUUID();\n        const pty = spawnPty(); // your PTY\n        sessions.add(id, pty, { owner: ctx.windowId });\n        pty.onData((text) => sessions.emit(id, \"output\", text));\n        return id;\n      },\n    },\n    resume: {\n      handler: (args, ctx) => sessions.attach((args as { id: string }).id, ctx.windowId ?? \"main\"),\n    },\n  },\n});\n```"
+          ],
+          "denextOnly": true
+        },
+        {
           "name": "DEFAULT_DESKTOP_INSTALLERS",
           "slug": "DEFAULT_DESKTOP_INSTALLERS",
           "kind": "variable",
@@ -48220,6 +48239,321 @@
           "returns": "The argv, xcrun first.",
           "examples": [],
           "denextOnly": true
+        },
+        {
+          "name": "OwnedResourceAddOptions",
+          "slug": "OwnedResourceAddOptions",
+          "kind": "interface",
+          "signature": "interface OwnedResourceAddOptions",
+          "doc": "Options for OwnedResources.add.",
+          "docFull": "Options for {@linkcode OwnedResources.add}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "owner",
+              "signature": "readonly owner?: string",
+              "doc": "The window that owns the resource: the calling handler's `ctx.windowId` (`\"main\"` when absent)."
+            }
+          ]
+        },
+        {
+          "name": "OwnedResourceAttachment",
+          "slug": "OwnedResourceAttachment",
+          "kind": "interface",
+          "signature": "interface OwnedResourceAttachment",
+          "doc": "What OwnedResources.attach returns.",
+          "docFull": "What {@linkcode OwnedResources.attach} returns.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "replay",
+              "signature": "readonly replay: readonly unknown[]",
+              "doc": "The `data` of the resource's retained events, oldest first (empty with no `replay`)."
+            }
+          ]
+        },
+        {
+          "name": "OwnedResources",
+          "slug": "OwnedResources",
+          "kind": "class",
+          "signature": "class OwnedResources<T>",
+          "doc": "A registry of per-window resources (build it with createOwnedResources). Keep it at module scope in the extension and call OwnedResources.connect from the extension's setup(host).",
+          "docFull": "A registry of per-window resources (build it with {@linkcode createOwnedResources}). Keep it at\nmodule scope in the extension and call {@linkcode OwnedResources.connect} from the extension's\n`setup(host)`.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "constructor",
+              "name": "constructor",
+              "signature": "constructor(options: OwnedResourcesOptions<T>)",
+              "doc": "Prefer {@linkcode createOwnedResources}.",
+              "params": [
+                {
+                  "name": "options",
+                  "doc": "The policy, the dispose function and the replay size."
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "connect",
+              "signature": "connect(host: OwnedResourcesHost): () => void",
+              "doc": "Wire the registry to the extension's host: events go out through `host.emit`, a window's close\napplies the `onOwnerClosed` policy to its resources, and the app's quit disposes them all.\nCall it from the extension's `setup(host)`.",
+              "params": [
+                {
+                  "name": "host",
+                  "doc": "The extension's host."
+                }
+              ],
+              "returns": "The unsubscribe: it stops the close and quit handling, and later events are kept for replay but sent nowhere."
+            },
+            {
+              "kind": "method",
+              "name": "add",
+              "signature": "add(id: string, resource: T, options?: OwnedResourceAddOptions): void",
+              "doc": "Register a resource under `id`, owned by `options.owner` (default `\"main\"`).",
+              "params": [
+                {
+                  "name": "id",
+                  "doc": "The extension's id for it (unique in this registry)."
+                },
+                {
+                  "name": "resource",
+                  "doc": "The resource."
+                },
+                {
+                  "name": "options",
+                  "doc": "The owner window."
+                }
+              ]
+            },
+            {
+              "kind": "method",
+              "name": "get",
+              "signature": "get(id: string): T | undefined",
+              "doc": "The resource registered under `id`, or `undefined`."
+            },
+            {
+              "kind": "method",
+              "name": "owner",
+              "signature": "owner(id: string): string | undefined",
+              "doc": "The window that owns `id`: `undefined` when it is detached or unknown."
+            },
+            {
+              "kind": "method",
+              "name": "emit",
+              "signature": "emit(id: string, event: string, data: unknown): boolean",
+              "doc": "Send one of a resource's events to its owner window ONLY, as\n`host.emit(event, { id, data }, { window: owner })` (never to every window), and append `data`\nto its replay, even while it is detached (then it is only appended). `event` must be one the\nextension declared, as for `host.emit`.\n\nThe replay measures a chunk as the UTF-8 length of a string, the `byteLength` of an\n`ArrayBuffer` or a typed array / `DataView`, and otherwise the UTF-8 length of its JSON. Past\n`maxBytes` it drops the OLDEST whole chunks. A single chunk larger than `maxBytes` keeps its\nlast `maxBytes` bytes when it is a string (cut on a character boundary) or bytes (as a\n`Uint8Array`); any other oversized chunk is not retained. Bytes are copied when retained (an\n`ArrayBuffer` as an `ArrayBuffer`, any view as a `Uint8Array`), so a reader may reuse its\nbuffer.\n\nAn `id` that is not registered (a resource removed while its reader was still running) is a\nno-op that returns `false`.",
+              "params": [
+                {
+                  "name": "id",
+                  "doc": "The resource."
+                },
+                {
+                  "name": "event",
+                  "doc": "The event name."
+                },
+                {
+                  "name": "data",
+                  "doc": "The payload (JSON-serializable, or bytes the host can carry)."
+                }
+              ],
+              "returns": "Whether id is registered."
+            },
+            {
+              "kind": "method",
+              "name": "attach",
+              "signature": "attach(id: string, windowId: string): OwnedResourceAttachment",
+              "doc": "Give `id` to `windowId` (a detached resource, a move to another window, or the same window\nafter a reload): later events go to that window, and the result carries the retained replay.\nThe replay is kept, so a later attach gets it again.",
+              "params": [
+                {
+                  "name": "id",
+                  "doc": "The resource."
+                },
+                {
+                  "name": "windowId",
+                  "doc": "The new owner (the calling handler's ctx.windowId)."
+                }
+              ],
+              "returns": "The replay."
+            },
+            {
+              "kind": "method",
+              "name": "detach",
+              "signature": "detach(id: string): boolean",
+              "doc": "Take `id` away from its owner without disposing it: its events are only retained until a\nwindow attaches. The owner's key (from the host's open windows) is remembered for\n{@linkcode OwnedResources.ownedBy}.",
+              "returns": "Whether id is registered."
+            },
+            {
+              "kind": "method",
+              "name": "remove",
+              "signature": "remove(id: string): Promise<boolean>",
+              "doc": "Unregister `id` and dispose it (awaited, bounded; a failure is logged).",
+              "returns": "Whether id was registered."
+            },
+            {
+              "kind": "method",
+              "name": "detached",
+              "signature": "detached(): string[]",
+              "doc": "The ids of the resources with no owner."
+            },
+            {
+              "kind": "method",
+              "name": "ownedBy",
+              "signature": "ownedBy(windowIdOrKey: string): string[]",
+              "doc": "The ids of the resources `windowIdOrKey` owns now, plus the detached ones whose last owner had\nthat key: what a window reopened with the same `key` should restore."
+            },
+            {
+              "kind": "method",
+              "name": "disposeAll",
+              "signature": "disposeAll(): Promise<void>",
+              "doc": "Unregister and dispose every resource (the app's quit does this)."
+            }
+          ]
+        },
+        {
+          "name": "OwnedResourcesClosedWindow",
+          "slug": "OwnedResourcesClosedWindow",
+          "kind": "interface",
+          "signature": "interface OwnedResourcesClosedWindow extends OwnedResourcesWindow",
+          "doc": "A closed window, as OwnedResourcesHost.onWindowClosed reports it.",
+          "docFull": "A closed window, as {@linkcode OwnedResourcesHost.onWindowClosed} reports it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "appQuitting",
+              "signature": "readonly appQuitting: boolean",
+              "doc": "The window closed because the app is quitting."
+            }
+          ],
+          "extends": [
+            {
+              "type": "OwnedResourcesWindow",
+              "ref": "denext-desktop/OwnedResourcesWindow"
+            }
+          ]
+        },
+        {
+          "name": "OwnedResourcesHost",
+          "slug": "OwnedResourcesHost",
+          "kind": "interface",
+          "signature": "interface OwnedResourcesHost",
+          "doc": "The part of an extension's setup(host) host that OwnedResources.connect uses: its emit, the window lifecycle hooks and the open windows.",
+          "docFull": "The part of an extension's `setup(host)` host that {@linkcode OwnedResources.connect} uses: its\n`emit`, the window lifecycle hooks and the open windows.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "method",
+              "name": "emit",
+              "signature": "emit(event: string, data: unknown, options?: DesktopEmitOptions): void",
+              "doc": "Push an event to the pages (here always to one window)."
+            },
+            {
+              "kind": "method",
+              "name": "onWindowClosed",
+              "signature": "onWindowClosed(fn: (info: OwnedResourcesClosedWindow) => void | Promise<void>): () => void",
+              "doc": "Run `fn` after a window closes; returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "onAppQuit",
+              "signature": "onAppQuit(fn: () => void | Promise<void>): () => void",
+              "doc": "Run `fn` while the app quits (the host bounds how long it waits); returns the unsubscribe."
+            },
+            {
+              "kind": "method",
+              "name": "windows",
+              "signature": "windows(): readonly OwnedResourcesWindow[]",
+              "doc": "The windows open now."
+            }
+          ]
+        },
+        {
+          "name": "OwnedResourcesOptions",
+          "slug": "OwnedResourcesOptions",
+          "kind": "interface",
+          "signature": "interface OwnedResourcesOptions<T>",
+          "doc": "Options for createOwnedResources.",
+          "docFull": "Options for {@linkcode createOwnedResources}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "onOwnerClosed",
+              "signature": "readonly onOwnerClosed?: \"detach\" | \"dispose\"",
+              "doc": "What closing a resource's owner window does: `\"dispose\"` (the default) disposes it;\n`\"detach\"` keeps it alive with no owner, remembering the window's `key`, so a window with that\nkey can find it with {@linkcode OwnedResources.ownedBy} and {@linkcode OwnedResources.attach}\nit. `\"detach\"` is for a resource that should outlive its window (a terminal session the user\nreopens); pair it with `replay`, or a reattached window misses what happened while it was gone.\nA detached resource lives until it is removed or the app quits, so an extension that detaches\nshould also give the user a way to end one ({@linkcode OwnedResources.detached} lists them)."
+            },
+            {
+              "kind": "property",
+              "name": "dispose",
+              "signature": "readonly dispose: (resource: T, id: string) => void | Promise<void>",
+              "doc": "Release a resource (kill the PTY, close the watcher). Called once per resource: from\n{@linkcode OwnedResources.remove}, on its owner's close under `\"dispose\"`, and for every\nresource when the app quits. It is awaited, at most `disposeTimeoutMs`; a throw or a rejection\nis logged and never stops the others."
+            },
+            {
+              "kind": "property",
+              "name": "replay",
+              "signature": "readonly replay?: { readonly maxBytes: number }",
+              "doc": "Keep each resource's recent events for {@linkcode OwnedResources.attach}: a ring buffer of\nat most `maxBytes` per resource (see {@linkcode OwnedResources.emit} for how a chunk is\nmeasured). No replay is kept when omitted."
+            },
+            {
+              "kind": "property",
+              "name": "disposeTimeoutMs",
+              "signature": "readonly disposeTimeoutMs?: number",
+              "doc": "The longest one dispose is awaited, in ms (default 5000)."
+            }
+          ]
+        },
+        {
+          "name": "OwnedResourcesWindow",
+          "slug": "OwnedResourcesWindow",
+          "kind": "interface",
+          "signature": "interface OwnedResourcesWindow",
+          "doc": "A window as OwnedResourcesHost describes it.",
+          "docFull": "A window as {@linkcode OwnedResourcesHost} describes it.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "The window id (`\"main\"`, `\"panel\"`, or an id `openWindow` returned)."
+            },
+            {
+              "kind": "property",
+              "name": "kind",
+              "signature": "readonly kind: \"main\" | \"panel\" | \"window\"",
+              "doc": "What kind of window it is."
+            },
+            {
+              "kind": "property",
+              "name": "key",
+              "signature": "readonly key?: string",
+              "doc": "The app's own key for the window (`openWindow({ key })`), when it has one."
+            }
+          ]
         },
         {
           "name": "parseDesktopPackageArgs",

@@ -116,6 +116,17 @@ export {
   type DesktopPermissions,
   type DesktopPickedPathOptions,
 } from "../desktop/extension.ts";
+// Per-window backend resources an extension owns (PTYs, watchers, subprocesses).
+export {
+  createOwnedResources,
+  type OwnedResourceAddOptions,
+  type OwnedResourceAttachment,
+  OwnedResources,
+  type OwnedResourcesClosedWindow,
+  type OwnedResourcesHost,
+  type OwnedResourcesOptions,
+  type OwnedResourcesWindow,
+} from "../desktop/owned-resources.ts";
 
 // Sidecars: backends the app runs and supervises next to its window (`desktop.sidecars`,
 // `runDesktop({ sidecars })`).
