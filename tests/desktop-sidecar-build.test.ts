@@ -283,12 +283,16 @@ Deno.test("desktopBuildFlags: a copied program runs scoped to its cache copy on 
     `--allow-run=${DESKTOP_CACHE_TOKEN}/sidecars/server/server,git`,
   ]);
   // No identifier (the fallback id is not in the binary: the runtime would drop the entry), or a
-  // runtime without the token: today's unscoped grants.
+  // runtime without the tokens (both arrived in 3.0.0-denext.8, so neither scope): today's
+  // unscoped grants.
   for (
     const flags of [
       desktopBuildFlags(config(), "linux", { cacheScope: true }),
       desktopBuildFlags(config(" "), "linux", { cacheScope: true }),
-      desktopBuildFlags(config("com.example.app"), "linux", { cacheScope: false }),
+      desktopBuildFlags(config("com.example.app"), "linux", {
+        cacheScope: false,
+        dataScope: false,
+      }),
     ]
   ) {
     assert(flags.includes("--allow-run"), flags.join(" "));
@@ -299,21 +303,33 @@ Deno.test("desktopBuildFlags: a copied program runs scoped to its cache copy on 
     desktopBuildFlags(config("com.example.app"), "linux").includes("--allow-run"),
     !desktopCacheTokenRuntime(),
   );
-  // Another write (a log file) keeps the broad --allow-write; the run stays scoped.
+  // With the cache token alone (no app-folder scoping, `dataScope: false`), another write (a log
+  // file) keeps the broad --allow-write; the run stays scoped.
   const logged = desktopBuildFlags(
     config("com.example.app", { extraPermissions: { write: ["/tmp/x"] } }),
     "darwin",
-    { cacheScope: true },
+    { cacheScope: true, dataScope: false },
   );
   assert(logged.includes("--allow-write"), logged.join(" "));
   assert(logged.includes(`--allow-run=${DESKTOP_CACHE_TOKEN}/sidecars/server/server,git`));
-  // A capability that writes, or the UI overlay, also keeps it broad.
+  // With both (3.0.0-denext.8), an absolute write is kept as written beside the copy's folder.
+  assert(
+    desktopBuildFlags(
+      config("com.example.app", { extraPermissions: { write: ["/tmp/x"] } }),
+      "darwin",
+      { cacheScope: true, dataScope: true },
+    ).includes(`--allow-write=${DESKTOP_CACHE_TOKEN}/sidecars/server,/tmp/x`),
+  );
+  // A capability that writes, or the UI overlay, also keeps it broad (cache token alone).
   for (
     const more of [{ capabilities: { fs: true } }, {
       update: { ui: { feedUrl: "https://u.example.com/f", publicKey: "k" } },
     }]
   ) {
-    const flags = desktopBuildFlags(config("com.example.app", more), "linux", { cacheScope: true });
+    const flags = desktopBuildFlags(config("com.example.app", more), "linux", {
+      cacheScope: true,
+      dataScope: false,
+    });
     assert(flags.includes("--allow-write"), flags.join(" "));
   }
   // A program name that cannot be one list value keeps the unscoped grant.

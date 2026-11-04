@@ -143,7 +143,7 @@ Deno.test("desktopTreeManifest: the app and version, and every file but the .exe
 Deno.test("desktopTreeManifest: a symlink in the bundle is refused (the runtime refuses it)", async () => {
   const app = await fakeBundle();
   try {
-    await Deno.symlink("laufey-launch.json", join(app, "link.json"));
+    await Deno.symlink("laufey-launch.json", join(app, "link.json"), { type: "file" });
     await assertRejects(() => desktopTreeManifest(app, EXE, ID), Error, "is a symlink");
   } finally {
     await Deno.remove(join(app, ".."), { recursive: true });
@@ -260,7 +260,7 @@ Deno.test("stampDesktopTreeManifest + desktopTreeManifestProblem: a tampered, ex
     await Deno.writeTextFile(join(app, "locales", "en-US.pak"), "PAK");
     assertEquals(await desktopTreeManifestProblem(app, exe), undefined);
 
-    await Deno.symlink("laufey-launch.json", join(app, "link.json"));
+    await Deno.symlink("laufey-launch.json", join(app, "link.json"), { type: "file" });
     assertStringIncludes((await desktopTreeManifestProblem(app, exe))!.problem, "symlink");
     await Deno.remove(join(app, "link.json"));
 
