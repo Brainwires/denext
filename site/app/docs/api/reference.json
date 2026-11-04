@@ -44931,7 +44931,7 @@
           ],
           "returns": "The registry.",
           "examples": [
-            "```ts\n// desktop/extensions/terminal.ts: runs in the Deno process only\nimport { createOwnedResources, defineDesktopExtension } from \"denext/desktop\";\nconst sessions = createOwnedResources<Pty>({\n  onOwnerClosed: \"detach\",\n  dispose: (pty) => pty.kill(),\n  replay: { maxBytes: 256 * 1024 },\n});\nexport default defineDesktopExtension({\n  name: \"terminal\",\n  events: [\"output\"],\n  setup: (host) => sessions.connect(host),\n  methods: {\n    open: {\n      handler: (_args, ctx) => {\n        const id = crypto.randomUUID();\n        const pty = spawnPty(); // your PTY\n        sessions.add(id, pty, { owner: ctx.windowId });\n        pty.onData((text) => sessions.emit(id, \"output\", text));\n        return id;\n      },\n    },\n    resume: {\n      handler: (args, ctx) => sessions.attach((args as { id: string }).id, ctx.windowId ?? \"main\"),\n    },\n  },\n});\n```"
+            "```ts\n// desktop/extensions/terminal.ts: runs in the Deno process only\nimport { createOwnedResources, defineDesktopExtension } from \"denext/desktop\";\nconst sessions = createOwnedResources<Pty>({\n  onOwnerClosed: \"detach\",\n  dispose: (pty) => pty.kill(),\n  replay: { maxBytes: 256 * 1024, events: [\"output\", \"exit\"] },\n});\nexport default defineDesktopExtension({\n  name: \"terminal\",\n  events: [\"output\", \"exit\"],\n  setup: (host) => sessions.connect(host),\n  methods: {\n    open: {\n      handler: (_args, ctx) => {\n        const id = crypto.randomUUID();\n        const pty = spawnPty(); // your PTY\n        sessions.add(id, pty, { owner: ctx.windowId });\n        pty.onData((text) => sessions.emit(id, \"output\", text));\n        pty.onExit((code) => sessions.emit(id, \"exit\", code));\n        return id;\n      },\n    },\n    resume: {\n      handler: (args, ctx) => sessions.attach((args as { id: string }).id, ctx.windowId ?? \"main\"),\n    },\n  },\n});\n```"
           ],
           "denextOnly": true
         },
@@ -48275,8 +48275,34 @@
             {
               "kind": "property",
               "name": "replay",
-              "signature": "readonly replay: readonly unknown[]",
-              "doc": "The `data` of the resource's retained events, oldest first (empty with no `replay`)."
+              "signature": "readonly replay: readonly OwnedResourceReplayEntry[]",
+              "doc": "The resource's retained events, oldest first (empty with no `replay`)."
+            }
+          ]
+        },
+        {
+          "name": "OwnedResourceReplayEntry",
+          "slug": "OwnedResourceReplayEntry",
+          "kind": "interface",
+          "signature": "interface OwnedResourceReplayEntry",
+          "doc": "One retained event: what OwnedResources.attach replays.",
+          "docFull": "One retained event: what {@linkcode OwnedResources.attach} replays.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "event",
+              "signature": "readonly event: string",
+              "doc": "The event name, as given to {@linkcode OwnedResources.emit}."
+            },
+            {
+              "kind": "property",
+              "name": "data",
+              "signature": "readonly data: unknown",
+              "doc": "Its data (bytes as a copy; an oversized string or bytes cut to its tail)."
             }
           ]
         },
@@ -48353,7 +48379,7 @@
               "kind": "method",
               "name": "emit",
               "signature": "emit(id: string, event: string, data: unknown): boolean",
-              "doc": "Send one of a resource's events to its owner window ONLY, as\n`host.emit(event, { id, data }, { window: owner })` (never to every window), and append `data`\nto its replay, even while it is detached (then it is only appended). `event` must be one the\nextension declared, as for `host.emit`.\n\nThe replay measures a chunk as the UTF-8 length of a string, the `byteLength` of an\n`ArrayBuffer` or a typed array / `DataView`, and otherwise the UTF-8 length of its JSON. Past\n`maxBytes` it drops the OLDEST whole chunks. A single chunk larger than `maxBytes` keeps its\nlast `maxBytes` bytes when it is a string (cut on a character boundary) or bytes (as a\n`Uint8Array`); any other oversized chunk is not retained. Bytes are copied when retained (an\n`ArrayBuffer` as an `ArrayBuffer`, any view as a `Uint8Array`), so a reader may reuse its\nbuffer.\n\nAn `id` that is not registered (a resource removed while its reader was still running) is a\nno-op that returns `false`.",
+              "doc": "Send one of a resource's events to its owner window ONLY, as\n`host.emit(event, { id, data }, { window: owner })` (never to every window), and append\n`{ event, data }` to its replay (unless `replay.events` leaves the event out), even while it is\ndetached (then it is only appended). `event` must be one the extension declared, as for\n`host.emit`.\n\nOnly `data` counts toward `maxBytes` (the event name is free). The replay measures it as the UTF-8 length of a string, the `byteLength` of an\n`ArrayBuffer` or a typed array / `DataView`, and otherwise the UTF-8 length of its JSON. Past\n`maxBytes` it drops the OLDEST whole chunks. A single chunk larger than `maxBytes` keeps its\nlast `maxBytes` bytes when it is a string (cut on a character boundary) or bytes (as a\n`Uint8Array`); any other oversized chunk is not retained. Bytes are copied when retained (an\n`ArrayBuffer` as an `ArrayBuffer`, any view as a `Uint8Array`), so a reader may reuse its\nbuffer.\n\nAn `id` that is not registered (a resource removed while its reader was still running) is a\nno-op that returns `false`.",
               "params": [
                 {
                   "name": "id",
@@ -48512,7 +48538,7 @@
             {
               "kind": "property",
               "name": "replay",
-              "signature": "readonly replay?: { readonly maxBytes: number }",
+              "signature": "readonly replay?: OwnedResourcesReplayOptions",
               "doc": "Keep each resource's recent events for {@linkcode OwnedResources.attach}: a ring buffer of\nat most `maxBytes` per resource (see {@linkcode OwnedResources.emit} for how a chunk is\nmeasured). No replay is kept when omitted."
             },
             {
@@ -48520,6 +48546,32 @@
               "name": "disposeTimeoutMs",
               "signature": "readonly disposeTimeoutMs?: number",
               "doc": "The longest one dispose is awaited, in ms (default 5000)."
+            }
+          ]
+        },
+        {
+          "name": "OwnedResourcesReplayOptions",
+          "slug": "OwnedResourcesReplayOptions",
+          "kind": "interface",
+          "signature": "interface OwnedResourcesReplayOptions",
+          "doc": "The replay buffer's options (OwnedResourcesOptions.replay).",
+          "docFull": "The replay buffer's options ({@linkcode OwnedResourcesOptions.replay}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "maxBytes",
+              "signature": "readonly maxBytes: number",
+              "doc": "The most bytes of event `data` kept per resource (a positive integer)."
+            },
+            {
+              "kind": "property",
+              "name": "events",
+              "signature": "readonly events?: readonly string[]",
+              "doc": "The event names to keep (say `[\"data\", \"exit\"]`, leaving out a high-rate `\"progress\"`); every\nevent when omitted. An event not listed is still sent to the owner, just not kept."
             }
           ]
         },

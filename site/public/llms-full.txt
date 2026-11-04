@@ -3027,10 +3027,12 @@ Every public symbol, grouped by module. Full signatures + docs at https://denext
 - `notarytoolSubmitArgs(file: string, credentials: NotaryCredentials, json?: boolean): string[]` — The xcrun notarytool submit … --wait argv for file (a .zip, .dmg or .pkg).
 - `interface OwnedResourceAddOptions` — Options for OwnedResources.add.
 - `interface OwnedResourceAttachment` — What OwnedResources.attach returns.
+- `interface OwnedResourceReplayEntry` — One retained event: what OwnedResources.attach replays.
 - `class OwnedResources<T>` — A registry of per-window resources (build it with createOwnedResources). Keep it at module scope in the extension and call OwnedResources.connect from the extension's setup(host).
 - `interface OwnedResourcesClosedWindow extends OwnedResourcesWindow` — A closed window, as OwnedResourcesHost.onWindowClosed reports it.
 - `interface OwnedResourcesHost` — The part of an extension's setup(host) host that OwnedResources.connect uses: its emit, the window lifecycle hooks and the open windows.
 - `interface OwnedResourcesOptions<T>` — Options for createOwnedResources.
+- `interface OwnedResourcesReplayOptions` — The replay buffer's options (OwnedResourcesOptions.replay).
 - `interface OwnedResourcesWindow` — A window as OwnedResourcesHost describes it.
 - `parseDesktopPackageArgs(argv: readonly string[], spec: DesktopPackageArgSpec): DesktopPackageArgs` — Parse a package script's arguments: --arch <mode>, --no-export, --no-sign, --format <list> (repeatable), the script's legacy installer flags, and -h / --help. An unknown argument or an --arch outside spec.arches throws.
 - `class PickedPaths` — The runtime's picked-path set. One instance per launch is threaded (by the caps resolver) into the dialogs cap (which adds a pick) and the fs / shell caps (which resolve a handle back to a confined path).

@@ -16,8 +16,9 @@ and this project adheres to
   reaches the owner window only, as `{ id, data }`. When the owner closes, `onOwnerClosed:
   "dispose"` (the default) disposes its resources, and `"detach"` keeps them alive with no owner:
   `ownedBy(key)` finds them for a window reopened with the same key and `attach(id, windowId)`
-  hands one over with what it emitted meanwhile (`replay: { maxBytes }`, a per-resource ring
-  buffer that drops the oldest chunks and keeps the tail of an oversized string or byte chunk).
+  hands one over with what it emitted meanwhile, as `{ event, data }` entries (`replay: { maxBytes,
+  events? }`, a per-resource ring buffer of event data that drops the oldest chunks and keeps the
+  tail of an oversized string or byte chunk; `events` limits which events are kept).
   The app's quit disposes everything whatever the policy, each dispose bounded by
   `disposeTimeoutMs`. It needs the host's window lifecycle hooks (`onWindowClosed`, `onAppQuit`,
   `windows()`).

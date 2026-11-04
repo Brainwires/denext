@@ -3343,9 +3343,15 @@ onDesktopEvent<{ percent: number }>("jobs", "progress", ({ percent }) => setPerc
       </p>
       <p>
         <code>replay: {"{ maxBytes }"}</code>{" "}
-        keeps each resource&apos;s recent event data, emitted while owned or detached, in a ring
-        buffer of that many bytes: a string counts its UTF-8 bytes, an <code>ArrayBuffer</code>{" "}
-        or typed array its{" "}
+        keeps each resource&apos;s recent events, emitted while owned or detached, and{" "}
+        <code>attach</code> returns them as <code>{"{ event, data }"}</code>{" "}
+        entries, oldest first, so a page can tell a terminal&apos;s output from its{" "}
+        <code>exit</code>. <code>replay.events</code>{" "}
+        limits which events are kept (all of them by default); one left out is still sent to the
+        owner. The buffer holds <code>maxBytes</code>{" "}
+        of event data per resource, the event names not counted: a string counts its UTF-8 bytes, an
+        {" "}
+        <code>ArrayBuffer</code> or typed array its{" "}
         <code>byteLength</code>, anything else its JSON. The oldest whole chunks go first; one chunk
         larger than the whole buffer keeps its last <code>maxBytes</code>{" "}
         bytes when it is a string or bytes, and is dropped otherwise.
@@ -3356,11 +3362,11 @@ import { createOwnedResources, defineDesktopExtension } from "denext/desktop";
 const sessions = createOwnedResources<Pty>({
   onOwnerClosed: "detach", // survive the window; "dispose" (the default) ends with it
   dispose: (pty) => pty.kill(),
-  replay: { maxBytes: 256 * 1024 },
+  replay: { maxBytes: 256 * 1024, events: ["output", "exit"] }, // not "title"
 });
 export default defineDesktopExtension({
   name: "terminal",
-  events: ["output"],
+  events: ["output", "exit", "title"],
   setup: (host) => sessions.connect(host),
   methods: {
     open: {
@@ -3369,6 +3375,7 @@ export default defineDesktopExtension({
         const pty = spawnPty(); // your PTY
         sessions.add(id, pty, { owner: ctx.windowId });
         pty.onData((text) => sessions.emit(id, "output", text));
+        pty.onExit((code) => sessions.emit(id, "exit", code));
         return id;
       },
     },
@@ -3380,7 +3387,9 @@ export default defineDesktopExtension({
   },
 });
 
-// a "use client" component
+// a "use client" component: replay first, then the live events
+const { replay } = await terminal.resume({ id });
+for (const { event, data } of replay) event === "output" ? write(id, data) : showExit(id, data);
 onDesktopEvent<{ id: string; data: string }>("terminal", "output", ({ id, data }) => write(id, data));`}
       </Code>
 

@@ -6,6 +6,7 @@
 import { assertEquals, assertThrows } from "@std/assert";
 import {
   createOwnedResources,
+  type OwnedResources,
   type OwnedResourcesClosedWindow,
   type OwnedResourcesHost,
   type OwnedResourcesWindow,
@@ -48,6 +49,11 @@ function fakeHost(open: OwnedResourcesWindow[] = [{ id: "main", kind: "main" }])
     },
     hooks: () => closed.size + quit.size,
   };
+}
+
+/** The retained data values of `id`, oldest first. */
+function dataOf(res: OwnedResources<string>, id: string): unknown[] {
+  return res.attach(id, "main").replay.map((entry) => entry.data);
 }
 
 /** A dispose that records which ids it saw. */
@@ -106,7 +112,9 @@ Deno.test("owned resources: detach keeps it alive and ownerless; attach returns 
   assertEquals(res.detached(), ["a"]);
   res.emit("a", "output", "two"); // retained, sent nowhere
   assertEquals(fake.sent.length, 1);
-  assertEquals(res.attach("a", "w2"), { replay: ["one", "two"] });
+  assertEquals(res.attach("a", "w2"), {
+    replay: [{ event: "output", data: "one" }, { event: "output", data: "two" }],
+  });
   assertEquals(res.owner("a"), "w2");
   assertEquals(res.detached(), []);
   res.emit("a", "output", "three");
@@ -246,10 +254,10 @@ Deno.test("owned resources: the replay is bounded per resource and drops the old
   res.emit("a", "out", "abc");
   res.emit("a", "out", "de");
   res.emit("b", "out", "123456"); // b's own budget
-  assertEquals(res.attach("a", "main").replay, ["abc", "de"]);
+  assertEquals(dataOf(res, "a"), ["abc", "de"]);
   res.emit("a", "out", "fg"); // 3 + 2 + 2 > 6: "abc" goes whole
-  assertEquals(res.attach("a", "main").replay, ["de", "fg"]);
-  assertEquals(res.attach("b", "main").replay, ["123456"]);
+  assertEquals(dataOf(res, "a"), ["de", "fg"]);
+  assertEquals(dataOf(res, "b"), ["123456"]);
 });
 
 Deno.test("owned resources: replay sizes are UTF-8 bytes, byteLength, else JSON length", () => {
@@ -257,11 +265,11 @@ Deno.test("owned resources: replay sizes are UTF-8 bytes, byteLength, else JSON 
   res.add("a", "x");
   res.emit("a", "out", "é€"); // 2 + 3 = 5 bytes, though 2 characters
   res.emit("a", "out", new Uint16Array([1, 2])); // 4 bytes: 5 + 4 > 8, "é€" goes
-  assertEquals(res.attach("a", "main").replay, [new Uint8Array([1, 0, 2, 0])]);
+  assertEquals(dataOf(res, "a"), [new Uint8Array([1, 0, 2, 0])]);
   res.add("b", "y");
   res.emit("b", "out", { n: 1 }); // {"n":1} = 7 bytes
   res.emit("b", "out", 12); // 2 bytes: 9 > 8, the object goes
-  assertEquals(res.attach("b", "main").replay, [12]);
+  assertEquals(dataOf(res, "b"), [12]);
 });
 
 Deno.test("owned resources: an oversized chunk keeps its tail when it is a string or bytes", () => {
@@ -269,14 +277,14 @@ Deno.test("owned resources: an oversized chunk keeps its tail when it is a strin
   res.add("a", "x");
   res.emit("a", "out", "old");
   res.emit("a", "out", "abcdefgh");
-  assertEquals(res.attach("a", "main").replay, ["efgh"]);
+  assertEquals(dataOf(res, "a"), ["efgh"]);
   res.emit("a", "out", "xx€€"); // 2 + 6 bytes; the tail cut lands mid-character, so it moves on
-  assertEquals(res.attach("a", "main").replay, ["€"]);
+  assertEquals(dataOf(res, "a"), ["€"]);
   res.emit("a", "out", new Uint8Array([1, 2, 3, 4, 5, 6]));
-  assertEquals(res.attach("a", "main").replay, [new Uint8Array([3, 4, 5, 6])]);
+  assertEquals(dataOf(res, "a"), [new Uint8Array([3, 4, 5, 6])]);
   const buf = new Uint8Array([9, 8, 7, 6, 5]).buffer;
   res.emit("a", "out", buf);
-  const [kept] = res.attach("a", "main").replay;
+  const [kept] = dataOf(res, "a");
   assertEquals(new Uint8Array(kept as ArrayBuffer), new Uint8Array([8, 7, 6, 5]));
   res.emit("a", "out", { long: "object" }); // cannot be cut: not retained, the rest stays
   assertEquals(res.attach("a", "main").replay.length, 1);
@@ -288,7 +296,7 @@ Deno.test("owned resources: retained bytes are a copy", () => {
   const buf = new Uint8Array([1, 2, 3]);
   res.emit("a", "out", buf);
   buf.fill(0); // the reader reuses its buffer
-  assertEquals(res.attach("a", "main").replay, [new Uint8Array([1, 2, 3])]);
+  assertEquals(dataOf(res, "a"), [new Uint8Array([1, 2, 3])]);
 });
 
 Deno.test("owned resources: replay.maxBytes must be a positive integer", () => {
@@ -304,7 +312,7 @@ Deno.test("owned resources: no replay without the option", () => {
   const res = createOwnedResources<string>({ dispose: () => {} });
   res.add("a", "x");
   res.emit("a", "out", "lost");
-  assertEquals(res.attach("a", "main").replay, []);
+  assertEquals(dataOf(res, "a"), []);
 });
 
 Deno.test("owned resources: unsubscribe stops close and quit handling and delivery", async () => {
@@ -334,7 +342,7 @@ Deno.test("owned resources: an emit the host refuses throws and is not retained"
   res.connect(fake.host);
   res.add("a", "x");
   assertThrows(() => res.emit("a", "bogus", "data"), Error, "undeclared event");
-  assertEquals(res.attach("a", "main").replay, []);
+  assertEquals(dataOf(res, "a"), []);
 });
 
 Deno.test("owned resources: remove of a resource whose dispose rejects resolves and logs", async () => {
@@ -351,4 +359,33 @@ Deno.test("owned resources: remove of a resource whose dispose rejects resolves 
     console.error = original;
   }
   assertEquals(logged.includes(`"a": dispose failed`), true);
+});
+
+Deno.test("owned resources: the replay keeps each event's name; only data counts toward maxBytes", () => {
+  const res = createOwnedResources<string>({ dispose: () => {}, replay: { maxBytes: 4 } });
+  res.add("a", "x");
+  res.emit("a", "a-very-long-event-name", "ab");
+  res.emit("a", "exit", 0); // "0" is 1 byte: 2 + 1 <= 4
+  assertEquals(res.attach("a", "main").replay, [
+    { event: "a-very-long-event-name", data: "ab" },
+    { event: "exit", data: 0 },
+  ]);
+});
+
+Deno.test("owned resources: replay.events limits which events are kept, not which are sent", () => {
+  const fake = fakeHost();
+  const res = createOwnedResources<string>({
+    dispose: () => {},
+    replay: { maxBytes: 64, events: ["data", "exit"] },
+  });
+  res.connect(fake.host);
+  res.add("a", "x");
+  res.emit("a", "data", "ls\n");
+  res.emit("a", "title", "~/src"); // sent, not kept
+  res.emit("a", "exit", { code: 0 });
+  assertEquals(fake.sent.map((s) => s.event), ["data", "title", "exit"]);
+  assertEquals(res.attach("a", "main").replay, [
+    { event: "data", data: "ls\n" },
+    { event: "exit", data: { code: 0 } },
+  ]);
 });

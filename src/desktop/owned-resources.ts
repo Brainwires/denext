@@ -76,9 +76,28 @@ export interface OwnedResourcesOptions<T> {
    * at most `maxBytes` per resource (see {@linkcode OwnedResources.emit} for how a chunk is
    * measured). No replay is kept when omitted.
    */
-  readonly replay?: { readonly maxBytes: number };
+  readonly replay?: OwnedResourcesReplayOptions;
   /** The longest one dispose is awaited, in ms (default 5000). */
   readonly disposeTimeoutMs?: number;
+}
+
+/** The replay buffer's options ({@linkcode OwnedResourcesOptions.replay}). */
+export interface OwnedResourcesReplayOptions {
+  /** The most bytes of event `data` kept per resource (a positive integer). */
+  readonly maxBytes: number;
+  /**
+   * The event names to keep (say `["data", "exit"]`, leaving out a high-rate `"progress"`); every
+   * event when omitted. An event not listed is still sent to the owner, just not kept.
+   */
+  readonly events?: readonly string[];
+}
+
+/** One retained event: what {@linkcode OwnedResources.attach} replays. */
+export interface OwnedResourceReplayEntry {
+  /** The event name, as given to {@linkcode OwnedResources.emit}. */
+  readonly event: string;
+  /** Its data (bytes as a copy; an oversized string or bytes cut to its tail). */
+  readonly data: unknown;
 }
 
 /** Options for {@linkcode OwnedResources.add}. */
@@ -89,8 +108,8 @@ export interface OwnedResourceAddOptions {
 
 /** What {@linkcode OwnedResources.attach} returns. */
 export interface OwnedResourceAttachment {
-  /** The `data` of the resource's retained events, oldest first (empty with no `replay`). */
-  readonly replay: readonly unknown[];
+  /** The resource's retained events, oldest first (empty with no `replay`). */
+  readonly replay: readonly OwnedResourceReplayEntry[];
 }
 
 /** One registered resource. */
@@ -99,7 +118,7 @@ interface Entry<T> {
   owner: string | undefined;
   /** The key of the window that last owned it, kept while it is detached. */
   lastKey: string | undefined;
-  chunks: { data: unknown; bytes: number }[];
+  chunks: { event: string; data: unknown; bytes: number }[];
   bytes: number;
 }
 
@@ -119,6 +138,7 @@ export class OwnedResources<T> {
   readonly #policy: "detach" | "dispose";
   readonly #dispose: (resource: T, id: string) => void | Promise<void>;
   readonly #maxBytes: number | undefined;
+  readonly #replayEvents: ReadonlySet<string> | undefined;
   readonly #timeoutMs: number;
   #host: OwnedResourcesHost | undefined;
 
@@ -136,6 +156,8 @@ export class OwnedResources<T> {
     this.#policy = options.onOwnerClosed ?? "dispose";
     this.#dispose = options.dispose;
     this.#maxBytes = maxBytes;
+    const events = options.replay?.events;
+    this.#replayEvents = events === undefined ? undefined : new Set(events);
     this.#timeoutMs = options.disposeTimeoutMs ?? DEFAULT_DISPOSE_TIMEOUT_MS;
   }
 
@@ -192,11 +214,12 @@ export class OwnedResources<T> {
 
   /**
    * Send one of a resource's events to its owner window ONLY, as
-   * `host.emit(event, { id, data }, { window: owner })` (never to every window), and append `data`
-   * to its replay, even while it is detached (then it is only appended). `event` must be one the
-   * extension declared, as for `host.emit`.
+   * `host.emit(event, { id, data }, { window: owner })` (never to every window), and append
+   * `{ event, data }` to its replay (unless `replay.events` leaves the event out), even while it is
+   * detached (then it is only appended). `event` must be one the extension declared, as for
+   * `host.emit`.
    *
-   * The replay measures a chunk as the UTF-8 length of a string, the `byteLength` of an
+   * Only `data` counts toward `maxBytes` (the event name is free). The replay measures it as the UTF-8 length of a string, the `byteLength` of an
    * `ArrayBuffer` or a typed array / `DataView`, and otherwise the UTF-8 length of its JSON. Past
    * `maxBytes` it drops the OLDEST whole chunks. A single chunk larger than `maxBytes` keeps its
    * last `maxBytes` bytes when it is a string (cut on a character boundary) or bytes (as a
@@ -218,7 +241,9 @@ export class OwnedResources<T> {
     if (entry.owner !== undefined && this.#host !== undefined) {
       this.#host.emit(event, { id, data }, { window: entry.owner });
     }
-    if (this.#maxBytes !== undefined) this.#retain(entry, data, this.#maxBytes);
+    if (this.#maxBytes !== undefined && (this.#replayEvents?.has(event) ?? true)) {
+      this.#retain(entry, event, data, this.#maxBytes);
+    }
     return true;
   }
 
@@ -239,7 +264,7 @@ export class OwnedResources<T> {
     }
     entry.owner = windowId;
     entry.lastKey = undefined;
-    return { replay: entry.chunks.map((chunk) => chunk.data) };
+    return { replay: entry.chunks.map(({ event, data }) => ({ event, data })) };
   }
 
   /**
@@ -328,10 +353,10 @@ export class OwnedResources<T> {
     }
   }
 
-  #retain(entry: Entry<T>, data: unknown, maxBytes: number): void {
+  #retain(entry: Entry<T>, event: string, data: unknown, maxBytes: number): void {
     const chunk = boundedChunk(data, maxBytes);
     if (chunk === undefined) return;
-    entry.chunks.push(chunk);
+    entry.chunks.push({ event, ...chunk });
     entry.bytes += chunk.bytes;
     while (entry.bytes > maxBytes) entry.bytes -= entry.chunks.shift()!.bytes;
   }
@@ -347,11 +372,11 @@ export class OwnedResources<T> {
  * const sessions = createOwnedResources<Pty>({
  *   onOwnerClosed: "detach",
  *   dispose: (pty) => pty.kill(),
- *   replay: { maxBytes: 256 * 1024 },
+ *   replay: { maxBytes: 256 * 1024, events: ["output", "exit"] },
  * });
  * export default defineDesktopExtension({
  *   name: "terminal",
- *   events: ["output"],
+ *   events: ["output", "exit"],
  *   setup: (host) => sessions.connect(host),
  *   methods: {
  *     open: {
@@ -360,6 +385,7 @@ export class OwnedResources<T> {
  *         const pty = spawnPty(); // your PTY
  *         sessions.add(id, pty, { owner: ctx.windowId });
  *         pty.onData((text) => sessions.emit(id, "output", text));
+ *         pty.onExit((code) => sessions.emit(id, "exit", code));
  *         return id;
  *       },
  *     },

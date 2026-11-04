@@ -121,10 +121,12 @@ export {
   createOwnedResources,
   type OwnedResourceAddOptions,
   type OwnedResourceAttachment,
+  type OwnedResourceReplayEntry,
   OwnedResources,
   type OwnedResourcesClosedWindow,
   type OwnedResourcesHost,
   type OwnedResourcesOptions,
+  type OwnedResourcesReplayOptions,
   type OwnedResourcesWindow,
 } from "../desktop/owned-resources.ts";
 
