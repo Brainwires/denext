@@ -836,8 +836,9 @@ denext task desktop:package:linux --arch both --format tar.gz,deb,rpm,appimage`}
         Under runtime 3.0.0-denext.8 a CEF app on macOS x64 (x86_64) can crash in Chromium&apos;s
         own teardown when it quits, about once in 5,600 launches. The app has already finished by
         then, but profile writes still in flight can be lost and macOS keeps a crash report. Apple
-        silicon, the WebView backend and the other OSes are not affected; the fix comes with the
-        next runtime.
+        silicon, the WebView backend and the other OSes are not affected. Runtime 3.0.0-denext.9
+        fixes it: its CEF shutdown ends with <code>_exit</code>{" "}
+        once the helpers have ended, as on Windows, instead of running exit&apos;s destructors.
       </p>
       <p>
         The runtime&apos;s own <code>Deno.desktop.clipboard</code> <code>change</code>{" "}

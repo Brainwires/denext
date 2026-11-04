@@ -711,8 +711,8 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **A CEF app on an Intel Mac can crash when it quits** (runtime 3.0.0-denext.8): about once in
   5,600 launches, Chromium's own teardown crashes after the app has finished. Profile writes still
   in flight can be lost and macOS keeps a crash report; Apple silicon, the WebView backend and the
-  other OSes are not affected. The fix comes with the next runtime
-  ([details](https://denext.dev/docs/desktop#desktop-cef-macos-x64-quit)).
+  other OSes are not affected. Runtime 3.0.0-denext.9 fixes it (its CEF shutdown ends with `_exit`
+  once the helpers have ended) ([details](https://denext.dev/docs/desktop#desktop-cef-macos-x64-quit)).
 - **CEF on Linux spellchecks seven languages out of the box** (runtime 2.9.7-denext.21): the
   runtime makes no network requests of its own, so it never downloads Hunspell dictionaries; it
   ships en-US, en-GB, de-DE, fr-FR, es-ES, pt-BR and it-IT. For any other language the app ships
