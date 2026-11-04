@@ -37,6 +37,9 @@ import { ptyDoctorCheck, ptyFactLine } from "../src/build/desktop-pty-doctor.ts"
 import { formatDesktopDoctor, runDesktopDoctor } from "../src/build/desktop-doctor.ts";
 import { validateDesktop } from "../src/server/config-validate/desktop.ts";
 import type { DesktopRuntimeStatus } from "../src/build/desktop-runtime.ts";
+import { desktopDoctor } from "../src/cli/commands/desktop-doctor.ts";
+import type { CommandContext } from "../src/cli/command.ts";
+import { join } from "@std/path";
 import { withDenoProps } from "./helpers/deno-stub.ts";
 
 const encoder = new TextEncoder();
@@ -815,4 +818,52 @@ Deno.test("doctor: the pty check runs from the project's desktop config", async 
     desktopConfig: () => Promise.resolve(null),
   });
   assert(!without.checks.includes("pty"));
+});
+
+Deno.test("desktop doctor CLI: the pty check reads the project's denext.config.ts as data", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_pty_doctor_cli_" });
+  const status = {
+    mode: "stock",
+    ok: true,
+    detail: "stock runtime",
+    backend: "webview",
+  } as unknown as DesktopRuntimeStatus;
+  const ctx = {
+    flags: {},
+    positionals: ["doctor"],
+    global: { json: true },
+    rest: [],
+  } as unknown as CommandContext;
+  const seams = {
+    os: "darwin",
+    runtimeStatus: () => Promise.resolve(status),
+    launchPolicy: () => Promise.resolve(null),
+  } as const;
+  const log = console.log;
+  console.log = () => {};
+  try {
+    await Deno.writeTextFile(join(dir, "desktop.ts"), "// entry\n");
+    const config = join(dir, "denext.config.ts");
+    // A desktop project whose config holds `capabilities.pty` as data: the check runs.
+    await Deno.writeTextFile(
+      config,
+      "export default { desktop: { capabilities: { pty: true } } };\n",
+    );
+    const on = await desktopDoctor(ctx, dir, seams);
+    assert(on.checks.includes("pty"), on.checks.join(","));
+    assertEquals(on.pty?.runAllow, ["/bin/zsh", "/bin/bash", "/bin/sh"]);
+    // `desktop` computed at runtime can't be read as data: no pty check (the launch-policy check
+    // is the one that reports an unreadable config).
+    await Deno.writeTextFile(
+      config,
+      "const desktop = { capabilities: { pty: true } };\nexport default { desktop };\n",
+    );
+    assert(!(await desktopDoctor(ctx, dir, seams)).checks.includes("pty"));
+    // Not a desktop project: no pty check either.
+    await Deno.remove(join(dir, "desktop.ts"));
+    assert(!(await desktopDoctor(ctx, dir, seams)).checks.includes("pty"));
+  } finally {
+    console.log = log;
+    await Deno.remove(dir, { recursive: true });
+  }
 });
