@@ -1759,8 +1759,11 @@ create trigger order_created after insert on orders for each row
   A trigger written for Supabase with a URL instead works only when `allowUrls` lists a prefix of
   it; any other target is recorded as failed and never fetched. Redirects are not followed.
 - **Delivery.** The event is stored in `supabase_functions.webhook_events` in the same transaction
-  as the change, and `denext dev` / `denext start` deliver it at once (NOTIFY) or within
-  `pollIntervalMs`. A non-2xx answer or a network error is retried with exponential backoff
+  as the change, and `denext dev` / `denext start` deliver it at once (NOTIFY). The deliverer
+  also looks on its own, as a safety net for a missed NOTIFY: `pollIntervalMs` (5 s) after a pass
+  that found work, doubling up to `maxPollIntervalMs` (60 s) while passes find nothing, and never
+  later than the next retry is due. A client that cannot LISTEN looks every `pollIntervalMs`. Its
+  timer never keeps the process alive, and shutdown waits for a pass in flight. A non-2xx answer or a network error is retried with exponential backoff
   (`backoffMs`, doubled up to `maxBackoffMs`) until `maxAttempts`, then marked failed. Several app
   instances share the work without sending one event twice at once; delivery is at least once,
   so receivers dedupe on `webhook-id`. `delivery: "manual"` leaves it to `deliverWebhooks()` (from
