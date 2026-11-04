@@ -2349,6 +2349,92 @@ const shortcut = desktopOs() === "darwin" ? "Cmd+K" : "Ctrl+K";`}
         <a href="/docs/desktop-runtime#page-downloads">the runtime</a>).
       </p>
 
+      <h3 id="desktop-pty">Terminals (pty)</h3>
+      <p>
+        <code>denext desktop add pty</code>{" "}
+        gives the page terminals: a shell started on a pseudo-terminal in the app&apos;s Deno
+        process, its output streamed to the window, for a terminal emulator such as xterm.js. It is
+        built on the runtime&apos;s{" "}
+        <code>Deno.openPty</code>, so it needs denext&apos;s Deno Desktop runtime{" "}
+        <code>3.0.0-denext.11</code> or later; under an older one every call rejects{" "}
+        <code>unsupported</code> with the reason, and <code>denext desktop doctor</code>{" "}
+        names the runtime it needs. The functions come from <code>denext/desktop/client</code>:
+      </p>
+      <Code lang="ts">
+        {`import {
+  attachPty, killPty, listPtys, onPtyData, onPtyExit, resizePty, spawnPty, writePty,
+} from "denext/desktop/client";
+
+// Subscribe first: a shell's first output can arrive before spawnPty resolves.
+onPtyData(({ id, data }) => terminals.get(id)?.write(data)); // { id, seq, data }
+onPtyExit(({ id, exitCode, signal }) => ended(id, exitCode, signal));
+
+const { id, pid, shell, cwd } = await spawnPty({ cols: xterm.cols, rows: xterm.rows });
+xterm.onData((data) => writePty(id, data));
+xterm.onBinary((data) => writePty(id, data, { binary: true })); // one byte per character
+xterm.onResize(({ cols, rows }) => resizePty(id, cols, rows));
+await killPty(id); // SIGHUP; or "SIGINT" | "SIGQUIT" | "SIGTERM" | "SIGKILL"`}
+      </Code>
+      <p>
+        <code>spawnPty</code> takes <code>cols</code> and <code>rows</code>, and optionally{" "}
+        <code>shell</code>, <code>args</code> (default <code>["-l"]</code>{" "}
+        on macOS and Linux, a login shell), <code>cwd</code>{" "}
+        (an absolute path to an existing directory; default the home folder) and <code>env</code>
+        {" "}
+        (set over the app&apos;s environment). Output arrives coalesced, one <code>data</code>{" "}
+        event per about 8 ms or 64 KiB, decoded as UTF-8. Each event carries a <code>seq</code>{" "}
+        that grows by one per terminal; the event stream is at-least-once, and{" "}
+        <code>onPtyData</code> drops a <code>seq</code> it has seen. <code>ptyInfo(id)</code>{" "}
+        gives the process id and, on Linux, the foreground process&apos;s name and folder.
+      </p>
+      <p>
+        Each terminal belongs to the window that started it: its events go to that window only, and
+        another window that sends its id (to write, resize, kill, inspect or attach it) gets{" "}
+        <code>not_found</code>, as for an id that does not exist. Ids are random. Closing the
+        window, or reloading its page, kills its terminals (<code>SIGHUP</code>, then{" "}
+        <code>SIGKILL</code>{" "}
+        if the program ignores it), and the app&apos;s quit kills them all. With{" "}
+        <code>onWindowClose: "detach"</code> they keep running instead: <code>listPtys()</code>{" "}
+        lists the window&apos;s own and the detached ones, and <code>attachPty(id)</code>{" "}
+        takes one over and returns what it missed (<code>replayBytes</code>{" "}
+        of output per terminal, and its exit if it ended meanwhile). That helps only while the app
+        outlives the window (<code>desktop.app.keepAlive</code>, or a tray), so the doctor warns
+        otherwise.
+      </p>
+      <Code lang="ts">
+        {`// denext.config.ts
+desktop: {
+  capabilities: {
+    pty: {
+      onWindowClose: "detach", // default "kill"
+      replayBytes: 1024 * 1024, // default 512 KiB; 0 keeps none
+      shells: ["/bin/zsh", "/opt/homebrew/bin/fish", "C:\\\\Program Files\\\\PowerShell\\\\7\\\\pwsh.exe"],
+    },
+  },
+},`}
+      </Code>
+      <Callout kind="note">
+        <strong>What a page can start.</strong> Only a program on <code>shells</code>{" "}
+        (absolute paths; an entry for another OS is ignored), by default the OS&apos;s login shells
+        and <code>/bin/sh</code> on macOS and Linux, Windows PowerShell and <code>cmd.exe</code>
+        {" "}
+        on Windows. With no <code>shell</code>, a terminal starts the user&apos;s{" "}
+        <code>$SHELL</code> when it is on the list, else the first entry. The package scripts bake
+        {" "}
+        <code>--allow-run</code>{" "}
+        for exactly those paths, never an unscoped run, so the runtime refuses any other program
+        too; <code>denext desktop doctor</code> prints the list. The page&apos;s <code>env</code>
+        {" "}
+        never carries a variable whose name starts with <code>LD_</code> or <code>DYLD_</code>{" "}
+        (the runtime refuses them under a scoped{" "}
+        <code>--allow-run</code>), and a parent terminal&apos;s (<code>TMUX</code>, …) is not
+        inherited. A shell is still full trust: what is typed into it runs as the user, so enable
+        {" "}
+        <code>pty</code>{" "}
+        only in an app whose page you trust with that. On Windows the terminal is a ConPTY, whose
+        output carries its own VT sequences even for plain text.
+      </Callout>
+
       <h3 id="picked-files-and-folders">Picked files and folders</h3>
       <p>
         A page never reaches a file outside the app&apos;s own folders by path. The dialogs{" "}

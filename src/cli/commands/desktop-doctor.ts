@@ -47,6 +47,17 @@ export async function projectLaunchPolicy(dir: string): Promise<LaunchPolicyProb
 }
 
 /**
+ * The project's `desktop` config as data, for the doctor's `pty` check: `null` off a desktop
+ * project or when the config can't be read as data (the launch-policy check reports that).
+ */
+async function projectDesktopConfig(dir: string): Promise<unknown | null> {
+  if (!await isDesktopProject(dir)) return null;
+  const config = await readStaticConfig(dir);
+  const desktop = config.keys.desktop;
+  return config.readable && desktop?.kind === "editable" ? desktop.value : null;
+}
+
+/**
  * `denext desktop doctor`.
  *
  * @param ctx The command context (`--linux`, `--json`).
@@ -71,6 +82,7 @@ export async function desktopDoctor(
     runtimeStatus: () => desktopRuntimeStatus({ projectDir: dir, deno: denoExecutable() }),
     deno: denoExecutable(),
     launchPolicy: () => projectLaunchPolicy(dir),
+    desktopConfig: () => projectDesktopConfig(dir),
     ...seams,
     os,
     ...(linux ? { linux } : {}),

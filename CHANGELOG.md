@@ -65,6 +65,22 @@ and this project adheres to
   The app's quit disposes everything whatever the policy, each dispose bounded by
   `disposeTimeoutMs`. It needs the host's window lifecycle hooks (`onWindowClosed`, `onAppQuit`,
   `windows()`).
+- **The `pty` desktop capability: terminals for the page (`denext desktop add pty`).** Over the
+  runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.11 or later; before it every
+  call rejects `unsupported` with the reason, and `denext desktop doctor` names the runtime it
+  needs). `denext/desktop/client` gains `spawnPty({ cols, rows, cwd?, shell?, args?, env? })`,
+  `writePty(id, data, { binary? })`, `resizePty`, `killPty(id, signal?)`, `ptyInfo`,
+  `attachPty(id)` (the missed output and exit), `listPtys()`, `onPtyData` (`{ id, seq, data }`,
+  coalesced per ~8 ms or 64 KiB, a repeated `seq` dropped) and `onPtyExit` (`{ id, exitCode,
+  signal }`). Each terminal belongs to the window that started it, through `createOwnedResources`:
+  its events go to that window only, and another window's calls with its id answer `not_found`.
+  `desktop.capabilities.pty` takes `{ onWindowClose: "kill" | "detach", replayBytes, shells }`:
+  closing the window (or reloading its page) kills its terminals by default, or detaches them for
+  `attachPty` (the doctor warns when the app does not outlive its windows). A page starts only a
+  program on `shells` (absolute paths; default the OS's login shells and `/bin/sh`, or PowerShell
+  and `cmd.exe`), which the package scripts bake as the app's `--allow-run` (never an unscoped
+  run) and the doctor lists; `cwd` must be an existing directory, and the page's `env` loses any
+  `LD_*` / `DYLD_*` variable.
 
 ## [4.12.0] - 2026-11-04
 

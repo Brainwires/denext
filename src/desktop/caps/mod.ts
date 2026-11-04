@@ -47,6 +47,8 @@ import { contextMenuCapability } from "./context-menu.ts";
 import { shortcutsCapability } from "./shortcuts.ts";
 import { launchAtLoginCapability } from "./launch-at-login.ts";
 import { updatesCapability } from "./updates.ts";
+import { ptyCapability } from "./pty.ts";
+import { type PtyOs, resolvePtyConfig } from "../pty-config.ts";
 import type { DesktopUpdaterConfig } from "../updater.ts";
 import {
   desktopAppIdentifierError,
@@ -199,7 +201,7 @@ async function loadExtension(spec: string, base: string | undefined): Promise<De
  *
  * The built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,
  * `secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,
- * `globalShortcuts`, `launchAtLogin`, `updates`, and the `echo` diagnostic), plus any `extensions` module
+ * `globalShortcuts`, `launchAtLogin`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module
  * paths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets
  * `authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers
  * `unavailable` per call (the page uses its web path), never an error. A bad extension path IS an
@@ -399,13 +401,19 @@ function dataCaps(caps: DesktopCapabilitiesConfig, ctx: BuiltinCtx): DesktopCapa
   return out;
 }
 
-/** The enabled built-ins over the pinned runtime's app APIs (notifications, menus, shortcuts, login). */
+/**
+ * The enabled built-ins over the pinned runtime's app APIs (notifications, menus, shortcuts, login,
+ * terminals).
+ */
 function appCaps(caps: DesktopCapabilitiesConfig): DesktopCapability[] {
   return [
     ...(caps.notifications ? [notificationsCapability()] : []),
     ...(caps.contextMenu ? [contextMenuCapability()] : []),
     ...(caps.globalShortcuts ? [shortcutsCapability()] : []),
     ...(caps.launchAtLogin ? [launchAtLoginCapability()] : []),
+    ...(caps.pty
+      ? [ptyCapability({ config: resolvePtyConfig(caps.pty, Deno.build.os as PtyOs) })]
+      : []),
   ];
 }
 

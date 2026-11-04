@@ -987,6 +987,14 @@ export interface DesktopCapabilitiesConfig {
   /** Prevent the machine from sleeping while held. */
   keepAwake?: boolean;
   /**
+   * Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)
+   * over the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.11 or later;
+   * `unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}
+   * allow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the
+   * window that started it. `true` takes the defaults.
+   */
+  pty?: boolean | DesktopPtyConfig;
+  /**
    * The OS clipboard — text, HTML and PNG images (`readClipboard` / `writeClipboard` /
    * `clipboardFormats`) — through denext's pinned runtime; under the stock runtime the page keeps
    * the WebView's `navigator.clipboard` (text).
@@ -1008,6 +1016,31 @@ export interface DesktopCapabilitiesConfig {
   echo?: boolean;
   /** User extension module paths (`defineDesktopExtension`); each module's `name` is its cap name. */
   extensions?: string[];
+}
+
+/** `desktop.capabilities.pty` options. */
+export interface DesktopPtyConfig {
+  /**
+   * What closing the window that started a terminal (or reloading its page) does to it: `"kill"`
+   * (the default) ends it; `"detach"` keeps it running with no window, and a window finds it with
+   * `listPtys()` and takes it over with `attachPty(id)`, getting the output it missed. Detaching
+   * only helps while the app keeps running with no window (`desktop.app.keepAlive`, or a tray):
+   * `denext desktop doctor` warns otherwise.
+   */
+  onWindowClose?: "kill" | "detach";
+  /**
+   * The most bytes of output kept per terminal for `attachPty` (and its `exit`): 0 keeps none,
+   * else 4096 to 64 MiB. Default 512 KiB.
+   */
+  replayBytes?: number;
+  /**
+   * The programs a page may start, as absolute paths (`/bin/zsh`,
+   * `C:\Windows\System32\cmd.exe`); an entry for another OS is ignored on this one. The
+   * packaged app bakes `--allow-run` for exactly these paths. Default: the OS's login shells and
+   * `/bin/sh` on macOS and Linux, Windows PowerShell and `cmd.exe` on Windows. With no `shell`, a
+   * terminal starts the user's `$SHELL` when it is on the list, else the first entry.
+   */
+  shells?: string[];
 }
 
 /** `desktop.capabilities.passkeys` options. */

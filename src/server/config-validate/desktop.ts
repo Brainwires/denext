@@ -23,6 +23,7 @@ import { desktopTrayProblem } from "../../desktop/tray-config.ts";
 import { desktopWindowKeyProblem } from "../../desktop/window-config.ts";
 import { desktopMenuProblem } from "../../desktop/menu-config.ts";
 import { sidecarListError } from "../../desktop/sidecar.ts";
+import { ptyConfigProblem } from "../../desktop/pty-config.ts";
 import { type Fail, isPlainObject, num, oneOf, validatePermissionLists } from "./shared.ts";
 
 /** The kinds `desktop.extraPermissions` takes. */
@@ -490,6 +491,11 @@ export function validateDesktop(
       c.extensions.every((p) => typeof p === "string" && p !== "");
     if (!ok) fail("desktop.capabilities.extensions", "must be an array of module paths");
   }
+  validateCapabilityOptions(c, fail);
+}
+
+/** The capabilities that take an options object: `fs`, `shell`, `passkeys`, `pty`. */
+function validateCapabilityOptions(c: Record<string, unknown>, fail: Fail): void {
   validatePasskeys(c.passkeys, fail);
   for (const key of ["fs", "shell", "passkeys"]) {
     const v = c[key];
@@ -498,6 +504,8 @@ export function validateDesktop(
     if (!ok) fail(`desktop.capabilities.${key}`, "must be a boolean or an options object");
   }
   validateOpenPathAllow(c.shell, fail);
+  const pty = ptyConfigProblem(c.pty);
+  if (pty) fail(pty[0], pty[1]);
 }
 
 /** `desktop.capabilities.shell.openPathAllowExtensions`: bare extensions (no dot, no path). */

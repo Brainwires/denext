@@ -16895,6 +16895,12 @@
             },
             {
               "kind": "property",
+              "name": "pty",
+              "signature": "pty?: boolean | DesktopPtyConfig",
+              "doc": "Terminals for the page (`spawnPty`, `writePty`, `onPtyData`, … in `denext/desktop/client`)\nover the runtime's `Deno.openPty` (denext's Deno Desktop runtime 3.0.0-denext.11 or later;\n`unsupported` before it). A page starts only a program on the {@link DesktopPtyConfig.shells}\nallow-list, which the packaged app bakes as its `--allow-run`; each terminal belongs to the\nwindow that started it. `true` takes the defaults."
+            },
+            {
+              "kind": "property",
               "name": "clipboard",
               "signature": "clipboard?: boolean",
               "doc": "The OS clipboard — text, HTML and PNG images (`readClipboard` / `writeClipboard` /\n`clipboardFormats`) — through denext's pinned runtime; under the stock runtime the page keeps\nthe WebView's `navigator.clipboard` (text)."
@@ -17330,6 +17336,38 @@
               "name": "env",
               "signature": "env?: string[]",
               "doc": "The environment variables the app's own code reads (`DATABASE_URL`, `NEXT_PUBLIC_*` names, …),\nadded to the strict `--allow-env` allow-list. One name per entry."
+            }
+          ]
+        },
+        {
+          "name": "DesktopPtyConfig",
+          "slug": "DesktopPtyConfig",
+          "kind": "interface",
+          "signature": "interface DesktopPtyConfig",
+          "doc": "desktop.capabilities.pty options.",
+          "docFull": "`desktop.capabilities.pty` options.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "onWindowClose",
+              "signature": "onWindowClose?: \"kill\" | \"detach\"",
+              "doc": "What closing the window that started a terminal (or reloading its page) does to it: `\"kill\"`\n(the default) ends it; `\"detach\"` keeps it running with no window, and a window finds it with\n`listPtys()` and takes it over with `attachPty(id)`, getting the output it missed. Detaching\nonly helps while the app keeps running with no window (`desktop.app.keepAlive`, or a tray):\n`denext desktop doctor` warns otherwise."
+            },
+            {
+              "kind": "property",
+              "name": "replayBytes",
+              "signature": "replayBytes?: number",
+              "doc": "The most bytes of output kept per terminal for `attachPty` (and its `exit`): 0 keeps none,\nelse 4096 to 64 MiB. Default 512 KiB."
+            },
+            {
+              "kind": "property",
+              "name": "shells",
+              "signature": "shells?: string[]",
+              "doc": "The programs a page may start, as absolute paths (`/bin/zsh`,\n`C:\\Windows\\System32\\cmd.exe`); an entry for another OS is ignored on this one. The\npackaged app bakes `--allow-run` for exactly these paths. Default: the OS's login shells and\n`/bin/sh` on macOS and Linux, Windows PowerShell and `cmd.exe` on Windows. With no `shell`, a\nterminal starts the user's `$SHELL` when it is on the list, else the first entry."
             }
           ]
         },
@@ -49277,7 +49315,7 @@
           "kind": "function",
           "signature": "resolveDesktopCapabilities(runtimeConfig: DesktopRuntimeConfig | undefined, options?: ResolveDesktopOptions): Promise<ResolvedDesktop>",
           "doc": "Resolve config.desktop.capabilities into the capability objects the bridge serves, plus the app-support directory the runtime hands to handlers.",
-          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, `updates`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
+          "docFull": "Resolve `config.desktop.capabilities` into the capability objects the bridge serves, plus the\napp-support directory the runtime hands to handlers.\n\nThe built-in bridge capabilities are mapped (`device`, `fs`, `sqlite`, `shell`, `keepAwake`,\n`secureStore`, `dialogs`, `clipboard`, `passkeys`, `notifications`, `contextMenu`,\n`globalShortcuts`, `launchAtLogin`, `updates`, `pty`, and the `echo` diagnostic), plus any `extensions` module\npaths; `auth-session` is a runtime endpoint (not a bridge cap) so it only sets\n`authSessionEnabled`. A capability the running Deno Desktop runtime cannot serve answers\n`unavailable` per call (the page uses its web path), never an error. A bad extension path IS an\nerror, and so is enabling a data-storing cap (`secureStore`/`fs`/`sqlite`) without a\n`desktop.app.identifier` — both fail fast at launch.",
           "params": [
             {
               "name": "runtimeConfig",
@@ -51283,6 +51321,23 @@
       "module": "denext/desktop/client",
       "symbols": [
         {
+          "name": "attachPty",
+          "slug": "attachPty",
+          "kind": "function",
+          "signature": "attachPty(id: string): Promise<PtyAttachment>",
+          "doc": "Take a terminal over: one this window owns (after a reload) or a detached one. Its later events come to this window. Drop a replayed data whose seq an onPtyData handler has already seen. An ended terminal is forgotten once its replay is returned.",
+          "docFull": "Take a terminal over: one this window owns (after a reload) or a detached one. Its later events\ncome to this window. Drop a replayed `data` whose `seq` an {@linkcode onPtyData} handler has\nalready seen. An ended terminal is forgotten once its replay is returned.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The terminal."
+            }
+          ],
+          "returns": "The output kept for it.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "claimDeepLinkScheme",
           "slug": "claimDeepLinkScheme",
           "kind": "function",
@@ -51669,6 +51724,39 @@
           "denextOnly": true
         },
         {
+          "name": "killPty",
+          "slug": "killPty",
+          "kind": "function",
+          "signature": "killPty(id: string, signal?: PtySignal): Promise<void>",
+          "doc": "Send a signal to a terminal's program (default SIGHUP, as closing a terminal does); its onPtyExit follows. An ended terminal is forgotten.",
+          "docFull": "Send a signal to a terminal's program (default `SIGHUP`, as closing a terminal does); its\n{@linkcode onPtyExit} follows. An ended terminal is forgotten.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The terminal."
+            },
+            {
+              "name": "signal",
+              "doc": "The signal."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "listPtys",
+          "slug": "listPtys",
+          "kind": "function",
+          "signature": "listPtys(): Promise<PtySession[]>",
+          "doc": "The terminals this window owns, and the detached ones (which any window may attach).",
+          "docFull": "The terminals this window owns, and the detached ones (which any window may attach).",
+          "params": [],
+          "returns": "The terminals.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "onDesktopEvent",
           "slug": "onDesktopEvent",
           "kind": "function",
@@ -51696,6 +51784,40 @@
           "denextOnly": true
         },
         {
+          "name": "onPtyData",
+          "slug": "onPtyData",
+          "kind": "function",
+          "signature": "onPtyData(handler: (event: PtyDataEvent) => void): () => void",
+          "doc": "Call handler with each chunk of output of this window's terminals. A chunk delivered twice (the event stream reconnected) is dropped by its seq. Off desktop it does nothing.",
+          "docFull": "Call `handler` with each chunk of output of this window's terminals. A chunk delivered twice (the\nevent stream reconnected) is dropped by its `seq`. Off desktop it does nothing.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called with each chunk."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "onPtyExit",
+          "slug": "onPtyExit",
+          "kind": "function",
+          "signature": "onPtyExit(handler: (event: PtyExitEvent) => void): () => void",
+          "doc": "Call handler once for each of this window's terminals that ends (its program exited or was killed). Off desktop it does nothing.",
+          "docFull": "Call `handler` once for each of this window's terminals that ends (its program exited or was\nkilled). Off desktop it does nothing.",
+          "params": [
+            {
+              "name": "handler",
+              "doc": "Called with the exit."
+            }
+          ],
+          "returns": "A function that unsubscribes.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
           "name": "onSidecarStatus",
           "slug": "onSidecarStatus",
           "kind": "function",
@@ -51716,6 +51838,326 @@
           "examples": [
             "```ts\nimport { onSidecarStatus } from \"denext/desktop/client\";\n\nconst stop = onSidecarStatus(\"server\", (s) => setBanner(s.state === \"ready\" ? null : s.state));\n```"
           ],
+          "denextOnly": true
+        },
+        {
+          "name": "PtyAttachment",
+          "slug": "PtyAttachment",
+          "kind": "interface",
+          "signature": "interface PtyAttachment",
+          "doc": "What attachPty resolves to.",
+          "docFull": "What {@linkcode attachPty} resolves to.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "replay",
+              "signature": "readonly replay: readonly PtyReplayEntry[]",
+              "doc": "The output kept for the terminal (up to `pty.replayBytes`), and its exit when it ended."
+            }
+          ]
+        },
+        {
+          "name": "PtyDataEvent",
+          "slug": "PtyDataEvent",
+          "kind": "interface",
+          "signature": "interface PtyDataEvent",
+          "doc": "A chunk of a terminal's output (onPtyData).",
+          "docFull": "A chunk of a terminal's output ({@linkcode onPtyData}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "The terminal's id."
+            },
+            {
+              "kind": "property",
+              "name": "seq",
+              "signature": "readonly seq: number",
+              "doc": "Grows by one per chunk of this terminal; a chunk seen twice has the same `seq`."
+            },
+            {
+              "kind": "property",
+              "name": "data",
+              "signature": "readonly data: string",
+              "doc": "The output, decoded as UTF-8 (a character split between reads is never cut)."
+            }
+          ]
+        },
+        {
+          "name": "PtyExitEvent",
+          "slug": "PtyExitEvent",
+          "kind": "interface",
+          "signature": "interface PtyExitEvent",
+          "doc": "A terminal's end (onPtyExit).",
+          "docFull": "A terminal's end ({@linkcode onPtyExit}).",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "The terminal's id."
+            },
+            {
+              "kind": "property",
+              "name": "exitCode",
+              "signature": "readonly exitCode: number",
+              "doc": "The program's exit code."
+            },
+            {
+              "kind": "property",
+              "name": "signal",
+              "signature": "readonly signal: string | null",
+              "doc": "The signal that ended it (`\"SIGHUP\"`), or `null`."
+            }
+          ]
+        },
+        {
+          "name": "ptyInfo",
+          "slug": "ptyInfo-fn",
+          "kind": "function",
+          "signature": "ptyInfo(id: string): Promise<PtyInfo>",
+          "doc": "A terminal's process id, and (on Linux) the foreground process's name and folder.",
+          "docFull": "A terminal's process id, and (on Linux) the foreground process's name and folder.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The terminal."
+            }
+          ],
+          "returns": "What the OS tells.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PtyInfo",
+          "slug": "PtyInfo-iface",
+          "kind": "interface",
+          "signature": "interface PtyInfo",
+          "doc": "What ptyInfo resolves to.",
+          "docFull": "What {@linkcode ptyInfo} resolves to.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "pid",
+              "signature": "readonly pid: number",
+              "doc": "The program's process id."
+            },
+            {
+              "kind": "property",
+              "name": "process",
+              "signature": "readonly process?: string",
+              "doc": "The foreground process's name (`vim`), where the OS tells it (Linux)."
+            },
+            {
+              "kind": "property",
+              "name": "cwd",
+              "signature": "readonly cwd?: string",
+              "doc": "The foreground process's working directory, where the OS tells it (Linux)."
+            }
+          ]
+        },
+        {
+          "name": "PtyReplayEntry",
+          "slug": "PtyReplayEntry",
+          "kind": "typeAlias",
+          "signature": "type PtyReplayEntry = { readonly event: \"data\"; readonly seq: number; readonly data: string } | { readonly event: \"exit\"; readonly exitCode: number; readonly signal: string | null }",
+          "doc": "One entry of attachPty's replay, oldest first.",
+          "docFull": "One entry of {@linkcode attachPty}'s replay, oldest first.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PtySession",
+          "slug": "PtySession",
+          "kind": "interface",
+          "signature": "interface PtySession",
+          "doc": "One terminal listPtys reports.",
+          "docFull": "One terminal {@linkcode listPtys} reports.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "The terminal's id."
+            },
+            {
+              "kind": "property",
+              "name": "pid",
+              "signature": "readonly pid: number",
+              "doc": "The program's process id."
+            },
+            {
+              "kind": "property",
+              "name": "shell",
+              "signature": "readonly shell: string",
+              "doc": "The program (its absolute path)."
+            },
+            {
+              "kind": "property",
+              "name": "cwd",
+              "signature": "readonly cwd: string",
+              "doc": "The folder it started in."
+            },
+            {
+              "kind": "property",
+              "name": "detached",
+              "signature": "readonly detached: boolean",
+              "doc": "No window owns it: {@linkcode attachPty} takes it over."
+            },
+            {
+              "kind": "property",
+              "name": "exited",
+              "signature": "readonly exited: boolean",
+              "doc": "Its program has ended (the replay ends with the exit)."
+            }
+          ]
+        },
+        {
+          "name": "PtySignal",
+          "slug": "PtySignal",
+          "kind": "typeAlias",
+          "signature": "type PtySignal = \"SIGHUP\" | \"SIGINT\" | \"SIGQUIT\" | \"SIGTERM\" | \"SIGKILL\"",
+          "doc": "The signals killPty sends.",
+          "docFull": "The signals {@linkcode killPty} sends.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "PtySpawned",
+          "slug": "PtySpawned",
+          "kind": "interface",
+          "signature": "interface PtySpawned",
+          "doc": "What spawnPty resolves to.",
+          "docFull": "What {@linkcode spawnPty} resolves to.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "id",
+              "signature": "readonly id: string",
+              "doc": "The terminal's id: random, and valid only in the window that owns the terminal."
+            },
+            {
+              "kind": "property",
+              "name": "pid",
+              "signature": "readonly pid: number",
+              "doc": "The program's process id."
+            },
+            {
+              "kind": "property",
+              "name": "shell",
+              "signature": "readonly shell: string",
+              "doc": "The program started (its absolute path)."
+            },
+            {
+              "kind": "property",
+              "name": "cwd",
+              "signature": "readonly cwd: string",
+              "doc": "Its working directory (`\"\"` when the home folder could not be read)."
+            }
+          ]
+        },
+        {
+          "name": "PtySpawnOptions",
+          "slug": "PtySpawnOptions",
+          "kind": "interface",
+          "signature": "interface PtySpawnOptions",
+          "doc": "Options for spawnPty.",
+          "docFull": "Options for {@linkcode spawnPty}.",
+          "params": [],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true,
+          "members": [
+            {
+              "kind": "property",
+              "name": "cols",
+              "signature": "readonly cols: number",
+              "doc": "Columns (1 to 10000)."
+            },
+            {
+              "kind": "property",
+              "name": "rows",
+              "signature": "readonly rows: number",
+              "doc": "Rows (1 to 10000)."
+            },
+            {
+              "kind": "property",
+              "name": "cwd",
+              "signature": "readonly cwd?: string",
+              "doc": "The working directory: an absolute path to an existing directory (default: the home folder)."
+            },
+            {
+              "kind": "property",
+              "name": "shell",
+              "signature": "readonly shell?: string",
+              "doc": "The program: one of `desktop.capabilities.pty.shells`, by its absolute path (default: the\nuser's `$SHELL` when it is on the list, else the list's first entry)."
+            },
+            {
+              "kind": "property",
+              "name": "args",
+              "signature": "readonly args?: readonly string[]",
+              "doc": "Its arguments (default `[\"-l\"]`, a login shell, on macOS and Linux; none on Windows)."
+            },
+            {
+              "kind": "property",
+              "name": "env",
+              "signature": "readonly env?: Readonly<Record<string, string>>",
+              "doc": "Variables set over the app's environment. Names must be identifiers; a name starting with\n`LD_` or `DYLD_` is dropped (the runtime refuses those under a scoped `--allow-run`)."
+            }
+          ]
+        },
+        {
+          "name": "resizePty",
+          "slug": "resizePty",
+          "kind": "function",
+          "signature": "resizePty(id: string, cols: number, rows: number): Promise<void>",
+          "doc": "Change a terminal's size (the program gets SIGWINCH).",
+          "docFull": "Change a terminal's size (the program gets `SIGWINCH`).",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The terminal."
+            },
+            {
+              "name": "cols",
+              "doc": "Columns."
+            },
+            {
+              "name": "rows",
+              "doc": "Rows."
+            }
+          ],
+          "returns": "",
+          "examples": [],
           "denextOnly": true
         },
         {
@@ -51892,6 +52334,48 @@
               "doc": "When the next start is due, while in `backoff` (epoch ms)."
             }
           ]
+        },
+        {
+          "name": "spawnPty",
+          "slug": "spawnPty",
+          "kind": "function",
+          "signature": "spawnPty(options: PtySpawnOptions): Promise<PtySpawned>",
+          "doc": "Start a terminal running an allowed shell.",
+          "docFull": "Start a terminal running an allowed shell.",
+          "params": [
+            {
+              "name": "options",
+              "doc": "Its size, and optionally the shell, arguments, folder and variables."
+            }
+          ],
+          "returns": "Its id, process id, program and folder. Rejects forbidden for a program not on desktop.capabilities.pty.shells, validation for a bad size, a cwd that is not an existing directory or malformed env, and busy past 64 terminals.",
+          "examples": [],
+          "denextOnly": true
+        },
+        {
+          "name": "writePty",
+          "slug": "writePty",
+          "kind": "function",
+          "signature": "writePty(id: string, data: string, options: { readonly binary?: boolean }): Promise<void>",
+          "doc": "Send input to a terminal, in order with the previous writes.",
+          "docFull": "Send input to a terminal, in order with the previous writes.",
+          "params": [
+            {
+              "name": "id",
+              "doc": "The terminal."
+            },
+            {
+              "name": "data",
+              "doc": "Text, written as UTF-8; with binary, one byte per character (U+0000 to U+00FF: xterm.js's onBinary, such as legacy mouse reports)."
+            },
+            {
+              "name": "options",
+              "doc": "binary."
+            }
+          ],
+          "returns": "",
+          "examples": [],
+          "denextOnly": true
         }
       ]
     },
