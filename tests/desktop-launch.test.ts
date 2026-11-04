@@ -19,14 +19,13 @@ import {
   desktopLaunchScratchDir,
   desktopPackageOutDirProblem,
   desktopProjectEntry,
+  desktopRunConfig,
   isInsideDir,
   markDesktopExport,
-  stripUnpackagedMediaCapture,
   withNetHosts,
   writeDesktopDevEntry,
 } from "../src/build/desktop-launch.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "../src/build/desktop-dev-build.ts";
-import { laufeyLaunchPath } from "../src/build/desktop-app-config.ts";
 import { desktopBundleCommand } from "../src/build/desktop-package-script.ts";
 import { desktopDevProxyDecision } from "../src/build/desktop.ts";
 import { desktopLaunchPolicyCheck } from "../src/cli/commands/doctor.ts";
@@ -645,35 +644,73 @@ Deno.test("desktopDevProxyDecision: a dev build proxies; a packaged app still ig
   );
 });
 
-Deno.test("stripUnpackagedMediaCapture: deno.json's grant never reaches an unpackaged window", async () => {
+Deno.test("desktopRunConfig: the build of an unpackaged window never sees deno.json's media grant", async () => {
   const dir = await Deno.makeTempDir({ prefix: "denext_desktop_launch_media_" });
   try {
-    for (const os of ["darwin", "linux", "windows"] as const) {
-      const bundle = desktopLaunchBundle(os, join(dir, os, "App"));
-      const file = laufeyLaunchPath(os, bundle);
-      // No launch file: nothing to do.
-      assertEquals(await stripUnpackagedMediaCapture(os, bundle), null);
-      await Deno.mkdir(join(file, ".."), { recursive: true });
-      // What `deno desktop` writes from deno.json's desktop.app.mediaCapture: any exact origin,
-      // a loopback dev server's too, which this window would otherwise grant.
-      const written = {
-        mediaCapture: { microphone: ["http://127.0.0.1:3000", "https://x.example"] },
-        bridgeOrigins: ["app://localhost"],
-        singleInstance: false,
-      };
-      await Deno.writeTextFile(file, JSON.stringify(written));
-      const said = await stripUnpackagedMediaCapture(os, bundle);
-      assert(said !== null);
-      assertStringIncludes(said, "https://x.example");
-      assertEquals(JSON.parse(await Deno.readTextFile(file)), {
-        bridgeOrigins: ["app://localhost"],
-        singleInstance: false,
-      });
-      // Already without the key: left as it is.
-      const before = await Deno.readTextFile(file);
-      assertEquals(await stripUnpackagedMediaCapture(os, bundle), null);
-      assertEquals(await Deno.readTextFile(file), before);
-    }
+    // No deno.json, or one without the key: the build reads the project's own config.
+    const none = await desktopRunConfig(dir);
+    assertEquals([none.args, none.dropped], [[], null]);
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ desktop: { app: { name: "App" } }, imports: { "@/": "./src/" } }),
+    );
+    assertEquals((await desktopRunConfig(dir)).args, []);
+
+    // What `deno desktop` would write into the bundle's laufey-launch.json: any exact origin, a
+    // loopback dev server's too. The build gets a copy beside deno.json without it, so nothing in
+    // the signed bundle is edited after the build.
+    const own = {
+      desktop: {
+        app: {
+          name: "App",
+          mediaCapture: { microphone: ["http://127.0.0.1:3000", "https://x.example"] },
+        },
+      },
+      imports: { "@/": "./src/" },
+      compile: { include: [".deno-desktop/app.json"] },
+    };
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(own));
+    const run = await desktopRunConfig(dir);
+    assertEquals(run.args.length, 2);
+    assertEquals(run.args[0], "--config");
+    const file = run.args[1];
+    // Beside deno.json: its relative paths, lockfile and workspace resolve the same.
+    assertEquals(join(file, ".."), dir);
+    assertStringIncludes(run.dropped ?? "", "https://x.example");
+    assertEquals(JSON.parse(await Deno.readTextFile(file)), {
+      desktop: { app: { name: "App" } },
+      imports: { "@/": "./src/" },
+      compile: { include: [".deno-desktop/app.json"] },
+    });
+    // The project's own deno.json is untouched.
+    assertEquals(JSON.parse(await Deno.readTextFile(join(dir, "deno.json"))), own);
+
+    // The build is planned with it (before `--output` and the entry).
+    const plan = await desktopLaunchBuildPlan({
+      projectDir: dir,
+      config: {},
+      os: "linux",
+      denoFlags: [],
+      entry: "desktop.ts",
+      dev: true,
+      scratch: dir,
+      configArgs: run.args,
+    });
+    const at = plan.args.indexOf("--config");
+    assert(at > 0 && plan.args[at + 1] === file, plan.args.join(" "));
+    assert(at < plan.args.indexOf("--output"), plan.args.join(" "));
+
+    await run.cleanup();
+    assertEquals(await Deno.stat(file).then(() => true, () => false), false);
+    // deno.jsonc too.
+    await Deno.remove(join(dir, "deno.json"));
+    await Deno.writeTextFile(
+      join(dir, "deno.jsonc"),
+      '// comment\n{ "desktop": { "app": { "mediaCapture": { "camera": ["https://y.example"] } } } }',
+    );
+    const jsonc = await desktopRunConfig(dir);
+    assertEquals(JSON.parse(await Deno.readTextFile(jsonc.args[1])), { desktop: { app: {} } });
+    await jsonc.cleanup();
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

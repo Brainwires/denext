@@ -40,8 +40,8 @@ import {
   desktopLaunchScratchDir,
   desktopPackageOutDirProblem,
   desktopProjectEntry,
+  desktopRunConfig,
   markDesktopExport,
-  stripUnpackagedMediaCapture,
   writeDesktopDevEntry,
 } from "../../build/desktop-launch.ts";
 import { scaffoldFiles } from "../../build/scaffold.ts";
@@ -321,8 +321,13 @@ async function buildDesktopWindow(
 ): Promise<BuiltDesktopWindow> {
   const os = hostDesktopOs();
   const scratch = await desktopLaunchScratchDir(dir);
+  // deno.json's own microphone / camera grant never reaches an unpackaged window: the build reads a
+  // copy without it, so nothing in the signed bundle is edited afterwards.
+  const runConfig = await desktopRunConfig(dir);
+  if (runConfig.dropped) console.warn(`  denext desktop: ${runConfig.dropped}.`);
   try {
     const plan = await desktopLaunchBuildPlan({
+      configArgs: runConfig.args,
       projectDir: dir,
       config: launch.config,
       os,
@@ -344,9 +349,6 @@ async function buildDesktopWindow(
       stderr: "inherit",
     }).output();
     if (code !== 0) throw new Error(`deno desktop exited with code ${code}`);
-    // deno.json's own microphone / camera grant never reaches an unpackaged window.
-    const media = await stripUnpackagedMediaCapture(os, plan.bundle);
-    if (media) console.warn(`  denext desktop: ${media}.`);
     // A CEF runtime with Chromium's sandbox on Windows: the bootstrap layout, as packaging does
     // (or as a `deno desktop` that knows it already wrote it).
     const scriptUrl = toFileUrl(join(dir, "scripts", "run.ts")).href;
@@ -359,6 +361,8 @@ async function buildDesktopWindow(
   } catch (err) {
     await removeScratch(scratch);
     throw err;
+  } finally {
+    await runConfig.cleanup();
   }
 }
 

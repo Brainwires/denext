@@ -128,8 +128,9 @@ and this project adheres to
 - **A `denext desktop run` / `dev` window no longer takes deno.json's microphone / camera grant.**
   `deno desktop` writes deno.json's `desktop.app.mediaCapture` (any exact origins, a loopback dev
   server's too) into the window's `laufey-launch.json`, which no environment variable overrides, so
-  an unpackaged window granted capture to those origins although denext said it got none. The grant
-  is now taken out of that file after the build, with a warning naming it.
+  an unpackaged window granted capture to those origins although denext said it got none. The window
+  is now built from a copy of deno.json without the key (`--config`, written beside deno.json and
+  removed after the build), so the grant is never written, with a warning naming it.
 - **`denext desktop package` says when a program sidecar runs unchecked.** On a runtime that checks
   a program sidecar's recorded hash, a program that cannot be recorded (no `desktop.app.identifier`,
   a `,`, `#`, `%` or `?` in its path, a file outside the project or one that cannot be read), or an

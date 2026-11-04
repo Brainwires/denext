@@ -16,7 +16,7 @@
 // `<app>` / `<app>.exe`). The webview's launch settings come from `LAUFEY_*` env (an env var wins
 // over the bundle's `laufey-launch.json`), so the window gets DevTools as documented and never takes
 // the single-instance lock of an installed copy. A key with no env var (deno.json's
-// `desktop.app.mediaCapture`) is taken out of that file ({@linkcode stripUnpackagedMediaCapture}).
+// `desktop.app.mediaCapture`) is kept out of the build ({@linkcode desktopRunConfig}).
 //
 // `desktop dev` builds a generated entry instead of `desktop.ts`: it marks the build as a dev build
 // ({@linkcode DESKTOP_DEV_BUILD_KEY}) and then imports the real entry. A built binary is not the
@@ -46,7 +46,7 @@ import {
   strictPermissionsProblem,
 } from "./desktop-capabilities.ts";
 import { DESKTOP_DEV_BUILD_KEY } from "./desktop-dev-build.ts";
-import { laufeyLaunchPath } from "./desktop-app-config.ts";
+import { readJson } from "./json-edit.ts";
 import { desktopAppName, desktopIconArgs } from "./desktop-package-script.ts";
 import {
   desktopNetSplit,
@@ -76,6 +76,8 @@ export interface DesktopLaunchBuildInput {
   readonly outDir?: string;
   /** Hosts to add to `--allow-net` (`--allow-net-connect` under the split grant; `dev --lan`: the dev server's LAN address). */
   readonly netHosts?: readonly string[];
+  /** `--config <file>` for the build ({@linkcode desktopRunConfig}; default none). */
+  readonly configArgs?: readonly string[];
   /** The `--output` path (see {@linkcode desktopLaunchOutput}). */
   readonly output: string;
   /** The entry module, relative to the project. */
@@ -124,6 +126,7 @@ export function desktopLaunchBuildArgs(input: DesktopLaunchBuildInput): string[]
     ...(input.includeOut ? ["--include", input.outDir ?? "out"] : []),
     ...input.extraArgs,
     ...input.iconArgs,
+    ...input.configArgs ?? [],
     "--output",
     input.output,
     input.entry,
@@ -380,36 +383,53 @@ export async function markDesktopExport(projectDir: string, outDir: string): Pro
   await Deno.writeTextFile(join(projectDir, outDir, ".gitignore"), DESKTOP_EXPORT_GITIGNORE);
 }
 
+/** A `--config` for `deno desktop` without deno.json's own media grant ({@linkcode desktopRunConfig}). */
+export interface DesktopRunConfig {
+  /** `["--config", <file>]`, or `[]` when deno.json sets no grant (the build reads it as it is). */
+  readonly args: string[];
+  /** What was left out (one line, for a warning), or `null`. */
+  readonly dropped: string | null;
+  /** Remove the generated file (after the build). */
+  cleanup(): Promise<void>;
+}
+
 /**
- * Take the microphone / camera grant out of an unpackaged window's bundle (`denext desktop run` /
- * `dev`). `deno desktop` writes deno.json's `desktop.app.mediaCapture` (any exact origins, a
+ * The config an unpackaged window (`denext desktop run` / `dev`) is built with: deno.json as it is,
+ * unless it sets `desktop.app.mediaCapture`. `deno desktop` writes that grant (any exact origins, a
  * loopback dev server's too) into the bundle's `laufey-launch.json`, which the window reads and no
- * `LAUFEY_*` env var overrides; denext's own grant is the packaged app's alone, so this window
- * gets none, as `denext desktop run` / `dev` say at launch. Nothing changes for a bundle without
- * the key (or without the file).
+ * `LAUFEY_*` env var overrides; denext's own grant is the packaged app's alone. So the build gets a
+ * copy without the key, beside deno.json (its relative paths, lockfile and workspace resolve the
+ * same), and never writes the grant: nothing inside the signed bundle is edited afterwards.
  *
- * @param os The host OS.
- * @param bundle The scratch bundle ({@linkcode desktopLaunchBundle}).
- * @returns What was taken out (one line, for a warning), or `null` when there was nothing.
+ * @param projectDir The project.
+ * @returns The `--config` args, the warning and the cleanup.
  */
-export async function stripUnpackagedMediaCapture(
-  os: DesktopOs,
-  bundle: string,
-): Promise<string | null> {
-  const file = laufeyLaunchPath(os, bundle);
-  const text = await Deno.readTextFile(file).catch((e) => {
-    if (e instanceof Deno.errors.NotFound) return null;
-    throw e;
-  });
-  if (text === null) return null;
-  const launch = JSON.parse(text) as Record<string, unknown>;
-  if (typeof launch !== "object" || launch === null || !("mediaCapture" in launch)) return null;
-  const granted = JSON.stringify(launch.mediaCapture);
-  delete launch.mediaCapture;
-  await Deno.writeTextFile(file, JSON.stringify(launch, null, 2) + "\n");
-  return `deno.json's desktop.app.mediaCapture (${granted}) was taken out of this window's ` +
-    "laufey-launch.json: an unpackaged window gets no microphone / camera grant, and the packaged " +
-    "app's is denext's own (desktop.capabilities.microphone / camera, the app origin alone)";
+export async function desktopRunConfig(projectDir: string): Promise<DesktopRunConfig> {
+  const none: DesktopRunConfig = { args: [], dropped: null, cleanup: () => Promise.resolve() };
+  for (const name of ["deno.json", "deno.jsonc"]) {
+    const text = await Deno.readTextFile(join(projectDir, name)).catch(() => null);
+    if (text === null) continue;
+    let doc: unknown;
+    try {
+      doc = readJson(text);
+    } catch {
+      return none; // `deno desktop` reports a config that does not parse.
+    }
+    const app = (doc as { desktop?: { app?: Record<string, unknown> } } | null)?.desktop?.app;
+    if (typeof app !== "object" || app === null || !("mediaCapture" in app)) return none;
+    const granted = JSON.stringify(app.mediaCapture);
+    delete app.mediaCapture;
+    const file = join(projectDir, `.denext-desktop-run-${crypto.randomUUID()}.deno.json`);
+    await Deno.writeTextFile(file, JSON.stringify(doc, null, 2) + "\n");
+    return {
+      args: ["--config", file],
+      dropped: `deno.json's desktop.app.mediaCapture (${granted}) is left out of this window's ` +
+        "build: an unpackaged window gets no microphone / camera grant, and the packaged app's is " +
+        "denext's own (desktop.capabilities.microphone / camera, the app origin alone)",
+      cleanup: () => Deno.remove(file).catch(() => {}),
+    };
+  }
+  return none;
 }
 
 /** What {@linkcode desktopLaunchBuildPlan} plans. */
@@ -450,6 +470,8 @@ export interface DesktopLaunchPlanInput {
    * `desktopSidecarIntegrityRuntime()`; see `DesktopBuildFlagOptions.sidecarIntegrity`).
    */
   readonly sidecarIntegrity?: boolean;
+  /** `--config <file>` for the build ({@linkcode desktopRunConfig}; default none). */
+  readonly configArgs?: readonly string[];
 }
 
 /** A planned `desktop run` / `dev` build. */
@@ -520,6 +542,7 @@ export async function desktopLaunchBuildPlan(
       ? {}
       : { outDir: await desktopEntryOutDir(input.projectDir, input.appEntry ?? input.entry) }),
     netHosts: input.netHosts,
+    ...(input.configArgs ? { configArgs: input.configArgs } : {}),
     output,
     entry: input.entry,
   });
