@@ -19,6 +19,7 @@ import {
   FIRST_STRICT_LAUNCH_RUNTIME,
   isDesktopProject,
   launchPolicyProblems,
+  staleBackendPackageScripts,
   stalePackageScripts,
   strictLaunchRuntime,
   supportsStrictLaunch,
@@ -129,6 +130,11 @@ Deno.test("launchPolicyProblems: empty rpIds, an unwritable bridgeOrigins and st
   assertStringIncludes(one[0].fix, "--regenerate-scripts");
   const two = launchPolicyProblems(ok, desktopBridgeOrigins, ["a.ts", "b.ts"]);
   assertStringIncludes(two[0].message, "a.ts, b.ts never write denext's");
+  const backend = launchPolicyProblems(ok, desktopBridgeOrigins, [], ["scripts/package-macos.ts"]);
+  assertEquals(backend.length, 1);
+  assertStringIncludes(backend[0].message, "scripts/package-macos.ts never passes desktop.backend");
+  assertStringIncludes(backend[0].message, "builds deno.json's");
+  assertStringIncludes(backend[0].fix, "--regenerate-scripts");
 });
 
 Deno.test("stalePackageScripts + isDesktopProject: read the project's files", async () => {
@@ -161,6 +167,14 @@ Deno.test("stalePackageScripts + isDesktopProject: read the project's files", as
     assertEquals(await stalePackageScripts(dir), []);
     await Deno.writeTextFile(join(dir, "scripts", "package-windows.ts"), "// deno desktop only\n");
     assertEquals(await stalePackageScripts(dir), ["scripts/package-windows.ts"]);
+    // The macOS script writes the launch file but never passes desktop.backend (desktopBackendArgs).
+    assertEquals(await staleBackendPackageScripts(dir), ["scripts/package-macos.ts"]);
+    await Deno.writeTextFile(
+      join(dir, "scripts", "package-macos.ts"),
+      "await writeLaufeyLaunchConfig(import.meta.url, 'darwin', out);\n" +
+        "cmd.push(...await desktopBackendArgs(import.meta.url, 'darwin'));\n",
+    );
+    assertEquals(await staleBackendPackageScripts(dir), []);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

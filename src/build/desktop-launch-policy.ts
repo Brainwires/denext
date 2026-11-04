@@ -280,22 +280,44 @@ export async function stalePackageScripts(dir: string): Promise<string[]> {
   return out;
 }
 
+/** What a current macOS package script calls to pass `desktop.backend` to `deno desktop`. */
+const BACKEND_PASSERS = /\b(?:desktopBackendArgs|buildDesktopBundle)\b/;
+
+/**
+ * The project's macOS package script when it never passes `desktop.backend` to `deno desktop` (a
+ * script from before the per-OS `desktop.backend`): the runtime it fetches follows the macOS engine
+ * `denext.config.ts` names, but `deno desktop` builds with deno.json's, so a per-OS value that gives
+ * macOS another engine builds the wrong one. (The Linux and Windows scripts pass it through
+ * denext's `buildDesktopBundle`.)
+ *
+ * @param dir The project directory.
+ * @returns `["scripts/package-macos.ts"]` when that script is stale so, else empty.
+ */
+export async function staleBackendPackageScripts(dir: string): Promise<string[]> {
+  const rel = "scripts/package-macos.ts";
+  const text = await Deno.readTextFile(join(dir, rel)).catch(() => null);
+  return text !== null && !BACKEND_PASSERS.test(text) ? [rel] : [];
+}
+
 /**
  * Why the packaged launch file would leave a policy unpinned or refuse every ceremony: a passkeys
  * capability with no RP ID (`passkeyRpIds` empty, so laufey refuses every ceremony with
  * `invalid_rp`), a `desktop.app.bridgeOrigins` that cannot be written (no `bridgeOrigins`: under
  * the strict policy the bridge then serves no document), and package scripts that do not write
- * denext's launch file at all ({@linkcode stalePackageScripts}).
+ * denext's launch file at all ({@linkcode stalePackageScripts}) or never pass `desktop.backend`
+ * to `deno desktop` ({@linkcode staleBackendPackageScripts}).
  *
  * @param config The project config.
  * @param bridgeOrigins Computes the launch file's `bridgeOrigins` (throws on a bad entry).
  * @param staleScripts The project's stale package scripts (default none).
+ * @param staleBackendScripts The package scripts that never pass `desktop.backend` (default none).
  * @returns The problems (empty when the launch policy is complete).
  */
 export function launchPolicyProblems(
   config: unknown,
   bridgeOrigins: (config: unknown) => string[],
   staleScripts: readonly string[] = [],
+  staleBackendScripts: readonly string[] = [],
 ): LaunchPolicyProblem[] {
   const problems: LaunchPolicyProblem[] = [];
   try {
@@ -323,6 +345,17 @@ export function launchPolicyProblems(
           staleScripts.length === 1 ? "s" : ""
         } denext's laufey-launch.json, so the packaged app lacks bridgeOrigins, passkeyRpIds ` +
         "and strictPolicy",
+      fix: "denext desktop package --regenerate-scripts",
+    });
+  }
+  if (staleBackendScripts.length > 0) {
+    problems.push({
+      message:
+        `${staleBackendScripts.join(", ")} never pass${
+          staleBackendScripts.length === 1 ? "es" : ""
+        } desktop.backend to deno desktop (desktopBackendArgs): a denext.config.ts desktop.backend ` +
+        "that gives macOS another engine than deno.json's fetches that engine's runtime but " +
+        "builds deno.json's",
       fix: "denext desktop package --regenerate-scripts",
     });
   }

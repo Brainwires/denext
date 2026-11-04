@@ -60,6 +60,14 @@ import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 import toolchainPinJson from "./deno-toolchain-pin.json" with { type: "json" };
 import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
 import { warnStockDeprecation } from "./stock-deprecation.ts";
+import { loadConfigBeside } from "./desktop-config-beside.ts";
+import {
+  DEFAULT_DESKTOP_BACKEND,
+  type DesktopBackend,
+  type DesktopBackendOs,
+  desktopBackendOsOfTarget,
+  resolveDesktopBackend,
+} from "../desktop/engine-backend.ts";
 import { ghPath, type IsFile, systemToolPath } from "../utils/system-programs.ts";
 import {
   decideRevocation,
@@ -77,7 +85,7 @@ import {
 const TOOLCHAIN_ACTIVE_ENV = "DENEXT_TOOLCHAIN_ACTIVE";
 
 /** A runtime backend (`deno desktop --backend`). */
-export type DesktopRuntimeBackend = "webview" | "cef";
+export type DesktopRuntimeBackend = DesktopBackend;
 
 /** One pinned runtime archive. */
 export interface DesktopRuntimeArtifact {
@@ -1094,12 +1102,17 @@ export async function assertStockRuntimeUsable(
 
 /** Options for {@linkcode resolveDesktopRuntimeEnv}. */
 export interface DesktopRuntimeEnvOptions {
-  /** The project directory (its deno.json `desktop.backend` picks the backend). */
+  /** The project directory (its `desktop.backend` for the target picks the backend). */
   readonly projectDir: string;
   /** Rust target triple; default the host's. */
   readonly target?: string;
-  /** Overrides deno.json `desktop.backend`. */
+  /** Overrides the project's `desktop.backend` ({@linkcode projectDesktopBackend}). */
   readonly backend?: DesktopRuntimeBackend;
+  /**
+   * The project's loaded `denext.config.*` default export, for its `desktop.backend` (`undefined`
+   * for none). Left out, the config is read as data ({@linkcode projectDesktopBackend}).
+   */
+  readonly config?: unknown;
   /** The `deno` that will run `deno desktop` (default `deno`). */
   readonly deno?: string;
   /** Env reader (default `Deno.env.get`). */
@@ -1145,6 +1158,14 @@ export interface ToolchainPinVersions {
   readonly rollback?: { readonly version: string };
 }
 
+/** What {@linkcode projectDesktopBackend} reads for `target`: the loaded config, when given. */
+function backendSource(
+  options: DesktopRuntimeEnvOptions,
+  target: string,
+): ProjectDesktopBackendOptions {
+  return "config" in options ? { target, config: options.config } : { target };
+}
+
 /** The env for `deno desktop`, plus which runtime it selects. */
 export interface DesktopRuntimeEnv {
   readonly mode: "pinned" | "stock" | "local";
@@ -1166,10 +1187,66 @@ async function configuredBackend(projectDir: string): Promise<unknown> {
   return undefined;
 }
 
-/** The deno.json `desktop.backend` of `projectDir` (default `webview`). */
-export async function projectDesktopBackend(projectDir: string): Promise<DesktopRuntimeBackend> {
-  const backend = (await configuredBackend(projectDir)) ?? "webview";
+/**
+ * The `desktop.backend` of the project's `denext.config.*`, read as data (the config is never
+ * run): `undefined` when the project has no config, the key is unset, or `desktop` is computed.
+ */
+async function staticConfigBackend(projectDir: string): Promise<unknown> {
+  const { readStaticConfig } = await import("./config-static.ts");
+  const desktop = (await readStaticConfig(projectDir)).keys.desktop;
+  if (desktop?.kind !== "editable") return undefined;
+  return (desktop.value as { backend?: unknown } | undefined)?.backend;
+}
+
+/** Options for {@linkcode projectDesktopBackend}. */
+export interface ProjectDesktopBackendOptions {
+  /** The target: a Rust triple (`x86_64-unknown-linux-gnu`) or an OS (default: the host's). */
+  readonly target?: string;
+  /**
+   * The project's loaded `denext.config.*` default export (`undefined` for none). Left out, the
+   * config is read as data, never run (the doctors).
+   */
+  readonly config?: unknown;
+}
+
+/** The OS `target` names: an OS itself, or a Rust triple's. */
+function backendOsOf(target: string): DesktopBackendOs {
+  if (target === "darwin" || target === "windows" || target === "linux") return target;
+  const os = desktopBackendOsOfTarget(target);
+  if (os === null) throw new Error(`denext: no Deno Desktop target OS in "${target}"`);
+  return os;
+}
+
+/**
+ * The window engine the project builds `target` with: `desktop.backend` in `denext.config.ts`
+ * (one engine, or a per-OS `{ macos?, windows?, linux?, default? }`), else deno.json's
+ * `desktop.backend` (one engine: `deno desktop` reads that key itself), else `"webview"`.
+ *
+ * @param projectDir The project directory.
+ * @param options The target (default: the host) and the loaded config.
+ * @returns The engine.
+ * @throws {Error} On a value that is not an engine the denext runtime ships, or a per-OS object in
+ *   deno.json.
+ */
+export async function projectDesktopBackend(
+  projectDir: string,
+  options: ProjectDesktopBackendOptions = {},
+): Promise<DesktopRuntimeBackend> {
+  const os = backendOsOf(options.target ?? Deno.build.os);
+  const fromConfig = "config" in options
+    ? (options.config as { desktop?: { backend?: unknown } } | undefined)?.desktop?.backend
+    : await staticConfigBackend(projectDir);
+  const configured = resolveDesktopBackend(fromConfig, os);
+  if (configured !== undefined) return configured;
+  const backend = (await configuredBackend(projectDir)) ?? DEFAULT_DESKTOP_BACKEND;
   if (backend === "webview" || backend === "cef") return backend;
+  if (typeof backend === "object" && backend !== null && !Array.isArray(backend)) {
+    throw new Error(
+      "denext: deno.json desktop.backend is an object; `deno desktop` reads that key as one " +
+        'engine ("webview" or "cef"). Put a per-OS value in denext.config.ts desktop.backend ' +
+        "({ macos?, windows?, linux?, default? }) and take it out of deno.json.",
+    );
+  }
   throw new Error(
     `denext: deno.json desktop.backend is ${JSON.stringify(backend)}; the denext Deno Desktop ` +
       `runtime ships "webview" and "cef". On a stock Deno CLI (DENEXT_DENO=stock), set ` +
@@ -1597,7 +1674,8 @@ export async function resolveDesktopRuntimeEnv(
   if (denoReleaseVersion(found) !== pin.deno) {
     return mismatchedDenoEnv(found, pin, deno, options, log);
   }
-  const backend = options.backend ?? await projectDesktopBackend(options.projectDir);
+  const backend = options.backend ??
+    await projectDesktopBackend(options.projectDir, backendSource(options, target));
   const rt = await ensureDesktopRuntime({
     target,
     backend,
@@ -1702,7 +1780,9 @@ export async function desktopRuntimeEnv(
   target?: string,
 ): Promise<Record<string, string>> {
   const projectDir = fromFileUrl(new URL("..", entryUrl));
-  return (await resolveDesktopRuntimeEnv({ projectDir, target })).env;
+  // The loaded config: its `desktop.backend` picks the target's runtime flavour.
+  const config = await loadConfigBeside(entryUrl);
+  return (await resolveDesktopRuntimeEnv({ projectDir, target, config })).env;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1837,7 +1917,8 @@ export async function desktopRuntimeStatus(
   let cache: CacheState = "unpinned";
   let problem: string | null = null;
   try {
-    backend = options.backend ?? await projectDesktopBackend(options.projectDir);
+    backend = options.backend ??
+      await projectDesktopBackend(options.projectDir, backendSource(options, target));
     cache = await cacheState(options, pin, target, backend);
   } catch (err) {
     problem = errText(err);

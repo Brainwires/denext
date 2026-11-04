@@ -108,6 +108,8 @@ const {
   V8_ENTITLEMENTS,
   writeLaufeyLaunchConfig,
 } = await import("denext/desktop");
+// The engine of the macOS build: desktop.backend (one, or per OS), passed as --backend.
+const { desktopBackendArgs } = await import("denext/desktop");
 
 const TARGETS: Record<string, string> = {
   arm64: "aarch64-apple-darwin",
@@ -141,6 +143,8 @@ async function buildApp(out: string, target?: string): Promise<void> {
     ...await desktopNpmArgs(import.meta.url),
   ];
   if (target) cmd.push("--target", target);
+  // The macOS engine: desktop.backend in denext.config.ts (one, or per OS), else deno.json's.
+  cmd.push(...await desktopBackendArgs(import.meta.url, "darwin"));
   // The app icon: desktop.app.icons.macos in denext.config.ts, else deno.json's, else
   // icons/app.icns, icons/app.png or desktop-icon.png.
   cmd.push(...await desktopIconArgs(import.meta.url, "darwin"));

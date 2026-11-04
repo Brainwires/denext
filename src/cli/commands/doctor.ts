@@ -39,6 +39,7 @@ import {
   isDesktopProject,
   launchPolicyProblems,
   readProjectDenoJson as readDenoJson,
+  staleBackendPackageScripts,
   stalePackageScripts,
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
@@ -879,6 +880,7 @@ export async function desktopLaunchPolicyCheck(
     config,
     desktopBridgeOrigins,
     await stalePackageScripts(dir),
+    await staleBackendPackageScripts(dir),
   );
   const pinned = desktopPasskeyRpIds(config) === null
     ? "bridgeOrigins"
@@ -897,7 +899,7 @@ export async function desktopLaunchPolicyCheck(
 async function desktopChecks(dir: string, config: unknown): Promise<Check[]> {
   const checks = [
     await desktopOriginCheck(dir, config),
-    await desktopRuntimeCheck(dir),
+    await desktopRuntimeCheck(dir, { config }),
     await desktopLaunchPolicyCheck(dir, config),
   ];
   return checks.filter((c): c is Check => c !== null);
