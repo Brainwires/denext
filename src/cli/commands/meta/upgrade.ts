@@ -25,8 +25,8 @@ export const upgradeMeta: CommandMeta = {
     '(any other @denext entry there, such as "jsr:@denext/denext", is flagged, never removed).\n' +
     'A missing ".deno/" entry is added to the top-level "exclude", and the lifecycle-script jail\n' +
     "exceptions the dependencies need (sharp, Prisma's engines, …) are written, as create does.\n" +
-    'A .vscode/settings.json that turns the Deno LSP on and sets no "deno.unstable" gets\n' +
-    '"deno.unstable": ["tsgo-lsp"] (the TypeScript 7 language server; DENEXT_TSGO_LSP=0 skips it).\n' +
+    'The "deno.unstable": ["tsgo-lsp"] earlier versions wrote into .vscode/settings.json is\n' +
+    "removed: the pinned runtime's language server runs TypeScript 7 without it.\n" +
     "Native templates in ios/ / android/ older than this denext writes (`denext mobile add`'s\n" +
     "files) are listed, --dry-run included, with the command that refreshes each (such as\n" +
     "`denext mobile add auth-session`); upgrade never rewrites native files itself.\n" +

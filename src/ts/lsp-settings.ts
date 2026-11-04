@@ -1,96 +1,78 @@
 // The editor's TypeScript backend. denext's Deno toolchain ships `deno lsp` with two TypeScript
-// language services: the in-process TypeScript 6 service (Deno's default) and a TypeScript 7
-// ("tsgo") backend that runs the pinned native language server from `typescript-lsp/` beside
-// `deno`. `deno lsp` picks the backend once, at `initialize`, from the editor's settings:
-// `"deno.unstable": ["tsgo-lsp"]` selects tsgo (`DENO_UNSTABLE_TSGO_LSP=0` / `=1` in the language
-// server's environment overrides the setting either way).
+// language services: a TypeScript 7 ("tsgo") backend that runs the pinned native language server
+// from `typescript-lsp/` beside `deno`, and the in-process TypeScript 6 service. From runtime
+// 3.0.0-rc.3 on (the pinned build included) TypeScript 7 is the runtime's own default: `deno lsp`
+// runs it with no setting at all. `DENO_UNSTABLE_TSGO_LSP=0` in the language server's environment
+// keeps TypeScript 6.
 //
-// denext makes tsgo the default wherever it sets up an editor: `denext create` / `init` and
-// `denext migrate` write the entry into `.vscode/settings.json`, and `denext upgrade` adds it to an
-// existing project's settings. Only when the settings have no `deno.unstable` key at all: a project
-// that set one (to anything, `[]` included) keeps its own choice. `DENEXT_TSGO_LSP=0` (or `false` /
-// `off` / `no`) makes those commands leave the setting out — the opt-out that keeps TypeScript 6,
-// mirroring `DENEXT_NATIVE_CHECK=0` for type checking.
+// So denext writes no backend setting any more: `denext create` / `init` and `denext migrate` turn
+// the Deno language server on and nothing else. Earlier denext versions wrote
+// `"deno.unstable": ["tsgo-lsp"]` into `.vscode/settings.json`, which only the runtimes before
+// rc.3 needed; `denext upgrade` takes that exact entry back out. Any other `deno.unstable` list (one
+// that names other features, or `"tsgo-lsp"` beside them) is the project's own and is never
+// touched.
 
 import { parse as parseJsonc } from "@std/jsonc";
 
-/** The `deno.unstable` editor-setting entry that selects `deno lsp`'s TypeScript 7 backend. */
-export const TSGO_LSP_FEATURE = "tsgo-lsp";
-/** The editor setting `deno lsp` reads the backend from. */
-export const DENO_UNSTABLE_SETTING = "deno.unstable";
-/** denext's opt-out: `0` / `false` / `off` / `no` writes no tsgo setting (TypeScript 6 stays). */
-const TSGO_LSP_ENV = "DENEXT_TSGO_LSP";
-
-/** Env reader. */
-type EnvGet = (name: string) => string | undefined;
-const processEnv: EnvGet = (name) => {
-  try {
-    return Deno.env.get(name);
-  } catch {
-    return undefined; // no env permission
-  }
-};
+/** The `deno.unstable` feature that selected `deno lsp`'s TypeScript 7 backend before rc.3. */
+const TSGO_LSP_FEATURE = "tsgo-lsp";
+/** The editor setting `deno lsp` reads unstable features from. */
+const DENO_UNSTABLE_SETTING = "deno.unstable";
 
 /**
- * Whether denext writes the tsgo setting when it sets up an editor: yes, unless
- * `DENEXT_TSGO_LSP` is `0` / `false` / `off` / `no`.
- *
- * @param env Env reader (default: the process environment).
- * @returns Whether the TypeScript 7 language server is denext's default.
- */
-export function tsgoLspByDefault(env: EnvGet = processEnv): boolean {
-  const value = env(TSGO_LSP_ENV)?.trim().toLowerCase();
-  return !(value === "0" || value === "false" || value === "off" || value === "no");
-}
-
-/**
- * Whether a parsed `.vscode/settings.json` should get the tsgo setting: it has no
- * `deno.unstable` key (any value there is the user's own choice, an empty list included).
+ * Whether a parsed `.vscode/settings.json` carries the entry earlier denext versions wrote:
+ * `deno.unstable` is exactly `["tsgo-lsp"]`.
  *
  * @param settings The parsed settings object.
- * @returns Whether the setting is missing.
+ * @returns Whether the legacy entry is there.
  */
-export function needsTsgoLspSetting(settings: Record<string, unknown>): boolean {
-  return !Object.hasOwn(settings, DENO_UNSTABLE_SETTING);
+export function hasLegacyTsgoLspSetting(settings: Record<string, unknown>): boolean {
+  const value = settings[DENO_UNSTABLE_SETTING];
+  return Array.isArray(value) && value.length === 1 && value[0] === TSGO_LSP_FEATURE;
 }
 
-/** Skip whitespace and JSONC comments from `i`; the index of the next significant character. */
-function skipTrivia(text: string, i: number): number {
-  while (i < text.length) {
-    if (/\s/.test(text[i])) i++;
-    else if (text.startsWith("//", i)) {
-      const nl = text.indexOf("\n", i);
-      i = nl === -1 ? text.length : nl + 1;
-    } else if (text.startsWith("/*", i)) {
-      const end = text.indexOf("*/", i + 2);
-      i = end === -1 ? text.length : end + 2;
-    } else break;
-  }
-  return i;
-}
-
-/**
- * Add `"deno.unstable": ["tsgo-lsp"]` to a `.vscode/settings.json` text that lacks a
- * `deno.unstable` key, as a splice right after the opening `{`: the rest of the file (comments,
- * formatting, key order) keeps its bytes. `null` when there is nothing to do: the key is present,
- * or the text is not a JSONC object (never rewritten).
- *
- * @param text The file's text.
- * @returns The new text, or `null` to leave the file alone.
- */
-export function addTsgoLspSetting(text: string): string | null {
+/** The JSONC object in `text`, or `null` when it is not one. */
+function parseObject(text: string): Record<string, unknown> | null {
   let parsed: unknown;
   try {
     parsed = parseJsonc(text);
   } catch {
     return null;
   }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-  if (!needsTsgoLspSetting(parsed as Record<string, unknown>)) return null;
-  const open = skipTrivia(text, 0);
-  if (text[open] !== "{") return null;
-  const entry = `"${DENO_UNSTABLE_SETTING}": ${JSON.stringify([TSGO_LSP_FEATURE])}`;
-  // An empty object takes the entry alone; otherwise a comma separates it from the first member.
-  const comma = Object.keys(parsed).length === 0 ? "" : ",";
-  return `${text.slice(0, open + 1)}\n  ${entry}${comma}${text.slice(open + 1)}`;
+  return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+    ? parsed as Record<string, unknown>
+    : null;
+}
+
+/** `"deno.unstable": ["tsgo-lsp"]` as a member, with the whitespace before it on its line. */
+const LEGACY_MEMBER = /(\r?\n)?[ \t]*"deno\.unstable"\s*:\s*\[\s*"tsgo-lsp"\s*\]/g;
+
+/**
+ * Remove `"deno.unstable": ["tsgo-lsp"]` (what earlier denext versions wrote) from a
+ * `.vscode/settings.json` text, as a splice: the rest of the file (comments, formatting, key
+ * order) keeps its bytes. `null` when there is nothing to do: no such entry, a `deno.unstable` that
+ * names anything else, text that is not a JSONC object, or a file whose shape the splice can't
+ * account for (the result must parse to the same settings without the key, else the file is left
+ * alone).
+ *
+ * @param text The file's text.
+ * @returns The new text, or `null` to leave the file alone.
+ */
+export function removeLegacyTsgoLspSetting(text: string): string | null {
+  const settings = parseObject(text);
+  if (!settings || !hasLegacyTsgoLspSetting(settings)) return null;
+  const matches = [...text.matchAll(LEGACY_MEMBER)];
+  if (matches.length !== 1) return null; // a duplicate key, or the text inside a comment
+  const [match] = matches;
+  const start = match.index;
+  let end = start + match[0].length;
+  let head = text.slice(0, start);
+  const comma = /^\s*,/.exec(text.slice(end));
+  if (comma) end += comma[0].length; // a member after it: its comma goes with it
+  else head = head.replace(/,(\s*)$/, "$1"); // the last member: the comma before it
+  const next = head + text.slice(end);
+  const after = parseObject(next);
+  const expected = { ...settings };
+  delete expected[DENO_UNSTABLE_SETTING];
+  return after && JSON.stringify(after) === JSON.stringify(expected) ? next : null;
 }

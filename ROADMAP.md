@@ -157,8 +157,9 @@ seeded fallback. No Deno has the hook below yet.
 
 - **A compiled binary disarms baked limits for `job` / `db`** (depends on `compile.limits`). _Why
   5.x: follows `compile.limits`._
-- **TypeScript 7.1 stable swap** and the `ts7-lsp-default` setting. _Why 5.x: date-driven (about
-  11-24); 5.0 only if it ships after that._
+- **TypeScript 7.1 stable swap:** the program-API pin (`src/ts/program-api.ts`, a dated 7.1
+  nightly today) moves to 7.1.0, and the runtime's `typescript-lsp/` with it. _Why 5.x:
+  date-driven (7.1.0 is due 11-24); 5.0 only if it ships after that._
 - **Workflow bootstrap versions:** the workflows use Deno 2.9.6 only as a bootstrap; close as by
   design or document it. _Why 5.x: no user impact._
 - **spa-dev-self-write's 700 ms settles** (a test). _Why 5.x: test flake._

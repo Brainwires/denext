@@ -89,8 +89,7 @@ What denext **can't** do (the OS, platform, browser or an upstream forbids it), 
   offline before either has happened fails to load. The compiled binary embeds every verb.
 - **The TypeScript 7 language server (the editor default) does less than the TypeScript 6
   service.** The pinned runtime's `deno lsp` runs the dated 7.1 nightly the toolchain pins by
-  default (earlier runtimes through the `"deno.unstable": ["tsgo-lsp"]` that `create`, `migrate`
-  and `upgrade` write into `.vscode/settings.json`). Against the in-process
+  default, with no editor setting. Against the in-process
   TypeScript 6 service it:
   - resolves only what `deno sync-types` expresses as `paths` and `.deno/` files, with the same
     gaps as the native check (no sloppy imports, `@deno-types` / `X-TypeScript-Types`, per-member

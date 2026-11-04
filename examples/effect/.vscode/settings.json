@@ -1,6 +1,3 @@
 {
-  "deno.enable": true,
-  "deno.unstable": [
-    "tsgo-lsp"
-  ]
+  "deno.enable": true
 }

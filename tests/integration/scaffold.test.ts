@@ -730,8 +730,8 @@ Deno.test("scaffoldProject writes the .vscode files that turn on the Deno LSP (u
     assert(written.includes("app/counter.tsx"), "the island is written to disk");
     const settings = JSON.parse(await Deno.readTextFile(join(dir, ".vscode", "settings.json")));
     assertEquals(settings["deno.enable"], true);
-    // The editor's Deno language server runs TypeScript 7 (tsgo) by default.
-    assertEquals(settings["deno.unstable"], ["tsgo-lsp"]);
+    // The pinned runtime's language server runs TypeScript 7 (tsgo) with no setting.
+    assertEquals(settings["deno.unstable"], undefined);
     const ext = JSON.parse(await Deno.readTextFile(join(dir, ".vscode", "extensions.json")));
     assertEquals(ext.recommendations, ["denoland.vscode-deno"]);
   } finally {
@@ -774,7 +774,6 @@ Deno.test("init merges into an existing .vscode/settings.json instead of refusin
     assertEquals(settings, {
       "editor.tabSize": 2,
       "deno.enable": true,
-      "deno.unstable": ["tsgo-lsp"],
     });
     const ext = JSON.parse(await Deno.readTextFile(join(dir, ".vscode", "extensions.json")));
     assertEquals(ext.recommendations, ["esbenp.prettier-vscode", "denoland.vscode-deno"]);

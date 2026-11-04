@@ -1232,8 +1232,8 @@ the [plugin guide](https://denext.dev/docs/plugins) and
   `DENEXT_DENO=stock` opts in to a `deno` on PATH), and the installer runs `toolchain install` (+ `toolchain link`
   when no `deno` is on PATH; `DENEXT_NO_DENO_LINK=1` skips it). The toolchain type-checks with
   native TypeScript 7 (`DENEXT_NATIVE_CHECK=0` keeps TypeScript 6) and its `deno lsp` runs
-  TypeScript 7 too (the runtime's own default; `create` / `migrate` / `upgrade` also write
-  `"deno.unstable": ["tsgo-lsp"]` for older runtimes; `DENO_UNSTABLE_TSGO_LSP=0` keeps
+  TypeScript 7 too (the runtime's own default, so no `deno.unstable` setting; `upgrade` removes the
+  `"deno.unstable": ["tsgo-lsp"]` older versions wrote; `DENO_UNSTABLE_TSGO_LSP=0` keeps
   TypeScript 6), and in a `package.json` project without a `deno.json` it runs npm
   packages as Node.js does (hoisted `node_modules`, Node's export conditions, extensionless and
   `tsconfig` `paths` imports, git / tarball dependencies, the project's own lifecycle scripts);

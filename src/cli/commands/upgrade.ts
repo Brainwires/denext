@@ -24,7 +24,7 @@ import {
   readProjectRule,
   stripDenextExclude,
 } from "../../build/dep-age.ts";
-import { addTsgoLspSetting, tsgoLspByDefault } from "../../ts/lsp-settings.ts";
+import { removeLegacyTsgoLspSetting } from "../../ts/lsp-settings.ts";
 import { SCAFFOLD_EXCLUDE } from "../../build/scaffold.ts";
 import { setJsonValue } from "../../build/json-edit.ts";
 import { applyJailExceptions, type JailReport } from "../../build/jail-scripts.ts";
@@ -120,7 +120,7 @@ interface UpgradeOutcome {
   readonly exemptions: readonly { readonly path: string; readonly entries: readonly string[] }[];
   /** The clock the plan was made at (for the hold lines). */
   readonly now: Date;
-  /** The editor settings that get (or would get) the TypeScript 7 language server, if any. */
+  /** The editor settings that lose (or would lose) the legacy `["tsgo-lsp"]` entry, if any. */
   readonly editor: { readonly path: string; readonly written: boolean } | null;
   /** Whether the `.deno/` exclude was (or would be) added to the root config, if it was missing. */
   readonly denoExclude: { readonly written: boolean } | null;
@@ -185,33 +185,22 @@ async function applyJail(dir: string, write: boolean): Promise<JailReport | null
 }
 
 /**
- * The project's `.vscode/settings.json` text with `"deno.unstable": ["tsgo-lsp"]` added — the
- * TypeScript 7 language server, denext's default for new apps — when the settings turn the Deno
- * LSP on (`"deno.enable": true`) and choose no `deno.unstable` of their own; `null` otherwise
- * (no settings, another editor setup, a `deno.unstable` the user set, a symlinked file, or
- * `DENEXT_TSGO_LSP=0`). The rest of the file keeps its bytes.
+ * The project's `.vscode/settings.json` text without the `"deno.unstable": ["tsgo-lsp"]` earlier
+ * denext versions wrote: the pinned runtime's `deno lsp` runs TypeScript 7 with no setting, so the
+ * entry only lingers. `null` when there is nothing to remove (no settings, a `deno.unstable` that
+ * names anything else, a symlinked file, or text the splice can't account for). The rest of the
+ * file keeps its bytes.
  *
  * @param dir The project directory.
- * @param env Env reader (default: the process environment).
  * @returns The settings path and its new text, or `null`.
  */
 export async function editorSettingUpdate(
   dir: string,
-  env?: (name: string) => string | undefined,
 ): Promise<{ path: string; text: string } | null> {
-  if (!tsgoLspByDefault(env)) return null;
   const path = join(dir, ".vscode", "settings.json");
   const info = await Deno.lstat(path).catch(() => null);
   if (!info?.isFile || !await insideProject(dir, path)) return null;
-  const before = await Deno.readTextFile(path);
-  let settings: unknown;
-  try {
-    settings = parseJsonc(before);
-  } catch {
-    return null;
-  }
-  if ((settings as Record<string, unknown> | null)?.["deno.enable"] !== true) return null;
-  const text = addTsgoLspSetting(before);
+  const text = removeLegacyTsgoLspSetting(await Deno.readTextFile(path));
   return text === null ? null : { path, text };
 }
 
@@ -446,13 +435,13 @@ async function applyToFiles(
   return changed;
 }
 
-/** The editor settings that got (or would get) the TypeScript 7 language server. */
+/** The editor settings that lost (or would lose) the legacy TypeScript 7 entry. */
 function reportEditor(dir: string, editor: UpgradeOutcome["editor"]): void {
   if (!editor) return;
   console.log(
-    `\n${editor.written ? "Added" : "Would add"} "deno.unstable": ["tsgo-lsp"] to ` +
+    `\n${editor.written ? "Removed" : "Would remove"} "deno.unstable": ["tsgo-lsp"] from ` +
       `${relative(dir, editor.path)}: the editor's Deno language server runs TypeScript 7 ` +
-      `(DENEXT_TSGO_LSP=0 leaves it out; "deno.unstable": [] keeps TypeScript 6).`,
+      `without it (DENO_UNSTABLE_TSGO_LSP=0 in its environment keeps TypeScript 6).`,
   );
 }
 

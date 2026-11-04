@@ -95,7 +95,7 @@ export interface DenoToolchainEsbuild {
  * `tsc[.exe]` and the `lib.*.d.ts` files it loads from its own directory. `typescript-check/` is
  * the compiler the runtime type-checks with by default (from the first runtime with native type
  * checking); `typescript-lsp/` is the dated 7.1 nightly `deno lsp`'s tsgo language-service backend
- * runs (`"deno.unstable": ["tsgo-lsp"]`).
+ * runs (the runtime's default from 3.0.0-rc.3 on).
  */
 export interface DenoToolchainTsgo {
   /** The TypeScript release (`7.0.2`, or a dated nightly such as `7.1.0-dev.20261017.1`). */
@@ -1966,7 +1966,7 @@ export function toolchainTsgo(
 
 /**
  * Whether denext's Deno toolchain has a verified TypeScript 7 language server (`typescript-lsp/`,
- * what `deno lsp` runs for `"deno.unstable": ["tsgo-lsp"]`) for this host. Never downloads. With
+ * what `deno lsp` runs by default) for this host. Never downloads. With
  * `verify`, the whole directory is re-hashed against the pin. Unlike the checker, a refused or
  * unpinned one costs nothing but a download: `deno lsp` then fetches its own pinned build and
  * verifies it against the npm integrity compiled into the runtime.

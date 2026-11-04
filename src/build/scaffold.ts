@@ -17,13 +17,6 @@ import { FALLOW_GITIGNORE, fallowFiles, fallowTasks } from "./fallow-template.ts
 import { markdownTable, wrapProse } from "./scaffold-markdown.ts";
 import { NATIVE_TEMPLATES } from "./native-templates.packed.ts";
 import {
-  addTsgoLspSetting,
-  DENO_UNSTABLE_SETTING,
-  needsTsgoLspSetting,
-  TSGO_LSP_FEATURE,
-  tsgoLspByDefault,
-} from "../ts/lsp-settings.ts";
-import {
   MCP_AGENTS_SECTION,
   MCP_README_ROWS,
   mcpTaskCommand,
@@ -53,9 +46,8 @@ export interface ScaffoldOptions {
    */
   template?: ScaffoldTemplate;
   /**
-   * Write `.vscode/settings.json` (`"deno.enable": true`, plus `"deno.unstable": ["tsgo-lsp"]`
-   * for the TypeScript 7 language server unless `DENEXT_TSGO_LSP=0`) and
-   * `.vscode/extensions.json` (recommending the Deno extension) so the editor resolves the
+   * Write `.vscode/settings.json` (`"deno.enable": true`; the pinned runtime's `deno lsp` runs
+   * TypeScript 7 with no further setting) and `.vscode/extensions.json` (recommending the Deno extension) so the editor resolves the
    * `denext` import map the way `deno` does. Defaults to `true`; `denext create --no-vscode` turns it off. Merged
    * additively into files that already exist (`denext init`), like `denext migrate`.
    */
@@ -976,9 +968,9 @@ async function refuseToClobber(files: ScaffoldFile[], opts: ScaffoldOptions): Pr
  * `imports` — flags `denext`/`denext/desktop` and the aliased `react` as unresolved even
  * though `deno check` passes and the app builds.
  *
- * Writes `.vscode/settings.json` (`"deno.enable": true`, and `"deno.unstable": ["tsgo-lsp"]` —
- * the TypeScript 7 language server, see src/ts/lsp-settings.ts — when the settings name no
- * `deno.unstable` and `DENEXT_TSGO_LSP` is not `0`) and `.vscode/extensions.json`
+ * Writes `.vscode/settings.json` (`"deno.enable": true`; the pinned runtime's `deno lsp` runs its
+ * TypeScript 7 backend by default, so no backend setting is written — see src/ts/lsp-settings.ts)
+ * and `.vscode/extensions.json`
  * (recommending `denoland.vscode-deno`, so the LSP is one prompt away). Both are merged
  * additively: any existing keys/recommendations are preserved, the entry is added only when
  * missing, and a re-run with it already present writes nothing (idempotent). Pushes each
@@ -989,32 +981,16 @@ async function refuseToClobber(files: ScaffoldFile[], opts: ScaffoldOptions): Pr
  *
  * @param dir The app directory.
  * @param written Accumulator each changed `.vscode` path (absolute) is pushed onto.
- * @param options `tsgoLsp`: whether to write the TypeScript 7 language-server setting (default:
- *   unless `DENEXT_TSGO_LSP=0`).
  */
-export async function ensureVscodeDeno(
-  dir: string,
-  written: string[],
-  options: { tsgoLsp?: boolean } = {},
-): Promise<void> {
+export async function ensureVscodeDeno(dir: string, written: string[]): Promise<void> {
   const vscodeDir = join(dir, ".vscode");
-  const tsgoLsp = options.tsgoLsp ?? tsgoLspByDefault();
 
-  // settings.json → turn on the Deno LSP for this workspace folder, on its TypeScript 7 (tsgo)
-  // backend unless the settings already choose (`deno.unstable`) or DENEXT_TSGO_LSP=0.
+  // settings.json → turn on the Deno LSP for this workspace folder.
   const settingsPath = join(vscodeDir, "settings.json");
-  const text = await mfs.readTextFile(settingsPath).catch(() => null);
-  const settings = (text === null ? null : parseVscodeJson(text)) ?? {};
+  const settings = (await readVscodeJson(settingsPath)) ?? {};
   if (settings["deno.enable"] !== true) {
     settings["deno.enable"] = true;
-    if (tsgoLsp && needsTsgoLspSetting(settings)) {
-      settings[DENO_UNSTABLE_SETTING] = [TSGO_LSP_FEATURE];
-    }
     await writeVscodeJson(vscodeDir, settingsPath, settings, written);
-  } else if (tsgoLsp && text !== null) {
-    // Already on the Deno LSP: add only the backend entry, leaving the rest of the file's bytes.
-    const next = addTsgoLspSetting(text);
-    if (next !== null) await writeVscodeText(vscodeDir, settingsPath, next, written);
   }
 
   // extensions.json → recommend the Deno extension so the LSP is a click away.

@@ -10,6 +10,7 @@
 import type { RealTarget } from "../extract-real.ts";
 import type { Surface } from "../types.ts";
 import { npmInstall, parseExtractorOutput } from "./shared.ts";
+import { TYPESCRIPT_API_VERSION } from "../../../src/ts/program-api.ts";
 import { fromFileUrl } from "@std/path";
 
 const RUNNER = fromFileUrl(new URL("./_real-runner.ts", import.meta.url));
@@ -33,9 +34,8 @@ export async function captureReal(
 ): Promise<Captured> {
   const dir = await Deno.makeTempDir({ prefix: "denext_parity_native_" });
   try {
-    // typescript is the extractor's own dependency: 7.0.x, whose IPC API the extractor speaks
-    // (typescript/unstable/sync), pinned to the minor until that API settles.
-    const dependencies = { ...deps, typescript: "~7.0.2" };
+    // typescript is the extractor's own dependency, at the version src/ts/program-api.ts pins.
+    const dependencies = { ...deps, typescript: TYPESCRIPT_API_VERSION };
     await Deno.writeTextFile(
       `${dir}/package.json`,
       JSON.stringify(

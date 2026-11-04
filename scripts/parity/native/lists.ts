@@ -421,7 +421,7 @@ function reactNativeListTypes(nm: string): { flat: string; section: string; virt
 // fallow-ignore-next-line complexity -- CLI parity-report script; not unit-tested, CRAP is coverage-estimated
 async function captureTypes(dir: string): Promise<Record<string, ListSurface>> {
   // TypeScript 7's native compiler, through its program API (src/ts/program-api.ts).
-  const { ts, SyntaxKind } = await import("../../../src/ts/program-api.ts");
+  const { openConfiguredProject, ts, SyntaxKind } = await import("../../../src/ts/program-api.ts");
   const kinds = {
     Interface: SyntaxKind.InterfaceDeclaration,
     TypeAlias: SyntaxKind.TypeAliasDeclaration,
@@ -453,9 +453,7 @@ async function captureTypes(dir: string): Promise<Record<string, ListSurface>> {
   );
   const api = new ts.API({ cwd: dir });
   try {
-    const project = (await api.updateSnapshot({ openProjects: [config] })).getProject(config);
-    if (!project) throw new Error(`typescript did not open ${config}`);
-    const { program, checker } = project;
+    const { program, checker } = await openConfiguredProject(api, config);
     const sourceFile = async (file: string) => {
       const sf = await program.getSourceFile(file);
       if (!sf) throw new Error(`${file} is not in the program`);

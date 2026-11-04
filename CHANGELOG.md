@@ -8,6 +8,20 @@ and this project adheres to
 
 ## [Unreleased]
 
+### Changed
+
+- **No `deno.unstable` editor setting for TypeScript 7.** The pinned runtime's `deno lsp` runs its
+  TypeScript 7 backend by default, so `denext create` / `init` and `denext migrate` write only
+  `"deno.enable": true` into `.vscode/settings.json`, and `denext upgrade` removes the
+  `"deno.unstable": ["tsgo-lsp"]` earlier versions wrote (exactly that list; the rest of the file
+  keeps its bytes, and any other `deno.unstable` is left alone). `DENO_UNSTABLE_TSGO_LSP=0` in the
+  language server's environment still keeps TypeScript 6.
+
+### Removed
+
+- **`DENEXT_TSGO_LSP`.** It only stopped `create`, `migrate` and `upgrade` writing the setting
+  above, which they no longer write.
+
 ## [4.12.0] - 2026-11-04
 
 ### Added

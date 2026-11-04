@@ -10,9 +10,9 @@
 // This module runs ONLY inside refresh.ts's child process (an arbitrary temp cwd with
 // its own node_modules, no deno.json in scope), so typescript is self-resolved through an
 // explicit `npm:` specifier rather than a bare import from the repo's import map: the one in
-// src/ts/program-api.ts, denext's single seam to TypeScript's program API (TypeScript 7's IPC
-// client, pinned to 7.0.x until its API settles).
-import { SyntaxKind, ts } from "../../src/ts/program-api.ts";
+// src/ts/program-api.ts, denext's single seam to TypeScript's program API (TypeScript 7.1's IPC
+// client, pinned to one version there).
+import { openConfiguredProject, SyntaxKind, ts } from "../../src/ts/program-api.ts";
 import { CATALOG, REAL_PACKAGES } from "./spec.ts";
 import { type CallSig, isInternalName, type Surface, type SurfaceSymbol } from "./types.ts";
 
@@ -271,10 +271,7 @@ async function withProject<T>(
   Deno.writeTextFileSync(entry, source);
   const api = new ts.API({ cwd: workDir });
   try {
-    const snapshot = await api.updateSnapshot({ openProjects: [config] });
-    const project = snapshot.getProject(config);
-    if (!project) throw new Error(`typescript did not open ${config}`);
-    return await fn(project);
+    return await fn(await openConfiguredProject(api, config));
   } finally {
     await api.close();
   }

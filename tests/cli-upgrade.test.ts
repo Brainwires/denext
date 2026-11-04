@@ -401,24 +401,26 @@ Deno.test("denoDirExcludeUpdate: added once, comments kept; a non-list exclude i
   assertEquals(await denoDirExcludeUpdate("not json"), null);
 });
 
-Deno.test("denext upgrade adds the TypeScript 7 language server to Deno-LSP editor settings that chose none", async () => {
+Deno.test("denext upgrade removes the legacy TypeScript 7 entry from Deno-LSP editor settings", async () => {
   const settings = '{\n  // the project\'s own\n  "deno.enable": true\n}\n';
-  const tsgo =
+  const legacy =
     '{\n  "deno.unstable": ["tsgo-lsp"],\n  // the project\'s own\n  "deno.enable": true\n}\n';
-  const dry = await runIn({ "dry-run": true }, false, settings);
-  assertEquals([dry.code, dry.editor], [0, settings]);
-  assert(dry.out.includes('Would add "deno.unstable": ["tsgo-lsp"]'), dry.out);
-  const check = await runIn({ check: true }, true, settings);
-  assertEquals(check.editor, settings, "--check writes nothing");
+  const dry = await runIn({ "dry-run": true }, false, legacy);
+  assertEquals([dry.code, dry.editor], [0, legacy]);
+  assert(dry.out.includes('Would remove "deno.unstable": ["tsgo-lsp"]'), dry.out);
+  const check = await runIn({ check: true }, true, legacy);
+  assertEquals(check.editor, legacy, "--check writes nothing");
   assertEquals(JSON.parse(check.out).editorSettings.written, false);
-  const run = await runIn({}, false, settings);
-  assertEquals([run.code, run.editor], [0, tsgo]);
-  assert(run.out.includes('Added "deno.unstable": ["tsgo-lsp"]'), run.out);
-  // a deno.unstable of the project's own (TypeScript 6 kept with []) is never touched
-  const kept = '{ "deno.enable": true, "deno.unstable": [] }\n';
-  const own = await runIn({}, false, kept);
-  assertEquals(own.editor, kept);
-  assert(!own.out.includes("tsgo-lsp"), own.out);
+  const run = await runIn({}, false, legacy);
+  assertEquals([run.code, run.editor], [0, settings]);
+  assert(run.out.includes('Removed "deno.unstable": ["tsgo-lsp"]'), run.out);
+  // settings with no entry are never touched (nothing is added any more), nor a list of the
+  // project's own
+  for (const kept of [settings, '{ "deno.enable": true, "deno.unstable": ["kv", "tsgo-lsp"] }\n']) {
+    const own = await runIn({}, false, kept);
+    assertEquals(own.editor, kept);
+    assert(!own.out.includes("tsgo-lsp"), own.out);
+  }
 });
 
 Deno.test("jsrLookups: versions from meta.json (yanked dropped), the range from <version>/deno.json", async () => {

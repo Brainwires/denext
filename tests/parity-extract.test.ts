@@ -57,7 +57,7 @@ Deno.test("parity extractor: no __@ members; type-only re-exports are types", as
     const missing = result.findings.filter((f) => f.category === "MISSING_VALUE");
     assertEquals(missing.map((f) => f.symbol).sort(), ["Klass", "helper", "names"]);
   } finally {
-    // TypeScript 7.0's unstable API closes its native compiler child without waiting for it to
+    // TypeScript's API client (src/ts/program-api.ts) closes its native compiler child without waiting for it to
     // exit (the child comes from node:child_process inside the package: no handle reaches here).
     // It exits at once; give it the moment, inside this test (Windows saw it still running).
     await new Promise((r) => setTimeout(r, 2_000));

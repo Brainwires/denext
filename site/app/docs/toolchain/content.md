@@ -539,7 +539,8 @@ runtime `3.0.0-rc.2` the native check also:
 
 denext's own tooling reaches TypeScript in one place, `src/ts/`: the engine choice
 (`engine.ts`), the type check the dev overlay runs (`check.ts`) and TypeScript's program API for
-the parity extractors (`program-api.ts`, TypeScript 7.0's IPC client until 7.1's stable API).
+the parity extractors (`program-api.ts`, TypeScript 7.1's IPC client, pinned to a dated 7.1
+nightly until 7.1.0).
 
 ## TypeScript 7 language server
 
@@ -551,24 +552,17 @@ and `denext toolchain status` prints a `typescript lsp` line for it.
 
 It is the default editor backend. From runtime `3.0.0-rc.3` (so in the pinned build too) it is the runtime's
 own default: its `deno lsp` runs TypeScript 7 with no setting at all, or with an empty
-`deno.unstable` list (what editors send by default). denext still writes the entry, which earlier
-runtimes need:
+`deno.unstable` list (what editors send by default). So denext writes no backend setting:
+`denext create` / `init` and `denext migrate` put only `"deno.enable": true` in
+`.vscode/settings.json`, and `denext upgrade` removes the `"deno.unstable": ["tsgo-lsp"]` that
+earlier denext versions wrote for the runtimes before `3.0.0-rc.3` (exactly that list, spliced out
+so the rest of the file keeps its bytes; `--dry-run` / `--check` report it without writing). Any
+other `deno.unstable` the project sets is never changed. To keep the TypeScript 6 service:
 
-- `denext create` / `init` and `denext migrate` write `"deno.unstable": ["tsgo-lsp"]` into
-  `.vscode/settings.json` beside `"deno.enable": true`;
-- `denext upgrade` adds the same entry to an existing project whose `.vscode/settings.json` turns
-  the Deno language server on and sets no `deno.unstable` of its own (`--dry-run` / `--check`
-  report it without writing). The entry goes in right after the opening `{`; the rest of the file
-  keeps its bytes.
-
-A `deno.unstable` the project already sets, an empty list included, is never changed. To keep the
-TypeScript 6 service:
-
-| Where              | How                                                                                                                                             |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| One editor session | `DENO_UNSTABLE_TSGO_LSP=0` in the environment `deno lsp` starts with (it overrides the setting either way)                                      |
-| One project        | a `deno.unstable` list in `.vscode/settings.json` that names other features but not `"tsgo-lsp"` (before `3.0.0-rc.3`, an empty list too)       |
-| What denext writes | `DENEXT_TSGO_LSP=0` (or `false` / `off` / `no`) when running `create`, `migrate` or `upgrade` (from `3.0.0-rc.3` this alone keeps TypeScript 7) |
+| Where              | How                                                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| One editor session | `DENO_UNSTABLE_TSGO_LSP=0` in the environment `deno lsp` starts with (it overrides the setting either way) |
+| One project        | a `deno.unstable` list in `.vscode/settings.json` that names other features but not `"tsgo-lsp"`           |
 
 The editor runs whichever `deno` it finds, so point it at the toolchain: `denext toolchain link`
 puts it on `PATH`, or set the Deno extension's `deno.path` to what `denext toolchain path` prints.
