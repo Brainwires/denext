@@ -48,6 +48,11 @@ and this project adheres to
   the submenu carries the standard Minimize / Zoom / Bring All to Front items. A page's
   `setAppMenu` keeps its menu: the items join its own "Window" submenu when it has one, else the
   submenu is appended, and the backend answers them itself.
+- **`examples/multiwindow`**: a small desktop app with two keyed windows, New Window and Reopen
+  Closed Window from `desktop.menu.window`, the session restored at launch, and one ticking counter
+  per window kept in the app's process with `createOwnedResources` (`onOwnerClosed: "detach"`): a
+  closed window's counter keeps going and the window reopened by its key takes it back with the
+  ticks it missed. Its counter logic is plain code, tested without a window.
 - **`desktop.window.key`** (or `runDesktop({ window: { key } })`): a key for the main window, with
   the same rules, so its frame is saved and restored at the next launch (the saved position, and
   the saved size unless `desktop.window.width` / `height` set one, clamped onto a connected
