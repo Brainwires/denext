@@ -4,7 +4,9 @@
 // per-launch token is injected, the live-reload proxy decision, and — under a fake pinned runtime —
 // the adopted window, its guarded close and the capabilities registered with it.
 
-import { assert, assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { join } from "@std/path";
+import type { DesktopCapability } from "../src/desktop/extension.ts";
 import { injectedGlobal } from "./helpers/desktop-bridge-server.ts";
 import {
   boot,
@@ -265,6 +267,219 @@ Deno.test("runDesktop (pinned runtime): adopts the window; its capabilities answ
     assertEquals(exits, [0]);
   } finally {
     FakeBrowserWindow.last = undefined;
+    await Deno.remove(outDir, { recursive: true });
+  }
+});
+
+/** A pinned-runtime window that can be opened, navigated, shown and given an application menu. */
+class FakeMenuWindow extends FakeBrowserWindow {
+  static all: FakeMenuWindow[] = [];
+  menus: unknown[][] = [];
+  calls: string[] = [];
+  constructor(readonly options?: Record<string, unknown>) {
+    super();
+    FakeMenuWindow.all.push(this);
+  }
+  navigate(url: string) {
+    this.calls.push(`navigate:${url}`);
+  }
+  show() {
+    this.calls.push("show");
+  }
+  hide() {
+    this.calls.push("hide");
+  }
+  focus() {
+    this.calls.push("focus");
+  }
+  isVisible() {
+    return true;
+  }
+  setBounds(b: Record<string, number>) {
+    this.calls.push(`setBounds:${JSON.stringify(b)}`);
+  }
+  setApplicationMenu(menu: unknown[]) {
+    this.menus.push(menu);
+  }
+}
+
+/** A `Deno.desktop` whose `quit()` is the pinned runtime's: beforequit, then every window's close. */
+function quittingDesktop(windows: () => readonly EventTarget[]) {
+  const quits: number[] = [];
+  const cancels: number[] = [];
+  const desktop = Object.assign(new EventTarget(), {
+    launchUrls: [],
+    screens: () => [],
+    quitOnLastWindowClosed: true,
+    quit: () => {
+      const before = new Event("beforequit", { cancelable: true });
+      desktop.dispatchEvent(before);
+      if (before.defaultPrevented) return false;
+      for (const win of windows()) {
+        const close = new Event("close", { cancelable: true });
+        win.dispatchEvent(close);
+        if (close.defaultPrevented) return false;
+      }
+      quits.push(1);
+      return true;
+    },
+    cancelQuit: () => {
+      cancels.push(1);
+      return true;
+    },
+  });
+  return { desktop, quits, cancels };
+}
+
+/** Wait for `cond`, up to `ms`. */
+async function until(cond: () => boolean, ms = 5_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > end) throw new Error("timed out waiting");
+    await new Promise((r) => setTimeout(r, 2));
+  }
+}
+
+Deno.test("runDesktop (pinned runtime): the window lifecycle, the quit guard, the window menu and the restored session are wired", async () => {
+  const outDir = await exportDir();
+  const support = await Deno.makeTempDir({ prefix: "denext-run-support-" });
+  const exits: number[] = [];
+  FakeMenuWindow.all = [];
+  try {
+    // The last session: a keyed "notes" window with a saved frame.
+    await Deno.writeTextFile(
+      join(support, "windows.json"),
+      JSON.stringify({
+        version: 1,
+        bounds: { notes: { x: 40, y: 50, width: 400, height: 300 } },
+        session: [{ key: "notes", url: "/notes" }],
+      }),
+    );
+    const { desktop, quits, cancels } = quittingDesktop(() => FakeMenuWindow.all);
+    const opened: string[] = [];
+    const quitHooks: string[] = [];
+    let hostWindows: () => readonly { id: string; key?: string }[] = () => [];
+    const ext: DesktopCapability = {
+      name: "ext",
+      methods: {},
+      onWindowOpened: (info) => void opened.push(info.key ?? info.id),
+      onAppQuit: () => void quitHooks.push("static"),
+      setup: (host) => {
+        hostWindows = () => host.windows();
+        host.onAppQuit(() => void quitHooks.push("host"));
+      },
+    };
+    const { runtime, served } = await boot({
+      outDir,
+      port: 1,
+      appSupportDir: support,
+      app: { restoreWindows: true, maxWindows: 3 },
+      window: { key: "workspace", title: "Workspace" },
+      configMenu: { window: { newWindow: "/", reopenClosed: true, list: true } },
+      newWindow: ({ suggestedKey }) => ({ url: "/fresh", key: suggestedKey, title: "Fresh" }),
+      capabilities: [ext],
+    }, {
+      deno: {
+        BrowserWindow: FakeMenuWindow,
+        desktop,
+        exit: (code: number) => void exits.push(code),
+      },
+    });
+    const main = FakeMenuWindow.all[0];
+    assertEquals(runtime.window, main);
+    // The main window's key (desktop.window.key), and the session restored at launch.
+    assertEquals(runtime.windows.byKey("workspace")?.id, "main");
+    const notes = runtime.windows.byKey("notes");
+    assert(notes, "the last session's window was reopened");
+    assertEquals(runtime.windows.lastSession().map((w) => w.key), ["notes"]);
+    const notesWin = FakeMenuWindow.all[1];
+    assertEquals(notesWin.options, { x: 40, y: 50, width: 400, height: 300 }, "its saved frame");
+    // (The stubbed serve has no addr, so the app URL falls back to the default port.)
+    assertEquals(notesWin.calls.map((c) => c.replace(/https?:\/\/[^/]+/, "")), ["navigate:/notes"]);
+    // The capabilities' static hooks and the setup host see the windows.
+    assertEquals(opened, ["workspace", "notes"]);
+    assertEquals(hostWindows().map((w) => w.key), ["workspace", "notes"]);
+    // The Window menu (desktop.menu.window) is on the main window; New Window opens desktop.ts's window.
+    const menu = main.menus.at(-1) as { submenu: { label: string; items: unknown[] } }[];
+    assertEquals(menu.map((e) => e.submenu.label), ["Window"]);
+    main.dispatchEvent(new CustomEvent("menuclick", { detail: { id: "denext:window:new" } }));
+    assertEquals(runtime.windows.byKey("window-1")?.key, "window-1");
+    assertEquals(
+      FakeMenuWindow.all.at(-1)!.calls.map((c) => c.replace(/https?:\/\/[^/]+/, "")),
+      ["navigate:/fresh"],
+    );
+    assertEquals(runtime.windows.list().length, 3);
+    // A document navigation with several windows open is attributed per page (windowCount), and a
+    // request from a window token nobody has is refused.
+    const token = injectedGlobal(
+      await (await served.handler(
+        get("http://127.0.0.1:1/", { "sec-fetch-mode": "navigate" }),
+        {},
+      )).text(),
+    )!.token as string;
+    const foreign = await served.handler(
+      new Request(`http://127.0.0.1:1${RPC}`, {
+        method: "POST",
+        headers: {
+          [TOKEN_HEADER]: token,
+          "x-denext-desktop-window": "not-a-window",
+          origin: "http://127.0.0.1:1",
+          "content-type": "application/json",
+          "sec-fetch-dest": "empty",
+        },
+        body: JSON.stringify({ cap: "app", method: "capabilities", args: {} }),
+      }),
+      {},
+    );
+    assertEquals((await foreign.json()).error, { code: "forbidden", message: "unknown window" });
+    // The runtime's own surface: emit, sidecar, the activation policy, onBeforeQuit.
+    runtime.emit("ext", "note", { n: 1 }, { window: "main" });
+    assertThrows(() => runtime.sidecar("api"), Error, "none declared");
+    assertEquals(runtime.setActivationPolicy("regular"), false, "no Dock / taskbar API here");
+    assertEquals(runtime.getActivationPolicy(), null);
+    const off = runtime.onBeforeQuit(() => false);
+    assertEquals(desktop.quit(), false, "held for the guard");
+    await until(() => cancels.length > 0);
+    assertEquals([quits.length, quitHooks.length], [0, 0], "refused: nothing quit, no hook ran");
+    off();
+    assertEquals(desktop.quit(), false, "held while the quit hooks run");
+    await until(() => quits.length > 0);
+    assertEquals(quitHooks.sort(), ["host", "static"]);
+    assertEquals(exits, [], "the runtime ends the process after its quit");
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
+    await Deno.remove(outDir, { recursive: true });
+    await Deno.remove(support, { recursive: true });
+  }
+});
+
+Deno.test("runDesktop: a close before the windows are set up goes through the close rules, not a bare exit", async () => {
+  const outDir = await exportDir();
+  const exits: number[] = [];
+  /** A window closed by the user right after it was adopted, before the sidecars were started. */
+  class EarlyClosedWindow extends FakeMenuWindow {
+    constructor(options?: Record<string, unknown>) {
+      super(options);
+      queueMicrotask(() => this.dispatchEvent(new Event("close", { cancelable: true })));
+    }
+  }
+  FakeMenuWindow.all = [];
+  try {
+    const { desktop } = quittingDesktop(() => FakeMenuWindow.all);
+    const { runtime } = await boot({ outDir, port: 1, app: { keepAlive: true } }, {
+      deno: {
+        BrowserWindow: EarlyClosedWindow,
+        desktop,
+        exit: (code: number) => void exits.push(code),
+      },
+    });
+    // Kept alive: the early close dropped the window instead of ending the process.
+    assertEquals(exits, []);
+    assertEquals(runtime.windows.get("main"), undefined);
+  } finally {
+    FakeBrowserWindow.last = undefined;
+    FakeMenuWindow.all = [];
     await Deno.remove(outDir, { recursive: true });
   }
 });
