@@ -750,8 +750,10 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   tools are full trust; the bridge token is readable by any script in the page, so keep the
   strict CSP and enable only the capabilities you use. A program sidecar shipped in the app
   (`run: { exec: "./bin/…" }`) is baked an unscoped `--allow-run` and a broad `--allow-write`
-  (its copy in the app's cache folder has a per-user path); runtime 3.0.0-denext.8 scopes both to
-  that copy when the app sets `desktop.app.identifier`, from the denext release that pins it. Under
+  (its copy in the app's cache folder has a per-user path); with runtime 3.0.0-denext.8 and
+  `desktop.app.identifier` the write is scoped to the app's cache folder, but the run grant stays
+  unscoped: Deno denies writes to every `--allow-run` path, so a run grant on the copy would keep
+  the app from writing it. Under
   `deno run desktop.ts` on a Deno before 3.0.0-denext.8, a sidecar's `spawnSelf()` child gets only
   the permissions the app holds unscoped (no scoped grants, `--unstable-*` or `--config`).
 - **`secureStore` per OS:** on macOS (under denext's pinned runtime; an older or the stock runtime

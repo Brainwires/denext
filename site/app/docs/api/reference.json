@@ -45324,7 +45324,7 @@
               "kind": "property",
               "name": "cacheScope",
               "signature": "readonly cacheScope?: boolean",
-              "doc": "The runtime expands `$DENO_DESKTOP_CACHE` in a baked permission (denext's pinned Deno Desktop\nruntime, 3.0.0-denext.8 or later; see `desktopCacheTokenRuntime`): a program sidecar copied\ninto the app's cache folder gets `--allow-run` over that copy alone, when\n`desktop.app.identifier` names the folder. Default: `desktopCacheTokenRuntime()`."
+              "doc": "The runtime expands `$DENO_DESKTOP_CACHE` in a baked permission (denext's pinned Deno Desktop\nruntime, 3.0.0-denext.8 or later; see `desktopCacheTokenRuntime`): a program sidecar copied\ninto the app's cache folder gets `--allow-run` over that copy alone, when\n`desktop.app.identifier` names the folder. Default `false`: Deno denies writes to every\n`--allow-run` path, so the app could not write the copy it then runs."
             },
             {
               "kind": "property",

@@ -19,7 +19,6 @@ import {
   sidecarPermissionSet,
   sidecarRunWriteWarnings,
 } from "../src/build/desktop-capabilities.ts";
-import { desktopCacheTokenRuntime } from "../src/build/desktop-launch-policy.ts";
 import { desktopAppDirs } from "../src/desktop/app-dirs.ts";
 import { addDesktopSidecar } from "../src/build/desktop-sidecar-add.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
@@ -298,11 +297,9 @@ Deno.test("desktopBuildFlags: a copied program runs scoped to its cache copy on 
     assert(flags.includes("--allow-run"), flags.join(" "));
     assert(flags.includes("--allow-write"), flags.join(" "));
   }
-  // The pinned runtime decides by default.
-  assertEquals(
-    desktopBuildFlags(config("com.example.app"), "linux").includes("--allow-run"),
-    !desktopCacheTokenRuntime(),
-  );
+  // Off by default, whatever the runtime: Deno denies writes to every --allow-run path, so a run
+  // grant on the copy would leave the app unable to write it (the sidecar never started).
+  assert(desktopBuildFlags(config("com.example.app"), "linux").includes("--allow-run"));
   // With the cache token alone (no app-folder scoping, `dataScope: false`), another write (a log
   // file) keeps the broad --allow-write; the run stays scoped.
   const logged = desktopBuildFlags(

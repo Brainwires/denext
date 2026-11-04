@@ -3487,13 +3487,13 @@ export default defineDesktopExtension({
           <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
           <code>--allow-run</code> and a broad{" "}
           <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
-          machine. From Deno Desktop runtime 3.0.0-denext.8, an app with{" "}
-          <code>desktop.app.identifier</code> is baked{" "}
-          <code>--allow-run=$DENO_DESKTOP_CACHE/sidecars/&lt;name&gt;/&lt;file&gt;</code>{" "}
-          instead, and the matching <code>--allow-write</code>{" "}
-          (scoped to that folder when nothing else writes): the runtime expands the token at launch
-          to the app&apos;s cache folder, keyed by the identifier. It gets the sidecar&apos;s
-          variables, and one JSON line on stdin (
+          machine (from Deno Desktop runtime 3.0.0-denext.8, in an app with{" "}
+          <code>desktop.app.identifier</code>, the write is scoped to the app&apos;s cache folder,
+          {" "}
+          <code>$DENO_DESKTOP_CACHE</code>). The run grant stays unscoped: Deno denies writes to
+          every <code>--allow-run</code>{" "}
+          path, so a run grant on the copy would leave the app unable to write it. It gets the
+          sidecar&apos;s variables, and one JSON line on stdin (
           <code>{'{"name","port","bootstrap","secrets"}'}</code>); stdin then stays open for as long
           as the app runs, so a program that exits on end-of-file never outlives it.
         </li>

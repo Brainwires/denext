@@ -213,7 +213,12 @@ and this project adheres to
   (`denext desktop package --regenerate-scripts`) to pick it up. An older script still gets the
   manifest from `buildDesktopBundle`, listing the VC++ DLLs only once the bundle is signed.
 - **The package run says when a sidecar's scoped `--allow-run` is not containment** (the runtime
-  denext.8 audit, F4). A project-file program sidecar in a packaged app is baked as
+  denext.8 audit, F4). The package scripts no longer bake that scope by default (it stays behind
+  `desktopBuildFlags`' `cacheScope` option): Deno adds every `--allow-run` path to the deny-write
+  list, so under runtime 3.0.0-denext.8 a run grant on the copy's own path left the app unable to
+  write the copy, and a project-file program sidecar never started; it keeps the unscoped
+  `--allow-run`, with the copy's write scoped to the app's cache folder. With the option, a
+  project-file program sidecar in a packaged app is baked as
   `--allow-run=$DENO_DESKTOP_CACHE/sidecars/<name>/<file>` with a `--allow-write` on that folder,
   so the app copies the program there at launch: that scope limits what the app's code may run by
   name, but the same code can write the program under that write grant and then run it, and so

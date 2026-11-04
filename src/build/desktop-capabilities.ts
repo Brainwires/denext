@@ -19,7 +19,6 @@ import { createUnifiedDiff } from "./patch-diff.ts";
 import { desktopImportMapArgsFor } from "./desktop-import-map.ts";
 import { desktopNetSplitFor } from "./desktop-runtime.ts";
 import {
-  desktopCacheTokenRuntime,
   desktopDataTokenRuntime,
   desktopDataTokenRuntimeProblem,
 } from "./desktop-launch-policy.ts";
@@ -483,7 +482,8 @@ export interface DesktopBuildFlagOptions {
    * The runtime expands `$DENO_DESKTOP_CACHE` in a baked permission (denext's pinned Deno Desktop
    * runtime, 3.0.0-denext.8 or later; see `desktopCacheTokenRuntime`): a program sidecar copied
    * into the app's cache folder gets `--allow-run` over that copy alone, when
-   * `desktop.app.identifier` names the folder. Default: `desktopCacheTokenRuntime()`.
+   * `desktop.app.identifier` names the folder. Default `false`: Deno denies writes to every
+   * `--allow-run` path, so the app could not write the copy it then runs.
    */
   readonly cacheScope?: boolean;
   /**
@@ -931,13 +931,18 @@ function writeGrantCovering(program: string, writes: readonly string[]): string 
 }
 
 /**
- * Whether a copied program sidecar's grants are baked as {@linkcode DESKTOP_CACHE_TOKEN} paths: the
- * runtime expands the token (`options.cacheScope`, by default the pinned runtime's), and
- * `desktop.app.identifier` is set (the runtime keys the folder by the identifier baked into the
- * binary; without one it would drop the entry).
+ * Whether a copied program sidecar's grants are baked as {@linkcode DESKTOP_CACHE_TOKEN} paths:
+ * `options.cacheScope` (default off), and `desktop.app.identifier` is set (the runtime keys the
+ * folder by the identifier baked into the binary; without one it would drop the entry).
+ *
+ * Off by default although runtime 3.0.0-denext.8 expands the token
+ * (`desktopCacheTokenRuntime`): Deno adds every `--allow-run` path to the deny-write
+ * list, so a run grant on the copy's own path leaves the app unable to write the copy, and the
+ * program sidecar never starts (`NotCapable` on its rename into place). The unscoped `--allow-run`
+ * stays until a runtime exempts a token run path from that rule.
  */
 function sidecarCacheScope(cfg: DesktopFlagConfig, options: DesktopBuildFlagOptions): boolean {
-  return (options.cacheScope ?? desktopCacheTokenRuntime()) && hasIdentifier(cfg);
+  return (options.cacheScope ?? false) && hasIdentifier(cfg);
 }
 
 /** Whether `desktop.app.identifier` is set (the runtime keys both folders by it). */
