@@ -333,6 +333,30 @@ Deno.test("desktop doctor: the runtime — deno mismatch, a pre-probe pin, refus
     pin: pin(45),
   });
   assertEquals(checksOf(preMarker).filter((c) => c === "error:runtime"), ["error:runtime"]);
+  // denext's own older builds are denext's: the finding says they are older than the minimum, and
+  // keeps "(not denext's)" for a stock Deno.
+  for (
+    const [found, denext] of [
+      ["3.0.0-denext.5", "3.0.0-denext.5"],
+      ["3.0.0-rc.4", "3.0.0-rc.4"],
+      ["2.9.8-denext.15", undefined],
+    ] as const
+  ) {
+    const r = await runDesktopDoctor({
+      ...linux,
+      runtimeStatus: () =>
+        Promise.resolve(
+          status({ deno: { found, required: "2.9.8", ...(denext ? { denext } : {}) } }),
+        ),
+      pin: pin(45),
+    });
+    const message = r.findings.find((f) => f.check === "runtime" && f.level === "error")!.message;
+    assertStringIncludes(
+      message,
+      `denext's runtime ${found} is older than the minimum 3.0.0-denext.8`,
+    );
+    assert(!message.includes("(not denext's)"), message);
+  }
   // The toolchain under its own version (3.0.0-denext.N), built from the pin's Deno, by its identity
   // marker: no mismatch ...
   const own = await runDesktopDoctor({

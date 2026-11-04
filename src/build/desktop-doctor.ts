@@ -39,7 +39,12 @@ import {
   type DesktopRuntimeStatus,
 } from "./desktop-runtime.ts";
 import { formatDoctorFindings } from "./doctor-format.ts";
-import { compareDenoVersions, isSupportedDenextRuntime } from "./deno-version.ts";
+import {
+  compareDenoVersions,
+  isDenextDenoVersion,
+  isSupportedDenextRuntime,
+  MIN_DENEXT_RUNTIME,
+} from "./deno-version.ts";
 import type { LaunchPolicyProblem } from "./desktop-launch-policy.ts";
 import {
   CEF_SIGNING_FIX,
@@ -917,6 +922,18 @@ export async function probeLinuxSession(
 }
 
 /**
+ * What a refused `deno` is, appended to the finding: another build of denext's own Deno
+ * (3.0.0-denext.1 to .7, the 3.0.0-rc.N line, a pre-marker 2.9.x-denext.N) is denext's, just older
+ * than 5.0's minimum; anything else that is not a supported runtime is not denext's.
+ */
+function whoseDeno(found: { deno: string; denext?: string } | null): string {
+  if (found === null || isSupportedDenextRuntime(found)) return "";
+  if (!isDenextDenoVersion(found)) return " (not denext's)";
+  return `; denext's runtime ${found.denext || found.deno} is older than the minimum ` +
+    MIN_DENEXT_RUNTIME;
+}
+
+/**
  * The finding about the `deno` that runs `deno desktop`, or `null` when it is denext's Deno
  * runtime built from the runtime's Deno release ({@linkcode desktopBuildDeno}).
  */
@@ -925,7 +942,7 @@ function denoFinding(s: DesktopRuntimeStatus): DesktopDoctorFinding | null {
     ? null
     : { deno: s.deno.found, ...(s.deno.denext ? { denext: s.deno.denext } : {}) };
   if (found !== null && desktopBuildDeno(found, { deno: s.deno.required })) return null;
-  const whose = found && !isSupportedDenextRuntime(found) ? " (not denext's)" : "";
+  const whose = whoseDeno(found);
   return {
     check: "runtime",
     level: "error",
