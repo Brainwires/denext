@@ -10,6 +10,8 @@ import { join } from "@std/path";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 import {
   compareDenoVersions,
+  currentDenoIdentity,
+  type DenoIdentity,
   supportsDesktopCacheToken,
   supportsDesktopDataToken,
   supportsInitialOverlay,
@@ -123,18 +125,38 @@ export function initialOverlayRuntime(
  * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime that
  * expands `$DENO_DESKTOP_CACHE` in a baked permission to the app's cache folder: denext's pinned
  * runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of
- * unknown version) from `FIRST_DESKTOP_CACHE_TOKEN_RUNTIME` (`3.0.0-denext.8`). An older runtime
- * would read the token as a relative path, so a program sidecar keeps its unscoped `--allow-run`.
+ * unknown version) from `FIRST_DESKTOP_CACHE_TOKEN_RUNTIME` (`3.0.0-denext.8`), compiled by
+ * denext's Deno. An older runtime would read the token as a relative path, and a binary stock Deno
+ * compiled carries no identifier to expand it from, so a program sidecar keeps its unscoped
+ * `--allow-run`.
  *
  * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
  * @param version The pinned runtime's version (default: the pin's).
+ * @param compiler The Deno that compiles the app (default: this process's; stock Deno bakes no
+ *   identifier, so no token can be expanded).
  * @returns Whether to bake `$DENO_DESKTOP_CACHE` grants.
  */
 export function desktopCacheTokenRuntime(
   env: EnvGet = processEnv,
   version: string = pinJson.version,
+  compiler: DenoIdentity = currentDenoIdentity(),
 ): boolean {
-  return pinnedRuntimeHas(env, version, supportsDesktopCacheToken);
+  return pinnedRuntimeHas(env, version, supportsDesktopCacheToken) &&
+    compilerBakesAppIdentifier(compiler);
+}
+
+/**
+ * Whether the Deno that compiles the app (`deno desktop`, which the package scripts run as this
+ * process's own binary, `desktopRun`) writes `desktop.app.identifier` into the binary's metadata:
+ * denext's Deno does, stock Deno does not. The runtime expands `$DENO_DESKTOP_CACHE` /
+ * `$DENO_DESKTOP_DATA` from that baked identifier and drops a token it can't expand, so on a stock
+ * compiler a token grant would grant nothing (a program sidecar's copy, the `fs` folders).
+ *
+ * @param compiler The compiling Deno's identity.
+ * @returns Whether a token grant would be expanded.
+ */
+function compilerBakesAppIdentifier(compiler: DenoIdentity): boolean {
+  return typeof compiler.denext === "string" && compiler.denext !== "";
 }
 
 /**
@@ -147,13 +169,17 @@ export function desktopCacheTokenRuntime(
  *
  * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
  * @param version The pinned runtime's version (default: the pin's).
+ * @param compiler The Deno that compiles the app (default: this process's; stock Deno bakes no
+ *   identifier, so no token can be expanded).
  * @returns Whether to bake `$DENO_DESKTOP_DATA` grants.
  */
 export function desktopDataTokenRuntime(
   env: EnvGet = processEnv,
   version: string = pinJson.version,
+  compiler: DenoIdentity = currentDenoIdentity(),
 ): boolean {
-  return pinnedRuntimeHas(env, version, supportsDesktopDataToken);
+  return pinnedRuntimeHas(env, version, supportsDesktopDataToken) &&
+    compilerBakesAppIdentifier(compiler);
 }
 
 /**
@@ -165,11 +191,14 @@ export function desktopDataTokenRuntime(
  *
  * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
  * @param version The pinned runtime's version (default: the pin's).
+ * @param compiler The Deno that compiles the app (default: this process's; stock Deno bakes no
+ *   identifier, so no token can be expanded).
  * @returns The reason and its fix, or `null` when the runtime expands the tokens.
  */
 export function desktopDataTokenRuntimeProblem(
   env: EnvGet = processEnv,
   version: string = pinJson.version,
+  compiler: DenoIdentity = currentDenoIdentity(),
 ): string | null {
   const mode = (env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase();
   if (mode === "stock") {
@@ -184,6 +213,11 @@ export function desktopDataTokenRuntimeProblem(
   if (!supportsDesktopDataToken(version)) {
     return `the pinned Deno Desktop runtime is ${version}, and expanding $DENO_DESKTOP_DATA / ` +
       "$DENO_DESKTOP_CACHE needs 3.0.0-denext.8 or later. Upgrade denext (`denext upgrade`)";
+  }
+  if (!compilerBakesAppIdentifier(compiler)) {
+    return `the app is compiled by stock Deno ${compiler.deno}, which does not write ` +
+      "desktop.app.identifier into the binary, so the runtime cannot expand $DENO_DESKTOP_DATA / " +
+      "$DENO_DESKTOP_CACHE. Package on denext's Deno toolchain (`denext desktop package`)";
   }
   return null;
 }

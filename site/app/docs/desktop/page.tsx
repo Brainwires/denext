@@ -4198,7 +4198,11 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         picked path under <code>dialogs</code>, <code>$DOCUMENTS</code> in{" "}
         <code>fs</code>, a relative path) keeps the unscoped <code>--allow-write</code>
         . Code of the app that writes anywhere else needs that path in{" "}
-        <code>desktop.extraPermissions.write</code>.
+        <code>desktop.extraPermissions.write</code>. The runtime reads the identifier from the
+        binary, where only denext&apos;s Deno writes it, so the tokens are baked only when
+        denext&apos;s Deno compiles the app (<code>denext desktop package</code>{" "}
+        does; the package scripts run <code>deno desktop</code>{" "}
+        on the Deno that runs them). A build by stock Deno keeps the unscoped grants.
       </p>
 
       <h3 id="desktop-strict-permissions">Strict permissions</h3>
@@ -4210,9 +4214,10 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         <code>desktop.app.identifier</code>. It never falls back to the unscoped grants:{" "}
         <code>denext desktop package</code>{" "}
         fails, naming the reason and the fix, when the identifier is missing or the runtime cannot
-        scope them (older than 3.0.0-denext.8, <code>DENEXT_DESKTOP_RUNTIME=stock</code>, or a local
+        scope them (older than 3.0.0-denext.8, <code>DENEXT_DESKTOP_RUNTIME=stock</code>, a local
         {" "}
-        <code>DENEXT_DESKTOP_RUNTIME_DIR</code> build). <code>denext desktop run</code> and{" "}
+        <code>DENEXT_DESKTOP_RUNTIME_DIR</code> build, or stock Deno compiling the app).{" "}
+        <code>denext desktop run</code> and{" "}
         <code>dev</code>, which build a local test copy, print a warning and bake the default
         instead.
       </p>

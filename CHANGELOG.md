@@ -120,7 +120,12 @@ and this project adheres to
   instead of an unscoped `--allow-write`; `$APPDATA/…` / `$CACHE/…` and absolute paths in
   `desktop.extraPermissions.write` are kept scoped too. A write with no folder token (a picked path
   under `dialogs`, `$DOCUMENTS`, a relative path) keeps the unscoped grant. Code that writes
-  anywhere else needs the path in `desktop.extraPermissions.write`.
+  anywhere else needs the path in `desktop.extraPermissions.write`. The tokens are baked only when
+  denext's Deno compiles the app: the runtime expands them from the identifier the compiler writes
+  into the binary, which stock Deno doesn't, so a stock build keeps the unscoped grants (and
+  `desktop.permissions: "strict"` refuses it, naming the fix). The package scripts now run
+  `deno desktop` (and `deno task export`) on the Deno running the script rather than the first
+  `deno` on PATH, so `denext desktop package` compiles on denext's toolchain.
 
 ### Security
 

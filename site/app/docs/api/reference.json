@@ -46690,8 +46690,8 @@
           "slug": "desktopRun",
           "kind": "function",
           "signature": "desktopRun(cmd: string[], env?: Record<string, string>, options?: DesktopRunOptions): Promise<void>",
-          "doc": "Run a command with inherited stdio; throws on a non-zero exit. The error names the command line with every DesktopRunOptions.secrets value redacted.",
-          "docFull": "Run a command with inherited stdio; throws on a non-zero exit. The error names the command\nline with every {@linkcode DesktopRunOptions.secrets} value redacted.",
+          "doc": "Run a command with inherited stdio; throws on a non-zero exit. The error names the command line with every DesktopRunOptions.secrets value redacted. A deno command runs on this script's own Deno (Deno.execPath()), not the first deno on PATH.",
+          "docFull": "Run a command with inherited stdio; throws on a non-zero exit. The error names the command\nline with every {@linkcode DesktopRunOptions.secrets} value redacted. A `deno` command runs on\nthis script's own Deno (`Deno.execPath()`), not the first `deno` on PATH.",
           "params": [
             {
               "name": "cmd",

@@ -395,7 +395,8 @@ export async function runDesktopPackageMain(main: () => Promise<void>): Promise<
 
 /**
  * Run a command with inherited stdio; throws on a non-zero exit. The error names the command
- * line with every {@linkcode DesktopRunOptions.secrets} value redacted.
+ * line with every {@linkcode DesktopRunOptions.secrets} value redacted. A `deno` command runs on
+ * this script's own Deno (`Deno.execPath()`), not the first `deno` on PATH.
  *
  * @param cmd The command and its arguments.
  * @param env Extra environment variables.
@@ -406,7 +407,9 @@ export async function desktopRun(
   env?: Record<string, string>,
   options: DesktopRunOptions = {},
 ): Promise<void> {
-  const p = new Deno.Command(cmd[0], {
+  // `deno` is this script's own Deno, not the first one on PATH: the token gates
+  // (desktopDataTokenRuntime) judge the compiler by this process's identity.
+  const p = new Deno.Command(cmd[0] === "deno" ? Deno.execPath() : cmd[0], {
     args: cmd.slice(1),
     env,
     stdout: "inherit",

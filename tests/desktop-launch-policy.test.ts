@@ -268,7 +268,10 @@ Deno.test("desktopCacheTokenRuntime: the pinned runtime from 3.0.0-denext.8, nev
   assertEquals(supportsDesktopCacheToken("3.0.0-denext.8"), true);
   assertEquals(supportsDesktopCacheToken("3.0.0-denext.7"), false);
   assertEquals(supportsDesktopCacheToken("nope"), false);
-  assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8"), true);
+  const denextDeno = { deno: "2.9.8", denext: "3.0.0-denext.8" };
+  assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8", denextDeno), true);
+  // A binary stock Deno compiled carries no identifier for the runtime to expand a token from.
+  assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8", { deno: "2.9.8" }), false);
   assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.7"), false);
   assertEquals(
     desktopCacheTokenRuntime(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-denext.8"),
@@ -285,7 +288,10 @@ Deno.test("desktopDataTokenRuntime: the pinned runtime from 3.0.0-denext.8, neve
   assertEquals(supportsDesktopDataToken("3.0.0-denext.8"), true);
   assertEquals(supportsDesktopDataToken("3.0.0-denext.7"), false);
   assertEquals(supportsDesktopDataToken("nope"), false);
-  assertEquals(desktopDataTokenRuntime(env({}), "3.0.0-denext.8"), true);
+  const denextDeno = { deno: "2.9.8", denext: "3.0.0-denext.8" };
+  assertEquals(desktopDataTokenRuntime(env({}), "3.0.0-denext.8", denextDeno), true);
+  // A binary stock Deno compiled carries no identifier for the runtime to expand a token from.
+  assertEquals(desktopDataTokenRuntime(env({}), "3.0.0-denext.8", { deno: "2.9.8" }), false);
   assertEquals(desktopDataTokenRuntime(env({}), "3.0.0-denext.7"), false);
   assertEquals(
     desktopDataTokenRuntime(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-denext.8"),
