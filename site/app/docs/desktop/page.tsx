@@ -2712,7 +2712,13 @@ console.log(await getWindows());   // [{ id: "main", kind: "main", visible }, �
         reopens them at launch, which also gives the packaged app <code>--allow-write</code>{" "}
         for its app support folder (without it, or the <code>fs</code> / <code>sqlite</code> /{" "}
         <code>updates</code> capability or{" "}
-        <code>desktop.extraPermissions.write</code>, the save is skipped with one warning).
+        <code>desktop.extraPermissions.write</code>, the save is skipped with one warning). The main
+        window takes a key too: <code>desktop.window.key: "workspace"</code> (or{" "}
+        <code>runDesktop({"{ window: { key } }"})</code>) saves its frame the same way and restores
+        it at the next launch — the saved position, and the saved size unless{" "}
+        <code>desktop.window.width</code> / <code>height</code> set one — and the key names it in
+        {" "}
+        <code>byKey</code>, the lifecycle hooks and <code>lastSession()</code>.
       </p>
       <Code lang="ts">
         {`// desktop.ts — a "New Window" that remembers where each window was

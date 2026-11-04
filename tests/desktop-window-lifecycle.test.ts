@@ -31,7 +31,11 @@ import {
 } from "../src/desktop/window-store.ts";
 import { setUpDesktopWindows } from "../src/desktop/app-windows.ts";
 import { createDesktopBridge } from "../src/desktop/bridge.ts";
-import { maxWindowsProblem, resolveDesktopAppSettings } from "../src/desktop/window-config.ts";
+import {
+  maxWindowsProblem,
+  resolveDesktopAppSettings,
+  resolveDesktopWindowSettings,
+} from "../src/desktop/window-config.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import { DESKTOP_DATA_TOKEN, desktopBuildFlags } from "../src/build/desktop-capabilities.ts";
@@ -769,6 +773,69 @@ Deno.test("session: a last-session window that cannot be reopened is a warning, 
     assertEquals(s.restoreSession(), 1);
     assertEquals(warnings.length, 1);
     assertStringIncludes(warnings[0], '"b"');
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("main window key: desktop.window.key restores the main frame, names it, and holds its key", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext-windows-" });
+  try {
+    await Deno.writeTextFile(
+      join(dir, WINDOW_STORE_FILE),
+      JSON.stringify({
+        version: 1,
+        bounds: { workspace: { x: 200, y: 150, width: 1200, height: 800 } },
+        session: [{ key: "workspace", url: "/" }],
+      }),
+    );
+    FakeWin.made = [];
+    const main = new FakeWin();
+    const { api, quits } = quittingApi(() => FakeWin.made);
+    const s = setUpDesktopWindows({
+      window: main,
+      BrowserWindow: FakeWin,
+      api,
+      emit: () => {},
+      wantsTray: false,
+      windowSettings: { key: "workspace", width: 1000 },
+      appSettings: { restoreWindows: true },
+      appSupportDir: dir,
+      exit: () => {},
+    });
+    main.addEventListener("close", (e) => {
+      if (s.interceptMainClose(e)) return;
+      s.mainClosed();
+    });
+    s.install();
+    // The saved position; the configured width wins over the saved one (a frame on the fake's
+    // 1440x875 display is kept as it is).
+    assertEquals(main.bounds, { x: 200, y: 150, width: 1000, height: 800 });
+    assertEquals(s.windows.get("main")?.key, "workspace");
+    assertEquals(s.windows.byKey("workspace")?.id, "main");
+    assertEquals(s.lifecycle!.windows(), [{ id: "main", kind: "main", key: "workspace" }]);
+    assertEquals(s.restoreSession(), 0, "the main window is open already");
+    assertThrows(() => s.windows.open({ url: "/x", key: "workspace" }), Error, "open already");
+    // Moved, then the app quits: the frame and the session are saved.
+    main.moveTo(300, 200);
+    s.lifecycle!.onAppQuit(() => {});
+    api.quit!();
+    await until(() => quits.length > 0);
+    const saved = JSON.parse(await Deno.readTextFile(join(dir, WINDOW_STORE_FILE)));
+    assertEquals(saved.bounds.workspace, { x: 300, y: 200, width: 1000, height: 800 });
+    assertEquals(saved.session, [{ key: "workspace", url: "/" }]);
+    // A bad key is refused where the config is checked.
+    assertThrows(
+      () => resolveDesktopWindowSettings({ window: { key: "a/b" } }),
+      Error,
+      "window.key",
+    );
+    assertEquals(resolveDesktopWindowSettings({ window: { key: "ws" } }), { key: "ws" });
+    assertThrows(
+      () => validateDenextConfig({ desktop: { window: { key: "" } } } as DenextConfig),
+      Error,
+      "desktop.window.key",
+    );
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

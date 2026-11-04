@@ -38,6 +38,11 @@ and this project adheres to
   launch (it also bakes `--allow-write` for the app support folder into the packaged app).
 - **`desktop.app.maxWindows`** (an integer from 1 to 64, default 8): the most windows open at once
   besides the main window and the tray panel; the `windows` capability reports it as `max`.
+- **`desktop.window.key`** (or `runDesktop({ window: { key } })`): a key for the main window, with
+  the same rules, so its frame is saved and restored at the next launch (the saved position, and
+  the saved size unless `desktop.window.width` / `height` set one, clamped onto a connected
+  display), and the key names it in `windows.byKey`, the lifecycle hooks' `DesktopWindowInfo` and
+  `windows.lastSession()`; a window opened with the same key is refused.
 - **`createOwnedResources()` in `denext/desktop`: per-window backend resources for extensions.** An
   extension that keeps a PTY, a watcher or a subprocess alive for one window registers it with
   an owner (`ctx.windowId`) and connects the registry from `setup(host)`. `emit(id, event, data)`

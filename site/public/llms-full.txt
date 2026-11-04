@@ -669,7 +669,8 @@ searchable })`, `onUserActivityContinued`; list the types in `desktop.macos.user
 `desktop.ts` (`openWindow({ key })` in a page) names a window with an app-chosen key (unique among the open
 windows), found again with `windows.byKey(key)`; a keyed window's frame is saved to `windows.json` in the app
 support folder and restored the next time the key opens (the bounds the call leaves out, clamped onto a
-connected display; macOS Spaces are not restored), `windows.lastSession()` lists the keyed windows open at the
+connected display; macOS Spaces are not restored; `desktop.window.key` does the same for the main window),
+`windows.lastSession()` lists the keyed windows open at the
 last quit and `desktop.app.restoreWindows: true` reopens them at launch; `desktop.app.maxWindows` (default 8,
 at most 64) caps the open windows. An extension follows the windows with `onWindowOpened` / `onWindowClosed`
 (`{ id, kind, key?, appQuitting }`, never on a reload) / `onAppQuit` (awaited, 3 s at most) on the capability or

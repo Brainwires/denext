@@ -468,8 +468,14 @@ function buildControllers(st: SetupState, win: RegistryWindow): DesktopCapabilit
         ...(o.dirs ? { dirs: o.dirs } : {}),
       }),
   });
+  const ws = o.windowSettings;
   st.registry.adopt(win, "main", "main", {
-    overlay: o.windowSettings?.overlay === true && overlayRuntime(st),
+    overlay: ws?.overlay === true && overlayRuntime(st),
+    ...(ws?.key !== undefined ? { key: ws.key } : {}),
+    configured: {
+      ...(ws?.width !== undefined ? { width: ws.width } : {}),
+      ...(ws?.height !== undefined ? { height: ws.height } : {}),
+    },
   });
   // The full-app updater's install quits through the lifecycle (its guards and hooks run first).
   registerAppLifecycle(st.registry.lifecycle);

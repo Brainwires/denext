@@ -15,6 +15,7 @@
  */
 
 import type { DesktopWindowLevel } from "../server/config.ts";
+import { windowKeyProblem } from "./window-store.ts";
 
 /** A window size in CSS pixels. */
 export interface DesktopWindowSize {
@@ -68,6 +69,8 @@ export interface DesktopWindowSettings {
   readonly visibleOnAllWorkspaces?: boolean;
   /** A Wayland layer-shell overlay surface (`desktop.window.overlay`, creation-time). */
   readonly overlay?: boolean;
+  /** The main window's key (`desktop.window.key`): its frame is saved and restored. */
+  readonly key?: string;
 }
 
 /** The app-level settings of `desktop.app` that `runDesktop` applies at launch. */
@@ -185,6 +188,8 @@ export function desktopWindowKeyProblem(w: Record<string, unknown>): [string, st
   if (o !== undefined && (typeof o !== "number" || !Number.isFinite(o) || o < 0 || o > 1)) {
     return ["window.opacity", "must be a number from 0 to 1"];
   }
+  const key = w.key === undefined ? null : windowKeyProblem(w.key);
+  if (key !== null) return ["window.key", key.replace(/^key /, "")];
   return null;
 }
 
@@ -214,6 +219,7 @@ function windowKeys(raw: unknown): Omit<
     ...windowFlags(w),
     ...levelSetting(w.alwaysOnTop),
     ...(w.opacity !== undefined ? { opacity: w.opacity as number } : {}),
+    ...(w.key !== undefined ? { key: w.key as string } : {}),
   };
 }
 

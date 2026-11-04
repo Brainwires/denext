@@ -165,7 +165,7 @@ export interface WindowRegistry {
     window: RegistryWindow,
     kind: WindowKind,
     id?: string,
-    options?: { readonly overlay?: boolean },
+    options?: AdoptOptions,
   ): RegisteredWindow;
   /** Open a new window from page / backend options (checked); `unsupported` without a runtime. */
   open(options: unknown): RegisteredWindow;
@@ -204,6 +204,19 @@ export interface WindowRegistry {
   readonly router: DesktopCapability;
   /** The `windows` capability: open windows, list them, act on one by id. */
   readonly capability: DesktopCapability;
+}
+
+/** Options for {@linkcode WindowRegistry.adopt}. */
+export interface AdoptOptions {
+  /** It was created as a layer-shell overlay (default not). */
+  readonly overlay?: boolean;
+  /**
+   * Its key (`desktop.window.key` for the main window): its frame is followed and saved, and its
+   * saved frame is applied now — the position, and the size unless `configured` gives one.
+   */
+  readonly key?: string;
+  /** The size the configuration set explicitly (kept over a saved one). */
+  readonly configured?: { readonly width?: number; readonly height?: number };
 }
 
 /** A `validation` error. */
@@ -611,6 +624,28 @@ function restoredGeometry(st: RegistryState, settings: OpenWindowSettings): Open
   return { ...settings, ...clampToScreens(merged, screensOf(st)) };
 }
 
+/**
+ * Apply the saved frame of an adopted keyed window (the main window): the saved position and,
+ * unless configured, the saved size, clamped onto a connected display.
+ */
+function restoreAdopted(st: RegistryState, entry: RegisteredWindow, options: AdoptOptions): void {
+  if (entry.key === undefined || typeof entry.window.setBounds !== "function") return;
+  const saved = st.store.bounds(entry.key);
+  if (!saved) return;
+  const rect = {
+    ...saved,
+    ...(options.configured?.width !== undefined ? { width: options.configured.width } : {}),
+    ...(options.configured?.height !== undefined ? { height: options.configured.height } : {}),
+  };
+  try {
+    entry.window.setBounds({ ...clampToScreens(rect, screensOf(st)) });
+  } catch (err) {
+    st.warn(
+      `the main window's frame could not be restored: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+}
+
 /** Follow a keyed window's frame: its moves and resizes (debounced into the store), its session. */
 function followFrame(st: RegistryState, entry: RegisteredWindow, url: string): void {
   if (entry.key === undefined) return;
@@ -848,8 +883,17 @@ export function createWindowRegistry(options: WindowRegistryOptions): WindowRegi
     methods: windowsMethods(st),
   };
   return {
-    adopt: (window, kind, id = kind, options) => {
-      const entry = register(st, window, kind, id, null, options?.overlay === true);
+    adopt: (window, kind, id = kind, options = {}) => {
+      if (options.key !== undefined) {
+        const problem = windowKeyProblem(options.key);
+        if (problem) throw new Error(`desktop: the window's ${problem}`);
+        if (byKey(st, options.key)) {
+          throw new Error(`desktop: a window with key "${options.key}" is open already`);
+        }
+      }
+      const entry = register(st, window, kind, id, null, options.overlay === true, options.key);
+      restoreAdopted(st, entry, options);
+      followFrame(st, entry, "/");
       // The tray panel's close (a quit's) is followed like an opened window's; the main window's
       // listener is `runDesktop`'s (it consults `interceptClose` and `closed`).
       if (kind === "panel") {

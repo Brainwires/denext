@@ -1741,6 +1741,15 @@ export interface DesktopWindowConfig {
    */
   visibleOnAllWorkspaces?: boolean;
   /**
+   * An app-chosen key for the main window (1 to 64 letters, digits, `.`, `_`, `:` or `-`), as
+   * `windows.open({ key })` gives another window one: its frame is saved to `windows.json` in the
+   * app support folder as it moves and when it closes, and restored at the next launch (the saved
+   * position, and the size unless `width` / `height` set one), clamped onto a display connected
+   * now; it is `DesktopWindowRef.key`, found with `windows.byKey`, and in `windows.lastSession()`.
+   * A window opened with the same key is refused.
+   */
+  key?: string;
+  /**
    * Make the window a desktop overlay surface on Linux Wayland: where the compositor has
    * wlr-layer-shell (KDE Plasma, wlroots compositors such as Sway and Hyprland, COSMIC; not GNOME)
    * the window is a layer surface above every other window, on every workspace, with no taskbar
