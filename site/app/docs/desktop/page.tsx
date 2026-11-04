@@ -3487,7 +3487,7 @@ export default defineDesktopExtension({
           <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
           <code>--allow-run</code> and a broad{" "}
           <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s
-          machine. From Deno Desktop runtime 3.0.0-denext.8 (once denext pins it), an app with{" "}
+          machine. From Deno Desktop runtime 3.0.0-denext.8, an app with{" "}
           <code>desktop.app.identifier</code> is baked{" "}
           <code>--allow-run=$DENO_DESKTOP_CACHE/sidecars/&lt;name&gt;/&lt;file&gt;</code>{" "}
           instead, and the matching <code>--allow-write</code>{" "}
@@ -4181,10 +4181,10 @@ if ((await deepLinkSchemeOwner("myapp")).owner === "other") {
         so a binary that writes there is baked an unscoped <code>--allow-write</code>.
       </p>
       <p>
-        From Deno Desktop runtime 3.0.0-denext.8 (once denext pins it), an app with{" "}
-        <code>desktop.app.identifier</code> is baked those writes as the folders themselves:{" "}
-        <code>$DENO_DESKTOP_DATA</code> (and <code>$DENO_DESKTOP_DATA/logs</code>,{" "}
-        <code>$DENO_DESKTOP_DATA/ui-updates</code>) and{" "}
+        From Deno Desktop runtime 3.0.0-denext.8, an app with <code>desktop.app.identifier</code>
+        {" "}
+        is baked those writes as the folders themselves: <code>$DENO_DESKTOP_DATA</code> (and{" "}
+        <code>$DENO_DESKTOP_DATA/logs</code>, <code>$DENO_DESKTOP_DATA/ui-updates</code>) and{" "}
         <code>$DENO_DESKTOP_CACHE</code>, which the runtime expands at launch to the app&apos;s data
         folder (<code>~/Library/Application Support/&lt;id&gt;</code> on macOS,{" "}
         <code>%APPDATA%\&lt;id&gt;</code> on Windows, <code>$XDG_DATA_HOME/&lt;id&gt;</code>{" "}

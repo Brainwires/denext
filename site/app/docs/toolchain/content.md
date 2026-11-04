@@ -1100,7 +1100,8 @@ banner names the subcommand and the argument count instead of printing the comma
 `3.0.0-denext.6` is a Deno Desktop release: beyond `deno desktop`
 reading deno.json's `desktop.app.activationPolicy`, the CLI is unchanged, and the runtime adds overlay windows, tray events with their detail, the macOS activation policy and the
 OS's text to speech ([Our Deno Desktop runtime](/docs/desktop-runtime#overlay-windows-tray-events-and-the-activation-policy)).
-`3.0.0-denext.7` (the build denext pins today) is a Deno Desktop release as well: CEF 156 ([GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)), the overlay on Linux Wayland and a Linux runtime library that binds its own symbols; for the CLI, `deno doc --json` and `--html` no longer carry ANSI color escapes. The
+`3.0.0-denext.7` is a Deno Desktop release as well: CEF 156 ([GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)), the overlay on Linux Wayland and a Linux runtime library that binds its own symbols; for the CLI, `deno doc --json` and `--html` no longer carry ANSI color escapes.
+`3.0.0-denext.8` (the build denext pins today) moves the CLI and the runtime to V8 15.6 (Chrome Extended Stable 156) and CEF to 156.0.15 (Chromium 156.0.8078.80); the CLI embeds the expected `denort` SHA-256s, adds `Deno.disarmResourceLimits(import.meta)` and keeps the type check's npm copy under `DENO_DIR`, and the runtime adds OS quits to the close handlers, `backgroundThrottling`, the `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` permission tokens and stricter full-app update checks. The
 [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases

@@ -23,7 +23,7 @@ and this project adheres to
   while the config gives macOS another engine than deno.json's (it would fetch one engine's runtime
   and build the other); `denext desktop package --regenerate-scripts` fixes it.
 - **`onCloseRequested` and `onBeforeQuit` are asked about the OS's own quits** (takes effect with
-  Deno Desktop runtime 3.0.0-denext.8, once denext pins it; on an older runtime Cmd+Q still ends the
+  Deno Desktop runtime 3.0.0-denext.8; on an older runtime Cmd+Q still ends the
   app at once). Cmd+Q, the Dock's Quit and a logout on macOS, and the session ending on Windows,
   reach the handlers with `reason: "quit"`, and a handler that refuses a session end asks the OS to stop it, which it may not honour: on macOS 26
   a logout stopped for an app with a Dock icon and went on anyway for an accessory app (real Windows
@@ -38,7 +38,7 @@ and this project adheres to
   hidden window that does background work. With that runtime a hidden page on macOS is throttled
   instead of frozen, so a tray app's hidden pages handle menu items and events again.
 - **A compiled app's `job` and `db` run past the server's `start.limits`** (takes effect with
-  denext's Deno 3.0.0-denext.8, once denext pins it). The main module `denext build --compile`
+  denext's Deno 3.0.0-denext.8). The main module `denext build --compile`
   generates calls `Deno.disarmResourceLimits(import.meta)` before it dispatches `./app job <name>`
   or `./app db migrate` (the runtime takes only the main module's own `import.meta`), so a long
   job or migration is no longer ended by the server's `--max-memory` / `--max-cpu-time` /
@@ -112,7 +112,7 @@ and this project adheres to
   release, and the download, no-pinned-build and version-mismatch messages offer the opt-out only
   with that condition. On a stock Deno CLI nothing changes.
 - **A packaged desktop app's writes to its own folders are scoped to those folders** (takes effect
-  with Deno Desktop runtime 3.0.0-denext.8, once denext pins it; gated on
+  with Deno Desktop runtime 3.0.0-denext.8; gated on
   `FIRST_DESKTOP_DATA_TOKEN_RUNTIME`, so nothing changes on an older runtime). In an app with
   `desktop.app.identifier`, the package scripts bake the `fs` / `sqlite` / `updates` capabilities'
   folders, a sidecar's log file and the UI overlay's `ui-updates` as `$DENO_DESKTOP_DATA[/…]` and
@@ -174,6 +174,13 @@ and this project adheres to
   target the list doesn't name, rather than trusting the release's `SHA256SUMS`, which a swapped
   release could change along with the archive. A runtime build that skipped the verified V8
   prebuilt fails, rather than linking a V8 without the fork's patches.
+- **A macOS full-app update needs a notarized Developer ID Application signature.** The runtime
+  checked the staged bundle only for an Apple-issued certificate of the installed app's team, which
+  an Apple Development or Mac App Store certificate also satisfies, and asked for no notarization
+  ticket. It now checks Apple's Developer ID requirement plus `notarized` (the Developer ID CA, a
+  Developer ID Application leaf, the same team, a stapled or online ticket), so a build signed with a
+  Developer ID but not notarized no longer installs as an update. `denext desktop package --sign`
+  notarizes.
 - **A Windows app's files are all under its Authenticode signature for full-app updates, and the
   signature is bound to the app and version** (5.0-gate review A, M2; the runtime denext.8 audit,
   F2). The runtime verified the signature of every `.exe` / `.dll` / `.node` of a staged update,
@@ -228,6 +235,11 @@ and this project adheres to
 
 ### Fixed
 
+- **`SafeSet` / `SafeMap` built from another collection no longer hang or throw** in denext's Deno
+  and the Deno Desktop runtime. The runtime's internal safe collections read a `Set` or `Map`
+  argument by index, so `new SafeSet(otherSet)` never returned and `new SafeMap(otherMap)` threw
+  `Iterator value undefined is not an entry object` (OpenTelemetry's trace-state copy hit it); any
+  iterable that isn't array-like is now read by its own iterator.
 - **A `desktop.permissions: "strict"` refusal prints as one line.** The generated
   `scripts/package-*.ts` (and so `denext desktop package`) end with the refusal's message and exit 1
   instead of an uncaught error with a stack trace; other errors keep their stack. Regenerate the

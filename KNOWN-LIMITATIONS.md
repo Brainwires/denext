@@ -697,9 +697,9 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **Windows CEF apps start in their install folder** (CEF's bootstrap, which Chromium's sandbox
   needs; build paths from `Deno.execPath()`), and a bootstrap signed with a certificate Windows
   doesn't trust refuses to start ([details](https://denext.dev/docs/desktop#desktop-windows-cef)).
-- **The CEF backend is on Chromium 156.0.8078.48** (runtime 3.0.0-denext.7), without Chrome's fixes
-  from 156.0.8078.73 on (73 CVEs by Chrome's notes), which need a newer CEF 156 build and come with
-  the next runtime. Keep untrusted remote content out of app windows
+- **The CEF backend is on Chromium 156.0.8078.80** (CEF 156.0.15, runtime 3.0.0-denext.8). Chrome's
+  fixes released after that build reach CEF apps only with a later runtime, so CEF trails Chrome's
+  own security releases. Keep untrusted remote content out of app windows
   (`desktop.app.allowedNavigationOrigins`) or use a system web view; see
   [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj).
 - **A CEF app on an Intel Mac can crash when it quits** (runtime 3.0.0-denext.8): about once in
@@ -715,7 +715,7 @@ Under denext's pinned runtime; what the stock runtime lacks is in
 - **WebView2 streams only what the page fetches** ([WebView2Feedback#3519](https://github.com/MicrosoftEdge/WebView2Feedback/issues/3519)):
   navigations and subresources arrive whole. Stream through `fetch` / `EventSource`, or use CEF.
 - **Overlay and tray-first windows depend on the OS for part of what they ask for.** With the
-  pinned runtime (3.0.0-denext.7): always-on-top levels above `"floating"` and
+  pinned runtime (3.0.0-denext.7 and later): always-on-top levels above `"floating"` and
   `visibleOnFullScreen` are macOS-only (Windows and Linux have one floating level); a transparent
   window is opaque on CEF; `overlay: true` is a layer surface only on a Wayland compositor with
   wlr-layer-shell (wlroots compositors, KDE Plasma, COSMIC) and with gtk-layer-shell installed, an
