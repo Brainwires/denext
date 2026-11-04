@@ -7,15 +7,19 @@ import { join } from "@std/path";
 import {
   compareDenoVersions,
   FIRST_DESKTOP_CACHE_TOKEN_RUNTIME,
+  FIRST_DESKTOP_DATA_TOKEN_RUNTIME,
   supportsDesktopCacheToken,
+  supportsDesktopDataToken,
 } from "../src/build/deno-version.ts";
 import { desktopBridgeOrigins } from "../src/build/desktop-app-config.ts";
 import {
   desktopCacheTokenRuntime,
+  desktopDataTokenRuntime,
   desktopPasskeyRpIds,
   FIRST_STRICT_LAUNCH_RUNTIME,
   isDesktopProject,
   launchPolicyProblems,
+  staleBackendPackageScripts,
   stalePackageScripts,
   strictLaunchRuntime,
   supportsStrictLaunch,
@@ -126,6 +130,11 @@ Deno.test("launchPolicyProblems: empty rpIds, an unwritable bridgeOrigins and st
   assertStringIncludes(one[0].fix, "--regenerate-scripts");
   const two = launchPolicyProblems(ok, desktopBridgeOrigins, ["a.ts", "b.ts"]);
   assertStringIncludes(two[0].message, "a.ts, b.ts never write denext's");
+  const backend = launchPolicyProblems(ok, desktopBridgeOrigins, [], ["scripts/package-macos.ts"]);
+  assertEquals(backend.length, 1);
+  assertStringIncludes(backend[0].message, "scripts/package-macos.ts never passes desktop.backend");
+  assertStringIncludes(backend[0].message, "builds deno.json's");
+  assertStringIncludes(backend[0].fix, "--regenerate-scripts");
 });
 
 Deno.test("stalePackageScripts + isDesktopProject: read the project's files", async () => {
@@ -158,6 +167,14 @@ Deno.test("stalePackageScripts + isDesktopProject: read the project's files", as
     assertEquals(await stalePackageScripts(dir), []);
     await Deno.writeTextFile(join(dir, "scripts", "package-windows.ts"), "// deno desktop only\n");
     assertEquals(await stalePackageScripts(dir), ["scripts/package-windows.ts"]);
+    // The macOS script writes the launch file but never passes desktop.backend (desktopBackendArgs).
+    assertEquals(await staleBackendPackageScripts(dir), ["scripts/package-macos.ts"]);
+    await Deno.writeTextFile(
+      join(dir, "scripts", "package-macos.ts"),
+      "await writeLaufeyLaunchConfig(import.meta.url, 'darwin', out);\n" +
+        "cmd.push(...await desktopBackendArgs(import.meta.url, 'darwin'));\n",
+    );
+    assertEquals(await staleBackendPackageScripts(dir), []);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }
@@ -251,7 +268,10 @@ Deno.test("desktopCacheTokenRuntime: the pinned runtime from 3.0.0-denext.8, nev
   assertEquals(supportsDesktopCacheToken("3.0.0-denext.8"), true);
   assertEquals(supportsDesktopCacheToken("3.0.0-denext.7"), false);
   assertEquals(supportsDesktopCacheToken("nope"), false);
-  assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8"), true);
+  const denextDeno = { deno: "2.9.8", denext: "3.0.0-denext.8" };
+  assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8", denextDeno), true);
+  // A binary stock Deno compiled carries no identifier for the runtime to expand a token from.
+  assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.8", { deno: "2.9.8" }), false);
   assertEquals(desktopCacheTokenRuntime(env({}), "3.0.0-denext.7"), false);
   assertEquals(
     desktopCacheTokenRuntime(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-denext.8"),
@@ -261,4 +281,26 @@ Deno.test("desktopCacheTokenRuntime: the pinned runtime from 3.0.0-denext.8, nev
     desktopCacheTokenRuntime(env({ DENEXT_DESKTOP_RUNTIME_DIR: "/x" }), "3.0.0-denext.8"),
     false,
   );
+});
+
+Deno.test("desktopDataTokenRuntime: the pinned runtime from 3.0.0-denext.8, never stock or a local build", () => {
+  assertEquals(FIRST_DESKTOP_DATA_TOKEN_RUNTIME, "3.0.0-denext.8");
+  assertEquals(supportsDesktopDataToken("3.0.0-denext.8"), true);
+  assertEquals(supportsDesktopDataToken("3.0.0-denext.7"), false);
+  assertEquals(supportsDesktopDataToken("nope"), false);
+  const denextDeno = { deno: "2.9.8", denext: "3.0.0-denext.8" };
+  assertEquals(desktopDataTokenRuntime(env({}), "3.0.0-denext.8", denextDeno), true);
+  // A binary stock Deno compiled carries no identifier for the runtime to expand a token from.
+  assertEquals(desktopDataTokenRuntime(env({}), "3.0.0-denext.8", { deno: "2.9.8" }), false);
+  assertEquals(desktopDataTokenRuntime(env({}), "3.0.0-denext.7"), false);
+  assertEquals(
+    desktopDataTokenRuntime(env({ DENEXT_DESKTOP_RUNTIME: "stock" }), "3.0.0-denext.8"),
+    false,
+  );
+  assertEquals(
+    desktopDataTokenRuntime(env({ DENEXT_DESKTOP_RUNTIME_DIR: "/x" }), "3.0.0-denext.8"),
+    false,
+  );
+  // The pinned runtime decides by default.
+  assertEquals(desktopDataTokenRuntime(), desktopCacheTokenRuntime());
 });

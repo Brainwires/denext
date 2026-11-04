@@ -50,7 +50,8 @@
  * Builds on denext's pinned Deno Desktop runtime (custom app origin, per-app storage, deep links,
  * single instance), downloaded once into the Deno cache and SHA-256-verified; it needs the exact
  * Deno version it was built for (`deno upgrade --version 2.9.8`).
- *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead (none of the above works)
+ *   DENEXT_DESKTOP_RUNTIME=stock     use the stock runtime instead, on a stock Deno CLI only
+ *                                    (DENEXT_DENO=stock; none of the above works)
  *   DENEXT_DESKTOP_RUNTIME_DIR=<dir> use a local runtime build (unverified; runtime development)
  *   DENEXT_DESKTOP_RUNTIME_VERIFY=1  re-hash the cached runtime before use
  *   DENEXT_DESKTOP_RUNTIME_ATTEST=1  also check a fresh download's build provenance (needs gh)
@@ -102,10 +103,13 @@ const {
   macosSigningEntitlements,
   notarytoolSubmitArgs,
   parseDesktopPackageArgs,
+  runDesktopPackageMain,
   syncDesktopAppConfig,
   V8_ENTITLEMENTS,
   writeLaufeyLaunchConfig,
 } = await import("denext/desktop");
+// The engine of the macOS build: desktop.backend (one, or per OS), passed as --backend.
+const { desktopBackendArgs } = await import("denext/desktop");
 
 const TARGETS: Record<string, string> = {
   arm64: "aarch64-apple-darwin",
@@ -139,6 +143,8 @@ async function buildApp(out: string, target?: string): Promise<void> {
     ...await desktopNpmArgs(import.meta.url),
   ];
   if (target) cmd.push("--target", target);
+  // The macOS engine: desktop.backend in denext.config.ts (one, or per OS), else deno.json's.
+  cmd.push(...await desktopBackendArgs(import.meta.url, "darwin"));
   // The app icon: desktop.app.icons.macos in denext.config.ts, else deno.json's, else
   // icons/app.icns, icons/app.png or desktop-icon.png.
   cmd.push(...await desktopIconArgs(import.meta.url, "darwin"));
@@ -576,4 +582,4 @@ async function main(): Promise<void> {
   console.log(distributionNote(signing));
 }
 
-if (import.meta.main) await main();
+if (import.meta.main) await runDesktopPackageMain(main);

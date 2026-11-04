@@ -29,6 +29,7 @@ import { SCAFFOLD_EXCLUDE } from "../../build/scaffold.ts";
 import { setJsonValue } from "../../build/json-edit.ts";
 import { applyJailExceptions, type JailReport } from "../../build/jail-scripts.ts";
 import { commandMeta } from "../command-meta.ts";
+import type { StaleNativeTemplate } from "../../build/native-template-status.ts";
 
 /** The project config `upgrade` edits: `deno.json`, else `deno.jsonc`. */
 async function configPath(dir: string): Promise<string | null> {
@@ -125,6 +126,8 @@ interface UpgradeOutcome {
   readonly denoExclude: { readonly written: boolean } | null;
   /** The lifecycle-script jail exceptions the dependencies need (`null`: none needed). */
   readonly jail: JailReport | null;
+  /** The native template families in `ios/` / `android/` older than this denext writes. */
+  readonly nativeTemplates: readonly StaleNativeTemplate[];
 }
 
 /** Whether an `exclude` entry already keeps the runtime's `.deno/` directory out. */
@@ -217,20 +220,31 @@ function outcomeJson(
   o: UpgradeOutcome,
   files: { changedFiles: string[]; unresolved: string[]; outside: string[] },
 ): Record<string, unknown> {
+  const optional: Record<string, unknown> = {
+    removedExclude: nonEmpty(o.stripped),
+    denextExemptions: nonEmpty(o.exemptions),
+    lockRefreshed: o.lock,
+    editorSettings: o.editor,
+    denoExclude: o.denoExclude,
+    jailExceptions: o.jail && { action: o.jail.action, lines: o.jail.lines },
+    nativeTemplates: nonEmpty(o.nativeTemplates),
+    unresolvedMembers: nonEmpty(files.unresolved),
+    outsideMembers: nonEmpty(files.outside),
+  };
   return {
     config: o.path,
     ...o.plan,
     written: o.written,
     files: files.changedFiles,
-    ...(o.stripped.length ? { removedExclude: o.stripped } : {}),
-    ...(o.exemptions.length ? { denextExemptions: o.exemptions } : {}),
-    ...(o.lock === undefined ? {} : { lockRefreshed: o.lock }),
-    ...(o.editor ? { editorSettings: o.editor } : {}),
-    ...(o.denoExclude ? { denoExclude: o.denoExclude } : {}),
-    ...(o.jail ? { jailExceptions: { action: o.jail.action, lines: o.jail.lines } } : {}),
-    ...(files.unresolved.length ? { unresolvedMembers: files.unresolved } : {}),
-    ...(files.outside.length ? { outsideMembers: files.outside } : {}),
+    ...Object.fromEntries(
+      Object.entries(optional).filter(([, v]) => v !== undefined && v !== null),
+    ),
   };
+}
+
+/** A list, or undefined when it is empty (left out of the `--json` document). */
+function nonEmpty<T>(list: readonly T[]): readonly T[] | undefined {
+  return list.length ? list : undefined;
 }
 
 /** Print the outcome: one JSON document, or the human report. */
@@ -247,6 +261,7 @@ function printOutcome(
   reportWorkspace(o.dir, o.plan.ok ? changedFiles : [], unresolved, outside);
   reportEditor(o.dir, o.editor);
   reportProjectRepairs(o);
+  reportNativeTemplates(o.nativeTemplates);
   if (o.lock === true) console.log("deno.lock refreshed.");
   if (o.lock === false) {
     console.error(
@@ -336,6 +351,7 @@ export async function runUpgrade(
   const changedFiles = plan.ok ? await applyToFiles(read, files, plan.steps, written) : [];
   const repairs = await projectRepairs(dir, path, plan.ok, !check && ctx.flags["dry-run"] !== true);
   const lock = written && await hasLockfile(dir) ? await refreshLock(dir) : undefined;
+  const nativeTemplates = await nativeTemplatesBehind(dir);
   const outcome = {
     dir,
     path,
@@ -347,6 +363,7 @@ export async function runUpgrade(
     exemptions,
     now,
     ...repairs,
+    nativeTemplates,
   };
   printOutcome(ctx.global.json === true, outcome, { changedFiles, unresolved, outside });
   if (!plan.ok) return 1;
@@ -450,6 +467,38 @@ function reportProjectRepairs(o: UpgradeOutcome): void {
     );
   }
   if (o.jail) console.log(`\n${o.jail.lines.join("\n")}`);
+}
+
+/**
+ * The project's native template families older than this denext writes (`denext mobile add`'s
+ * files in `ios/` / `android/`): never rewritten by `upgrade`, which only names the command that
+ * refreshes each (they change the binary, so they ship in a new build, not with the pin).
+ */
+async function nativeTemplatesBehind(dir: string): Promise<StaleNativeTemplate[]> {
+  try {
+    const { staleNativeTemplates } = await import("../../build/native-template-status.ts");
+    return await staleNativeTemplates(dir);
+  } catch {
+    return []; // an unreadable project: `denext mobile doctor` reports it
+  }
+}
+
+/** The out-of-date native templates and the command that refreshes each. */
+function reportNativeTemplates(stale: readonly StaleNativeTemplate[]): void {
+  if (!stale.length) return;
+  console.log(
+    "\nNative templates older than this denext writes (`upgrade` does not rewrite native files):",
+  );
+  for (const t of stale) {
+    console.log(
+      `  ${t.family}  generation ${t.generation} → ${t.current}: run \`${t.command}\` ` +
+        `(${t.files.length} file${t.files.length === 1 ? "" : "s"})`,
+    );
+  }
+  console.log(
+    "An unedited file is upgraded in place; an edited one needs `--force` or the changes merged " +
+      "by hand. Then ship a new binary.",
+  );
 }
 
 /** Why the `jsr:@denext/*` exclude entry was removed (or would be). */

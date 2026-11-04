@@ -9,6 +9,7 @@
 import { runToExit } from "./exited-output.ts";
 import { dirname, join, resolve, toFileUrl } from "@std/path";
 import { carryLinks } from "./config-links.ts";
+import { layeredFrameworkImports } from "./local-checkout-imports.ts";
 import { ensureDir } from "@std/fs";
 import { parse as parseJsonc } from "@std/jsonc";
 import { denoExecutable, minDepAgeConfig, readFrameworkJson } from "./bundle.ts";
@@ -411,8 +412,16 @@ export async function writeMergedModuleConfig(
   frameworkConfigPath: string,
 ): Promise<string> {
   const appCfg = await readConfig(appConfigPath);
+  // The CLI runs under this config, so its deps count; a package the app owns stays the app's
+  // (denext's root map lists a test-only `effect@^3` that shadowed an app's Effect 4).
+  const framework = await layeredFrameworkImports(await readImportsAbsolute(frameworkConfigPath), {
+    root: toFileUrl(dirname(resolve(frameworkConfigPath)) + "/").href,
+    configPath: frameworkConfigPath,
+    appDir: dirname(appConfigPath),
+    cli: true,
+  });
   const merged = mergeModuleConfig(
-    await readImportsAbsolute(frameworkConfigPath),
+    framework,
     await readImportsAbsolute(appConfigPath),
     appCfg,
     await workspaceImports(appConfigPath),

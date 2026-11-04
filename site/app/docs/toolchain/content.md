@@ -517,12 +517,13 @@ subpath), or remove it. `"node"` and `"deno"` are fine as they are. Earlier runt
 an entry silently, so a `"types": ["vite/client"]` carried over from a `tsconfig.json` can start
 failing there. The same release prints `Checked N files` after a clean `deno check`.
 
-From runtime `3.0.0-rc.5` the type check writes `.deno/npm-compat` into the project root, the
-`_test.ts` files of `@jsr/*` packages included, so a `deno test` with default discovery would run
-them. A project `denext create` scaffolds excludes it, and `denext upgrade` adds the entry to an
-existing one; otherwise add the same top-level entry to an older project's `deno.json` (a
-workspace's root and its members): `{ "exclude": [".deno/"] }`. See
-[known limitations](/docs/limitations).
+Runtimes `3.0.0-rc.5` through `3.0.0-denext.7` write the type check's `.deno/npm-compat` into the
+project root, the `_test.ts` files of `@jsr/*` packages included, so a `deno test` with default
+discovery would run them. A project `denext create` scaffolds excludes it, and `denext upgrade` adds
+the entry to an existing one; otherwise add the same top-level entry to an older project's
+`deno.json` (a workspace's root and its members): `{ "exclude": [".deno/"] }`. From `3.0.0-denext.8`
+the copy lives under `DENO_DIR` (`npm_compat/`, one folder per project) and a check removes an
+earlier `.deno/npm-compat`; only without a resolvable `DENO_DIR` does it stay in the project.
 
 The dev type-check overlay checks only the files an edit changed (and what they import). From
 runtime `3.0.0-rc.2` the native check also:
@@ -647,6 +648,32 @@ A `deno.json` `file:` target on another drive (an app on `C:` importing a checko
 workspace member's mapping to a module on another drive from `3.0.0-rc.5`. Stock
 Deno 2.9 still resolves it as `file:///C:/D:/…`, so under `DENEXT_DENO=stock` keep the project and
 its `file:` targets on one drive.
+
+## A local denext checkout
+
+An app can run an unreleased denext straight from a checkout: `denext migrate --denext-local-path
+<checkout>` points the import map's `denext` entries (and the tasks' CLI) at the checkout's files
+instead of `jsr:@denext/denext`. A checkout is not a self-contained package, so its modules' bare
+imports (`@std/path`, `ws`, …) resolve through the app's import map, and migrate maps them too —
+only the ones the modules an app can load import (not the dependencies only denext's CLI or its
+tests use; a local CLI runs under the checkout's own `deno.json`).
+
+The app's own entries win. A key the app already maps (its import map, or a `package.json`
+dependency resolved from `node_modules`) is never overridden by the checkout's, which would shadow
+the app's version (an app on Effect 4 against a checkout's `effect@^3`, say, breaks a
+`nodeModulesDir: "manual"` workspace's bundles). When the two disagree on the major, migrate keeps
+the app's entry and reports the clash — the package, the app's specifier and the checkout's — and
+`denext doctor` flags an import-map entry that maps a package the checkout needs at another major
+(`local denext imports`). Do not copy the checkout's whole `imports` into an app: its root import
+map also serves denext's workspace packages and tests. `denext migrate --check` previews the
+clashes as review findings.
+
+The same rule holds for the configs `denext dev` and `denext build` resolve through: denext's
+`jsr:` / `npm:` entries are never layered under the app's for a package the app has in its
+package.json or `node_modules` (that resolves to the app's version), and from a checkout only the
+ones denext's own modules import are layered at all. Independently of where denext comes from,
+`denext doctor`'s `import-map versions` check flags an `npm:` import-map entry whose major differs
+from the app's own copy of the package (installed, else its package.json range).
 
 ## Supply-chain hold
 
@@ -1073,7 +1100,8 @@ banner names the subcommand and the argument count instead of printing the comma
 `3.0.0-denext.6` is a Deno Desktop release: beyond `deno desktop`
 reading deno.json's `desktop.app.activationPolicy`, the CLI is unchanged, and the runtime adds overlay windows, tray events with their detail, the macOS activation policy and the
 OS's text to speech ([Our Deno Desktop runtime](/docs/desktop-runtime#overlay-windows-tray-events-and-the-activation-policy)).
-`3.0.0-denext.7` (the build denext pins today) is a Deno Desktop release as well: CEF 156 ([GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)), the overlay on Linux Wayland and a Linux runtime library that binds its own symbols; for the CLI, `deno doc --json` and `--html` no longer carry ANSI color escapes. The
+`3.0.0-denext.7` is a Deno Desktop release as well: CEF 156 ([GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)), the overlay on Linux Wayland and a Linux runtime library that binds its own symbols; for the CLI, `deno doc --json` and `--html` no longer carry ANSI color escapes.
+`3.0.0-denext.8` (the build denext pins today) moves the CLI and the runtime to V8 15.6 (Chrome Extended Stable 156) and CEF to 156.0.15 (Chromium 156.0.8078.80); the CLI embeds the expected `denort` SHA-256s, adds `Deno.disarmResourceLimits(import.meta)` and keeps the type check's npm copy under `DENO_DIR`, and the runtime adds OS quits to the close handlers, `backgroundThrottling`, the `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` permission tokens and stricter full-app update checks. The
 [runtime reference](/docs/runtime-reference) lists every addition by the version it arrived in.
 
 ### Support across denext releases

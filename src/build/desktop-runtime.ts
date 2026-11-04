@@ -22,7 +22,8 @@
 //      the winner's verified tree. A crashed run leaves only a temp dir, cleaned up a day later.
 //
 // The `deno` that runs `deno desktop` must be the runtime's exact Deno version (the CLI embeds a
-// matching libdenort ABI). `DENEXT_DESKTOP_RUNTIME=stock` opts out (the stock runtime: no custom
+// matching libdenort ABI). `DENEXT_DESKTOP_RUNTIME=stock` opts out on a stock Deno CLI only (denext's
+// Deno refuses to build on an upstream runtime; the stock runtime: no custom
 // origin, deep links or single instance); `DENEXT_DESKTOP_RUNTIME_DIR=<dir>` uses a local runtime
 // build unverified (runtime development).
 
@@ -50,6 +51,7 @@ import {
   currentDenoIdentity,
   type DenoIdentity,
   denoReleaseVersion,
+  isDenextDenoVersion,
   needsNoLegacyAbortFlag,
   parseDenoVersionOutput,
 } from "./deno-version.ts";
@@ -58,6 +60,14 @@ import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 import toolchainPinJson from "./deno-toolchain-pin.json" with { type: "json" };
 import { assertLinuxLibc, type LinuxLibc, minGlibcFor } from "./linux-libc.ts";
 import { warnStockDeprecation } from "./stock-deprecation.ts";
+import { loadConfigBeside } from "./desktop-config-beside.ts";
+import {
+  DEFAULT_DESKTOP_BACKEND,
+  type DesktopBackend,
+  type DesktopBackendOs,
+  desktopBackendOsOfTarget,
+  resolveDesktopBackend,
+} from "../desktop/engine-backend.ts";
 import { ghPath, type IsFile, systemToolPath } from "../utils/system-programs.ts";
 import {
   decideRevocation,
@@ -75,7 +85,7 @@ import {
 const TOOLCHAIN_ACTIVE_ENV = "DENEXT_TOOLCHAIN_ACTIVE";
 
 /** A runtime backend (`deno desktop --backend`). */
-export type DesktopRuntimeBackend = "webview" | "cef";
+export type DesktopRuntimeBackend = DesktopBackend;
 
 /** One pinned runtime archive. */
 export interface DesktopRuntimeArtifact {
@@ -201,10 +211,17 @@ const STOCK_LACKS = "no stable app origin or persistent browser storage, deep li
   "single instance, preload, full-app updates, native clipboard / notifications / context " +
   "menu, or window controls beyond size, position and title";
 
+/**
+ * The stock opt-out as a fallback message offers it: it needs a stock Deno CLI, since an upstream
+ * runtime can't read what denext's Deno compiles ({@linkcode stockRuntimeOnDenextDenoMessage}).
+ */
+const STOCK_WAY_OUT = `on a stock Deno CLI (DENEXT_DENO=stock), set ${RUNTIME_ENV}=stock to use ` +
+  `the stock runtime (${STOCK_LACKS})`;
+
 /** The way out of a runtime download that failed (every download error ends with it). */
 const DOWNLOAD_HINT =
   `\n  Once it is cached, packaging needs no network. Or set ${RUNTIME_DIR_ENV}=<an unpacked ` +
-  `runtime>, or ${RUNTIME_ENV}=stock to use the stock runtime (${STOCK_LACKS}).`;
+  `runtime>, or, ${STOCK_WAY_OUT}.`;
 
 /** The marker's contents. */
 interface RuntimeMarker {
@@ -278,8 +295,7 @@ function pinnedArtifact(
   if (a) return a;
   throw new Error(
     `denext: the pinned Deno Desktop runtime ${pin.version} has no ${backend} build for ` +
-      `${target} (it has: ${Object.keys(pin.targets).join(", ")}).\n  Set ${RUNTIME_ENV}=stock ` +
-      `to use the stock runtime (${STOCK_LACKS}).`,
+      `${target} (it has: ${Object.keys(pin.targets).join(", ")}).\n  Or, ${STOCK_WAY_OUT}.`,
   );
 }
 
@@ -465,12 +481,24 @@ const MACOS_SYSTEM_TOOLS = new Set(["plutil", "codesign"]);
  * @param cmd The program a runner was asked to start.
  * @param os The OS (default: this one).
  * @param isFile Checks a path (default: `Deno.statSync`).
+ * @param trusted Whether a POSIX `gh` may run (default: owned by root or this user and writable by
+ * no other user, see `trustedProgram`).
  * @returns The path to start.
  */
-export function runtimeProgram(cmd: string, os: string = Deno.build.os, isFile?: IsFile): string {
+export function runtimeProgram(
+  cmd: string,
+  os: string = Deno.build.os,
+  isFile?: IsFile,
+  trusted?: (path: string) => boolean,
+): string {
   if (cmd === "gh") {
-    const gh = ghPath(os, isFile);
-    if (gh === null) throw new Deno.errors.NotFound("gh: the GitHub CLI is not installed");
+    const gh = ghPath(os, isFile, undefined, trusted);
+    if (gh === null) {
+      throw new Deno.errors.NotFound(
+        "gh: the GitHub CLI is not installed where denext looks for it, or another user can " +
+          "change it (or a folder it is in), so it is not run",
+      );
+    }
     return gh;
   }
   if (os !== "darwin" || !MACOS_SYSTEM_TOOLS.has(cmd)) return cmd;
@@ -543,8 +571,8 @@ async function shouldAttest(plan: InstallPlan): Promise<boolean> {
   if (mode !== "auto") return mode;
   if (await ghSignedIn(plan.opts.capture ?? capture)) return true;
   plan.log(
-    "  denext: the runtime's build provenance was not checked (the GitHub CLI is not installed or " +
-      "not signed in; the SHA-256 pin was). `gh auth login` checks it on the next download; " +
+    "  denext: the runtime's build provenance was not checked (the GitHub CLI is not installed, " +
+      "another user can change it, or it is not signed in; the SHA-256 pin was). `gh auth login` checks it on the next download; " +
       `${DESKTOP_RUNTIME_ATTEST_ENV}=0 silences this.`,
   );
   return false;
@@ -1027,17 +1055,64 @@ export function denoVersionMismatchMessage(
     `  Install it with:  deno upgrade --version ${pin.deno}\n` +
     `  Or point DENO_BIN at a Deno ${pin.deno} binary, or at denext's Deno toolchain ` +
     `(\`denext toolchain path\`; desktop run / dev build with it).\n` +
-    `  Or set ${RUNTIME_ENV}=stock to use the stock runtime (${STOCK_LACKS}).`;
+    `  Or, ${STOCK_WAY_OUT}.`;
+}
+
+/**
+ * The refusal of `DENEXT_DESKTOP_RUNTIME=stock` on denext's Deno, whose `deno desktop` builds only
+ * on denext's runtime: an upstream runtime exits at startup, unable to read what it compiles.
+ *
+ * @param found The Deno's identity.
+ * @param deno The binary that was asked.
+ * @returns The message.
+ */
+function stockRuntimeOnDenextDenoMessage(found: DenoIdentity, deno: string): string {
+  return `denext: ${RUNTIME_ENV}=stock needs a stock Deno CLI, but \`${deno}\` is denext's Deno ` +
+    `(${found.denext || found.deno}), which builds only on denext's runtime.\n` +
+    `  Unset ${RUNTIME_ENV} to use denext's pinned runtime (it downloads on first use), or set ` +
+    "DENEXT_DENO=stock with a stock `deno` on PATH (or DENO_BIN at one).";
+}
+
+/**
+ * What `deno` is, for the stock opt-out's check (`null` when it can't be asked: the build then
+ * says so itself, as it always has).
+ */
+function stockOptOutIdentity(
+  options: Pick<DesktopRuntimeEnvOptions, "deno" | "denoVersion">,
+): Promise<DenoIdentity | null> {
+  return (options.denoVersion ?? denoCliVersion)(options.deno ?? "deno")
+    .then(asIdentity, () => null);
+}
+
+/**
+ * Refuse `DENEXT_DESKTOP_RUNTIME=stock` when `deno` is denext's Deno, before anything is built.
+ * Does nothing under any other runtime mode, or on a stock Deno CLI.
+ *
+ * @param options The `deno` that will run `deno desktop`, plus the env and version seams.
+ */
+export async function assertStockRuntimeUsable(
+  options: Pick<DesktopRuntimeEnvOptions, "deno" | "denoVersion" | "env">,
+): Promise<void> {
+  if (runtimeMode(options.env ?? processEnv) !== "stock") return;
+  const found = await stockOptOutIdentity(options);
+  if (found && isDenextDenoVersion(found)) {
+    throw new Error(stockRuntimeOnDenextDenoMessage(found, options.deno ?? "deno"));
+  }
 }
 
 /** Options for {@linkcode resolveDesktopRuntimeEnv}. */
 export interface DesktopRuntimeEnvOptions {
-  /** The project directory (its deno.json `desktop.backend` picks the backend). */
+  /** The project directory (its `desktop.backend` for the target picks the backend). */
   readonly projectDir: string;
   /** Rust target triple; default the host's. */
   readonly target?: string;
-  /** Overrides deno.json `desktop.backend`. */
+  /** Overrides the project's `desktop.backend` ({@linkcode projectDesktopBackend}). */
   readonly backend?: DesktopRuntimeBackend;
+  /**
+   * The project's loaded `denext.config.*` default export, for its `desktop.backend` (`undefined`
+   * for none). Left out, the config is read as data ({@linkcode projectDesktopBackend}).
+   */
+  readonly config?: unknown;
   /** The `deno` that will run `deno desktop` (default `deno`). */
   readonly deno?: string;
   /** Env reader (default `Deno.env.get`). */
@@ -1083,6 +1158,14 @@ export interface ToolchainPinVersions {
   readonly rollback?: { readonly version: string };
 }
 
+/** What {@linkcode projectDesktopBackend} reads for `target`: the loaded config, when given. */
+function backendSource(
+  options: DesktopRuntimeEnvOptions,
+  target: string,
+): ProjectDesktopBackendOptions {
+  return "config" in options ? { target, config: options.config } : { target };
+}
+
 /** The env for `deno desktop`, plus which runtime it selects. */
 export interface DesktopRuntimeEnv {
   readonly mode: "pinned" | "stock" | "local";
@@ -1104,13 +1187,70 @@ async function configuredBackend(projectDir: string): Promise<unknown> {
   return undefined;
 }
 
-/** The deno.json `desktop.backend` of `projectDir` (default `webview`). */
-export async function projectDesktopBackend(projectDir: string): Promise<DesktopRuntimeBackend> {
-  const backend = (await configuredBackend(projectDir)) ?? "webview";
+/**
+ * The `desktop.backend` of the project's `denext.config.*`, read as data (the config is never
+ * run): `undefined` when the project has no config, the key is unset, or `desktop` is computed.
+ */
+async function staticConfigBackend(projectDir: string): Promise<unknown> {
+  const { readStaticConfig } = await import("./config-static.ts");
+  const desktop = (await readStaticConfig(projectDir)).keys.desktop;
+  if (desktop?.kind !== "editable") return undefined;
+  return (desktop.value as { backend?: unknown } | undefined)?.backend;
+}
+
+/** Options for {@linkcode projectDesktopBackend}. */
+export interface ProjectDesktopBackendOptions {
+  /** The target: a Rust triple (`x86_64-unknown-linux-gnu`) or an OS (default: the host's). */
+  readonly target?: string;
+  /**
+   * The project's loaded `denext.config.*` default export (`undefined` for none). Left out, the
+   * config is read as data, never run (the doctors).
+   */
+  readonly config?: unknown;
+}
+
+/** The OS `target` names: an OS itself, or a Rust triple's. */
+function backendOsOf(target: string): DesktopBackendOs {
+  if (target === "darwin" || target === "windows" || target === "linux") return target;
+  const os = desktopBackendOsOfTarget(target);
+  if (os === null) throw new Error(`denext: no Deno Desktop target OS in "${target}"`);
+  return os;
+}
+
+/**
+ * The window engine the project builds `target` with: `desktop.backend` in `denext.config.ts`
+ * (one engine, or a per-OS `{ macos?, windows?, linux?, default? }`), else deno.json's
+ * `desktop.backend` (one engine: `deno desktop` reads that key itself), else `"webview"`.
+ *
+ * @param projectDir The project directory.
+ * @param options The target (default: the host) and the loaded config.
+ * @returns The engine.
+ * @throws {Error} On a value that is not an engine the denext runtime ships, or a per-OS object in
+ *   deno.json.
+ */
+export async function projectDesktopBackend(
+  projectDir: string,
+  options: ProjectDesktopBackendOptions = {},
+): Promise<DesktopRuntimeBackend> {
+  const os = backendOsOf(options.target ?? Deno.build.os);
+  const fromConfig = "config" in options
+    ? (options.config as { desktop?: { backend?: unknown } } | undefined)?.desktop?.backend
+    : await staticConfigBackend(projectDir);
+  const configured = resolveDesktopBackend(fromConfig, os);
+  if (configured !== undefined) return configured;
+  const backend = (await configuredBackend(projectDir)) ?? DEFAULT_DESKTOP_BACKEND;
   if (backend === "webview" || backend === "cef") return backend;
+  if (typeof backend === "object" && backend !== null && !Array.isArray(backend)) {
+    throw new Error(
+      "denext: deno.json desktop.backend is an object; `deno desktop` reads that key as one " +
+        'engine ("webview" or "cef"). Put a per-OS value in denext.config.ts desktop.backend ' +
+        "({ macos?, windows?, linux?, default? }) and take it out of deno.json.",
+    );
+  }
   throw new Error(
     `denext: deno.json desktop.backend is ${JSON.stringify(backend)}; the denext Deno Desktop ` +
-      `runtime ships "webview" and "cef". Set ${RUNTIME_ENV}=stock for another backend.`,
+      `runtime ships "webview" and "cef". On a stock Deno CLI (DENEXT_DENO=stock), set ` +
+      `${RUNTIME_ENV}=stock for another backend.`,
   );
 }
 
@@ -1464,13 +1604,47 @@ function fallbackHint(version: string): string {
 }
 
 /**
+ * A `deno` of another release than the runtime's: a refusal, or under `onDenoMismatch: "stock"` on
+ * a stock Deno the stock runtime with a warning (denext's Deno can't build on it).
+ */
+function mismatchedDenoEnv(
+  found: DenoIdentity,
+  pin: DesktopRuntimePin,
+  deno: string,
+  options: DesktopRuntimeEnvOptions,
+  log: (l: string) => void,
+): DesktopRuntimeEnv {
+  if (options.onDenoMismatch !== "stock" || isDenextDenoVersion(found)) {
+    throw new Error(denoVersionMismatchMessage(found.deno, pin, deno));
+  }
+  const stock = stockForMismatch(found.deno, pin, deno, log);
+  warnStockDeprecation("desktop-mismatch", deprecationDeps(options.env, log));
+  return stock;
+}
+
+/** The `DENEXT_DESKTOP_RUNTIME=stock` opt-out: a refusal on denext's Deno, else no env + warnings. */
+async function stockRuntimeEnv(
+  options: DesktopRuntimeEnvOptions,
+  env: EnvGet,
+  log: (l: string) => void,
+): Promise<DesktopRuntimeEnv> {
+  await assertStockRuntimeUsable({ ...options, env });
+  log(
+    `  denext: ${RUNTIME_ENV}=stock — building with the STOCK Deno Desktop runtime (${STOCK_LACKS}).`,
+  );
+  warnStockDeprecation("desktop-env", deprecationDeps(options.env, log));
+  return { mode: "stock", env: {} };
+}
+
+/**
  * Resolve the env one `deno desktop` invocation needs to run on denext's pinned runtime (and
- * download / verify it on first use). Honors `DENEXT_DESKTOP_RUNTIME=stock` (no env, a warning),
+ * download / verify it on first use). Honors `DENEXT_DESKTOP_RUNTIME=stock` (no env, a warning; on
+ * denext's Deno a refusal),
  * `DENEXT_DESKTOP_RUNTIME_DIR` (a local build, unverified, a warning),
  * `DENEXT_DESKTOP_RUNTIME_VERIFY=1` and `DENEXT_DESKTOP_RUNTIME_ATTEST` (unset: a fresh download
  * is attested when `gh` is signed in). Fails when `deno` is
- * not the runtime's exact Deno version (or, with `onDenoMismatch: "stock"`, warns and selects the
- * stock runtime). A target whose backend binary the host's `deno desktop` would look up under
+ * not the runtime's exact Deno version (or, with `onDenoMismatch: "stock"` on a stock Deno, warns
+ * and selects the stock runtime). A target whose backend binary the host's `deno desktop` would look up under
  * another executable suffix (Windows from macOS / Linux, Linux from Windows) gets a cross-host
  * `LAUFEY_DEV_DIR` (see {@linkcode crossHostBackendRename}).
  *
@@ -1483,13 +1657,7 @@ export async function resolveDesktopRuntimeEnv(
   const env = options.env ?? processEnv;
   const log = options.log ?? ((l: string) => console.error(l));
   const target = options.target ?? desktopRuntimeTarget();
-  if (runtimeMode(env) === "stock") {
-    log(
-      `  denext: ${RUNTIME_ENV}=stock — building with the STOCK Deno Desktop runtime (${STOCK_LACKS}).`,
-    );
-    warnStockDeprecation("desktop-env", deprecationDeps(options.env, log));
-    return { mode: "stock", env: {} };
-  }
+  if (runtimeMode(env) === "stock") return await stockRuntimeEnv(options, env, log);
   const localDir = env(RUNTIME_DIR_ENV);
   if (localDir) {
     const lib = runtimeLibFor(options.pin ?? DESKTOP_RUNTIME_PIN, target);
@@ -1504,14 +1672,10 @@ export async function resolveDesktopRuntimeEnv(
   const deno = options.deno ?? "deno";
   const found = asIdentity(await (options.denoVersion ?? denoCliVersion)(deno));
   if (denoReleaseVersion(found) !== pin.deno) {
-    if (options.onDenoMismatch === "stock") {
-      const stock = stockForMismatch(found.deno, pin, deno, log);
-      warnStockDeprecation("desktop-mismatch", deprecationDeps(options.env, log));
-      return stock;
-    }
-    throw new Error(denoVersionMismatchMessage(found.deno, pin, deno));
+    return mismatchedDenoEnv(found, pin, deno, options, log);
   }
-  const backend = options.backend ?? await projectDesktopBackend(options.projectDir);
+  const backend = options.backend ??
+    await projectDesktopBackend(options.projectDir, backendSource(options, target));
   const rt = await ensureDesktopRuntime({
     target,
     backend,
@@ -1616,7 +1780,9 @@ export async function desktopRuntimeEnv(
   target?: string,
 ): Promise<Record<string, string>> {
   const projectDir = fromFileUrl(new URL("..", entryUrl));
-  return (await resolveDesktopRuntimeEnv({ projectDir, target })).env;
+  // The loaded config: its `desktop.backend` picks the target's runtime flavour.
+  const config = await loadConfigBeside(entryUrl);
+  return (await resolveDesktopRuntimeEnv({ projectDir, target, config })).env;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1651,7 +1817,7 @@ const CACHE_TEXT: Record<CacheState, string> = {
   cached: "cached + verified",
   missing: "not cached yet (downloaded on the first desktop run/package)",
   invalid: "cache FAILED verification (re-downloaded on next use)",
-  unpinned: `no pinned build for this host (set ${RUNTIME_ENV}=stock)`,
+  unpinned: `no pinned build for this host (on a stock Deno CLI, ${RUNTIME_ENV}=stock)`,
   "n/a": "",
 };
 
@@ -1683,16 +1849,23 @@ function markerOf(identity: DenoIdentity): { denext?: string } {
 }
 
 /** The status under an override (`stock` / a local dir), or `null` for the pinned runtime. */
-function overrideStatus(
+async function overrideStatus(
+  options: DesktopRuntimeEnvOptions,
   env: EnvGet,
   base: Pick<DesktopRuntimeStatus, "version" | "target" | "deno">,
-): DesktopRuntimeStatus | null {
+): Promise<DesktopRuntimeStatus | null> {
   const common = { ...base, backend: null, cache: "n/a" as const, ok: true };
   if ((env(RUNTIME_ENV) ?? "").trim().toLowerCase() === "stock") {
+    const found = await stockOptOutIdentity(options);
+    const refused = found !== null && isDenextDenoVersion(found);
     return {
       ...common,
+      ...(found ? { deno: { ...base.deno, found: found.deno, ...markerOf(found) } } : {}),
       mode: "stock",
-      detail: `${RUNTIME_ENV}=stock — the stock runtime (${STOCK_LACKS})`,
+      ok: !refused,
+      detail: refused
+        ? stockRuntimeOnDenextDenoMessage(found, options.deno ?? "deno").replace(/^denext: /, "")
+        : `${RUNTIME_ENV}=stock — the stock runtime (${STOCK_LACKS})`,
     };
   }
   const local = env(RUNTIME_DIR_ENV);
@@ -1733,7 +1906,7 @@ export async function desktopRuntimeStatus(
   const pin = options.pin ?? DESKTOP_RUNTIME_PIN;
   const target = options.target ?? desktopRuntimeTarget();
   const base = { version: pin.version, target, deno: { found: null, required: pin.deno } };
-  const override = overrideStatus(options.env ?? processEnv, base);
+  const override = await overrideStatus(options, options.env ?? processEnv, base);
   if (override) return override;
   const deno = denoStatus(
     await (options.denoVersion ?? denoCliVersion)(options.deno ?? "deno")
@@ -1744,7 +1917,8 @@ export async function desktopRuntimeStatus(
   let cache: CacheState = "unpinned";
   let problem: string | null = null;
   try {
-    backend = options.backend ?? await projectDesktopBackend(options.projectDir);
+    backend = options.backend ??
+      await projectDesktopBackend(options.projectDir, backendSource(options, target));
     cache = await cacheState(options, pin, target, backend);
   } catch (err) {
     problem = errText(err);

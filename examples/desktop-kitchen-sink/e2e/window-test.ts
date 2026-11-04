@@ -39,7 +39,7 @@
 //                                               # deno.json's desktop.backend (restored afterwards)
 //   deno task test:window --runtime-dir <dir>   # package with a local runtime build
 //                                               # (DENEXT_DESKTOP_RUNTIME_DIR; unverified)
-//   deno task test:window --stock-runtime       # package with the stock runtime (DENEXT_DESKTOP_RUNTIME=stock)
+//   deno task test:window --stock-runtime       # the stock runtime (DENEXT_DESKTOP_RUNTIME=stock); needs a stock Deno CLI
 //   deno task test:window --results <file>      # also write the results document to <file>
 //   deno task test:window --json                # print only the results document on stdout (the
 //                                               # progress goes to stderr)

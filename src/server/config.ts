@@ -1221,10 +1221,37 @@ export interface DesktopConfig {
    */
   extraPermissions?: DesktopExtraPermissions;
   /**
+   * How narrow the packaged binary's baked read and environment grants are. `"default"` (or unset):
+   * `--allow-read` and `--allow-env` unscoped, as before. `"strict"` (needs Deno Desktop runtime
+   * 3.0.0-denext.8 and `desktop.app.identifier`): `--allow-read` scoped to the app's data and cache
+   * folders (`$DENO_DESKTOP_DATA`, `$DENO_DESKTOP_CACHE`; the embedded files are always readable)
+   * plus {@link DesktopExtraPermissions.read} and what the capabilities read, and `--allow-env`
+   * scoped to the variables denext's desktop runtime reads (never a signing or credential variable
+   * of the packaging tools) plus {@link DesktopPermissionsConfig.env} and
+   * {@link DesktopExtraPermissions.env}. Strict mode never falls back to the unscoped grants:
+   * packaging fails, naming the reason and the fix, when the runtime is older (or
+   * `DENEXT_DESKTOP_RUNTIME=stock` / `DENEXT_DESKTOP_RUNTIME_DIR` is set) or the identifier is
+   * missing, and when a read has no folder token or absolute path (a capability that reads a path
+   * picked at run time, `dialogs`; `$DOCUMENTS`; a relative path; `"*"`) or an env entry is `"*"`.
+   * `denext desktop run` / `dev` warn and bake the default instead for the first two. Refused with
+   * a program sidecar (`run.exec`) or `loginShellEnv`, which hand the child the whole environment.
+   */
+  permissions?: "default" | "strict" | DesktopPermissionsConfig;
+  /**
    * Full-app self-update (`checkForAppUpdate` … from `denext/desktop/updater`): the whole signed
    * app is replaced by a newer signed build. Needs denext's pinned Deno Desktop runtime.
    */
   update?: DesktopUpdateConfig;
+  /**
+   * The window engine `deno desktop` builds the app with: `"webview"` (the system WebView:
+   * WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux) or `"cef"` (Chromium, bundled).
+   * One engine for every target, or one per OS (`{ linux: "cef" }`: Chromium on Linux, where
+   * WebKitGTK has no WebRTC, and the system WebView elsewhere). The package scripts, `desktop run` /
+   * `dev`, the runtime download and both doctors resolve it for the OS they build or run for. It
+   * takes precedence over deno.json's `desktop.backend`, which `deno desktop` reads as one engine
+   * and which stays the fallback. Default `"webview"`.
+   */
+  backend?: "webview" | "cef" | DesktopBackendConfig;
   /**
    * The installers `denext desktop package` (the `scripts/package-*.ts`) builds, per OS. Unset,
    * an OS builds its defaults: `.dmg` on macOS (beside the `.app`), `.tar.gz` + `.deb` on Linux,
@@ -1437,6 +1464,21 @@ export interface DesktopAppIcons {
   windows?: string;
   /** Linux: a `.png` (512² or larger). */
   linux?: string;
+}
+
+/**
+ * {@link DesktopConfig.backend} per OS: each target's window engine. An OS left out takes
+ * `default`, else `"webview"`.
+ */
+export interface DesktopBackendConfig {
+  /** The macOS app's engine (`"webview"`: WKWebView). */
+  macos?: "webview" | "cef";
+  /** The Windows app's engine (`"webview"`: WebView2). */
+  windows?: "webview" | "cef";
+  /** The Linux app's engine (`"webview"`: WebKitGTK, which has no WebRTC). */
+  linux?: "webview" | "cef";
+  /** The engine of every OS not named here. */
+  default?: "webview" | "cef";
 }
 
 /** {@link DesktopConfig.installers}: the installer formats per OS, and what they say about the app. */
@@ -1871,6 +1913,19 @@ export interface CompilePermissions {
   netListen?: string[];
 }
 
+/** {@link DesktopConfig.permissions} as an object: the mode, and the app's own variables. */
+export interface DesktopPermissionsConfig {
+  /** `"strict"` scopes the baked read and environment grants (see {@link DesktopConfig.permissions}). */
+  mode: "default" | "strict";
+  /**
+   * The environment variables the app's own code reads (`DATABASE_URL`, `NEXT_PUBLIC_*` names, …),
+   * added to the strict `--allow-env` allow-list. One name per entry.
+   *
+   * @itemPattern "^[A-Za-z_][A-Za-z0-9_]*$"
+   */
+  env?: string[];
+}
+
 /**
  * Extra `--allow-*` for the desktop packaging scripts (see {@link DesktopConfig.extraPermissions}).
  * Each field is a list of Deno permission values, unioned into the derived flags.
@@ -1878,7 +1933,12 @@ export interface CompilePermissions {
 export interface DesktopExtraPermissions {
   /** `--allow-read` paths (usually unnecessary — the baseline is already broad read). */
   read?: string[];
-  /** `--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be scoped). */
+  /**
+   * `--allow-write` paths; ANY entry bakes a broad `--allow-write` (a per-user path can't be
+   * scoped) — except under Deno Desktop runtime 3.0.0-denext.8 in an app with
+   * `desktop.app.identifier`, where `$APPDATA/…`, `$CACHE/…` and absolute paths are baked as
+   * written (the folders as `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE`).
+   */
   write?: string[];
   /**
    * `--allow-net` hosts, e.g. the updater's feed host. Under denext's pinned runtime (3.0.0-rc.2 or

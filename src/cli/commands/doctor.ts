@@ -39,10 +39,20 @@ import {
   isDesktopProject,
   launchPolicyProblems,
   readProjectDenoJson as readDenoJson,
+  staleBackendPackageScripts,
   stalePackageScripts,
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
 import { DENEXT_EXCLUDE, denextExemptions } from "../../build/dep-age.ts";
+import {
+  describeClash,
+  frameworkRuntimeDeps,
+  importsOf,
+  localCheckoutOf,
+  majorClashes,
+  ownVersionMismatches,
+  readDenoConfig,
+} from "../../build/local-checkout-imports.ts";
 import { desktopRuntimeStatus } from "../../build/desktop-runtime.ts";
 import {
   DENO_TOOLCHAIN,
@@ -410,6 +420,75 @@ export async function depAgeExemptionCheck(
       `other dependency; fix: ${fixes.join("; ")}. Keep an entry only if you publish denext ` +
       `yourself, or in a harness that tests its own fresh releases (${DEP_AGE_EXEMPTION_ALLOWED_ENV}=1 ` +
       "marks it deliberate): https://denext.dev/docs/toolchain#supply-chain-hold",
+    critical: false,
+  };
+}
+
+/**
+ * The local-checkout import check: an app whose import map points `denext` at a local checkout
+ * (a path or `file:` URL) must map denext's own deps itself, and an entry it maps at another major
+ * than the checkout's (`"@std/path": "jsr:@std/path@^0.224.0"` beside the checkout's `^1`) gives
+ * denext's modules a version they were not written for. A failure naming each clash (not
+ * critical); a pass when the checkout's deps agree; null when denext does not come from a checkout.
+ *
+ * @param dir The project directory (its `deno.json`).
+ */
+export async function localCheckoutImportsCheck(dir: string): Promise<Check | null> {
+  const imports = importsOf(await readDenoConfig(dir));
+  const checkout = await localCheckoutOf(dir, imports);
+  if (!checkout) return null;
+  const clashes = majorClashes(imports, await frameworkRuntimeDeps(checkout));
+  if (!clashes.length) {
+    return {
+      name: "local denext imports",
+      ok: true,
+      detail: `denext from the checkout at ${checkout}; the import map agrees with its deps`,
+      critical: false,
+    };
+  }
+  return {
+    name: "local denext imports",
+    ok: false,
+    detail: `denext comes from the checkout at ${checkout}, and the import map maps ` +
+      `${clashes.length === 1 ? "a package" : "packages"} it imports at another major: ` +
+      `${clashes.map(describeClash).join("; ")}. denext's modules load the app's version. ` +
+      "Map the checkout's version if the app does not need its own, or check denext works " +
+      "with the app's: https://denext.dev/docs/toolchain#a-local-denext-checkout",
+    critical: false,
+  };
+}
+
+/**
+ * The own-version check: an `npm:` import-map entry whose major differs from the app's own copy
+ * of the package (installed in `node_modules`, else its package.json range) loads one major
+ * through the import map and another everywhere `node_modules` is read (`"effect":
+ * "npm:effect@^3.22.0"` beside an installed Effect 4). A failure naming each (not critical); a
+ * pass when there were entries to compare and they agree; null when there were none.
+ *
+ * @param dir The project directory.
+ */
+export async function importVersionsCheck(dir: string): Promise<Check | null> {
+  const imports = importsOf(await readDenoConfig(dir));
+  const npm = Object.values(imports).filter((v) => v.startsWith("npm:"));
+  if (!npm.length) return null;
+  const found = await ownVersionMismatches(dir, imports);
+  if (!found.length) {
+    return {
+      name: "import-map versions",
+      ok: true,
+      detail: `${npm.length} npm: import-map entr${
+        npm.length === 1 ? "y agrees" : "ies agree"
+      } in major with the app's own copies (or have none to compare)`,
+      critical: false,
+    };
+  }
+  const listed = found.map((m) => `${m.key} → ${m.spec}, but ${m.source} has ${m.own}`);
+  return {
+    name: "import-map versions",
+    ok: false,
+    detail: `the import map loads another major than the app's own copy: ${listed.join("; ")}. ` +
+      "Point the entry at the version the app installs (or drop it, so the package resolves " +
+      "from node_modules), or install the version the import map names",
     critical: false,
   };
 }
@@ -801,6 +880,7 @@ export async function desktopLaunchPolicyCheck(
     config,
     desktopBridgeOrigins,
     await stalePackageScripts(dir),
+    await staleBackendPackageScripts(dir),
   );
   const pinned = desktopPasskeyRpIds(config) === null
     ? "bridgeOrigins"
@@ -819,7 +899,7 @@ export async function desktopLaunchPolicyCheck(
 async function desktopChecks(dir: string, config: unknown): Promise<Check[]> {
   const checks = [
     await desktopOriginCheck(dir, config),
-    await desktopRuntimeCheck(dir),
+    await desktopRuntimeCheck(dir, { config }),
     await desktopLaunchPolicyCheck(dir, config),
   ];
   return checks.filter((c): c is Check => c !== null);
@@ -1054,6 +1134,10 @@ export async function collectDoctorReport(
   if (signing) checks.push(signing);
   const depAge = await depAgeExemptionCheck(paths.projectDir);
   if (depAge) checks.push(depAge);
+  const localImports = await localCheckoutImportsCheck(paths.projectDir);
+  if (localImports) checks.push(localImports);
+  const importVersions = await importVersionsCheck(paths.projectDir);
+  if (importVersions) checks.push(importVersions);
   const jail = await jailScriptsCheck(paths.projectDir, options);
   if (jail) checks.push(jail);
   checks.push(...await backendChecks(paths.projectDir, paths.config), ...authChecks(paths.config));

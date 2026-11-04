@@ -10,7 +10,10 @@ import { join } from "@std/path";
 import pinJson from "./desktop-runtime-pin.json" with { type: "json" };
 import {
   compareDenoVersions,
+  currentDenoIdentity,
+  type DenoIdentity,
   supportsDesktopCacheToken,
+  supportsDesktopDataToken,
   supportsInitialOverlay,
   supportsOverlayTray,
 } from "./deno-version.ts";
@@ -122,18 +125,101 @@ export function initialOverlayRuntime(
  * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime that
  * expands `$DENO_DESKTOP_CACHE` in a baked permission to the app's cache folder: denext's pinned
  * runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of
- * unknown version) from `FIRST_DESKTOP_CACHE_TOKEN_RUNTIME` (`3.0.0-denext.8`). An older runtime
- * would read the token as a relative path, so a program sidecar keeps its unscoped `--allow-run`.
+ * unknown version) from `FIRST_DESKTOP_CACHE_TOKEN_RUNTIME` (`3.0.0-denext.8`), compiled by
+ * denext's Deno. An older runtime would read the token as a relative path, and a binary stock Deno
+ * compiled carries no identifier to expand it from, so a program sidecar keeps its unscoped
+ * `--allow-run`.
  *
  * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
  * @param version The pinned runtime's version (default: the pin's).
+ * @param compiler The Deno that compiles the app (default: this process's; stock Deno bakes no
+ *   identifier, so no token can be expanded).
  * @returns Whether to bake `$DENO_DESKTOP_CACHE` grants.
  */
 export function desktopCacheTokenRuntime(
   env: EnvGet = processEnv,
   version: string = pinJson.version,
+  compiler: DenoIdentity = currentDenoIdentity(),
 ): boolean {
-  return pinnedRuntimeHas(env, version, supportsDesktopCacheToken);
+  return pinnedRuntimeHas(env, version, supportsDesktopCacheToken) &&
+    compilerBakesAppIdentifier(compiler);
+}
+
+/**
+ * Whether the Deno that compiles the app (`deno desktop`, which the package scripts run as this
+ * process's own binary, `desktopRun`) writes `desktop.app.identifier` into the binary's metadata:
+ * denext's Deno does, stock Deno does not. The runtime expands `$DENO_DESKTOP_CACHE` /
+ * `$DENO_DESKTOP_DATA` from that baked identifier and drops a token it can't expand, so on a stock
+ * compiler a token grant would grant nothing (a program sidecar's copy, the `fs` folders).
+ *
+ * @param compiler The compiling Deno's identity.
+ * @returns Whether a token grant would be expanded.
+ */
+function compilerBakesAppIdentifier(compiler: DenoIdentity): boolean {
+  return typeof compiler.denext === "string" && compiler.denext !== "";
+}
+
+/**
+ * Whether a package script or `denext desktop run` / `dev` in this process builds on a runtime that
+ * expands `$DENO_DESKTOP_DATA` in a baked permission to the app's data folder: denext's pinned
+ * runtime (not `DENEXT_DESKTOP_RUNTIME=stock`, not a local `DENEXT_DESKTOP_RUNTIME_DIR` build of
+ * unknown version) from `FIRST_DESKTOP_DATA_TOKEN_RUNTIME` (`3.0.0-denext.8`). An older runtime
+ * would read the token as a relative path, so the app-folder grants stay an unscoped
+ * `--allow-write`.
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @param compiler The Deno that compiles the app (default: this process's; stock Deno bakes no
+ *   identifier, so no token can be expanded).
+ * @returns Whether to bake `$DENO_DESKTOP_DATA` grants.
+ */
+export function desktopDataTokenRuntime(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+  compiler: DenoIdentity = currentDenoIdentity(),
+): boolean {
+  return pinnedRuntimeHas(env, version, supportsDesktopDataToken) &&
+    compilerBakesAppIdentifier(compiler);
+}
+
+/**
+ * Why a package script or `denext desktop run` / `dev` in this process does not build on a runtime
+ * that expands `$DENO_DESKTOP_DATA` / `$DENO_DESKTOP_CACHE` ({@linkcode desktopDataTokenRuntime}),
+ * with the fix, else `null`: `DENEXT_DESKTOP_RUNTIME=stock`, a local `DENEXT_DESKTOP_RUNTIME_DIR`
+ * build of unknown version, or a pinned runtime older than `FIRST_DESKTOP_DATA_TOKEN_RUNTIME`
+ * (`3.0.0-denext.8`).
+ *
+ * @param env Reads an environment variable (default `Deno.env.get`, a denied read as unset).
+ * @param version The pinned runtime's version (default: the pin's).
+ * @param compiler The Deno that compiles the app (default: this process's; stock Deno bakes no
+ *   identifier, so no token can be expanded).
+ * @returns The reason and its fix, or `null` when the runtime expands the tokens.
+ */
+export function desktopDataTokenRuntimeProblem(
+  env: EnvGet = processEnv,
+  version: string = pinJson.version,
+  compiler: DenoIdentity = currentDenoIdentity(),
+): string | null {
+  const mode = (env("DENEXT_DESKTOP_RUNTIME") ?? "").trim().toLowerCase();
+  if (mode === "stock") {
+    return "DENEXT_DESKTOP_RUNTIME=stock selects the stock Deno Desktop runtime, which does not " +
+      "expand $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE. Unset DENEXT_DESKTOP_RUNTIME";
+  }
+  if (env("DENEXT_DESKTOP_RUNTIME_DIR")) {
+    return "DENEXT_DESKTOP_RUNTIME_DIR points at a local Deno Desktop runtime build of unknown " +
+      "version, which may not expand $DENO_DESKTOP_DATA / $DENO_DESKTOP_CACHE. Unset " +
+      "DENEXT_DESKTOP_RUNTIME_DIR to build on the pinned runtime";
+  }
+  if (!supportsDesktopDataToken(version)) {
+    return `the pinned Deno Desktop runtime is ${version}, and expanding $DENO_DESKTOP_DATA / ` +
+      "$DENO_DESKTOP_CACHE needs 3.0.0-denext.8 or later. Upgrade denext (`denext upgrade`)";
+  }
+  if (!compilerBakesAppIdentifier(compiler)) {
+    return `the app is compiled by stock Deno ${compiler.deno}, which does not write ` +
+      "desktop.app.identifier into the binary, so the runtime cannot expand $DENO_DESKTOP_DATA / " +
+      "$DENO_DESKTOP_CACHE. Package on denext's Deno toolchain (`denext desktop package`)";
+  }
+  return null;
 }
 
 /**
@@ -228,22 +314,44 @@ export async function stalePackageScripts(dir: string): Promise<string[]> {
   return out;
 }
 
+/** What a current macOS package script calls to pass `desktop.backend` to `deno desktop`. */
+const BACKEND_PASSERS = /\b(?:desktopBackendArgs|buildDesktopBundle)\b/;
+
+/**
+ * The project's macOS package script when it never passes `desktop.backend` to `deno desktop` (a
+ * script from before the per-OS `desktop.backend`): the runtime it fetches follows the macOS engine
+ * `denext.config.ts` names, but `deno desktop` builds with deno.json's, so a per-OS value that gives
+ * macOS another engine builds the wrong one. (The Linux and Windows scripts pass it through
+ * denext's `buildDesktopBundle`.)
+ *
+ * @param dir The project directory.
+ * @returns `["scripts/package-macos.ts"]` when that script is stale so, else empty.
+ */
+export async function staleBackendPackageScripts(dir: string): Promise<string[]> {
+  const rel = "scripts/package-macos.ts";
+  const text = await Deno.readTextFile(join(dir, rel)).catch(() => null);
+  return text !== null && !BACKEND_PASSERS.test(text) ? [rel] : [];
+}
+
 /**
  * Why the packaged launch file would leave a policy unpinned or refuse every ceremony: a passkeys
  * capability with no RP ID (`passkeyRpIds` empty, so laufey refuses every ceremony with
  * `invalid_rp`), a `desktop.app.bridgeOrigins` that cannot be written (no `bridgeOrigins`: under
  * the strict policy the bridge then serves no document), and package scripts that do not write
- * denext's launch file at all ({@linkcode stalePackageScripts}).
+ * denext's launch file at all ({@linkcode stalePackageScripts}) or never pass `desktop.backend`
+ * to `deno desktop` ({@linkcode staleBackendPackageScripts}).
  *
  * @param config The project config.
  * @param bridgeOrigins Computes the launch file's `bridgeOrigins` (throws on a bad entry).
  * @param staleScripts The project's stale package scripts (default none).
+ * @param staleBackendScripts The package scripts that never pass `desktop.backend` (default none).
  * @returns The problems (empty when the launch policy is complete).
  */
 export function launchPolicyProblems(
   config: unknown,
   bridgeOrigins: (config: unknown) => string[],
   staleScripts: readonly string[] = [],
+  staleBackendScripts: readonly string[] = [],
 ): LaunchPolicyProblem[] {
   const problems: LaunchPolicyProblem[] = [];
   try {
@@ -271,6 +379,17 @@ export function launchPolicyProblems(
           staleScripts.length === 1 ? "s" : ""
         } denext's laufey-launch.json, so the packaged app lacks bridgeOrigins, passkeyRpIds ` +
         "and strictPolicy",
+      fix: "denext desktop package --regenerate-scripts",
+    });
+  }
+  if (staleBackendScripts.length > 0) {
+    problems.push({
+      message:
+        `${staleBackendScripts.join(", ")} never pass${
+          staleBackendScripts.length === 1 ? "es" : ""
+        } desktop.backend to deno desktop (desktopBackendArgs): a denext.config.ts desktop.backend ` +
+        "that gives macOS another engine than deno.json's fetches that engine's runtime but " +
+        "builds deno.json's",
       fix: "denext desktop package --regenerate-scripts",
     });
   }

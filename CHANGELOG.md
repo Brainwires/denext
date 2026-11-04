@@ -8,6 +8,288 @@ and this project adheres to
 
 ## [Unreleased]
 
+## [4.12.0] - 2026-11-04
+
+### Added
+
+- **`desktop.backend` per OS.** `denext.config.ts` `desktop.backend` takes `"webview"`, `"cef"` or
+  `{ macos?, windows?, linux?, default? }` (the keys `desktop.installers` uses), so an app can ship
+  CEF on Linux, where WebKitGTK has no WebRTC, and the system WebView on macOS and Windows. Each
+  reader resolves it for its target: the package scripts pass `--backend` to `deno desktop` and
+  fetch that target's runtime flavour, the Windows CEF signature check and the Linux packages'
+  dependencies follow it, `desktop run` / `dev` and both doctors use the host's, and config
+  validation and the `denext ui` Desktop form know it. deno.json's `desktop.backend` stays the
+  one-engine fallback (`deno desktop` reads it as a string; a per-OS object there is refused with
+  the fix). A `scripts/package-macos.ts` from before this passes no `--backend`: `denext doctor`
+  and `denext desktop doctor` flag it, `denext desktop package` warns of it and refuses to run it
+  while the config gives macOS another engine than deno.json's (it would fetch one engine's runtime
+  and build the other); `denext desktop package --regenerate-scripts` fixes it.
+- **`onCloseRequested` and `onBeforeQuit` are asked about the OS's own quits** (takes effect with
+  Deno Desktop runtime 3.0.0-denext.8; on an older runtime Cmd+Q still ends the
+  app at once). Cmd+Q, the Dock's Quit and a logout on macOS, and the session ending on Windows,
+  reach the handlers with `reason: "quit"`, and a handler that refuses a session end asks the OS to stop it, which it may not honour: on macOS 26
+  a logout stopped for an app with a Dock icon and went on anyway for an accessory app (real Windows
+  logoffs are untested). The OS
+  is never held for long: an unanswered quit goes ahead after 5 seconds, a session end after 10
+  (macOS) or 4 (Windows), and a refusal after that does nothing. macOS takes no input for the app
+  while a session end is pending, so a handler can't ask the user then.
+- **`openWindow({ backgroundThrottling })`** (and `windows.open` in `desktop.ts`), Electron's
+  `webPreferences.backgroundThrottling`, passed to `Deno.BrowserWindow` at creation (takes effect
+  with Deno Desktop runtime 3.0.0-denext.8; an older one ignores it). `true` (the default) keeps a
+  hidden window's page running with its timers slowed; `false` keeps them at their rate, for a
+  hidden window that does background work. With that runtime a hidden page on macOS is throttled
+  instead of frozen, so a tray app's hidden pages handle menu items and events again.
+- **A compiled app's `job` and `db` run past the server's `start.limits`** (takes effect with
+  denext's Deno 3.0.0-denext.8). The main module `denext build --compile`
+  generates calls `Deno.disarmResourceLimits(import.meta)` before it dispatches `./app job <name>`
+  or `./app db migrate` (the runtime takes only the main module's own `import.meta`), so a long
+  job or migration is no longer ended by the server's `--max-memory` / `--max-cpu-time` /
+  `--max-time`; `./app` and `./app start` keep them. On an older runtime, which has no such
+  function, those verbs run under the limits and print the notice as before.
+- **`desktop.permissions: "strict"`: a packaged desktop app's read and environment grants scoped**
+  (opt-in; needs Deno Desktop runtime 3.0.0-denext.8 and `desktop.app.identifier`; the default is
+  unchanged). `--allow-read` covers the app's data and cache folders, the capabilities' folders and
+  `desktop.extraPermissions.read`; `--allow-env` covers the variables denext's desktop runtime
+  reads plus `desktop.permissions.env` (`{ mode: "strict", env: [...] }`) and
+  `desktop.extraPermissions.env`. The packaging tools' signing and credential variables
+  (`DENEXT_WINDOWS_CERT*`, `DENEXT_OTA_SIGNING_KEY`, `DENEXT_NOTARY_*`, `DENEXT_CODESIGN_IDENTITY`,
+  `DENEXT_SIGN_TIMESTAMP_URL`, and any `*_TOKEN` / `*_SECRET` / `*_PASSWORD` / `*_KEY` name such
+  as `SESSION_SECRET`) are never in that list, though the `denext/desktop` module graph reads them:
+  an app's dependency can't read a signing key from the environment of a developer or CI runner
+  testing the app (an app that reads one of them itself declares it). Strict mode never falls back
+  to the unscoped grants. Packaging fails, naming the reason and the fix, when the runtime can't
+  scope them (older than 3.0.0-denext.8, `DENEXT_DESKTOP_RUNTIME=stock`, a
+  `DENEXT_DESKTOP_RUNTIME_DIR` build) or `desktop.app.identifier` is missing (the package scripts
+  check it too, not only the config validator), and when a read can't be scoped (a picked path
+  under `dialogs`, `$DOCUMENTS`, a relative path, `"*"`) or an env entry is `"*"`, naming the entry.
+  `denext desktop run` / `dev` print a warning and bake the default for the first two, so a local
+  runtime build can still be tried. A program sidecar (`run.exec`) or `loginShellEnv` hands its
+  child the whole environment, so the config validator and the package scripts refuse strict mode
+  with either.
+- **`denext upgrade` lists out-of-date native templates.** The native files `denext mobile add` /
+  `add-ota` wrote into `ios/` and `android/` carry their template generation; `upgrade` (with
+  `--dry-run` too, and as `nativeTemplates` in `--json`) names every family older than this denext
+  writes, with the command that refreshes it (`denext mobile add auth-session` for the bridge
+  frame-guard fixes of auth-session generation 6, say). Native files are never rewritten by
+  `upgrade`: they change the binary.
+- **`denext doctor` checks an app that runs denext from a local checkout.** When the import map's
+  `denext` entry is a path or `file:` URL into a denext checkout, the `local denext imports` check
+  flags an entry that maps a package the checkout's modules import at another major (or to another
+  package), naming the app's specifier and the checkout's.
+- **`denext doctor` checks an import map against the app's own package versions.** The
+  `import-map versions` check flags an `npm:` entry whose major differs from the app's own copy
+  of the package (installed in `node_modules`, else its package.json range), such as
+  `"effect": "npm:effect@^3.22.0"` beside an installed Effect 4.
+- **`denext migrate --check --denext-local-path` previews the import clashes** the migration would
+  report, as review findings and as `importClashes` in the report.
+- **A desktop extension can stream to the page with no page call in flight.** A capability's new
+  `setup(host)` runs once when the app starts and receives a `DesktopExtensionHost`: its
+  `host.emit(event, data)` is the extension's own process-level emit (limited to its declared
+  `events`, kept until the page subscribes, like `ctx.emit`), so work started by `desktop.ts`, a
+  tray item or a timer reaches `onDesktopEvent` without the "keep the last `ctx.emit`" workaround.
+  `ctx.emit`, `host.emit` and `runDesktop`'s `emit` take `{ window }` to reach one window instead
+  of every one.
+- **`ctx.pickedPath(handle)` hands an extension the path of a file the user picked.** It resolves a
+  handle that a dialog (`pickDocument`, `openFile`, `saveFile`, `pickFolder`), a file dropped on a
+  window or a file the OS opened with the app produced in this launch to its absolute path, for a
+  host program that needs one; a path string, a made-up or expired handle is refused with
+  `forbidden`, and `{ write: true }` also refuses a read-only handle. The page's `path` stays
+  display-only. The desktop guide gains "Validate what the page sends".
+
+### Changed
+
+- **The Deno toolchain and the Deno Desktop runtime are pinned to `3.0.0-denext.8`**, with
+  `3.0.0-denext.7` as the rollback. Everything above marked "takes effect with 3.0.0-denext.8" is
+  now in effect. **Known issue:** a CEF app on an Intel (x86_64) Mac can crash in Chromium's own
+  teardown when it quits (seen about once in 5,600 quits); the app has already finished, but
+  profile writes in flight can be lost and a crash report is left. The fix comes with the next
+  runtime. The first passkey request on macOS after a login takes 1.3 to 2.5 s while the OS starts
+  its authentication agent on demand; later requests take a few milliseconds.
+- **`DENEXT_DESKTOP_RUNTIME=stock` needs a stock Deno CLI, and denext now says so.** On denext's
+  Deno it stops before anything is built (`desktop run` / `dev` / `package` and the package scripts),
+  naming the fix: unset it, or set `DENEXT_DENO=stock` with a stock `deno`. That combination could
+  not start an app (a stock runtime can't read what denext's Deno compiles), and from Deno Desktop
+  runtime 3.0.0-denext.8 `deno desktop` refuses it. `denext desktop doctor` reports it as an error,
+  `desktop run` / `dev` no longer fall back to the stock runtime on a denext Deno of another
+  release, and the download, no-pinned-build and version-mismatch messages offer the opt-out only
+  with that condition. On a stock Deno CLI nothing changes.
+- **A packaged desktop app's writes to its own folders are scoped to those folders** (takes effect
+  with Deno Desktop runtime 3.0.0-denext.8; gated on
+  `FIRST_DESKTOP_DATA_TOKEN_RUNTIME`, so nothing changes on an older runtime). In an app with
+  `desktop.app.identifier`, the package scripts bake the `fs` / `sqlite` / `updates` capabilities'
+  folders, a sidecar's log file and the UI overlay's `ui-updates` as `$DENO_DESKTOP_DATA[/…]` and
+  `$DENO_DESKTOP_CACHE`, which the runtime expands at launch to the app's data and cache folders,
+  instead of an unscoped `--allow-write`; `$APPDATA/…` / `$CACHE/…` and absolute paths in
+  `desktop.extraPermissions.write` are kept scoped too. A write with no folder token (a picked path
+  under `dialogs`, `$DOCUMENTS`, a relative path) keeps the unscoped grant. Code that writes
+  anywhere else needs the path in `desktop.extraPermissions.write`. The tokens are baked only when
+  denext's Deno compiles the app: the runtime expands them from the identifier the compiler writes
+  into the binary, which stock Deno doesn't, so a stock build keeps the unscoped grants (and
+  `desktop.permissions: "strict"` refuses it, naming the fix). The package scripts now run
+  `deno desktop` (and `deno task export`) on the Deno running the script rather than the first
+  `deno` on PATH, so `denext desktop package` compiles on denext's toolchain.
+
+### Fixed
+
+- **`SafeSet` / `SafeMap` built from another collection no longer hang or throw** in denext's Deno
+  and the Deno Desktop runtime. The runtime's internal safe collections read a `Set` or `Map`
+  argument by index, so `new SafeSet(otherSet)` never returned and `new SafeMap(otherMap)` threw
+  `Iterator value undefined is not an entry object` (OpenTelemetry's trace-state copy hit it); any
+  iterable that isn't array-like is now read by its own iterator.
+- **A `desktop.permissions: "strict"` refusal prints as one line.** The generated
+  `scripts/package-*.ts` (and so `denext desktop package`) end with the refusal's message and exit 1
+  instead of an uncaught error with a stack trace; other errors keep their stack. Regenerate the
+  scripts with `denext desktop package --regenerate-scripts` to pick it up.
+- **The desktop kitchen-sink's drag check passes on a Wayland WebKitGTK window**, where a drag with
+  no button held ends `"cancelled"` rather than `"failed"`. The desktop guide and known limitations
+  now say that `startFileDrag` resolving `"failed"` is a normal outcome on Wayland (always under
+  CEF), and that the runtime's clipboard `change` event can be absent under CEF on Wayland.
+- **`.deno/npm-compat` is no longer listed as a limitation of the pinned runtime**: from runtime
+  3.0.0-denext.8 the type check keeps it under `DENO_DIR` and removes the old folder. A project
+  on an older runtime still wants `"exclude": [".deno/"]`.
+- **`migrate --denext-local-path` never overrides a package the app maps itself.** A key in the
+  app's existing import map keeps the app's value on a re-run (it was replaced by the checkout's),
+  a `package.json` dependency stays the app's, and a clash at another major is reported (package,
+  the app's specifier, the checkout's) instead of shadowing the app's version.
+- **`migrate --denext-local-path` maps only the deps an app's graph can load.** They come from the
+  modules reachable from the checkout's public entry points, not from every file under `src/`: a
+  dependency only denext's CLI imports (its profiler's headless-browser client) no longer lands in
+  the app's import map, and neither does one of the checkout's workspace packages or tests.
+- **denext's own import map no longer shadows an app's package in dev and build configs.** The
+  merged configs the unbundled dev loop, the stylesheet build, the runtime prebuild and the
+  module re-exec of a build resolve through layered denext's whole root import map under the
+  app's, so a package the app leaves unmapped and resolves from its own `node_modules` (an app on
+  Effect 4) got denext's test-only `effect@^3` instead. They now carry denext's `jsr:` / `npm:`
+  entries only where denext's own module graph imports them, and never for a package the app has
+  in package.json or `node_modules` (the runtime prebuild, which bundles none of the app's
+  modules, applies only the first rule).
+- **The desktop examples no longer print Deno's "Ignored build scripts" box.** The examples that
+  are their own workspace root (Hangar, Companion, the kitchen sink, Clerk, React Native desktop)
+  carry the `allowScripts` deny of `@parcel/watcher` a scaffold writes, so an app copied from one
+  runs `denext desktop package --regenerate-scripts` and every other command without the warning.
+- **Hangar's settings page can no longer loosen what guards the host.** `setSettings` checks the
+  page's arguments against the settings a page may change: unknown keys are refused instead of
+  dropped, the QEMU prefix (the program Hangar runs) is set only in the settings file, and the RAM
+  budget goes up to 90% from a page. A VM the tray starts or stops now refreshes the open pages at
+  once through the extension's `setup` host, and Hangar's tests type-check it with a timeout helper
+  of their own instead of a repository script.
+
+### Security
+
+- **Rebuild and reship: V8 moves to 15.6 (Chrome Extended Stable 156).** denext's Deno and the
+  Deno Desktop runtime were on V8 15.2.124.45, the last of a branch that gets no more fixes, and
+  they now run V8 15.6.75.33. It carries the V8 fixes from Chrome 153 through 156 that were never
+  merged back to 15.2: 27 CVEs by Chrome's release notes (15 High, 7 Medium, 5 Low), none reported
+  exploited in the wild. This covers `denext start`, `denext build --compile` binaries and packaged
+  desktop apps on every backend. A binary or a packaged app keeps the engine it was built with
+  until it is rebuilt. V8 15.6 has no live edit, so `deno run --watch-hmr` restarts the program on
+  each change and the desktop dev loop reloads the window instead of replacing a module in place.
+  The engine build also holds other isolates back while a snapshot is being made, because V8 frees
+  the read-only heap such an isolate is attached to; denext embeds the prebuilt snapshot, so no
+  program reaches that window.
+- **Rebuild CEF apps: the CEF hosts move to CEF 156.0.15 (Chromium 156.0.8078.80).** This brings
+  Chrome's fixes from 156.0.8078.73 on, the part
+  [GHSA-fp5v-5vcj-35wj](https://github.com/Brainwires/deno/security/advisories/GHSA-fp5v-5vcj-35wj)
+  left open. Apps on a system web view (WebView2, WKWebView, WebKitGTK) are not affected.
+- **`--deny-write` can no longer be bypassed through a parent of the denied path.** With
+  `--allow-write=base --deny-write=base/a/b`, stock Deno 2.9.8 and every runtime through
+  `3.0.0-denext.7` let `Deno.rename("base/a", …)` move the denied folder away, let a rename or a
+  symlink put another tree at a denied path or one of its parents, and let `node:fs` `cp` recreate
+  or remove links the same way. `node:wasi`'s `path_rename` and `path_symlink` had the same gaps
+  under a scoped grant, and a `path_symlink` target could point out of the preopen. Renames (both
+  paths), symlink paths, a non-recursive removal of a link and `chmod` / `chown` of a parent now
+  get the strict check a recursive remove has: a deny scope inside the path refuses the operation.
+  A `node:wasi` link target must stay in the preopen. `node:wasi` also unlinks, removes and renames
+  a link rather than its target, and `path_open` with `O_CREAT` no longer writes outside the
+  preopen through a dangling link.
+- **Windows permission checks compare paths the way NTFS does.** Each of these got past
+  `--deny-write` (or `--deny-read`) through another spelling of the denied path: an 8.3 short name
+  (`LONGNA~1`), a letter case outside ASCII (`Ärger` / `ärger`; the fold is now NTFS's own upcase
+  table), trailing dots and spaces (`base\a.\b`) and named streams (`prog::$DATA`, `prog:evil`).
+  The same applied to a Unix-socket deny, a run deny by name and a drive-relative path (`D:dir\f`).
+  Paths are compared by their long names with the dots, spaces and stream suffixes trimmed, and
+  each operation still receives the path as written. Write deny scopes with long names: a scope
+  written as the short name of an entry that does not exist yet matches only that spelling.
+- **A full-app update's rollback puts back only the app tree it checked, and only for the app it
+  replaced.** Before the swap, the update helper now writes a trial record to its private staging
+  folder with the installed app's digest and version and the version going in. A rollback holds
+  the tree it is about to restore, checks it against that record before the move and again right
+  before it, and marks the version compiled into the installed app as rejected, not the one the
+  state file names. Earlier, a program that could write the install's parent could swap another
+  tree in at `.old` during the check, and an edited state file chose what counted as the previous
+  and rejected versions. A swap made by an older runtime that then fails its trial under this one
+  is not rolled back: the refusal is recorded and the installed version stays. The staged app is
+  also checked through a held, private (0700) staging folder; the extraction uses the exact bytes
+  the download verified; and on Windows an update is refused whenever certificate revocation can't
+  be checked (an offline machine waits until the revocation servers can be reached).
+- **The runtime's build pins fail closed.** A CLI with the embedded `denort` SHA-256 list refuses a
+  target the list doesn't name, rather than trusting the release's `SHA256SUMS`, which a swapped
+  release could change along with the archive. A runtime build that skipped the verified V8
+  prebuilt fails, rather than linking a V8 without the fork's patches.
+- **A macOS full-app update needs a notarized Developer ID Application signature.** The runtime
+  checked the staged bundle only for an Apple-issued certificate of the installed app's team, which
+  an Apple Development or Mac App Store certificate also satisfies, and asked for no notarization
+  ticket. It now checks Apple's Developer ID requirement plus `notarized` (the Developer ID CA, a
+  Developer ID Application leaf, the same team, a stapled or online ticket), so a build signed with a
+  Developer ID but not notarized no longer installs as an update. `denext desktop package --sign`
+  notarizes.
+- **A Windows app's files are all under its Authenticode signature for full-app updates, and the
+  signature is bound to the app and version** (5.0-gate review A, M2; the runtime denext.8 audit,
+  F2). The runtime verified the signature of every `.exe` / `.dll` / `.node` of a staged update,
+  but `laufey-launch.json` (the window's bridge origins and inspectable policy), CEF's `.pak` /
+  `icudtl.dat` / snapshot files, sidecar JavaScript and `.deno-desktop-app` were protected by the
+  update key alone, and a signature says who signed a DLL, not which release or product it came
+  from. The Windows package build (`buildDesktopBundle`, which `scripts/package-windows.ts` calls)
+  now writes a tree manifest, `desktop.app.identifier` and the package version plus every file but
+  the `.exe` (DLLs included, as signed: path, size, SHA-256), into the `.exe` as the `RT_RCDATA`
+  resource `DENEXT_TREE` before the script signs it (`stampDesktopTreeManifest` from
+  `denext/desktop`, pure TypeScript, any host). `desktopSignWindows` signs the other PE files
+  first, writes the manifest again with their signed bytes, then signs the `.exe`, whatever order
+  its caller lists the files in, so existing package scripts pick it up unchanged. The runtime
+  refuses an update whose manifest is for another app or version, whose files differ from it (a
+  DLL from another build too), that holds a symlink, or that drops the manifest an installed app
+  has (Deno Desktop runtime 3.0.0-denext.8; fork items 202 and 212). An app without
+  `desktop.app.identifier` gets no manifest (the updater needs an identifier anyway).
+  `denext desktop publish-update` refuses a Windows bundle changed after its manifest was written
+  or whose manifest is for another app or version, and warns about one without a manifest; an
+  installed app that has none still accepts its first update without one. The current
+  `scripts/package-windows.ts` writes the manifest as its last change to the bundle, after the
+  app-local VC++ runtime's DLLs are copied in (`buildDesktopBundle(…, { treeManifest: false })`,
+  then `stampDesktopWindowsBundle`), so an unsigned build (`--no-sign`, no `DENEXT_WINDOWS_CERT`)
+  also lists them and `publish-update` takes it; regenerate the scripts
+  (`denext desktop package --regenerate-scripts`) to pick it up. An older script still gets the
+  manifest from `buildDesktopBundle`, listing the VC++ DLLs only once the bundle is signed.
+- **The package run says when a sidecar's scoped `--allow-run` is not containment** (the runtime
+  denext.8 audit, F4). The package scripts no longer bake that scope by default (it stays behind
+  `desktopBuildFlags`' `cacheScope` option): Deno adds every `--allow-run` path to the deny-write
+  list, so under runtime 3.0.0-denext.8 a run grant on the copy's own path left the app unable to
+  write the copy, and a project-file program sidecar never started; it keeps the unscoped
+  `--allow-run`, with the copy's write scoped to the app's cache folder. With the option, a
+  project-file program sidecar in a packaged app is baked as
+  `--allow-run=$DENO_DESKTOP_CACHE/sidecars/<name>/<file>` with a `--allow-write` on that folder,
+  so the app copies the program there at launch: that scope limits what the app's code may run by
+  name, but the same code can write the program under that write grant and then run it, and so
+  can another process of the user between the copy's check and the spawn. `prepareDesktopPackage`
+  prints one line per such program (`sidecarRunWriteWarnings` from `denext/desktop`: a scoped run
+  grant that a baked write grant covers, exact, by a folder above it, or unscoped); it does not
+  refuse the combination, which every project-file program sidecar is, and which a capability that
+  writes (`fs`, the updater's UI overlay) makes of every sidecar. The write grant it compares is
+  the one the build bakes: on a runtime that scopes the app's folder writes it names that scoped
+  grant, not an unscoped one, and a program outside the app's folders is not reported.
+- **The GitHub CLI denext runs to verify a Deno Desktop runtime download's attestation is looked
+  for only where its admin-installed packages put it** on Windows (`%ProgramFiles%\GitHub
+  CLI\gh.exe`, an absolute drive path only), no longer in the per-user
+  `%LOCALAPPDATA%\Programs\GitHub CLI`, which any program the user runs can write. Install the
+  GitHub CLI machine-wide (the MSI or `winget install --scope machine GitHub.cli`) where it was
+  installed per user.
+- **On macOS and Linux that GitHub CLI runs only when no other user can have replaced it.**
+  `/opt/homebrew/bin` and `/usr/local/bin` can belong to a user other than root, so a `gh` found
+  there (or in any of denext's other install locations) is now run only when the file, the folders
+  above it and the folders above the link that led to it are owned by root or the current user and
+  writable by no other user (macOS's admin group, whose members can become root anyway, and a
+  sticky folder such as `/tmp` excepted). One that fails the check is skipped, and with none left
+  the attestation check reports that `gh` was not run.
+
 ## [4.11.13] - 2026-11-02
 
 ### Added
@@ -20772,7 +21054,8 @@ reconciler, the router, the middleware runner, **and** the linter together.
   `notFound()`, middleware, client navigation, and the lint plugin — 75 passing.
   Ships a tiny in-memory DOM shim so reconciler tests need no third-party DOM.
 
-[Unreleased]: https://github.com/Brainwires/denext/compare/v4.11.13...development
+[Unreleased]: https://github.com/Brainwires/denext/compare/v4.12.0...development
+[4.12.0]: https://jsr.io/@denext/denext@4.12.0
 [4.11.13]: https://jsr.io/@denext/denext@4.11.13
 [4.11.12]: https://jsr.io/@denext/denext@4.11.12
 [4.11.11]: https://jsr.io/@denext/denext@4.11.11

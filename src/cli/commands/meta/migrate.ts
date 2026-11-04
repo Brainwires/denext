@@ -88,7 +88,8 @@ export const migrateMeta: CommandMeta = {
       type: "string",
       valueName: "<path>",
       help: "Point the generated config at a LOCAL denext checkout (file://) instead of JSR — " +
-        "for testing an unreleased/dev denext against a real app",
+        "for testing an unreleased/dev denext against a real app. denext's own deps are mapped " +
+        "only where the app maps nothing for them; a clash with the app's entry is reported",
     },
   ],
 };

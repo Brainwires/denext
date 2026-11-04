@@ -70,6 +70,9 @@ Deno.test("dialogs on Windows: every panel's script resets the module path first
     emit: () => {},
     appSupportDir: "",
     runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+    pickedPath: () => {
+      throw new Error("no picked paths in tests");
+    },
     os: "windows",
     signal: new AbortController().signal,
   };

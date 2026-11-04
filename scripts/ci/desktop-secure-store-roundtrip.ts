@@ -20,6 +20,10 @@ const ctx = {
   appSupportDir: "",
   os: Deno.build.os as "darwin" | "windows" | "linux",
   signal: AbortSignal.timeout(30_000),
+  runOnMainThread: () => Promise.reject(new Error("no UI thread in this check")),
+  pickedPath: (): string => {
+    throw new Error("no picked files in this check");
+  },
 };
 
 /** Invoke a capability method with a minimal ctx. */

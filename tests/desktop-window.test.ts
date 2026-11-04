@@ -183,6 +183,9 @@ const ctx = (): DesktopCapCtx => ({
   emit: () => {},
   appSupportDir: "",
   runOnMainThread: () => Promise.reject(new Error("no UI thread in tests")),
+  pickedPath: () => {
+    throw new Error("no picked paths in tests");
+  },
   os: "darwin",
   signal: new AbortController().signal,
 });
@@ -618,6 +621,47 @@ Deno.test("window close guard: a refused quit is over; the next quit asks every 
   assertEquals(quits.length, 1, "A's page reloaded: unguarded now, the quit goes through");
 });
 
+Deno.test("window close guard: a refused quit ends the session end the OS holds; nothing else does", async () => {
+  const win = new FakeWindow();
+  const { api } = quittingApi([win]);
+  let cancels = 0;
+  const withCancel = Object.assign(api, { cancelQuit: () => (cancels++, true) });
+  const w = guardedWindow(withCancel, win);
+  await w.call("setCloseGuard", { enabled: true });
+
+  // A plain close the page refuses has nothing to do with the OS's wait.
+  w.ctl.interceptClose(new Event("close", { cancelable: true }));
+  await w.call("closeRespond", { id: w.last().id, close: false });
+  assertEquals(cancels, 0);
+  await Promise.resolve();
+
+  // A stale answer refuses nothing.
+  withCancel.quit!();
+  await w.call("closeRespond", { id: "stale", close: false });
+  assertEquals(cancels, 0);
+
+  // A refused quit does, once.
+  assertEquals(await w.call("closeRespond", { id: w.last().id, close: false }), { closing: false });
+  assertEquals(cancels, 1);
+  await w.call("closeRespond", { id: w.last().id, close: false });
+  assertEquals(cancels, 1);
+  await Promise.resolve();
+
+  // A quit the page lets go is not a refusal.
+  withCancel.quit!();
+  await w.call("closeRespond", { id: w.last().id, close: true });
+  assertEquals(cancels, 1);
+});
+
+Deno.test("window close guard: a refused quit on a runtime without cancelQuit stays a plain refusal", async () => {
+  const win = new FakeWindow();
+  const { api } = quittingApi([win]);
+  const w = guardedWindow(api, win);
+  await w.call("setCloseGuard", { enabled: true });
+  assertEquals(api.quit!(), false);
+  assertEquals(await w.call("closeRespond", { id: w.last().id, close: false }), { closing: false });
+});
+
 Deno.test("window close guard: quitOnly holds quits and lets plain closes go; turning it off drops consent", async () => {
   const win = new FakeWindow();
   const { api, quits } = quittingApi([win]);
@@ -750,6 +794,30 @@ Deno.test("window.startDrag: picked handles and app-folder files only, never a r
       await call("startDrag", { items: [{ directory: { picked: handle } }] }),
       { result: "failed" },
     );
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("window.startDrag: a drag that never started is an outcome, and fileDragOut follows the runtime", async () => {
+  // Wayland (runtime 3.0.0-denext.8): the pointer off the window, or any drag under CEF, reports
+  // FAILED. denext hands it on as "failed" and doesn't turn it into an error.
+  const dir = await Deno.makeTempDir({ prefix: "denext-dragout-failed-" });
+  try {
+    const data = join(dir, "data");
+    await Deno.mkdir(data, { recursive: true });
+    await Deno.writeTextFile(join(data, "r.txt"), "r");
+    const { call, win } = setup({
+      dirs: { data, cache: join(dir, "cache"), documents: join(dir, "docs") },
+      api: fakeApi({ windowCapabilities: () => ({ fileDragOut: false }) }),
+    });
+    win.dragResult = "failed";
+    assertEquals(await call("startDrag", { items: [{ directory: "data", path: "r.txt" }] }), {
+      result: "failed",
+    });
+    // The window has the method, but the runtime's own report wins.
+    const caps = await call("capabilities") as Record<string, unknown>;
+    assertEquals(caps.fileDragOut, false);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

@@ -20,9 +20,11 @@ import { ensureDir, walk } from "@std/fs";
 import {
   absolutizeImports,
   frameworkImports,
+  frameworkRootUrl,
   minDepAgeConfig,
   readFrameworkJson,
 } from "./bundle.ts";
+import { layeredFrameworkImports } from "./local-checkout-imports.ts";
 import { compileTailwind } from "./tailwind.ts";
 import { inRootContext } from "../server/root-context.ts";
 import { holdRequestDeadline } from "../server/request-context.ts";
@@ -660,7 +662,13 @@ async function writeCssConfig(
   const merged: Record<string, unknown> = {
     compilerOptions: fwConfig.compilerOptions,
     imports: {
-      ...await frameworkImports(),
+      // The CLI re-execs the build under this config, so its deps count; a package the app owns
+      // stays the app's (see layeredFrameworkImports).
+      ...await layeredFrameworkImports(await frameworkImports(), {
+        root: frameworkRootUrl(),
+        appDir: opts.projectDir,
+        cli: true,
+      }),
       ...workspace.imports,
       ...appImports,
       ...redirects,
