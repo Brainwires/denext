@@ -8,6 +8,7 @@ import { join, toFileUrl } from "@std/path";
 import {
   DESKTOP_DEV_ENTRY_FILE,
   desktopDevEntrySource,
+  desktopEntryOutDir,
   desktopLaunchBuildArgs,
   desktopLaunchBuildPlan,
   desktopLaunchBundle,
@@ -322,7 +323,8 @@ Deno.test("desktop run / dev --entry app/desktop.ts: an extension, a module side
     // `desktop run` compiles the entry itself.
     const run = includes((await plan("app/desktop.ts", false)).args);
     check(run, "desktop run");
-    assertEquals(run, ["out", ...want]);
+    // The UI is the export beside the entry, which `runDesktop` serves by default.
+    assertEquals(run, ["app/out", ...want]);
     // The bundle is on disk where the app loads it.
     const main = join(dir, "app", ".deno-desktop", "sidecars", "api", "main.mjs");
     assert(await Deno.stat(main).then(() => true, () => false), main);
@@ -376,6 +378,38 @@ Deno.test("desktop run / dev: an entry at the project root gets the same flags a
   } finally {
     console.log = log;
     await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktopEntryOutDir: the folder the entry's runDesktop serves; out for a root entry", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_entry_out_" });
+  try {
+    await Deno.mkdir(join(dir, "app"));
+    const entry = async (rel: string, source: string) => {
+      await Deno.writeTextFile(join(dir, rel), source);
+      return await desktopEntryOutDir(dir, rel);
+    };
+    // A root entry: `out`, as before, whatever its source says.
+    assertEquals(await entry("desktop.ts", ""), "out");
+    assertEquals(await entry("desktop.ts", 'runDesktop({ outDir: "dist" });'), "out");
+    assertEquals(await desktopEntryOutDir(dir, "./desktop.ts"), "out");
+    // A nested entry: `out` (or its literal `outDir`) resolved from its folder, as runDesktop does.
+    assertEquals(
+      await entry("app/desktop.ts", "runDesktop({ importMetaUrl: import.meta.url });"),
+      "app/out",
+    );
+    assertEquals(await entry("app/desktop.ts", 'runDesktop({ outDir: "../out" });'), "out");
+    assertEquals(
+      await entry("app/desktop.ts", "runDesktop({ outDir: 'ui/dist' });"),
+      "app/ui/dist",
+    );
+    assertEquals(
+      await entry("app/desktop.ts", `runDesktop({ outDir: ${JSON.stringify(join(dir, "web"))} });`),
+      "web",
+    );
+    assertEquals(await desktopEntryOutDir(dir, "app\\missing.ts"), "app/out");
+  } finally {
     await Deno.remove(dir, { recursive: true });
   }
 });

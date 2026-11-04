@@ -45,6 +45,16 @@ export default function Desktop() {
           (what the window serves).
         </li>
         <li>
+          <code>--entry app/desktop.ts</code> (<code>run</code>, <code>dev</code>,{" "}
+          <code>build</code>) uses another entry. <code>runDesktop</code> serves{" "}
+          <code>out</code>, or its <code>outDir</code>, from the entry&apos;s folder, so{" "}
+          <code>run</code> and <code>build</code> export there (<code>app/out/</code>, or a literal
+          {" "}
+          <code>outDir: "../out"</code> resolved from <code>app/</code>) and <code>run</code>{" "}
+          embeds that folder. The packaging scripts always compile the root{" "}
+          <code>desktop.ts</code>, which exports to <code>out/</code>.
+        </li>
+        <li>
           <code>denext desktop package</code> — build the app and its{" "}
           <a href="#desktop-installers">installers</a> for the host OS;{" "}
           <code>--target-os linux</code> or <code>windows</code>{" "}

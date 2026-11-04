@@ -32,6 +32,7 @@ import { desktopDevTarget, type DesktopWindow, runDesktopDev } from "../../build
 import { DESKTOP_DEV_LAN_ENV, DESKTOP_DEV_URL_ENV } from "../../build/desktop.ts";
 import type { DesktopOs } from "../../build/desktop-capabilities.ts";
 import {
+  desktopEntryOutDir,
   desktopLaunchBuildPlan,
   desktopLaunchExecutable,
   desktopLaunchScratchDir,
@@ -82,16 +83,22 @@ function desktopDir(ctx: CommandContext): string {
 }
 
 /**
- * Export the SPA to out/, holding the build-dir and out/ locks for the export only — `desktop
+ * Export the SPA to out/ (for a nested `--entry`, the folder that entry serves:
+ * `desktopEntryOutDir`), holding the build-dir and output locks for the export only — `desktop
  * run` then keeps its window open for as long as the user likes, and must not block builds.
  */
-async function exportSpa(dir: string): Promise<void> {
+async function exportSpa(dir: string, entry = "desktop.ts"): Promise<void> {
+  const outDir = await desktopEntryOutDir(dir, entry);
   // The window runs on this machine: resolve this OS's platform files (`.macos`, `.desktop`).
   const platform = desktopPlatform(Deno.build.os);
   console.log(`\n  denext desktop — exporting SPA [${platform}]  ▸  ${dir}\n`);
   const result = await withProjectLocks(
-    { projectDir: dir, buildDir: "exclusive", outputDirs: ["out"] },
-    () => runBuildStep(() => staticExport(dir, { platform }), "desktop export"),
+    { projectDir: dir, buildDir: "exclusive", outputDirs: [outDir] },
+    () =>
+      runBuildStep(
+        () => staticExport(dir, { platform, ...(outDir === "out" ? {} : { outDir }) }),
+        "desktop export",
+      ),
   );
   console.log(`  Exported ${result.pages} page(s) to ${result.outDir}\n`);
 }
@@ -101,7 +108,7 @@ const DESKTOP_ACTIONS: Record<
   string,
   (ctx: CommandContext, dir: string, entry: string) => Promise<void>
 > = {
-  build: (_ctx, dir) => exportSpa(dir),
+  build: (_ctx, dir, entry) => exportSpa(dir, entry),
   run: (_ctx, dir, entry) => runDesktop(dir, entry),
   dev: (ctx, dir, entry) => runDesktopDevSession(ctx, dir, entry),
   package: (ctx, dir) => packageDesktop(ctx, dir),
@@ -520,7 +527,7 @@ async function runDesktop(dir: string, entry: string): Promise<void> {
   } catch (err) {
     fail(`denext desktop run: ${err instanceof Error ? err.message : String(err)}`);
   }
-  await exportSpa(dir);
+  await exportSpa(dir, entry);
   let built: BuiltDesktopWindow;
   try {
     built = await buildDesktopWindow(dir, entry, launch, { dev: false });

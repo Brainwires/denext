@@ -348,6 +348,38 @@ Deno.test("desktop build exports the SPA to out/", async () => {
   }
 });
 
+Deno.test("desktop build --entry shell/desktop.ts exports the SPA to the folder that entry serves", async () => {
+  const dir = await tempDir("denext_desktop_build_nested_");
+  try {
+    await Deno.mkdir(join(dir, "shell"));
+    await Deno.writeTextFile(join(dir, "shell", "desktop.ts"), "export {};\n");
+    const r = await runVerb(["build"], dir, { entry: "shell/desktop.ts" });
+    assertEquals(r.code, 0, r.err);
+    // `runDesktop` resolves `out` against the entry's `import.meta.url`: `shell/out`.
+    assertStringIncludes(r.out, `Exported 0 page(s) to ${join(dir, "shell", "out")}`);
+    assert(await exists(join(dir, "shell", "out")));
+    assert(!await exists(join(dir, "out")));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop build --entry desktop.ts exports to out/ whatever outDir the entry passes", async () => {
+  const dir = await tempDir("denext_desktop_build_root_");
+  try {
+    await Deno.writeTextFile(
+      join(dir, "desktop.ts"),
+      'runDesktop({ importMetaUrl: import.meta.url, outDir: "ui" });\n',
+    );
+    const r = await runVerb(["build"], dir, { entry: "desktop.ts" });
+    assertEquals(r.code, 0, r.err);
+    assertStringIncludes(r.out, `Exported 0 page(s) to ${join(dir, "out")}`);
+    assert(!await exists(join(dir, "ui")));
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
 Deno.test("desktop run: a failing export stops before any window is opened", async () => {
   const dir = await tempDir("denext_desktop_run_export_");
   try {

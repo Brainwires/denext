@@ -106,13 +106,16 @@ and this project adheres to
   the project root (`bin/server`), so the sidecar's program was missing from the app or its
   recorded grant named another file. The `--include`, the recorded hash and the embedded path now
   name the file the app resolves. An entry at the project root (every packaged app) is unchanged.
-- **Extensions, module sidecars and Node backends work with a desktop entry below the project
-  root.** The app resolves a relative `desktop.capabilities.extensions` module, a module sidecar's
+- **Extensions, module sidecars, Node backends and the UI work with a desktop entry below the
+  project root.** The app resolves a relative `desktop.capabilities.extensions` module, a module sidecar's
   `run.module` and a Node backend's bundle (`.deno-desktop/sidecars/<name>/`) from the folder of the
   entry, but `denext desktop run` / `dev --entry app/desktop.ts` embedded them from the project
   root, so the app could not load them. The build now embeds the extension and the module the app
-  loads (`app/ext.ts`) and writes the bundle to `app/.deno-desktop/sidecars/<name>/`. An entry at
-  the project root (every packaged app) is unchanged.
+  loads (`app/ext.ts`) and writes the bundle to `app/.deno-desktop/sidecars/<name>/`. The UI
+  export follows the same rule: `runDesktop` serves `out` (or its `outDir`) from the entry's folder,
+  so `denext desktop run` / `build --entry app/desktop.ts` now export to `app/out/` (or to the
+  entry's literal `outDir`, resolved from `app/`) and `run` embeds that folder, where a nested entry's
+  window had no UI before. An entry at the project root (every packaged app) is unchanged.
 - **A `desktop.app.mediaCapture` in deno.json is no longer replaced silently.** denext writes the
   packaged app's `laufey-launch.json` after `deno desktop`, with its own grant (the app origin
   alone, for the kinds `desktop.capabilities.microphone` / `camera` turn on), so a deno.json grant

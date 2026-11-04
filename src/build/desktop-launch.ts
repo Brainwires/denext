@@ -22,7 +22,21 @@
 // `deno` CLI, and the runtime honours `DENEXT_DESKTOP_DEV_URL` only under the CLI or in a build that
 // carries that mark, which only this verb compiles in — a packaged app still ignores the env.
 
-import { basename, dirname, join, relative, resolve, SEPARATOR, toFileUrl } from "@std/path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  SEPARATOR,
+  toFileUrl,
+} from "@std/path";
+import {
+  dirname as posixDirname,
+  join as posixJoin,
+  normalize as posixNormalize,
+} from "@std/path/posix";
 import {
   desktopBuildFlags,
   desktopIncludeArgs,
@@ -55,6 +69,9 @@ export interface DesktopLaunchBuildInput {
   readonly iconArgs: readonly string[];
   /** Embed the static export (`run`); `dev` proxies to the dev server and does not need it. */
   readonly includeOut: boolean;
+  /** The static export embedded with `includeOut`, relative to the project (default `out`; see
+   * {@linkcode desktopEntryOutDir}). */
+  readonly outDir?: string;
   /** Hosts to add to `--allow-net` (`--allow-net-connect` under the split grant; `dev --lan`: the dev server's LAN address). */
   readonly netHosts?: readonly string[];
   /** The `--output` path (see {@linkcode desktopLaunchOutput}). */
@@ -102,7 +119,7 @@ export function desktopLaunchBuildArgs(input: DesktopLaunchBuildInput): string[]
     ...withNetHosts(input.permissionFlags, input.netHosts ?? []),
     ...input.denoFlags,
     ...input.runtimeFlags ?? [],
-    ...(input.includeOut ? ["--include", "out"] : []),
+    ...(input.includeOut ? ["--include", input.outDir ?? "out"] : []),
     ...input.extraArgs,
     ...input.iconArgs,
     "--output",
@@ -244,6 +261,30 @@ export async function writeDesktopDevEntry(
   return relative(projectDir, file);
 }
 
+/** A literal `outDir: "<path>"` in an entry's source (the first one). */
+const ENTRY_OUT_DIR = /\boutDir\s*:\s*(["'`])([^"'`$\n]+)\1/;
+
+/**
+ * Where `denext desktop run` / `build` export the UI for an entry, relative to the project and
+ * `/`-separated: the folder the app serves it from (`runDesktop`'s `resolveOutDir`, `out` or its
+ * `outDir` resolved against the entry's `import.meta.url`). For an entry at the project root this
+ * is `out`, as always (every packaged app compiles the root `desktop.ts`); for
+ * `--entry app/desktop.ts` it is `app/out`, or the entry's own literal `outDir: "<path>"` resolved
+ * from `app/`.
+ *
+ * @param projectDir The project.
+ * @param entry The entry that calls `runDesktop`, relative to the project.
+ * @returns The export folder, relative to the project.
+ */
+export async function desktopEntryOutDir(projectDir: string, entry: string): Promise<string> {
+  const entryDir = posixDirname(posixNormalize(entry.replaceAll("\\", "/")));
+  if (entryDir === ".") return "out";
+  const source = await Deno.readTextFile(join(projectDir, entry)).catch(() => "");
+  const outDir = ENTRY_OUT_DIR.exec(source)?.[2] ?? "out";
+  if (isAbsolute(outDir)) return relative(projectDir, outDir).replaceAll("\\", "/");
+  return posixNormalize(posixJoin(entryDir, outDir.replaceAll("\\", "/")));
+}
+
 /** What {@linkcode desktopLaunchBuildPlan} plans. */
 export interface DesktopLaunchPlanInput {
   /** The project. */
@@ -347,6 +388,10 @@ export async function desktopLaunchBuildPlan(
     ],
     iconArgs: await desktopIconArgs(scriptUrl, input.os),
     includeOut: !input.dev,
+    // The export the app serves: `out` for a root entry, beside a nested one.
+    ...(input.dev
+      ? {}
+      : { outDir: await desktopEntryOutDir(input.projectDir, input.appEntry ?? input.entry) }),
     netHosts: input.netHosts,
     output,
     entry: input.entry,
