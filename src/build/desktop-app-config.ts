@@ -49,10 +49,13 @@ import {
   initialOverlayRuntime,
   mediaCaptureRuntime,
   PASSKEY_RP_IDS_FIX,
+  readProjectDenoJson,
   strictLaunchRuntime,
 } from "./desktop-launch-policy.ts";
 import {
   assertMediaCaptureRuntime,
+  DENO_JSON_MEDIA_CAPTURE_FIX,
+  denoJsonMediaCaptureProblem,
   type DesktopMediaKind,
   mediaCaptureLaunchGrant,
   withMediaUsageDescriptions,
@@ -572,6 +575,13 @@ export async function writeLaufeyLaunchConfig(
         `refuses every passkey ceremony (invalid_rp): ${PASSKEY_RP_IDS_FIX}.`,
     );
   }
+  const replaced = new URL("../", entryUrl).protocol === "file:"
+    ? denoJsonMediaCaptureProblem(
+      await readProjectDenoJson(fromFileUrl(new URL("../", entryUrl))),
+      launch.mediaCapture,
+    )
+    : null;
+  if (replaced) console.warn(`  denext: WARNING: ${replaced} — ${DENO_JSON_MEDIA_CAPTURE_FIX}.`);
   const path = laufeyLaunchPath(os, bundle);
   await Deno.mkdir(dirname(path), { recursive: true });
   await Deno.writeTextFile(path, JSON.stringify(launch, null, 2) + "\n");

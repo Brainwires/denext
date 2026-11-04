@@ -94,6 +94,49 @@ export function mediaCaptureLaunchGrant(
 }
 
 /**
+ * Why deno.json's own `desktop.app.mediaCapture` will not reach the packaged app, or `null` when
+ * nothing is lost. `deno desktop` writes it into `laufey-launch.json`, but denext's packaging
+ * rewrites that file afterwards ({@linkcode mediaCaptureLaunchGrant}: the app origin alone, for the
+ * kinds `desktop.capabilities` turns on), so any other grant is replaced. `null` when deno.json
+ * sets none (or an empty one) or the same grant denext writes.
+ *
+ * @param denoJson The parsed deno.json (`undefined`: none).
+ * @param grant The grant denext writes (`undefined`: none).
+ * @returns The message (one line), or `null`.
+ */
+export function denoJsonMediaCaptureProblem(
+  denoJson: unknown,
+  grant: Partial<Record<DesktopMediaKind, string[]>> | undefined,
+): string | null {
+  const own = (denoJson as { desktop?: { app?: { mediaCapture?: unknown } } } | null | undefined)
+    ?.desktop?.app?.mediaCapture;
+  if (own === undefined || own === null) return null;
+  const sorted = (value: unknown): string => {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      return JSON.stringify(value);
+    }
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => !(Array.isArray(v) && v.length === 0))
+      .map(([k, v]) => [k, Array.isArray(v) ? [...v].map(String).sort() : v] as const)
+      .sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    return JSON.stringify(entries);
+  };
+  if (sorted(own) === sorted(grant ?? {})) return null;
+  const written = grant
+    ? DESKTOP_MEDIA_KINDS.filter((k) => grant[k]).map((k) => `${k} for ${grant[k]!.join(", ")}`)
+      .join(", ")
+    : "no grant (neither desktop.capabilities.microphone nor camera is on)";
+  return "deno.json sets desktop.app.mediaCapture, which denext's packaging replaces: it rewrites " +
+    "laufey-launch.json after `deno desktop` with its own grant, the app origin alone for the " +
+    `kinds desktop.capabilities turns on (here: ${written})`;
+}
+
+/** What to do about {@linkcode denoJsonMediaCaptureProblem}. */
+export const DENO_JSON_MEDIA_CAPTURE_FIX = "remove desktop.app.mediaCapture from deno.json and " +
+  "turn on desktop.capabilities.microphone / camera in denext.config.ts " +
+  "(`denext desktop add microphone camera`); no other origin can be granted";
+
+/**
  * The Hardened Runtime entitlements the enabled kinds need on macOS.
  *
  * @param config The project config.

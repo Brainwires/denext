@@ -470,7 +470,12 @@ so denext binds them as they are (runtime `3.0.0-denext.6`, laufey API 50):
   delegates the device to (`allow="microphone"`) gets it. denext's packager writes the grant for
   the app origin alone when `desktop.capabilities.microphone` / `camera` is on, with the macOS
   usage strings and entitlements, and refuses to package either on an older runtime; `deno
-  desktop` writes it from deno.json's `desktop.app.mediaCapture`.
+  desktop` writes it from deno.json's `desktop.app.mediaCapture`. In a denext app that deno.json
+  key has no effect: denext writes `laufey-launch.json` after `deno desktop` and replaces whatever
+  `mediaCapture` it held with its own grant, the app origin alone for the kinds
+  `desktop.capabilities` turns on (none when neither is on), so no other origin can be granted.
+  `denext desktop package` warns, and `denext doctor` reports it, when deno.json sets a different
+  grant.
 - **Why:** before it, each engine asked (or refused) by its own rules, for whatever origin asked,
   so a page the window navigated to could reach the device as easily as the app's own. A grant
   names the app's own documents and nothing else, and nothing is remembered between requests.

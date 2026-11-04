@@ -100,6 +100,17 @@ and this project adheres to
 
 ### Fixed
 
+- **A program sidecar works with a desktop entry below the project root.** With `denext desktop
+  run` / `dev --entry app/desktop.ts`, the app resolves a sidecar's `exec` (`./bin/server`) from
+  the entry's folder (`app/bin/server`), but the build embedded, hashed and recorded the file at
+  the project root (`bin/server`), so the sidecar's program was missing from the app or its
+  recorded grant named another file. The `--include`, the recorded hash and the embedded path now
+  name the file the app resolves. An entry at the project root (every packaged app) is unchanged.
+- **A `desktop.app.mediaCapture` in deno.json is no longer replaced silently.** denext writes the
+  packaged app's `laufey-launch.json` after `deno desktop`, with its own grant (the app origin
+  alone, for the kinds `desktop.capabilities.microphone` / `camera` turn on), so a deno.json grant
+  never reached the app. `denext desktop package` now warns and `denext doctor` reports it when
+  deno.json's grant differs. Docs: https://denext.dev/docs/desktop#desktop-media-capture
 - **`dns.lookup()` passes its `hints` to the system resolver** (denext's Deno 3.0.0-denext.10), so
   `net.connect()`'s default `dns.ADDRCONFIG` takes effect: on a machine with no IPv6, AAAA records
   no longer come back and slow down family autoselection. `dns.ADDRCONFIG`, `dns.ALL` and

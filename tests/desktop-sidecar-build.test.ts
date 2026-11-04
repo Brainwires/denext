@@ -17,6 +17,7 @@ import {
   desktopSidecarIncludeArgs,
   sidecarCacheProgram,
   sidecarPermissionSet,
+  sidecarProgramFile,
   sidecarRecordedProgram,
   sidecarRunWriteWarnings,
 } from "../src/build/desktop-capabilities.ts";
@@ -25,7 +26,7 @@ import { addDesktopSidecar } from "../src/build/desktop-sidecar-add.ts";
 import { validateDenextConfig } from "../src/server/config-validate.ts";
 import type { DenextConfig } from "../src/server/config.ts";
 import type { SidecarDefinition } from "../src/desktop/sidecar.ts";
-import { workerSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
+import { resolveSidecarProgram, workerSidecarLauncher } from "../src/desktop/sidecar-launch.ts";
 import { prepareSidecarModules } from "../src/desktop/sidecar-modules.ts";
 
 /** The bundle's archived packages, unpacked into a cache folder in the test's project. */
@@ -764,15 +765,28 @@ Deno.test("a recorded program: its embedded path is relative to the entry deno d
       grant("bin/server"),
     );
     assertEquals(
-      sidecarRecordedProgram("server", "./bin/server", root, ".denext/desktop-dev-entry.ts"),
+      sidecarRecordedProgram(
+        "server",
+        "./bin/server",
+        root,
+        ".denext/desktop-dev-entry.ts",
+        "desktop.ts",
+      ),
       grant("../bin/server"),
     );
     assertEquals(
-      sidecarRecordedProgram("server", "bin\\server", root, ".denext\\desktop-dev-entry.ts"),
+      sidecarRecordedProgram(
+        "server",
+        "bin\\server",
+        root,
+        ".denext\\desktop-dev-entry.ts",
+        "desktop.ts",
+      ),
       grant("../bin/server"),
     );
+    // A compiled entry in `app/` that imports the root `desktop.ts` (which calls `runDesktop`).
     assertEquals(
-      sidecarRecordedProgram("server", "./bin/./server", root, "app/desktop.ts"),
+      sidecarRecordedProgram("server", "./bin/./server", root, "app/desktop.ts", "desktop.ts"),
       grant("../bin/server"),
     );
     // A path that leaves the project is not one the build embeds: nothing is recorded.
@@ -788,8 +802,81 @@ Deno.test("a recorded program: its embedded path is relative to the entry deno d
         sidecarIntegrity: true,
         projectDir: root,
         entry: ".denext/desktop-dev-entry.ts",
+        appEntry: "desktop.ts",
       }).filter((f) => f.startsWith("--allow-run")),
       [`--allow-run=${grant("../bin/server")}`],
+    );
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+Deno.test("a nested entry: the --include, the recorded hash and the app's own resolution name one file", async () => {
+  const root = await Deno.makeTempDir({ prefix: "denext-sidecar-nested-entry-" });
+  try {
+    // `denext desktop run --entry app/desktop.ts`: the app resolves `./bin/server` against
+    // `app/desktop.ts`'s `import.meta.url`, so the program is `app/bin/server`, never `bin/server`.
+    await Deno.mkdir(join(root, "app", "bin"), { recursive: true });
+    await Deno.writeTextFile(join(root, "app", "bin", "server"), "nested");
+    await Deno.mkdir(join(root, "bin"));
+    await Deno.writeTextFile(join(root, "bin", "server"), "a different file at the root");
+    const entryUrl = toFileUrl(join(root, "app", "desktop.ts")).href;
+    const resolved = await resolveSidecarProgram(
+      "./bin/server",
+      "server",
+      entryUrl,
+      undefined,
+      false,
+    );
+    assertEquals(resolved, join(root, "app", "bin", "server"));
+    assertEquals(join(root, sidecarProgramFile("./bin/server", "app/desktop.ts")), resolved);
+    assertEquals(sidecarProgramFile("../bin/server", "app/desktop.ts"), "bin/server");
+    assertEquals(sidecarProgramFile("bin\\server", "app\\desktop.ts"), "app/bin/server");
+    assertEquals(sidecarProgramFile("./bin/server"), "bin/server");
+
+    // The plain copy: the file embedded is the one the app reads.
+    const config = {
+      desktop: {
+        app: { identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    };
+    assertEquals(await desktopSidecarIncludeArgs(root, config, "linux", "app/desktop.ts"), [
+      "--include",
+      "app/bin/server",
+    ]);
+    assertEquals(await desktopSidecarIncludeArgs(root, config, "linux"), [
+      "--include",
+      "./bin/server",
+    ]);
+
+    // The recorded program: hashed from that file, embedded at it relative to the compiled entry.
+    const sha256 = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("nested"))
+      .then((d) => Array.from(new Uint8Array(d), (b) => b.toString(16).padStart(2, "0")).join(""));
+    const grant = (source: string) =>
+      `$DENO_DESKTOP_CACHE/sidecars/server/${sha256}/server#sha256=${sha256}#embedded=${source}`;
+    assertEquals(
+      sidecarRecordedProgram("server", "./bin/server", root, "app/desktop.ts"),
+      grant("bin/server"),
+    );
+    assertEquals(
+      sidecarRecordedProgram(
+        "server",
+        "./bin/server",
+        root,
+        ".denext/desktop-dev-entry.ts",
+        "app/desktop.ts",
+      ),
+      grant("../app/bin/server"),
+    );
+    assertEquals(
+      desktopBuildFlags(config, "linux", {
+        sidecarIntegrity: true,
+        projectDir: root,
+        entry: ".denext/desktop-dev-entry.ts",
+        appEntry: "app/desktop.ts",
+      }).filter((f) => f.startsWith("--allow-run")),
+      [`--allow-run=${grant("../app/bin/server")}`],
     );
   } finally {
     await Deno.remove(root, { recursive: true });

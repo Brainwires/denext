@@ -7,6 +7,7 @@ import { join, toFileUrl } from "@std/path";
 import {
   assertMediaCaptureRuntime,
   defaultUsageDescription,
+  denoJsonMediaCaptureProblem,
   desktopMediaCapture,
   LINUX_WEBRTC_FIX,
   linuxWebRtcProblem,
@@ -500,6 +501,76 @@ Deno.test("media capture: `desktop add microphone camera` writes both keys", asy
     const text = await Deno.readTextFile(join(dir, "denext.config.ts"));
     assertStringIncludes(text, "microphone: true");
     assertStringIncludes(text, "camera: true");
+  } finally {
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("media capture: deno.json's own mediaCapture is named as replaced, never silently dropped", async () => {
+  const grant = { microphone: ["myapp://app"] };
+  // Nothing set, an empty grant, or the very grant denext writes: nothing is lost.
+  assertEquals(denoJsonMediaCaptureProblem({}, grant), null);
+  assertEquals(denoJsonMediaCaptureProblem(null, grant), null);
+  assertEquals(
+    denoJsonMediaCaptureProblem({ desktop: { app: { mediaCapture: {} } } }, undefined),
+    null,
+  );
+  assertEquals(
+    denoJsonMediaCaptureProblem(
+      { desktop: { app: { mediaCapture: { microphone: ["myapp://app"], camera: [] } } } },
+      grant,
+    ),
+    null,
+  );
+  // Another origin, or a grant with no capability on: replaced, and the message says with what.
+  const other = {
+    desktop: { app: { mediaCapture: { microphone: ["https://example.com"] } } },
+  };
+  const problem = denoJsonMediaCaptureProblem(other, grant)!;
+  assertStringIncludes(problem, "deno.json sets desktop.app.mediaCapture");
+  assertStringIncludes(problem, "microphone for myapp://app");
+  assertStringIncludes(denoJsonMediaCaptureProblem(other, undefined)!, "no grant");
+
+  // The package step warns, and still writes denext's grant.
+  const { dir, entry } = await project({
+    desktop: { app: BOTH.desktop.app, capabilities: { microphone: true } },
+  });
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), JSON.stringify(other));
+    const warned: string[] = [];
+    const warn = console.warn;
+    console.warn = (...args: unknown[]) => warned.push(args.join(" "));
+    let written: string | null;
+    try {
+      written = await writeLaufeyLaunchConfig(entry, "linux", join(dir, "dist"), {
+        mediaCapture: true,
+      });
+    } finally {
+      console.warn = warn;
+    }
+    assertEquals(JSON.parse(await Deno.readTextFile(written!)).mediaCapture, grant);
+    assertEquals(warned.length, 1, warned.join("\n"));
+    assertStringIncludes(warned[0], "deno.json sets desktop.app.mediaCapture");
+    assertStringIncludes(warned[0], "denext desktop add microphone camera");
+
+    // `denext doctor` names it too.
+    await Deno.writeTextFile(join(dir, "desktop.ts"), "// entry\n");
+    const config = { desktop: { app: BOTH.desktop.app, capabilities: { microphone: true } } };
+    const check = await desktopLaunchPolicyCheck(dir, config, {
+      env: () => undefined,
+      runtimeVersion: "3.0.0-denext.10",
+    });
+    assert(!check!.ok);
+    assertStringIncludes(check!.detail, "deno.json sets desktop.app.mediaCapture");
+    await Deno.writeTextFile(
+      join(dir, "deno.json"),
+      JSON.stringify({ desktop: { app: { mediaCapture: grant } } }),
+    );
+    const same = await desktopLaunchPolicyCheck(dir, config, {
+      env: () => undefined,
+      runtimeVersion: "3.0.0-denext.10",
+    });
+    assert(!same!.detail.includes("mediaCapture"), same!.detail);
   } finally {
     await Deno.remove(dir, { recursive: true });
   }

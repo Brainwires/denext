@@ -3257,6 +3257,14 @@ if (state === "requires-approval") hint("Allow Acme in System Settings › Login
           says so;
         </li>
         <li>
+          that grant replaces any <code>desktop.app.mediaCapture</code> in deno.json:{" "}
+          <code>deno desktop</code>{" "}
+          writes deno.json&apos;s into the launch file, and denext rewrites the file after it, so
+          the packaged app grants exactly the kinds <code>desktop.capabilities</code>{" "}
+          turns on, to the app origin, and no other origin. <code>denext desktop package</code>{" "}
+          warns and <code>denext doctor</code> reports it when deno.json sets a different grant;
+        </li>
+        <li>
           on macOS, <code>NSMicrophoneUsageDescription</code> /{" "}
           <code>NSCameraUsageDescription</code> in{" "}
           <code>Info.plist</code>: the text macOS shows when it asks the user, from{" "}
@@ -3591,8 +3599,11 @@ export default defineDesktopExtension({
         </li>
         <li>
           <code>run: {"{ exec }"}</code> spawns a program: an absolute path, a name on{" "}
-          <code>PATH</code>, or a file of the project (<code>"./bin/server"</code>), which is
-          embedded and run from a copy in the app&apos;s cache folder (
+          <code>PATH</code>, or a file of the project (<code>"./bin/server"</code>), relative to the
+          folder of the entry that calls <code>runDesktop</code> (the project root for{" "}
+          <code>desktop.ts</code>, which packaging compiles;{" "}
+          <code>denext desktop run --entry app/desktop.ts</code> reads it from{" "}
+          <code>app/</code>), which is embedded and run from a copy in the app&apos;s cache folder (
           <code>sidecars/&lt;name&gt;/&lt;file&gt;</code>). Such a program is baked an unscoped{" "}
           <code>--allow-run</code> and a broad{" "}
           <code>--allow-write</code>, since the copy&apos;s path is only known on the user&apos;s

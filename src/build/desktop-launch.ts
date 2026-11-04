@@ -261,6 +261,12 @@ export interface DesktopLaunchPlanInput {
   readonly runtimeEnv?: Readonly<Record<string, string>>;
   /** The entry to build, relative to the project. */
   readonly entry: string;
+  /**
+   * The entry that calls `runDesktop`, relative to the project (default {@linkcode entry}): `desktop
+   * dev` builds a generated entry that imports it. A program sidecar's `exec` is relative to its
+   * folder, as the app resolves it.
+   */
+  readonly appEntry?: string;
   /** `desktop dev` (no export embedded) vs `desktop run`. */
   readonly dev: boolean;
   /** Hosts to add to `--allow-net` (`dev --lan`). */
@@ -324,6 +330,7 @@ export async function desktopLaunchBuildPlan(
       // A recorded program sidecar's embedded path is relative to the compiled entry (`desktop dev`
       // compiles `.denext/desktop-dev-entry.ts`).
       entry: input.entry,
+      appEntry: input.appEntry ?? input.entry,
       ...(input.sidecarIntegrity === undefined ? {} : { sidecarIntegrity: input.sidecarIntegrity }),
       // The split network grant needs the pinned runtime (a non-empty runtime env) at 3.0.0-rc.2+.
       netSplit: Boolean(input.runtimeEnv?.DENORT_DESKTOP_BIN) &&
@@ -332,7 +339,7 @@ export async function desktopLaunchBuildPlan(
     denoFlags: input.denoFlags,
     runtimeFlags: desktopRuntimeDenoFlags(input.runtimeEnv ?? {}, input.denoFlags),
     extraArgs: [
-      ...await desktopIncludeArgs(scriptUrl, input.os),
+      ...await desktopIncludeArgs(scriptUrl, input.os, input.appEntry ?? input.entry),
       ...await desktopNpmArgs(scriptUrl),
       // The host's engine, as the runtime was fetched for (a per-OS `desktop.backend`).
       "--backend",

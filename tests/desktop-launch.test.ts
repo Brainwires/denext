@@ -172,6 +172,7 @@ Deno.test("desktop dev: a recorded program sidecar names its file relative to th
         os: "linux",
         denoFlags: [],
         entry,
+        appEntry: "desktop.ts",
         dev: entry !== "desktop.ts",
         scratch,
         sidecarIntegrity: true,
@@ -179,6 +180,60 @@ Deno.test("desktop dev: a recorded program sidecar names its file relative to th
     // The runtime resolves `#embedded=` from the compiled entry's folder (`.denext/`).
     assertStringIncludes((await runGrant(entry)) ?? "", "#embedded=../bin/server");
     assertStringIncludes((await runGrant("desktop.ts")) ?? "", "#embedded=bin/server");
+  } finally {
+    await Deno.remove(scratch, { recursive: true });
+    await Deno.remove(dir, { recursive: true });
+  }
+});
+
+Deno.test("desktop run / dev --entry app/desktop.ts: a program sidecar is the file the app resolves", async () => {
+  const dir = await Deno.makeTempDir({ prefix: "denext_desktop_launch_nested_" });
+  const scratch = await desktopLaunchScratchDir(dir);
+  try {
+    await Deno.writeTextFile(join(dir, "deno.json"), "{}");
+    await Deno.mkdir(join(dir, "app", "bin"), { recursive: true });
+    await Deno.writeTextFile(join(dir, "app", "desktop.ts"), "");
+    await Deno.writeTextFile(join(dir, "app", "bin", "server"), "packaged");
+    const config = {
+      desktop: {
+        app: { name: "My App", identifier: "com.example.app" },
+        sidecars: [{ name: "server", run: { exec: "./bin/server" } }],
+      },
+    };
+    // The `--include`s are read from the project's config file, as a packaging script reads them.
+    await Deno.writeTextFile(
+      join(dir, "denext.config.ts"),
+      `export default ${JSON.stringify(config)};\n`,
+    );
+    const plan = (entry: string, dev: boolean) =>
+      desktopLaunchBuildPlan({
+        projectDir: dir,
+        config,
+        os: "linux",
+        denoFlags: [],
+        entry,
+        appEntry: "app/desktop.ts",
+        dev,
+        scratch,
+        sidecarIntegrity: true,
+      });
+    const included = (args: string[]) =>
+      args.flatMap((a, i) => args[i - 1] === "--include" ? [a] : []);
+    // `desktop run` compiles the entry itself: the app resolves `./bin/server` from `app/`.
+    const run = (await plan("app/desktop.ts", false)).args;
+    assert(included(run).includes("app/bin/server"), run.join(" "));
+    assertStringIncludes(
+      run.find((a) => a.startsWith("--allow-run")) ?? "",
+      "#embedded=bin/server",
+    );
+    // `desktop dev` compiles the generated entry, which imports `app/desktop.ts`.
+    const entry = await writeDesktopDevEntry(dir, join(dir, ".denext"), "app/desktop.ts");
+    const dev = (await plan(entry, true)).args;
+    assert(included(dev).includes("app/bin/server"), dev.join(" "));
+    assertStringIncludes(
+      dev.find((a) => a.startsWith("--allow-run")) ?? "",
+      "#embedded=../app/bin/server",
+    );
   } finally {
     await Deno.remove(scratch, { recursive: true });
     await Deno.remove(dir, { recursive: true });

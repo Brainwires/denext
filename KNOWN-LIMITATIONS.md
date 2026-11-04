@@ -692,6 +692,12 @@ Under denext's pinned runtime; what the stock runtime lacks is in
   Windows keep the system WebView);
   `denext desktop doctor --linux`, `denext doctor` and a Linux `desktop package` warn
   ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
+- **The microphone and camera are granted to the app origin only.** denext writes the packaged
+  app's `laufey-launch.json` after `deno desktop` and replaces any `desktop.app.mediaCapture` in
+  deno.json with its own grant: the app origin alone, for the kinds `desktop.capabilities.microphone`
+  / `camera` turn on. No other origin can be granted; `denext desktop package` warns and `denext
+  doctor` reports a deno.json grant that differs
+  ([details](https://denext.dev/docs/desktop#desktop-media-capture)).
 - **WebKitGTK `fetch` bodies aren't byte streams** ([WebKit bug 322545](https://bugs.webkit.org/show_bug.cgi?id=322545)):
   on Linux's WebView backend `getReader({ mode: "byob" })` throws.
 - **Wayland:** global shortcuts need the XDG portal (the user approves each); an app can't move

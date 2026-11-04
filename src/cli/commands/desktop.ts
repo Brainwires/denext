@@ -289,7 +289,7 @@ async function buildDesktopWindow(
   dir: string,
   entry: string,
   launch: DesktopWindowLaunch,
-  opts: { dev: boolean; netHosts?: string[] },
+  opts: { dev: boolean; netHosts?: string[]; appEntry?: string },
 ): Promise<BuiltDesktopWindow> {
   const os = hostDesktopOs();
   const scratch = await desktopLaunchScratchDir(dir);
@@ -301,6 +301,7 @@ async function buildDesktopWindow(
       denoFlags: launch.denoFlags,
       runtimeEnv: launch.buildEnv,
       entry,
+      ...(opts.appEntry === undefined ? {} : { appEntry: opts.appEntry }),
       dev: opts.dev,
       netHosts: opts.netHosts,
       scratch,
@@ -437,6 +438,8 @@ async function spawnDevWindow(o: {
   const devEntry = await writeDesktopDevEntry(dir, launch.buildDir, o.entry);
   const built = await buildDesktopWindow(dir, devEntry, launch, {
     dev: true,
+    // The generated entry imports the real one, whose folder a program sidecar's `exec` is from.
+    appEntry: o.entry,
     // The window's runtime reaches a LAN dev server over the network.
     netHosts: lan ? [new URL(devUrl).hostname] : [],
   });

@@ -46,11 +46,15 @@ import {
   strictLaunchRuntime,
 } from "../../build/desktop-launch-policy.ts";
 import {
+  DENO_JSON_MEDIA_CAPTURE_FIX,
+  denoJsonMediaCaptureProblem,
   LINUX_WEBRTC_FIX,
   linuxWebRtcProblem,
+  mediaCaptureLaunchGrant,
   mediaCaptureRuntimeProblem,
 } from "../../build/desktop-media-capture.ts";
 import { DENEXT_EXCLUDE, denextExemptions } from "../../build/dep-age.ts";
+import { DEFAULT_DESKTOP_APP_ORIGIN } from "../../desktop/app-origin.ts";
 import {
   describeClash,
   frameworkRuntimeDeps,
@@ -914,6 +918,14 @@ export async function desktopLaunchPolicyCheck(
         "upgrade denext once it pins that runtime (`denext upgrade`), or turn the capability off",
     });
   }
+  const replaced = denoJsonMediaCaptureProblem(
+    await readDenoJson(dir),
+    mediaCaptureLaunchGrant(
+      config,
+      desktopAppIdentity(config)?.origin ?? DEFAULT_DESKTOP_APP_ORIGIN,
+    ),
+  );
+  if (replaced) problems.push({ message: replaced, fix: DENO_JSON_MEDIA_CAPTURE_FIX });
   const pinned = desktopPasskeyRpIds(config) === null
     ? "bridgeOrigins"
     : "bridgeOrigins + passkeyRpIds";

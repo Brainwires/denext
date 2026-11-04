@@ -45372,6 +45372,12 @@
             },
             {
               "kind": "property",
+              "name": "appEntry",
+              "signature": "readonly appEntry?: string",
+              "doc": "The entry that calls `runDesktop`, relative to the project (default {@linkcode entry}): a\nproject-file program sidecar's `exec` is relative to its folder ({@linkcode sidecarProgramFile}),\nas the app resolves it against that entry's `import.meta.url`. `denext desktop dev` compiles a\ngenerated entry that imports it."
+            },
+            {
+              "kind": "property",
               "name": "sidecarIntegrity",
               "signature": "readonly sidecarIntegrity?: boolean",
               "doc": "The runtime checks a program sidecar's recorded hash at spawn (denext's pinned Deno Desktop\nruntime, 3.0.0-denext.10 or later; see `desktopSidecarIntegrityRuntime`), so its `--allow-run`\nrecords the hash and it needs no write grant. Needs `desktop.app.identifier` and `projectDir`,\nand `cacheScope` not `false`. Default:\n`desktopSidecarIntegrityRuntime()`."
@@ -45933,13 +45939,21 @@
           "name": "desktopIncludeArgs",
           "slug": "desktopIncludeArgs",
           "kind": "function",
-          "signature": "desktopIncludeArgs(entryUrl: string, os?: DesktopOs): Promise<string[]>",
+          "signature": "desktopIncludeArgs(entryUrl: string, os?: DesktopOs, appEntry?: string): Promise<string[]>",
           "doc": "The extra args a scaffolded packaging script must add so the packaged binary embeds every module the app loads at runtime, and loads each one from the binary, never from the build machine's disk:",
           "docFull": "The extra args a scaffolded packaging script must add so the packaged binary embeds every module\nthe app loads at runtime, and loads each one from the binary, never from the build machine's\ndisk:\n\n- `--include <path>` per `desktop.capabilities.extensions` module — otherwise the app launches\n  but the runtime fails to load the extension (\"Module not found\"), since `--include out` only\n  bundles the export;\n- `--import-map <.deno-desktop/import-map.json>` when deno.json's import map has an absolute\n  local target (`\"denext/desktop\": \"file:///…\"`): a compiled binary resolves such a target to the\n  build machine's path, so a relocatable copy of the map is written and used instead.\n\nReads the project's `denext.config.ts` and deno.json next to `entryUrl` (a `scripts/` script →\n`../`), like {@linkcode desktopPackageFlags}; a project with neither gets `[]`.",
           "params": [
             {
               "name": "entryUrl",
               "doc": "The packaging script's import.meta.url."
+            },
+            {
+              "name": "os",
+              "doc": "The OS packaged for (default: the host's)."
+            },
+            {
+              "name": "appEntry",
+              "doc": "The entry that calls runDesktop, relative to the project (default desktop.ts; denext desktop run / dev --entry): a program sidecar's file is resolved from its folder."
             }
           ],
           "returns": "[\"--include\", path, …, \"--import-map\", file], ready to splice into the deno desktop argv.",
@@ -49342,7 +49356,7 @@
           "kind": "typeAlias",
           "signature": "type SidecarRun = { readonly module: string; readonly nodeModules?: string; readonly external?: readonly string[]; readonly entries?: readonly string[] } | { readonly exec: string }",
           "doc": "What runs: a module in the app's runtime, or a program.",
-          "docFull": "What runs: a module in the app's runtime, or a program.\n\n`module` is relative to the project (`\"./server/main.ts\"`). Without `nodeModules` it is part of\nthe app's own module graph (resolved through the app's `deno.json`) and embedded as it is. With\n`nodeModules` (a Node backend, e.g. `\"apps/server/dist/bin.mjs\"` and its package's\n`node_modules`) denext bundles it at packaging, every npm import inlined, except the packages\nwith a native addon (`.node`) and those listed in `external`, which are copied whole beside the\nbundle and loaded with `require`.\n\n`exec` is a program path: absolute, a bare name found on `PATH`, or relative to the project\n(`\"./bin/server\"`), which the package scripts copy into the app.",
+          "docFull": "What runs: a module in the app's runtime, or a program.\n\n`module` is relative to the project (`\"./server/main.ts\"`). Without `nodeModules` it is part of\nthe app's own module graph (resolved through the app's `deno.json`) and embedded as it is. With\n`nodeModules` (a Node backend, e.g. `\"apps/server/dist/bin.mjs\"` and its package's\n`node_modules`) denext bundles it at packaging, every npm import inlined, except the packages\nwith a native addon (`.node`) and those listed in `external`, which are copied whole beside the\nbundle and loaded with `require`.\n\n`exec` is a program path: absolute, a bare name found on `PATH`, or relative to the project\n(`\"./bin/server\"`), which the package scripts copy into the app. A relative path is resolved\nfrom the folder of the entry that calls `runDesktop` (its `importMetaUrl`): the project root for\n`desktop.ts`, `app/` for `denext desktop run --entry app/desktop.ts`.",
           "params": [],
           "returns": "",
           "examples": [],

@@ -53,7 +53,9 @@ export interface SidecarPermissions {
  * bundle and loaded with `require`.
  *
  * `exec` is a program path: absolute, a bare name found on `PATH`, or relative to the project
- * (`"./bin/server"`), which the package scripts copy into the app.
+ * (`"./bin/server"`), which the package scripts copy into the app. A relative path is resolved
+ * from the folder of the entry that calls `runDesktop` (its `importMetaUrl`): the project root for
+ * `desktop.ts`, `app/` for `denext desktop run --entry app/desktop.ts`.
  */
 export type SidecarRun =
   | {
